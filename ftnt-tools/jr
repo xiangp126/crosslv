@@ -101,8 +101,8 @@ parserAndPolish() {
 
 searchAndOpen() {
     # --glob='*.{c,h,cpp,js,ts,py,html,css,sh,php}'
-    local onlyCFilesGlob="--glob='*.{c}'"
-    local noLinuxKernelGlob="--glob='!linux-*/*'"
+    local globForOnlyCFile="--glob='*.{c}'"
+    local globForNoKernel="--glob='!linux-*/*'"
     local rgParams="--smart-case \
                     --color=ansi \
                     --colors 'match:fg:204,51,153' --colors 'match:style:bold' \
@@ -119,12 +119,12 @@ searchAndOpen() {
                      --cycle \
                     "
     if [ -z "$fExtendedSearch" ]; then
-        rgParams="$rgParams $noLinuxKernelGlob"
+        rgParams="$rgParams $globForNoKernel"
     fi
 
-    if [ -z "$query" ]; then
-        rgParams="$rgParams $onlyCFilesGlob"
-    fi
+    # if [ -z "$query" ]; then
+    #     rgParams="$rgParams $globForOnlyCFile"
+    # fi
 
     # Squash multiple whitespaces
     rgParams=$(echo "$rgParams" | tr -s ' ')

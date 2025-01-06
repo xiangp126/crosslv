@@ -111,6 +111,7 @@ updatePrerequisitesForDebian() {
         bash-completion
         openssh-server
         python3-dev
+        ffmpeg
         ## build essentials
         build-essential
         libvirt-clients
