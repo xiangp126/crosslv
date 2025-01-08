@@ -14,6 +14,7 @@ fPasswd="password"
 fExpectRoot="# "
 fKillExisting="" # Kill the existing gdbserver process attached to the worker PID
 fNoDebug=""
+fReboot=""
 # GDB Server listen port
 fGDBSrvLisPort=444
 # 0: unlimited, 1: 1 worker, -1: not change
@@ -33,7 +34,7 @@ $SCRIPT_NAME 0.1
 Usage: $SCRIPT_NAME [-t target] [-w worker_type] [-P gdbserver_listen_port] [-T max_attempts]
               [-u/-l username] [-p password] [-P ssh_conn_port] [-h]
               [-N wad_worker_count]
-              [-n] [-k ]
+              [-n] [-k] [-r]
 
 Options:
     -t      Target device name or IP address(must be set)
@@ -44,7 +45,8 @@ Options:
     -P      SSH connection port(default: $fSSHConnPort)
     -N      Set wad worker count(default: $fWADWorkerCnt)
             0: unlimited, 1: 1 worker to make life easier, -1: keep the original value
-    -n      No debug, only display the wad process info
+    -r      Reboot the device
+    -n      Just display the WAD process info without entering the debug session
     -k      Kill the existing gdbserver process attached to the worker PID
     -T      Maximum attempt(default: $fMaxAttempts)
     -h      Print this help message
@@ -64,7 +66,7 @@ _EOF
 [[ $# -eq 0 ]] && usage
 
 # Parse the options
-while getopts "t:w:d:T:l:u:p:P:N:nkh" opt; do
+while getopts "t:w:d:T:l:u:p:P:N:nrkh" opt; do
     case $opt in
         t)
             fTarget=$OPTARG
@@ -95,6 +97,9 @@ while getopts "t:w:d:T:l:u:p:P:N:nkh" opt; do
             ;;
         n)
             fNoDebug=true
+            ;;
+        r)
+            fReboot=true
             ;;
         k)
             fKillExisting=true
@@ -254,19 +259,6 @@ expect -c "
         send \"end\r\"
         expect \"$fExpectRoot\"
 
-        # set wait_time 3
-        # puts stderr \"$USER_NOTATION Wait for \$wait_time seconds to apply the configuration.\"
-        # for {set j 0} {\$j < \$wait_time * 2} {incr j} {
-        #     puts stderr \"====\"
-        # }
-        # puts stderr \"\n\"
-        # for {set i 0} {\$i < \$wait_time * 2} {incr i} {
-        #     puts stderr \"====\"
-        #     after 500
-        # }
-        # send \"\r\"
-        # expect \"$fExpectRoot\"
-
         send \"exit\r\"
         expect eof {
             set COLOR \$MAGENTA
@@ -279,6 +271,22 @@ expect -c "
         send \"config global\r\"
         expect \"$fExpectRoot\"
     }
+
+    # Handle the reboot option
+    if {\"$fReboot\" != \"\"} {
+        send \"exe reboot\r\"
+        expect {
+            {(y/n)} {
+                send \"y\r\"
+                exp_continue
+            }
+            eof {
+                puts stderr \"$USER_NOTATION \${RED}System is rebooting\${RESET}\"
+                exit 0
+            }
+        }
+    }
+
     send \"diagnose debug disable\r\"
     set timeout 30
     expect {
@@ -381,6 +389,7 @@ $USER_NOTATION Simply retry the same command with -N1
         }
     }
 
+    # Kill the existing gdbserver process attached to the worker PID
     if {\"$fKillExisting\" != \"\"} {
         set COLOR \$MAGENTA
         # The output maybe like:

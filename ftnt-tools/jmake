@@ -47,6 +47,7 @@ MAGENTA='\033[35m'
 BLUE='\033[34m'
 GREY='\033[90m'
 LIGHTYELLOW='\033[93m'
+LIGHTGREEN='\033[92m'
 # YELLOW='\033[33m'
 RESET='\033[0m'
 
@@ -648,7 +649,7 @@ if [[ "$fSyncTarget" != false ]]; then
                 echo -e "$USER_NOTATION ${COLOR}Login tool $loginTool not found${RESET}"
                 exit 1
             fi
-            echo -e "$USER_NOTATION ${NORMAL}Calling $loginTool to login to $fSyncTarget and wait for it to reboot${RESET}"
+            echo -e "$USER_NOTATION Calling ${LIGHTGREEN}$loginTool${RESET} to login to $fSyncTarget and wait for it to reboot"
             $loginTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget"
             if [[ $? -ne 0 ]]; then
                 echo "$USER_NOTATION Please check the server status manually."
