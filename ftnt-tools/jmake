@@ -280,11 +280,10 @@ preParseOptions
 showLogo
 
 echo $SEPARATOR2
+# Print the build flags
 if [[ "$fPrintBuildFlags" != false ]]; then
     COLOR="$GREEN"
-    # echo "$SEPARATOR"
     echo -e "${BOLD}Build Flags:${RESET}"
-    # echo "$SHORT_SEPARATOR"
     [[ "$fGitClean"     == true ]] && echo -e "$USER_NOTATION [c] ${COLOR}Clean${RESET} the repo"
     [[ "$fRunConfigure" == true ]] && echo -e "$USER_NOTATION [C] ${COLOR}Configure${RESET} the project"
     [[ "$fNeedBuild"    == true ]] && echo -e "$USER_NOTATION [o] ${COLOR}Build${RESET} the project"
@@ -293,10 +292,9 @@ if [[ "$fPrintBuildFlags" != false ]]; then
     [[ "$fRMCompileCommandsJson" == true ]] && echo -e "$USER_NOTATION [f] ${COLOR}Remove${RESET} the existing $compileCommandsFile"
 fi
 
+# Print the build options
 if [[ "$fNeedBuild" != false ]]; then
-    # echo "$SEPARATOR"
     echo -e "${BOLD}Build Optioins:${RESET}"
-    # echo "$SHORT_SEPARATOR"
     COLOR="$RED"
     echo -e "$USER_NOTATION [m] Build Modle:  ${COLOR}$fBuildModel${RESET}"
     COLOR="$CYAN"
@@ -308,14 +306,12 @@ fi
 
 if [[ "$fSyncTarget" != false ]]; then
     COLOR="$RED"
-    # echo "$SEPARATOR"
     echo -e "${BOLD}Sync Optioins:${RESET}"
-    # echo "$SHORT_SEPARATOR"
-    echo -e "$USER_NOTATION [s] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
+    echo -e "$USER_NOTATION [/] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
     echo -e "$USER_NOTATION [l] User:     (${COLOR}$fSyncUsername${RESET})"
     echo -e "$USER_NOTATION [p] Password: (${COLOR}$fSyncPassword${RESET})"
-    echo -e "$USER_NOTATION [S] Sync File:   (${COLOR}$fSyncFile${RESET})"
-    echo -e "$USER_NOTATION [S] Sync Target: (${COLOR}$fSyncTarget${RESET})"
+    echo -e "$USER_NOTATION [s] Sync File:   (${COLOR}$fSyncFile${RESET})"
+    echo -e "$USER_NOTATION [t] Sync Target: (${COLOR}$fSyncTarget${RESET})"
 fi
 echo "$SEPARATOR2"
 echo -en "${BOLD}Input Command: ${RESET}" >&2
