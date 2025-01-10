@@ -6,19 +6,20 @@ FTNTBUILDTARGET="image.out"
 fPoundPattern='#\s*$'
 ftntUser=
 ftntPasswd=
-fRebuildKernel=false
+fRebuildKernel=
 fPlatform="FOS" # Default platform
 fBuildTarget="$FTNTBUILDTARGET"
 fBuildModel=
 fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
 fMaxBuildAttempt=1
-fUseBear=false
-fRunConfigure=false
-fNeedBuild=false
-fPrintBuildFlags=false # Print build flags
-fGitClean=false
-fRMCompileCommandsJson=false
+fUseBear=
+fRunConfigure=
+fNeedBuild=
+fPrintBuildFlags= # Print build flags
+fGitClean=
+fRMCompileCommandsJson=
+fDisableOptimization=
 fInputCmd=
 # Sync Options
 fSyncTarget=false
@@ -73,14 +74,15 @@ Usage: $SCRIPT_NAME [options]
        $SCRIPT_NAME [-m model] [-w working_dir] [-j num_of_jobs] [-T max_attempt]
              [-s sync_target] [-S sync_file] [-P sync_port] [-l/-u username] [-p password]
              [-B build_target]
-             [-bcCohfk1]
+             [-bcCohfkO]
 
 Build Flags:
-    -c      Clean the repo (default: $fGitClean)
-    -C      Run Configure intelligently (default: $fRunConfigure)
+    -c      Clean the repo (default: ${fGitClean:-false})
+    -C      Run Configure intelligently (default: ${fRunConfigure:-false})
     -o      Run build commands (set automatically if any of the [bmjwT] options is set)
-    -b      Use Bear to generate $compileCommandsFile (default: $fUseBear)
-    -f      Remove $compileCommandsFile (default: $fRMCompileCommandsJson)
+    -b      Use Bear to generate $compileCommandsFile (default: ${fUseBear:-false})
+    -f      Remove $compileCommandsFile (default: ${fRMCompileCommandsJson:-false})
+    -O      Disable optimization (default: ${fDisableOptimization:-false})
 
 Build Options:
     -T      Set the maximum number of build attempts (default: $fMaxBuildAttempt)
@@ -88,7 +90,7 @@ Build Options:
     -m      Set the build model  (default: ${fBuildModel:-KVM})
     -j      Set the number of jobs (default: $fNumOfJobs)
     -w      Set working directory  (default: $fWorkingDir)
-    -k      Rebuild the kernel (default: $fRebuildKernel)
+    -k      Rebuild the kernel (default: ${fRebuildKernel:-false})
 
 Sync Options:
     -s      Set the sync source file (default: $fSyncFile)
@@ -114,7 +116,7 @@ _EOF
 
 # Parse command line options
 fInputCmd="$SCRIPT_NAME $*"
-while getopts "hm:w:j:cCbB:ofT:t:s:P:p:u:l:k" opt; do
+while getopts "hm:w:j:cCbB:ofT:t:s:P:p:u:l:kO" opt; do
     case $opt in
         m)
             fBuildModel=$OPTARG
@@ -134,6 +136,10 @@ while getopts "hm:w:j:cCbB:ofT:t:s:P:p:u:l:k" opt; do
             ;;
         k)
             fRebuildKernel=true
+            fNeedBuild=true
+            ;;
+        O)
+            fDisableOptimization=true
             fNeedBuild=true
             ;;
         b)
@@ -226,12 +232,11 @@ searchModel() {
 
 preParseOptions() {
     # Set fRunConfigure to true if fNeedBuild is true
-    [[ "$fNeedBuild" == true ]] && fRunConfigure=true
+    [ -n "$fNeedBuild" ] && fRunConfigure=true
 
-    [[ "$fGitClean" == true || "$fRunConfigure" == true || "$fNeedBuild" == true
-     || "$fUseBear" == true || "$fRMCompileCommandsJson" == true ]] && fPrintBuildFlags=true
+    [ -n "$fGitClean" ] || [ -n "$fRunConfigure" ] || [ -n "$fNeedBuild" ] || [ -n "$fUseBear" ] || [ -n "$fRMCompileCommandsJson" ] && fPrintBuildFlags=true
 
-    [[ "$fPrintBuildFlags" == false ]] && return
+    [ -z "$fPrintBuildFlags" ] && return
 
     command -v realpath >/dev/null 2>&1 && fWorkingDir=$(realpath "$fWorkingDir")
     if [[ ! -d "$fWorkingDir" ]]; then
@@ -256,7 +261,7 @@ preParseOptions() {
     fBuildModel=$(echo "$fBuildModel" | tr '[:lower:]' '[:upper:]')
 
     if [[ "$fPlatform" == "FPX" ]]; then
-        if [[ "$fBuildModel" == "" ]]; then
+        if [ -z "$fBuildModel" ]; then
             fBuildModel="FPX_KVM"
         else
             # Change the max build attempt to 2 for FPX
@@ -265,7 +270,7 @@ preParseOptions() {
         fi
     else
         # The platform is FOS
-        if [[ "$fBuildModel" == "" ]]; then
+        if [ -z "$fBuildModel" ]; then
             fBuildModel="FGT_VM64_KVM"
         elif [[ "$fBuildModel" == "VMWARE" ]]; then
             fBuildModel="FGT_VM64"
@@ -281,51 +286,52 @@ showLogo
 
 echo $SEPARATOR2
 # Print the build flags
-if [[ "$fPrintBuildFlags" != false ]]; then
+if [ -n "$fPrintBuildFlags" ]; then
     COLOR="$GREEN"
     echo -e "${BOLD}Build Flags:${RESET}"
-    [[ "$fGitClean"     == true ]] && echo -e "$USER_NOTATION [c] ${COLOR}Clean${RESET} the repo"
-    [[ "$fRunConfigure" == true ]] && echo -e "$USER_NOTATION [C] ${COLOR}Configure${RESET} the project"
-    [[ "$fNeedBuild"    == true ]] && echo -e "$USER_NOTATION [o] ${COLOR}Build${RESET} the project"
-    [[ "$fRebuildKernel" == true ]] && echo -e "$USER_NOTATION [k] ${COLOR}Kernel${RESET} Rebuild"
-    [[ "$fUseBear"      == true ]] && echo -e "$USER_NOTATION [b] ${COLOR}Generate${RESET} compile_commands.json using bear"
-    [[ "$fRMCompileCommandsJson" == true ]] && echo -e "$USER_NOTATION [f] ${COLOR}Remove${RESET} the existing $compileCommandsFile"
+    [ -n "$fGitClean" ]              && echo -e "[c] ${COLOR}Clean${RESET} the repo"
+    [ -n "$fRunConfigure" ]          && echo -e "[C] ${COLOR}Configure${RESET} the project"
+    [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
+    [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} Rebuild"
+    [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Generate${RESET} compile_commands.json using bear"
+    [ -n "$fRMCompileCommandsJson" ] && echo -e "[f] ${COLOR}Remove${RESET} the existing $compileCommandsFile"
+    [ -n "$fDisableOptimization" ]   && echo -e "[O] ${COLOR}Disable${RESET} optimization"
 fi
 
 # Print the build options
-if [[ "$fNeedBuild" != false ]]; then
+if [ -n "$fNeedBuild" ]; then
     echo -e "${BOLD}Build Optioins:${RESET}"
     COLOR="$RED"
-    echo -e "$USER_NOTATION [m] Build Modle:  ${COLOR}$fBuildModel${RESET}"
+    echo -e "[m] Build Modle:  ${COLOR}$fBuildModel${RESET}"
     COLOR="$CYAN"
-    echo -e "$USER_NOTATION [B] Build Target: ${COLOR}$fBuildTarget${RESET}"
-    echo -e "$USER_NOTATION [w] Working Directory: ${COLOR}$fWorkingDir${RESET}"
-    echo -e "$USER_NOTATION [T] Maximum Build Attempts: ${COLOR}$fMaxBuildAttempt${RESET}"
-    echo -e "$USER_NOTATION [j] Concurrent Build Jobs:  ${COLOR}$fNumOfJobs${RESET}"
+    echo -e "[B] Build Target: ${COLOR}$fBuildTarget${RESET}"
+    echo -e "[w] Working Directory: ${COLOR}$fWorkingDir${RESET}"
+    echo -e "[T] Maximum Build Attempts: ${COLOR}$fMaxBuildAttempt${RESET}"
+    echo -e "[j] Concurrent Build Jobs:  ${COLOR}$fNumOfJobs${RESET}"
 fi
 
 if [[ "$fSyncTarget" != false ]]; then
     COLOR="$RED"
     echo -e "${BOLD}Sync Optioins:${RESET}"
-    echo -e "$USER_NOTATION [/] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
-    echo -e "$USER_NOTATION [l] User:     (${COLOR}$fSyncUsername${RESET})"
-    echo -e "$USER_NOTATION [p] Password: (${COLOR}$fSyncPassword${RESET})"
-    echo -e "$USER_NOTATION [s] Sync File:   (${COLOR}$fSyncFile${RESET})"
-    echo -e "$USER_NOTATION [t] Sync Target: (${COLOR}$fSyncTarget${RESET})"
+    echo -e "[/] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
+    echo -e "[l] User:     (${COLOR}$fSyncUsername${RESET})"
+    echo -e "[p] Password: (${COLOR}$fSyncPassword${RESET})"
+    echo -e "[s] Sync File:   (${COLOR}$fSyncFile${RESET})"
+    echo -e "[t] Sync Target: (${COLOR}$fSyncTarget${RESET})"
 fi
 echo "$SEPARATOR2"
 echo -en "${BOLD}Input Command: ${RESET}" >&2
 echo -e "${LIGHTYELLOW}$fInputCmd${RESET}" >&2
 
 # Clean the working directory
-if [[ "$fGitClean" == true ]]; then
+if [ -n "$fGitClean" ]; then
     echo "$USER_NOTATION Cleaning the working directory ..."
 
     COLOR="$MAGENTA"
     cd "$fWorkingDir" || exit
     gitExcludePattern=""
     for patt in $gitExcludeList; do
-        if [[ "$fRMCompileCommandsJson" == true ]]; then
+        if [ -n "$fRMCompileCommandsJson" ]; then
             if [[ "$patt" == "$compileCommandsFile" ]]; then
                 # Do not add it to the exclude list
                 echo -e "$USER_NOTATION ${COLOR}Remove $compileCommandsFile${RESET}"
@@ -358,7 +364,7 @@ if [[ -z "$expectPath" ]]; then
 fi
 
 # Step 1: Run Configure
-if [[ "$fRunConfigure" == true ]]; then
+if [ -n "$fRunConfigure" ]; then
     if ! command -v get_credentials &> /dev/null; then
         echo -e "$USER_NOTATION ${RED}Error: Command get_credentials not found.${RESET}"
         exit 1
@@ -378,9 +384,13 @@ if [[ "$fRunConfigure" == true ]]; then
     fi
 
     COLOR=$BLUE
-    # -d y  Build debug image
-    # -c    Enable code coverage
-    CONFIGURE_CMD="./Configure -m $fBuildModel -d y -c"
+    # -O   Disable optimization
+    # -c   Enable code coverage
+    param="-m $fBuildModel -d y -c"
+    if [ -n "$fDisableOptimization" ]; then
+        param+=" -O"
+    fi
+    CONFIGURE_CMD="./Configure $param"
     echo -e "$USER_NOTATION Running Configure: ${COLOR}$CONFIGURE_CMD${RESET}"
     COLOR=$MAGENTA
     echo -e "$USER_NOTATION ${COLOR}Spawning a new bash session.${RESET}"
@@ -431,16 +441,16 @@ if [[ "$fRunConfigure" == true ]]; then
 fi
 
 # Step 2: Run build commands
-if [[ "$fNeedBuild" != false ]]; then
+if [ -n "$fNeedBuild" ]; then
     cd "$fWorkingDir" || exit
 
     makeCommand="make -j$fNumOfJobs $fBuildTarget"
-    if [[ "$fRebuildKernel" == true ]]; then
+    if [ -n "$fRebuildKernel" ]; then
         makeCommand="make kernel_only && $makeCommand"
     fi
 
     # Use Bear to generate compile_commands.json
-    if [[ "$fUseBear" == true ]]; then
+    if [ -n "$fUseBear" ]; then
         bearPath=$(command -v bear)
         if [[ -z "$bearPath" ]]; then
             echo "$USER_NOTATION Command bear not found, please install it first"
@@ -507,7 +517,7 @@ if [[ "$fNeedBuild" != false ]]; then
         fi
     else
         echo -e "$USER_NOTATION ${COLOR}No $jsonFile found in $fWorkingDir${RESET}"
-        if [[ "$fUseBear" == true ]]; then
+        if [ -n "$fUseBear" ]; then
             echo -e "$USER_NOTATION ${COLOR}Please check the bear command${RESET}"
             exit 1
         fi
