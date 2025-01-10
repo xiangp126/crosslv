@@ -66,6 +66,7 @@ fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o ca
 fFSOptions=""
 fFSMountPoint=""
 fFSRemoteDir=""
+fFSDemoMountPoint="$HOME/mmt"
 # Colors
 RED='\033[31m'
 LIGHTRED='\033[91m'
@@ -102,7 +103,7 @@ usage:
          [-J user@jumpserver[:port]] [-W jump_passwd]
          [-L [local_listen_addr:]local_listen_port:target_addr:target_port]
          [-R [remote_listen_addr:]remote_listen_port:target_addr:target_port]
-         [-M [dir:]mountpoint]
+         [-m [remote_dir:]mountpoint]
          [-S] [-T] [-X]
 
 Basic Options:
@@ -124,7 +125,7 @@ Forwarder Options:
 Advanced Options:
     -X     X11 Forward   Enable X11 forwarding
     -v     Vdom          Specify the VDOM (Useful for FGT/FPX devices)
-    -M     Mountpoint    SSHFS Mode. Mount remote directory to local directory. Format: [dir:]mountpoint
+    -m     Mountpoint    SSHFS Mode. Mount remote directory to local directory. Format: [remote_dir:]mountpoint
     -S     SFTP Mode     Connect to the target device via SFTP
     -T     Telnet Mode   Auth to the target device via Telnet
 
@@ -156,8 +157,8 @@ Examples:
     $SCRIPT_NAME -R 127.0.0.1:1080:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz -l owner -p "FGT12\!34"
 
     # SSHFS to mount remote directory
-    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -M :~/MP
-    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -J fpxauto@172.18.20.84:22 -W qaz -M :~/MP
+    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -m :$fFSDemoMountPoint
+    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -J fpxauto@172.18.20.84:22 -W qaz -m :$fFSDemoMountPoint
 
 _EOF
     exit 0
@@ -167,7 +168,7 @@ _EOF
 
 # Parse command-line options
 fInputCmd="$SCRIPT_NAME $*"
-while getopts "t:l:u:p:P:J:W:v:c:TSM:CL:R:Xdh" opt; do
+while getopts "t:l:u:p:P:J:W:v:c:TSm:CL:R:Xdh" opt; do
     case ${opt} in
         t)
             fTarget=$OPTARG
@@ -221,7 +222,7 @@ while getopts "t:l:u:p:P:J:W:v:c:TSM:CL:R:Xdh" opt; do
         X)
             fX11Forwarding=true
             ;;
-        M)
+        m)
             fMode=$SSHFS_MODE
             fSwitchToSShfs=true
             fFSOptions=$OPTARG
@@ -373,7 +374,7 @@ parseOptions() {
     #     echo -e "$USER_NOTATION ${COLOR}BASH_REMATCH[$i]: ${BASH_REMATCH[$i]}${RESET}"
     # done
 
-    # !! Parse fFSOptions in the format of [dir:]mountpoint
+    # !! Parse fFSOptions in the format of [remote_dir:]mountpoint
     if [ -n "$fSwitchToSShfs" ]; then
         if [[ $fFSOptions == *":"* ]]; then
             IFS=':' read -r fFSRemoteDir fFSMountPoint <<< "$fFSOptions"
@@ -694,7 +695,7 @@ dumpLCTips() {
         local sslKeyFilename="${SSLKEYLOGFILE##*/}"
         echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -k -i -${RESET}" >&2
         echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:/home/$fTargetUser/$sslKeyFilename\" -k -i -${RESET}" >&2
-        echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:$HOME/MP/$sslKeyFilename\" -k -i -${RESET}" >&2
+        echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:$fFSDemoMountPoint/$sslKeyFilename\" -k -i -${RESET}" >&2
     fi
 }
 
@@ -702,7 +703,7 @@ dumpSSHFSTips() {
     local COLOR=$1
     if [ -z "$fSwitchToSShfs" ]; then
         local __remote_dir="/home/$fTargetUser"
-        local __mount_point="$HOME/MP"
+        local __mount_point="$fFSDemoMountPoint"
         local __addr=$fTarget
         local __port=$fTargetPort
         echo -e "${BOLD}SSHFS Command Tips:${RESET}" >&2
@@ -717,7 +718,7 @@ dumpSSHFSTips() {
                 __addr=$fLFLocalAddr
                 __port=$fLFLocalPort
             fi
-            echo -e "${COLOR}$SCRIPT_NAME -t $fTargetUser@$__addr:$__port -p \"$fTargetPwd\" -M $__remote_dir:$__mount_point${RESET}" >&2
+            echo -e "${COLOR}$SCRIPT_NAME -t $fTargetUser@$__addr:$__port -p \"$fTargetPwd\" -m $__remote_dir:$__mount_point${RESET}" >&2
         fi
     fi
 }
