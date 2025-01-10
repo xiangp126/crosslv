@@ -30,4 +30,4 @@ set prompt (gdb)
 # alias r run
 
 # Load the custom GDB commands
-source ~/Templates/gdb_useful.py
+source ~/Templates/gdb_tools.py
