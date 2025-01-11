@@ -264,8 +264,6 @@ preParseOptions() {
         if [ -z "$fBuildModel" ]; then
             fBuildModel="FPX_KVM"
         else
-            # Change the max build attempt to 2 for FPX
-            fMaxBuildAttempt=2
             searchModel "$availModels" "$fBuildModel"
         fi
     else
@@ -528,10 +526,20 @@ fi
 
 # Step 3: Sync the SYNC_FILE to the target machine
 if [[ "$fSyncTarget" != false ]]; then
+    debugTool="jdebug"
+    loginTool="jssh"
+
     # The -t option tells mapfile to strip the trailing newlines from each line it reads.
     mapfile -t syncFiles < <(find "$fWorkingDir" -name "$fSyncFile")
     if [[ ${#syncFiles[@]} -eq 0 ]]; then
         echo -e "$USER_NOTATION ${MAGENTA}$fSyncFile not found in $fWorkingDir${RESET}"
+        exit 1
+    fi
+
+    echo -e "$USER_NOTATION Calling ${LIGHTGREEN}$debugTool${RESET} to kill all existing debug sessions on $fSyncTarget"
+    $debugTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget" -k
+    if [[ $? -ne 0 ]]; then
+        echo "$USER_NOTATION $debugTool run failed. Please check the server status manually."
         exit 1
     fi
 
@@ -650,15 +658,15 @@ if [[ "$fSyncTarget" != false ]]; then
         $ESUCCESS)
             COLOR=$MAGENTA
             echo -e "$USER_NOTATION You have synced $fSyncFile to $fSyncTarget successfully at $(getCurrentTime)"
-            loginTool="jssh"
             if ! command -v $loginTool &> /dev/null; then
                 echo -e "$USER_NOTATION ${COLOR}Login tool $loginTool not found${RESET}"
                 exit 1
             fi
+
             echo -e "$USER_NOTATION Calling ${LIGHTGREEN}$loginTool${RESET} to login to $fSyncTarget and wait for it to reboot"
             $loginTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget"
             if [[ $? -ne 0 ]]; then
-                echo "$USER_NOTATION Please check the server status manually."
+                echo "$USER_NOTATION $loginTool run failed. Please check the server status manually."
                 exit 1
             else
                 echo -e "$USER_NOTATION Target ${MAGENTA}$fSyncTarget${RESET} started to reboot at $(getCurrentTime)"

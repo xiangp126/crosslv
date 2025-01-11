@@ -53,6 +53,7 @@ Options:
 
 Example:
     $SCRIPT_NAME -t fgt1
+    $SCRIPT_NAME -t fgt1 -k
     $SCRIPT_NAME -t fgt1 -P 22
     $SCRIPT_NAME -t fgt1 -p "123" -N1
     $SCRIPT_NAME -t fgt1 -w algo -d 9229
@@ -172,6 +173,8 @@ expect -c "
     set MAGENTA \"\033\[35m\"
     set CYAN    \"\033\[36m\"
     set WHITE   \"\033\[37m\"
+    set LIGHTGREEN \"\033\[92m\"
+    set LIGHTYELLOW \"\033\[93m\"
 
     while {\$i <= $fMaxAttempts} {
         if {\$i > 1} {
@@ -362,7 +365,7 @@ $USER_NOTATION Simply retry the same command with -N1
             puts stderr \"$USER_NOTATION Recommend to check the input worker type.\"
         }
     } elseif {\$worker_cnt == 1} {
-        set COLOR \$MAGENTA
+        set COLOR \$LIGHTYELLOW
         puts stderr \"\n$USER_NOTATION \${COLOR}Found single PID: \$worker_pids for WAD process of type $fWorkerType\${RESET}\"
     } else {
         puts stderr \"\n$USER_NOTATION \${COLOR}Could not find WAD process of type $fWorkerType.\${RESET}\"
@@ -401,14 +404,16 @@ $USER_NOTATION Simply retry the same command with -N1
             -re {\r\n(\d+)} {
                 # Find an existing gdbserver process attached to the worker PID
                 set process_id \$expect_out(1,string)
+                puts stderr \"$USER_NOTATION \${COLOR}Found PID \$process_id\${RESET}\"
                 puts stderr \"$USER_NOTATION \${COLOR}Sending kill signal to gdbserver process \$process_id\${RESET}\"
                 set gdbserver_pid \$expect_out(1,string)
                 send \"kill \$gdbserver_pid\r\"
+                sleep 1
                 exp_continue
             }
             \"$fExpectRoot\" {
                 puts stderr \"$USER_NOTATION \${COLOR}All existing gdbserver processes have been killed\${RESET}\"
-                exit 1
+                exit 0
             }
         }
     }
