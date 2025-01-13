@@ -546,6 +546,7 @@ if [[ "$fSyncTarget" != false ]]; then
     # Only sync the first file that is found.
     syncFile="${syncFiles[0]}"
     COLOR="$BLUE"
+    echo '----------------------------------------------------'
     echo -e "$USER_NOTATION Syncing ${COLOR}$syncFile${RESET} to ${COLOR}$fSyncTarget${RESET} ..."
 
     maxSyncRetries=3

@@ -1,3 +1,4 @@
+import argparse
 import re
 import gdb
 
@@ -163,13 +164,14 @@ class PrintErrno(gdb.Command):
 # Instantiate the command
 PrintErrno()
 
-class PrintMemoryValue(gdb.Command):
-    """Print memory at the specified address using the x/4bu format."""
+class PrintMemory(gdb.Command):
+    """Print memory at the specified address using various formats."""
     def __init__(self):
-        super(PrintMemoryValue, self).__init__("pm", gdb.COMMAND_USER)
+        super(PrintMemory, self).__init__("pm", gdb.COMMAND_USER)
+        self.parser = self._create_parser()
 
     def print_session_ctx(self):
-        # Define the addresses with the requested format
+        """Print session context details."""
         addresses = [
             "&ses_ctx->src_addr.sa4.sin_addr",
             "&ses_ctx->dst_addr.sa4.sin_addr",
@@ -186,102 +188,151 @@ class PrintMemoryValue(gdb.Command):
 
         for (address, port) in zip(addresses, ports):
             try:
-                # x/2bu &ses_ctx->src_addr.sa4.sin_port
-                # 0x7f01609f1e3a: 209     30
                 ret_port = gdb.execute(f"x/2bu {port}", to_string=True)
-                # ['209', '30']
                 numbers = re.findall(r'\b\d+\b', ret_port)
                 int_values = [int(num) for num in numbers]
                 port_value = int_values[0] * 256 + int_values[1]
 
-                # ++x/4bu &ses_ctx->orig_dst_addr.sa4.sin_addr
-                # 0x7f01609f1e90: 192     168     103     100
                 ret_addr = gdb.execute(f'x/4bu {address}', to_string=True)
                 print(f"{ret_addr.rstrip()}    (Big-endian Port = {port_value})")
 
             except gdb.error as e:
-                print(f"Error: {e}", end="")
+                print(f"Error: {e}")
+                break
 
-    # Convert the integer to bytes in big-endian order
-    def convert_le_to_be(self, value, length = 4):
+    def print_memory(self, address, type, size):
+        if size == 0:
+            size = type.target().sizeof
         try:
-            # Attempt to convert the value to an integer
-            value = int(value)
-        except:
-            print(f"Error: {value} is not a valid integer")
-            return False
+            print(f"++x/{size}bu ({type} *) {address}")
+            self.print_memory_bytes(address, size)
+        except gdb.error as e:
+            print(f"Error accessing memory at {address}: {e}")
 
-        # Convert the integer to bytes in big-endian order
-        # bytes_be => b'\x00\x15\x00\x00'
-        bytes_be = value.to_bytes(length, byteorder='little')
+    def print_memory_bytes(self, mem, size):
+        result = gdb.execute(f"x/{size}bu {mem}", to_string=True)
+
+        numbers = re.findall(r':\s*((?:\d+\s+)+)', result)
+        if not numbers:
+            print("No values found in memory")
+            return
+
+        bytes_list = [int(x) for x in numbers[0].split()]
+
+        # Calculate values in both endianness
+        le_val = sum(byte << (8 * i) for i, byte in enumerate(bytes_list))
+        be_val = sum(byte << (8 * (size - 1 - i)) for i, byte in enumerate(bytes_list))
+
+        # Convert back to bytes in big-endian order for verification
+        bytes_be = be_val.to_bytes(size, byteorder='big')
         hex_string = ' '.join(f'0x{format(byte, "02X")}' for byte in bytes_be)
-        # Big-endian bytes: 0x00 0x15
-        print(f"Big-endian Hex: {hex_string}")
+        dec_string = ' '.join(f'{byte:<4}' for byte in bytes_be)
 
-        # Convert the Big-endian bytes to integers
-        # values => [0, 21, 0, 0]
-        values = [int(byte) for byte in bytes_be]
-        # Calculate the port number in case of need
-        port_num = values[0] * 256 + values[1]
+        print(f"Big-endian Hex string: {hex_string}")
+        print(f'Big-endian Dec string: {dec_string}')
+        print(f"Big-endian Decimal:    {be_val}")
+        print(f"Little-endian Decimal: {le_val}")
 
-        if length == 4:
-            # Format the result as a string
-            result = '   '.join(map(str, values))
-            print(f"Big-endian Decimal: {result}")
+    def _create_parser(self):
+        """Create the argument parser for the command."""
+        # Note: We can't use argparse directly with GDB's argument string
+        # so we'll create a custom parser
+        parser = argparse.ArgumentParser(
+            prog="pm",
+            description="Print memory at the specified address using various formats",
+            add_help=False  # Disable built-in help to handle it ourselves
+        )
+        parser.add_argument(
+            "address",
+            nargs="?",
+            help="Memory address to print (e.g., 0x7f01609f1e90)",
+        )
+        parser.add_argument(
+            "-s", "--size",
+            type=int,
+            choices=[1, 2, 4, 8],
+            default=0,
+            help="Size of memory bytes to print (1, 2, 4, 8 bytes), default: 0"
+        )
+        parser.add_argument(
+            "-c", "--context",
+            action="store_true",
+            help="Print the session context details"
+        )
+        parser.add_argument(
+            "-h", "--help",
+            action="store_true",
+            help="Show this help message"
+        )
+        return parser
 
-        # print(f"Big-endian Port: {port_num} ({values[0]} * 256 + {values[1]})")
-        print(f"Big-endian Port: {port_num}")
+    def print_help(self):
+        """Print command help."""
+        self.parser.print_help()
+        print("\nExamples:")
+        print("  pm 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
+        print("  pm 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
+        print("  pm -c                        # Print session context")
 
-    # Print the memory using x/4bu format or x/2bu format
-    def print_memory_bytes(self, arg, len = 4):
-        result = gdb.execute(f"x/{len}bu {arg}", to_string=True)
-        print(result, end="")
+    def parse_args(self, args):
+        current_args = []
+        current_arg = []
+        in_quotes = False
 
-    def invoke(self, arg, from_tty):
-        # If no argument is provided, print the session context by default
-        if not arg:
+        # Args Input: &fs->new_ip.sa4.sin_port -l 2
+        # print(f"Args Input: {arg}")
+
+        for char in args:
+            if char == '"':
+                in_quotes = not in_quotes
+            elif char.isspace() and not in_quotes:
+                if current_arg:
+                    current_args.append(''.join(current_arg))
+                    current_arg = []
+            else:
+                current_arg.append(char)
+
+        if current_arg:
+            current_args.append(''.join(current_arg))
+
+        # Args Parsed: ['&fs->new_ip.sa4.sin_port', '-l', '2']
+        # print(f"Args Parsed: {current_args}")
+
+        try:
+            return self.parser.parse_args(current_args)
+        except SystemExit:
+            return None
+        except Exception as e:
+            print(f"Error parsing arguments: {e}")
+            self.print_help()
+            return None
+
+    def invoke(self, args, from_tty):
+        parsed_args = self.parse_args(args)
+        if not parsed_args:
+            return
+
+        if parsed_args.help:
+            self.print_help()
+            return
+
+        if parsed_args.context:
             self.print_session_ctx()
             return
 
-        try:
-            address = ""
-            # default number of bytes needed to represent the type
-            byte_length = 4
-
-            # Check if the address is ses_ctx
-            if arg == "ses_ctx" or arg == "&ses_ctx":
-                self.print_session_ctx()
-                return
-
-            # pt4 0x7f01609f5c88
-            elif "0x" in arg:
-                address = arg
-            else:
-                result = gdb.parse_and_eval(arg)
-                type = result.type
-                # Type: struct wad_session_context *, Value: 0x7f01609f5c88
-                print(f"Type: {type}, LE Value: {result}")
-                # Type: __be16, Value: 5376
-                if "16" in str(type):
-                   byte_length = 2
-                else:
-                    byte_length = 4
-
-                # Type: struct wad_session_context *, Value: 0x7f01609f5c88
-                if "0x" in str(result):
-                    address = arg
-                else:
-                    # Type: int, Value: 1684515008
-                    self.convert_le_to_be(result, byte_length)
-                    return
-
-            self.print_memory_bytes(address, byte_length)
-
-        except gdb.error as e:
-            print(f"Error: {e}")
+        if parsed_args.address:
+            addr = parsed_args.address
+            ret = gdb.parse_and_eval(addr)
+            type = ret.type
+            if type.code != gdb.TYPE_CODE_PTR:
+                print(f"Warning: {addr} is not a pointer, use its address instead")
+                addr = ret.address
+            self.print_memory(addr, type, parsed_args.size)
+        else:
+            self.print_help()
 
 # Instantiate the command
-PrintMemoryValue()
+PrintMemory()
 
 class CircularDoublyLinkedList(gdb.Command):
     """Command to print and count elements in a circular doubly linked list."""
