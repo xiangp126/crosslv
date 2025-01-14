@@ -164,10 +164,10 @@ class PrintErrno(gdb.Command):
 # Instantiate the command
 PrintErrno()
 
-class PrintMemory(gdb.Command):
+class PrettyPrintMemory(gdb.Command):
     """Print memory at the specified address using various formats."""
     def __init__(self):
-        super(PrintMemory, self).__init__("pm", gdb.COMMAND_USER)
+        super(PrettyPrintMemory, self).__init__("pp", gdb.COMMAND_USER)
         self.parser = self._create_parser()
 
     def print_session_ctx(self):
@@ -238,7 +238,7 @@ class PrintMemory(gdb.Command):
         # Note: We can't use argparse directly with GDB's argument string
         # so we'll create a custom parser
         parser = argparse.ArgumentParser(
-            prog="pm",
+            prog="pp",
             description="Print memory at the specified address using various formats",
             add_help=False  # Disable built-in help to handle it ourselves
         )
@@ -270,9 +270,9 @@ class PrintMemory(gdb.Command):
         """Print command help."""
         self.parser.print_help()
         print("\nExamples:")
-        print("  pm 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
-        print("  pm 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
-        print("  pm -c                        # Print session context")
+        print("  pp 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
+        print("  pp 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
+        print("  pp -c                        # Print session context")
 
     def parse_args(self, args):
         current_args = []
@@ -332,7 +332,7 @@ class PrintMemory(gdb.Command):
             self.print_help()
 
 # Instantiate the command
-PrintMemory()
+PrettyPrintMemory()
 
 class CircularDoublyLinkedList(gdb.Command):
     """Command to print and count elements in a circular doubly linked list."""

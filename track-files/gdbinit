@@ -24,10 +24,15 @@ set follow-fork-mode child
 
 # Do not remove the trailing space
 set prompt (gdb) 
+# After recomplie, reload the binary and source code
+define reload
+    file sysinit/init
+    directory
+end
 
 # Specify your custom GDB aliases (if any)
 # For example, alias "run" to "r"
 # alias r run
 
-# Load the custom GDB commands
+# Load the custom gdb tools
 source ~/Templates/gdb_tools.py
