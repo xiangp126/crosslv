@@ -203,6 +203,7 @@ class PrettyPrintMemory(gdb.Command):
     def print_memory(self, address, type, size):
         if size == 0:
             size = type.target().sizeof
+            size = min(size, 16)
         try:
             print(f"++x/{size}bu ({type} *) {address}")
             self.print_memory_bytes(address, size)

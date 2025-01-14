@@ -391,7 +391,7 @@ if [ -n "$fRunConfigure" ]; then
     CONFIGURE_CMD="./Configure $param"
     echo -e "$USER_NOTATION Running Configure: ${COLOR}$CONFIGURE_CMD${RESET}"
     COLOR=$MAGENTA
-    echo -e "$USER_NOTATION ${COLOR}Spawning a new bash session.${RESET}"
+    echo -e "$USER_NOTATION ${COLOR}Spawning a new bash session${RESET}"
     sleep 1
 
     # expect -d -c "
@@ -491,9 +491,8 @@ if [ -n "$fNeedBuild" ]; then
 
     if [[ $eval_status -ne 0 ]]; then
         COLOR="$MAGENTA"
-        echo -e "$USER_NOTATION ${COLOR}Build projects failed${RESET}"
-        echo -e "$USER_NOTATION ${COLOR}You can run the following command to clean the repo and rebuild again${RESET}"
-        echo -e "$USER_NOTATION ${COLOR}$fInputCmd -c${RESET}"
+        echo -e "$USER_NOTATION ${RED}Build projects failed.${RESET}"
+        echo -e "$USER_NOTATION Please search for ${COLOR}error:${RESET} to find the error message."
         exit 1
     fi
 
