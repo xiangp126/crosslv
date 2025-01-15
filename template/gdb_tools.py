@@ -201,16 +201,26 @@ class PrettyPrintMemory(gdb.Command):
                 break
 
     def print_memory(self, address, type, size):
-        if size == 0:
-            size = type.target().sizeof
-            size = min(size, 16)
         try:
-            print(f"++x/{size}bu ({type} *) {address}")
-            self.print_memory_bytes(address, size)
+            if "ip_addr_t" in str(type) or 'wad_addr' in str(type):
+                self.print_ip_address(address, type)
+            else:
+                mem = f"({type} *) {address}"
+                self.print_memory_bytes(mem, type, size)
         except gdb.error as e:
             print(f"Error accessing memory at {address}: {e}")
 
-    def print_memory_bytes(self, mem, size):
+    def print_ip_address(self, address, type):
+        size = 4
+        _addr = f"&(({type} *) {address})->sa4.sin_addr"
+        self.print_memory_bytes(_addr, type, size)
+
+        size = 2
+        _port = f"&(({type} *) {address})->sa4.sin_port"
+        self.print_memory_bytes(_port, type, size)
+
+    def print_memory_bytes(self, mem, type, size):
+        print(f"++x/{size}bu {mem}")
         result = gdb.execute(f"x/{size}bu {mem}", to_string=True)
 
         numbers = re.findall(r':\s*((?:\d+\s+)+)', result)
@@ -324,11 +334,22 @@ class PrettyPrintMemory(gdb.Command):
         if parsed_args.address:
             addr = parsed_args.address
             ret = gdb.parse_and_eval(addr)
-            type = ret.type
-            if type.code != gdb.TYPE_CODE_PTR:
+            code = ret.type.code
+            type = None
+            size = 0
+
+            if code != gdb.TYPE_CODE_PTR:
                 print(f"Warning: {addr} is not a pointer, use its address instead")
                 addr = ret.address
-            self.print_memory(addr, type, parsed_args.size)
+                type = ret.type
+            else:
+                addr = ret
+                type = ret.type.target()
+
+            size = type.sizeof
+            if parsed_args.size:
+                size = parsed_args.size
+            self.print_memory(addr, type, min(16, size))
         else:
             self.print_help()
 

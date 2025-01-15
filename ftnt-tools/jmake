@@ -538,8 +538,9 @@ if [[ "$fSyncTarget" != false ]]; then
     echo -e "$USER_NOTATION Calling ${LIGHTGREEN}$debugTool${RESET} to kill all existing debug sessions on $fSyncTarget"
     $debugTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget" -k
     if [[ $? -ne 0 ]]; then
-        echo "$USER_NOTATION $debugTool run failed. Please check the server status manually."
-        exit 1
+        COLOR=$MAGENTA
+        echo -e "$USER_NOTATION ${COLOR}$debugTool run failed, please check the server status manually.${RESET}"
+        echo -e "$USER_NOTATION ${NORMAL}But going on anyway${RESET}"
     fi
 
     # Only sync the first file that is found.
