@@ -15,6 +15,7 @@ fExpectRoot="# "
 fKillExisting="" # Kill the existing gdbserver process attached to the worker PID
 fNoDebug=""
 fReboot=""
+fSilent=""
 # GDB Server listen port
 fGDBSrvLisPort=444
 # 0: unlimited, 1: 1 worker, -1: not change
@@ -46,6 +47,7 @@ Options:
     -N      Set wad worker count(default: $fWADWorkerCnt)
             0: unlimited, 1: 1 worker to make life easier, -1: keep the original value
     -r      Reboot the device
+    -s      Silent mode. Suppress the output of the wad process info
     -n      Just display the WAD process info without entering the debug session
     -k      Kill the existing gdbserver process attached to the worker PID
     -T      Maximum attempt(default: $fMaxAttempts)
@@ -67,7 +69,7 @@ _EOF
 [[ $# -eq 0 ]] && usage
 
 # Parse the options
-while getopts "t:w:d:T:l:u:p:P:N:nrkh" opt; do
+while getopts "t:w:d:T:l:u:p:P:N:nrksh" opt; do
     case $opt in
         t)
             fTarget=$OPTARG
@@ -101,6 +103,9 @@ while getopts "t:w:d:T:l:u:p:P:N:nrkh" opt; do
             ;;
         r)
             fReboot=true
+            ;;
+        s)
+            fSilent=true
             ;;
         k)
             fKillExisting=true
@@ -313,9 +318,16 @@ expect -c "
     }
     send \"diagnose debug enable\r\"
     expect \"$fExpectRoot\"
+    # Suppress the display of messages
+    if {\"$fSilent\" != \"\"} {
+        log_user 0
+    }
     send \"diagnose test application wad 1000\r\"
     expect \"$fExpectRoot\"
-    # Only display the wad process info
+    # Restore the display of messages
+    log_user 1
+
+    # Only display the wad process info and exit
     if {\"$fNoDebug\" != \"\"} {
         send \"exit\r\"
         expect eof {
@@ -324,8 +336,8 @@ expect -c "
             exit 0
         }
     }
-    set output \$expect_out(buffer)
 
+    set output \$expect_out(buffer)
     # Search for the line with \"type=worker\" and extract the PID
     set worker_pid \"\"
     set worker_cnt 0
@@ -365,8 +377,8 @@ $USER_NOTATION Simply retry the same command with -N1
             puts stderr \"$USER_NOTATION Recommend to check the input worker type.\"
         }
     } elseif {\$worker_cnt == 1} {
-        set COLOR \$LIGHTYELLOW
-        puts stderr \"\n$USER_NOTATION \${COLOR}Found single PID: \$worker_pids for WAD process of type $fWorkerType\${RESET}\"
+        set COLOR \$LIGHTGREEN
+        puts stderr \"\n$USER_NOTATION Found Single \${COLOR}PID: \$worker_pids\${RESET} for WAD process of type \${COLOR}$fWorkerType\${RESET}\"
     } else {
         puts stderr \"\n$USER_NOTATION \${COLOR}Could not find WAD process of type $fWorkerType.\${RESET}\"
         exit 1

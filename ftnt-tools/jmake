@@ -528,6 +528,16 @@ if [[ "$fSyncTarget" != false ]]; then
     debugTool="jdebug"
     loginTool="jssh"
 
+    if ! command -v $debugTool &> /dev/null; then
+        echo -e "$USER_NOTATION ${MAGENTA}Debug tool $debugTool not found${RESET}"
+        exit 1
+    fi
+
+    if ! command -v $loginTool &> /dev/null; then
+        echo -e "$USER_NOTATION ${MAGENTA}Login tool $loginTool not found${RESET}"
+        exit 1
+    fi
+
     # The -t option tells mapfile to strip the trailing newlines from each line it reads.
     mapfile -t syncFiles < <(find "$fWorkingDir" -name "$fSyncFile")
     if [[ ${#syncFiles[@]} -eq 0 ]]; then
@@ -535,8 +545,8 @@ if [[ "$fSyncTarget" != false ]]; then
         exit 1
     fi
 
-    echo -e "$USER_NOTATION Calling ${LIGHTGREEN}$debugTool${RESET} to kill all existing debug sessions on $fSyncTarget"
-    $debugTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget" -k
+    echo -e "$USER_NOTATION Invoking ${LIGHTGREEN}$debugTool${RESET} to kill all existing debug sessions on $fSyncTarget"
+    $debugTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget" -k -s
     if [[ $? -ne 0 ]]; then
         COLOR=$MAGENTA
         echo -e "$USER_NOTATION ${COLOR}$debugTool run failed, please check the server status manually.${RESET}"
@@ -664,7 +674,7 @@ if [[ "$fSyncTarget" != false ]]; then
                 exit 1
             fi
 
-            echo -e "$USER_NOTATION Calling ${LIGHTGREEN}$loginTool${RESET} to login to $fSyncTarget and wait for it to reboot"
+            echo -e "$USER_NOTATION Invoking ${LIGHTGREEN}$loginTool${RESET} to login to $fSyncTarget and wait for it to reboot"
             $loginTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget"
             if [[ $? -ne 0 ]]; then
                 echo "$USER_NOTATION $loginTool run failed. Please check the server status manually."
