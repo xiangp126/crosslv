@@ -339,7 +339,7 @@ class PrettyPrintMemory(gdb.Command):
             size = 0
 
             if code != gdb.TYPE_CODE_PTR:
-                print(f"Warning: {addr} is not a pointer, use its address instead")
+                # print(f"Warning: {addr} is not a pointer, use its address instead")
                 addr = ret.address
                 type = ret.type
             else:

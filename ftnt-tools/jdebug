@@ -362,23 +362,23 @@ expect -c "
     if {\$worker_cnt > 1} {
         if {[string match -nocase \"*work*\" $fWorkerType]} {
             set COLOR \$RED
-            puts stderr \"\n$USER_NOTATION \${COLOR}Warning: \$worker_cnt PIDs found: \$worker_pids for WAD process of type $fWorkerType.\${RESET}\"
-            puts stderr {$USER_NOTATION Recommend to set wad worker count to 1 to make life easier.
+            puts stderr \"\n$USER_NOTATION Warning: Found \$worker_cnt PIDs: \${COLOR}\$worker_pids\${RESET} for WAD process of type $fWorkerType\"
+            puts stderr {$USER_NOTATION Recommend to set wad worker count to 1 to make life easier
 $SUB_USER_NOTATION FPX # config system global
 $SUB_USER_NOTATION FPX (global) # set wad-worker-count 1
 $SUB_USER_NOTATION FPX (global) # end
-$USER_NOTATION Simply retry the same command with -N1
+$USER_NOTATION Or simply retry the same command with -N1
             }
         } else {
-            puts stderr \"\n$USER_NOTATION \${COLOR}Warning: \$worker_cnt PIDs found: \$worker_pids for WAD process of type $fWorkerType.\${RESET}\"
-            set worker_pid [lindex \$worker_pids 0]
             set COLOR \$GREEN
-            puts stderr \"\n$USER_NOTATION Default to choose the first PID: \${COLOR}\$worker_pid.\${RESET}\"
-            puts stderr \"$USER_NOTATION Recommend to check the input worker type.\"
+            set worker_pid [lindex \$worker_pids 0]
+            puts stderr \"\n$USER_NOTATION Warning: Found \$worker_cnt PIDs: \${COLOR}\$worker_pids\${RESET} for WAD process of type $fWorkerType\"
+            puts stderr \"\n$USER_NOTATION Default to choose the first PID: \${COLOR}\$worker_pid\${RESET}\"
+            puts stderr \"$USER_NOTATION Recommend to check the input WAD process type\"
         }
     } elseif {\$worker_cnt == 1} {
         set COLOR \$LIGHTGREEN
-        puts stderr \"\n$USER_NOTATION Found Single \${COLOR}PID: \$worker_pids\${RESET} for WAD process of type \${COLOR}$fWorkerType\${RESET}\"
+        puts stderr \"$USER_NOTATION (\${COLOR}PID: \$worker_pids\${RESET}) (\${COLOR}$fWorkerType\${RESET})\"
     } else {
         puts stderr \"\n$USER_NOTATION \${COLOR}Could not find WAD process of type $fWorkerType.\${RESET}\"
         exit 1
