@@ -206,29 +206,46 @@ class PrettyPrintMemory(gdb.Command):
                 self.print_ip_address(address, type)
             else:
                 mem = f"({type} *) {address}"
-                self.print_memory_bytes(mem, type, size)
+                self.print_memory_bytes(mem, size)
         except gdb.error as e:
             print(f"Error accessing memory at {address}: {e}")
 
     def print_ip_address(self, address, type):
         size = 4
         _addr = f"&(({type} *) {address})->sa4.sin_addr"
-        self.print_memory_bytes(_addr, type, size)
+        self.print_memory_bytes(_addr, size)
 
         size = 2
         _port = f"&(({type} *) {address})->sa4.sin_port"
-        self.print_memory_bytes(_port, type, size)
+        self.print_memory_bytes(_port, size)
 
-    def print_memory_bytes(self, mem, type, size):
+    def print_memory_bytes(self, mem, size):
         print(f"++x/{size}bu {mem}")
         result = gdb.execute(f"x/{size}bu {mem}", to_string=True)
 
-        numbers = re.findall(r':\s*((?:\d+\s+)+)', result)
+        # 0x7f9c1ba2e83c: 172     16      67      185
+        # (?:...): A non-capturing group, which groups part of the RE but does not create a separate capturing group.
+        # re.findall(): Returns a list of all non-overlapping matches of the RE pattern in the input string.
+        # It returns all matched substrings based on the capturing groups.
+        # re.search(): Searches for the first location where the regular RE matches in the input string.
+        # numbers = ['172     16      67      185 ']
+
+        # numbers = re.findall(r':\s*((?:\d+\s+)+)', result)
+        # if not numbers:
+        #     print("No values found in memory")
+        #     return
+
+        # # numbers[0]: Represents the first matched group
+        # bytes_list = [int(x) for x in numbers[0].split()]
+
+        numbers = re.search(r':\s*((?:\d+\s+)+)', result)
         if not numbers:
             print("No values found in memory")
             return
 
-        bytes_list = [int(x) for x in numbers[0].split()]
+        # match.group(0): This corresponds to the entire matched string (the full match).
+        # match.group(1): This corresponds to the first captured group.
+        bytes_list = [int(x) for x in numbers.group(1).split()]
 
         # Calculate values in both endianness
         le_val = sum(byte << (8 * i) for i, byte in enumerate(bytes_list))
@@ -245,7 +262,6 @@ class PrettyPrintMemory(gdb.Command):
         print(f"Little-endian Decimal: {le_val}")
 
     def _create_parser(self):
-        """Create the argument parser for the command."""
         # Note: We can't use argparse directly with GDB's argument string
         # so we'll create a custom parser
         parser = argparse.ArgumentParser(
@@ -261,9 +277,9 @@ class PrettyPrintMemory(gdb.Command):
         parser.add_argument(
             "-s", "--size",
             type=int,
-            choices=[1, 2, 4, 8],
+            choices=[1, 2, 4, 8, 16],
             default=0,
-            help="Size of memory bytes to print (1, 2, 4, 8 bytes), default: 0"
+            help="Size of memory bytes to print (1, 2, 4, 8, 16 bytes), default: 0"
         )
         parser.add_argument(
             "-c", "--context",
