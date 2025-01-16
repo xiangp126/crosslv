@@ -54,12 +54,14 @@ fJumpPort=22
 # -L [local_listen_addr:]local_listen_port:target_addr:target_port
 fForwarderMode=""
 fForwarderOptions=""
+fForwardTarget=""
+fForwardTargetPort=""
 # Local Forwarder
-fLFLocalAddr="127.0.0.1"
-fLFLocalPort="8881"
+fLFLocalLisAddr="127.0.0.1"
+fLFLocalLisPort="8881"
 # Reverse Forwarder
-fRFRemoteAddr="127.0.0.1"
-fRFRemotePort="1080"
+fRFRemoteLisAddr="127.0.0.1"
+fRFRemoteLisPort="1080"
 # SSHFS Variables
 fSwitchToSShfs=""
 fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o cache=yes"
@@ -151,12 +153,11 @@ Examples:
     $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -J fpxauto@172.18.20.84:22 -W qaz -c "tcpdump -i any -s 0 -U -n -w - '$dumpOptions'" -C
 
     # Local Port Forwarding
-    $SCRIPT_NAME -L 127.0.0.1:8881:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz
-    $SCRIPT_NAME -L 127.0.0.1:8881:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz -l owner -p "FGT12\!34"
+    $SCRIPT_NAME -L 127.0.0.1:8880:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz
+    $SCRIPT_NAME -L 127.0.0.1:8880:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz -L 127.0.0.1:8881:172.20.32.47:22
 
     # Reverse Port Forwarding
     $SCRIPT_NAME -R 127.0.0.1:1080:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz
-    $SCRIPT_NAME -R 127.0.0.1:1080:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz -l owner -p "FGT12\!34"
 
     # SSHFS to mount remote directory
     $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -m :$fFSDemoMountPoint
@@ -201,12 +202,12 @@ while getopts "t:l:u:p:P:J:W:v:c:TSm:CL:R:Xdh" opt; do
         L)
             fForwarderMode=$LOCAL_FORWARDER
             fLocalForwarder=true
-            fForwarderOptions=$OPTARG
+            fForwarderOptions+=("$OPTARG")
             ;;
         R)
             fForwarderMode=$REVERSE_FORWARDER
             fReverseForwarder=true
-            fForwarderOptions=$OPTARG
+            fForwarderOptions+=("$OPTARG")
             ;;
         J)
             fNeedJumpServer=true
@@ -319,27 +320,35 @@ parseOptions() {
     # Exp: -L 127.0.0.1:8881:10.40.1.101:22 or -L 8881:10.40.1.101:22
     if [ -n "$fForwarderMode" ]; then
         pattern='^((([0-9]{1,3}\.){3}[0-9]{1,3}):)?([0-9]+):(([0-9]{1,3}\.){3}[0-9]{1,3}):([0-9]+)$'
-        fForwarderOptions=$(echo "$fForwarderOptions" | xargs)
-        param=$fForwarderOptions
-        if [[ $param =~ $pattern ]]; then
-            # BASH_REMATCH[0]: Contains the entire matched string.
-            # BASH_REMATCH[1], BASH_REMATCH[2], etc.: Contain the results of any capturing groups in the regex.
-            case $fForwarderMode in
-            "$LOCAL_FORWARDER")
-                [ -n "${BASH_REMATCH[2]}" ] && fLFLocalAddr="${BASH_REMATCH[2]}"
-                fLFLocalPort="${BASH_REMATCH[4]}"
-                ;;
-            "$REVERSE_FORWARDER")
-                [ -n "${BASH_REMATCH[2]}" ] && fRFRemoteAddr="${BASH_REMATCH[2]}"
-                fRFRemotePort="${BASH_REMATCH[4]}"
-                ;;
-            esac
-            fTarget="${BASH_REMATCH[5]}"
-            fTargetPort="${BASH_REMATCH[7]}"
-        else
-            echo -e "$USER_NOTATION ${COLOR}-L/-R has to be in the format of [listen_address:]listen_port:target_address:target_port${RESET}" 2>&1
-            exit 1
-        fi
+        for options in "${fForwarderOptions[@]:1}"; do
+            options=$(echo "$options" | xargs)
+            param=$options
+            if [[ $param =~ $pattern ]]; then
+                # BASH_REMATCH[0]: Contains the entire matched string.
+                # BASH_REMATCH[1], BASH_REMATCH[2], etc.: Contain the results of any capturing groups in the regex.
+                case $fForwarderMode in
+                "$LOCAL_FORWARDER")
+                    # [ -n "${BASH_REMATCH[2]}" ] && fLFLocalAddr="${BASH_REMATCH[2]}"
+                    # fLFLocalPort="${BASH_REMATCH[4]}"
+                    [ -n "${BASH_REMATCH[2]}" ] && fLFLocalLisAddr+=("${BASH_REMATCH[2]}")
+                    fLFLocalLisPort+=("${BASH_REMATCH[4]}")
+                    ;;
+                "$REVERSE_FORWARDER")
+                    # [ -n "${BASH_REMATCH[2]}" ] && fRFRemoteAddr="${BASH_REMATCH[2]}"
+                    # fRFRemotePort="${BASH_REMATCH[4]}"
+                    [ -n "${BASH_REMATCH[2]}" ] && fRFRemoteLisAddr+=("${BASH_REMATCH[2]}")
+                    fRFRemoteLisPort+=("${BASH_REMATCH[4]}")
+                    ;;
+                esac
+                # fTarget="${BASH_REMATCH[5]}"
+                # fTargetPort="${BASH_REMATCH[7]}"
+                fForwardTarget+=("${BASH_REMATCH[5]}")
+                fForwardTargetPort+=("${BASH_REMATCH[7]}")
+            else
+                echo -e "$USER_NOTATION ${COLOR}-L/-R has to be in the format of [listen_address:]listen_port:target_address:target_port${RESET}" 2>&1
+                exit 1
+            fi
+        done
 
         # # Print the BASH_REMATCH array
         # for i in "${!BASH_REMATCH[@]}"; do
@@ -347,11 +356,13 @@ parseOptions() {
         # done
 
         if [ "$fForwarderMode" == "$LOCAL_FORWARDER" ]; then
-            if lsof -i:"$fLFLocalPort" -t &>/dev/null; then
-                lsof -i:"$fLFLocalPort"
-                echo -e "$USER_NOTATION ${COLOR}Local port $fLFLocalPort is already in use.${RESET}" 2>&1
-                exit 1
-            fi
+            for port in "${fLFLocalLisPort[@]:1}"; do
+                if lsof -i:"$port" -t &>/dev/null; then
+                    lsof -i:"$port"
+                    echo -e "$USER_NOTATION ${COLOR}Local port $port is already in use.${RESET}" 2>&1
+                    exit 1
+                fi
+            done
         fi
         # Skip the rest of the parsing
         return
@@ -428,7 +439,7 @@ EOF
 }
 
 checkSanity() {
-    if [ -z "$fTarget" ]; then
+    if [ -z "$fTarget" ] && [ -z "$fForwarderMode" ]; then
         COLOR=$MAGENTA
         echo -e "$USER_NOTATION ${COLOR}Target is not set.${RESET}"
         exit 1
@@ -503,13 +514,18 @@ makeSpawnCmd() {
     if [ -n "$fForwarderMode" ]; then
         case "$fForwarderMode" in
         "$LOCAL_FORWARDER")
-            cmd="ssh -N -L $fLFLocalAddr:$fLFLocalPort:$fTarget:$fTargetPort"
+            for ((i=1; i<${#fForwarderOptions[@]}; i++)); do
+                param+="-L ${fLFLocalLisAddr[$i]}:${fLFLocalLisPort[$i]}:${fForwardTarget[$i]}:${fForwardTargetPort[$i]} "
+            done
             ;;
         "$REVERSE_FORWARDER")
-            cmd="ssh -N -R $fRFRemoteAddr:$fRFRemotePort:$fTarget:$fTargetPort"
+            for ((i=1; i<${#fForwarderOptions[@]}; i++)); do
+                param+="-R ${fRFRemoteLisAddr[$i]}:${fRFRemoteLisPort[$i]}:${fForwardTarget[$i]}:${fForwardTargetPort[$i]} "
+            done
             ;;
         esac
-        cmd="$cmd $fJumpUser@$fJumpServer"
+        param="${param%"${param##*[![:space:]]}"}"
+        cmd="ssh -N $param $fJumpUser@$fJumpServer"
         fSpawnCmd="$cmd $keepAlive"
         return
     fi
@@ -607,14 +623,25 @@ makeSpawnCmd
 
 dumpPreTips() {
     echo "$SEPARATOR_LEFT" >&2
-    local COLOR=""
-    if [ -n "$fForwarderMode" ]; then
-        COLOR=$LIGHTRED
-        echo -e "${BOLD}Local Forwarder Options:${RESET}" >&2
-        echo -e "[L] Set Local Forwarder: ${COLOR}$fLFLocalAddr:$fLFLocalPort -> $fTarget:$fTargetPort${RESET}" >&2
-    else
+    local param=""
+    local COLOR=$LIGHTRED
+    case $fForwarderMode in
+    "$LOCAL_FORWARDER")
+        param="Local"
+        echo -e "${BOLD}$param Forwarder Options:${RESET}" >&2
+        for ((i=1; i<${#fForwarderOptions[@]}; i++)); do
+            echo -e "[L] Set $param Forwarder: ${COLOR}${fLFLocalLisAddr[$i]}:${fLFLocalLisPort[$i]} -> ${fForwardTarget[$i]}:${fForwardTargetPort[$i]}${RESET}" >&2
+        done
+        ;;
+    "$REVERSE_FORWARDER")
+        param="Reverse"
+        echo -e "${BOLD}$param Forwarder Options:${RESET}" >&2
+        for ((i=1; i<${#fForwarderOptions[@]}; i++)); do
+            echo -e "[R] Set $param Forwarder: ${COLOR}${fRFRemoteLisAddr[$i]}:${fRFRemoteLisPort[$i]} -> ${fForwardTarget[$i]}:${fForwardTargetPort[$i]}${RESET}" >&2
+        done
+        ;;
+    *)
         echo -e "${BOLD}Target Options:${RESET}" >&2
-        COLOR=$LIGHTRED
         echo -e "[t] Set SSH Target Device to: ${COLOR}$fTarget${RESET}" >&2
         echo -e "[l] Set SSH Username to: ${COLOR}$fTargetUser${RESET}" >&2
         echo -e "[p] Set SSH Password to: ${COLOR}$fTargetPwd${RESET}" >&2
@@ -622,7 +649,8 @@ dumpPreTips() {
         if [ -n "$fVdom" ]; then
             echo -e "[v] Set FGT/FPX VDOM to: ${COLOR}$fVdom${RESET}" >&2
         fi
-    fi
+        ;;
+    esac
 
     if [ $fMode == $SSHFS_MODE ]; then
         echo -e "${BOLD}SSHFS Options:${RESET}" >&2
@@ -656,25 +684,21 @@ dumpPreTips() {
 
 dumpForwarderTips() {
     # Port Forwarding only works when $fNeedJumpServer is set
+    local loopback="127.0.0.1"
+    local easyPort="8880"
     local COLOR=$1
     if [ -n "$fNeedJumpServer" ]; then
-        echo -e "${BOLD}Local Port Forwarding Command Tips:${RESET}" >&2
-        if [ -n "$fForwarderMode" ]; then
-            echo -e "${COLOR}ssh -p $fLFLocalPort -l $fTargetUser localhost${RESET}" >&2
-            echo -e "${COLOR}${SCRIPT_NAME} -t $fTargetUser@$fLFLocalAddr:$fLFLocalPort -p \"$fTargetPwd\"${RESET}" >&2
-        else
-            echo -e "${COLOR}${SCRIPT_NAME} -L $fLFLocalAddr:$fLFLocalPort:$fTarget:$fTargetPort -J $fJumpOptions -W \"$fJumpPwd\" -l $fTargetUser -p \"$fTargetPwd\"${RESET}" >&2
+        if [ -z "$fForwarderMode" ]; then
+            echo -e "${BOLD}Local Port Forwarding Command Tips:${RESET}" >&2
+            echo -e "${COLOR}${SCRIPT_NAME} -L ${fLFLocalLisAddr[1]:-$loopback}:${fLFLocalLisPort[1]:-$easyPort}:$fTarget:$fTargetPort -J $fJumpOptions -W \"$fJumpPwd\"${RESET}" >&2
         fi
     fi
 
     COLOR=$BLUE
     if [ -n "$fNeedJumpServer" ]; then
-        echo -e "${BOLD}Reverse Port Forwarding Command Tips:${RESET}" >&2
-        if [ -n "$fForwarderMode" ]; then
-            echo -e "${COLOR}ssh -p $fRFRemotePort -l $fTargetUser localhost${RESET}" >&2
-            echo -e "${COLOR}${SCRIPT_NAME} -t $fTargetUser@$fRFRemoteAddr:$fRFRemotePort -p \"$fTargetPwd\"${RESET}" >&2
-        else
-            echo -e "${COLOR}${SCRIPT_NAME} -R $fRFRemotePort:$fTarget:$fTargetPort -J $fJumpOptions -W \"$fJumpPwd\" -l $fTargetUser -p \"$fTargetPwd\"${RESET}" >&2
+        if [ -z "$fForwarderMode" ]; then
+            echo -e "${BOLD}Reverse Port Forwarding Command Tips:${RESET}" >&2
+            echo -e "${COLOR}${SCRIPT_NAME} -R ${fRFRemoteLisAddr[1]:-$loopback}:${fRFRemoteLisPort[1]-$easyPort}:$fTarget:$fTargetPort -J $fJumpOptions -W \"$fJumpPwd\"${RESET}" >&2
         fi
     fi
 }
@@ -692,7 +716,7 @@ dumpLCTips() {
     fi
 
     if [ -n "$fForwarderMode" ]; then
-        echo -e "${COLOR}nc $fLFLocalAddr $fLCPort | wireshark -k -${RESET}" >&2
+        echo -e "${COLOR}nc ${fLFLocalLisAddr[1]} $fLCPort | wireshark -k -${RESET}" >&2
     else
         local sslKeyFilename="${SSLKEYLOGFILE##*/}"
         echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -k -i -${RESET}" >&2
@@ -711,14 +735,14 @@ dumpSSHFSTips() {
         echo -e "${BOLD}SSHFS Command Tips:${RESET}" >&2
         if [ -n "$fNeedJumpServer" ]; then
             if [ -n "$fForwarderMode" ]; then
-                echo -e "${COLOR}$SCRIPT_NAME -t $fTargetUser@$fLFLocalAddr:$fLFLocalPort -p \"$fTargetPwd\" -M $__remote_dir:$__mount_point${RESET}" >&2
+                echo -e "${COLOR}$SCRIPT_NAME -t $fTargetUser@${fLFLocalLisAddr[1]:-${fRFRemoteLisAddr[1]}}:${fLFLocalLisPort[1]:-${fRFRemoteLisPort[1]}} -p \"$fTargetPwd\" -M $__remote_dir:$__mount_point${RESET}" >&2
             else
                 echo -e "${COLOR}$SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p \"$fTargetPwd\" -J $fJumpUser@$fJumpServer:$fJumpPort -W \"$fJumpPwd\" -M $__remote_dir:$__mount_point${RESET}" >&2
             fi
         else
             if [ -n "$fForwarderMode" ]; then
-                __addr=$fLFLocalAddr
-                __port=$fLFLocalPort
+                __addr=${fLFLocalLisAddr[1]}
+                __port=${fLFLocalLisPort[1]}
             fi
             echo -e "${COLOR}$SCRIPT_NAME -t $fTargetUser@$__addr:$__port -p \"$fTargetPwd\" -m $__remote_dir:$__mount_point${RESET}" >&2
         fi
