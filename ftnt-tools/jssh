@@ -151,9 +151,11 @@ Examples:
     $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -J fpxauto@172.18.20.84:22 -W qaz -c "tcpdump -i any -s 0 -U -n -w - '$dumpOptions'" -C
 
     # Local Port Forwarding
+    $SCRIPT_NAME -L 127.0.0.1:8881:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz
     $SCRIPT_NAME -L 127.0.0.1:8881:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz -l owner -p "FGT12\!34"
 
     # Reverse Port Forwarding
+    $SCRIPT_NAME -R 127.0.0.1:1080:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz
     $SCRIPT_NAME -R 127.0.0.1:1080:172.18.52.37:22 -J fpxauto@172.18.20.84:22 -W qaz -l owner -p "FGT12\!34"
 
     # SSHFS to mount remote directory
@@ -920,7 +922,7 @@ expect -c "
                 # Get the matched variable from the first capturing group
                 set host \$expect_out(1,string)
                 set COLOR \$LIGHTYELLOW
-                puts stderr \"$USER_NOTATION \${COLOR}Host key verification failed. Updating known_hosts file\${RESET}\"
+                puts stderr \"$USER_NOTATION \${COLOR}Host key verification failed. Updating known_hosts ...\${RESET}\"
                 puts stderr \"$USER_NOTATION \${COLOR}ssh-keygen -R \$host\${RESET}\"
                 system \"ssh-keygen -R \$host\"
                 puts stderr \"$USER_NOTATION \${COLOR}Host key removed from known_hosts file.\${RESET}\n\"
