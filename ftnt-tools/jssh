@@ -843,12 +843,12 @@ expect -c "
         }
     }
 
-    proc check_tcpdump_permission {{error_msg \"\"}} {
+    proc tcpdump_set_setuid  {} {
         global LIGHTYELLOW MAGENTA RESET
         set COLOR \$LIGHTYELLOW
-        set remote_cmd {ls -l \`command -v tcpdump\`}
-        # set remote_cmd {stat -c '%a' \`which tcpdump\`}
-        puts stderr \"$USER_NOTATION \${COLOR}Checking tcpdump permission on the remote.\n\${RESET}\"
+        set remote_cmd {sudo chmod u+s \`which tcpdump\` && ls -l \`which tcpdump\`}
+
+        puts stderr \"$USER_NOTATION \${COLOR}Set the setuid bit for tcpdump on $fTarget\n\${RESET}\"
         if {\"$fNeedJumpServer\" != \"\"} {
             system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -J $fJumpOptions -W $fJumpPwd -c '\$remote_cmd'
         } else {
@@ -959,7 +959,7 @@ expect -c "
                 clear_unfinished_jobs \$error_msg
 
                 if {[string match "*permission*" \$error_msg]} {
-                    check_tcpdump_permission
+                    tcpdump_set_setuid
                 }
                 exp_continue
             }
@@ -974,17 +974,6 @@ expect -c "
                 continue
             }
             eof {
-                if {\"$fNoLoginShell\" != \"\"} {
-                    set output \$expect_out(buffer)
-                    set pattern {(/([^/ ]+)+/tcpdump)}
-                    if {[regexp \$pattern \$output match tcpdump_path]} {
-                        # puts stderr \"Session \$session_id Matched path: \$tcpdump_path.\"
-                        set COLOR \$LIGHTYELLOW
-                        puts stderr \"$USER_NOTATION \${COLOR}Suggest to set the setuid bit for tcpdump.\${RESET}\"
-                        puts stderr \"$USER_NOTATION \${COLOR}sudo chmod u+s /usr\$tcpdump_path\${RESET}\"
-                        set COLOR \$MAGENTA
-                    }
-                }
                 puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Reached EOF. Program ended.\${RESET}\"
                 exit 0
             }
