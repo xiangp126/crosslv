@@ -170,31 +170,41 @@ class PrettyPrintMemory(gdb.Command):
         super(PrettyPrintMemory, self).__init__("pp", gdb.COMMAND_USER)
         self.parser = self._create_parser()
 
-    def print_session_ctx(self):
-        """Print session context details."""
+    def print_session_ctx(self, address, type):
+        mem = f"({type} *) {address}"
         addresses = [
-            "&ses_ctx->src_addr.sa4.sin_addr",
-            "&ses_ctx->dst_addr.sa4.sin_addr",
-            "&ses_ctx->orig_src_addr.sa4.sin_addr",
-            "&ses_ctx->orig_dst_addr.sa4.sin_addr",
+            f"&({mem})->src_addr.sa4.sin_addr",
+            f"&({mem})->dst_addr.sa4.sin_addr",
+            f"&({mem})->orig_src_addr.sa4.sin_addr",
+            f"&({mem})->orig_dst_addr.sa4.sin_addr",
         ]
 
         ports = [
-            "&ses_ctx->src_addr.sa4.sin_port",
-            "&ses_ctx->dst_addr.sa4.sin_port",
-            "&ses_ctx->orig_src_addr.sa4.sin_port",
-            "&ses_ctx->orig_dst_addr.sa4.sin_port",
+            f"&({mem})->src_addr.sa4.sin_port",
+            f"&({mem})->dst_addr.sa4.sin_port",
+            f"&({mem})->orig_src_addr.sa4.sin_port",
+            f"&({mem})->orig_dst_addr.sa4.sin_port",
         ]
 
         for (address, port) in zip(addresses, ports):
             try:
+                # The address
+                ret_addr = gdb.execute(f'x/4bu {address}', to_string=True)
+                # Format each number in the address to 3 digits
+                # (gdb) x/4bu &((struct wad_session_context *) 0x7fcd4e948fb0)->src_addr.sa4.sin_addr
+                # +x/4bu &((struct wad_session_context *) 0x7fcd4e948fb0)->src_addr.sa4.sin_addr
+                # 0x7fcd4e9491c4: 172     16      67      185
+                addr_parts = ret_addr.split(':')
+                numbers = re.findall(r'\b\d+\b', addr_parts[1])
+                formatted_numbers = '    '.join(f"{int(num):<3d}" for num in numbers)
+                formatted_addr = f"{addr_parts[0]}: {formatted_numbers}"
+                # The port
                 ret_port = gdb.execute(f"x/2bu {port}", to_string=True)
                 numbers = re.findall(r'\b\d+\b', ret_port)
                 int_values = [int(num) for num in numbers]
-                port_value = int_values[0] * 256 + int_values[1]
-
-                ret_addr = gdb.execute(f'x/4bu {address}', to_string=True)
-                print(f"{ret_addr.rstrip()}    (Big-endian Port = {port_value})")
+                port_value = (int_values[0] << 8) | (int_values[1])
+                # print(f"{ret_addr.rstrip()}    (Big-endian Port = {port_value})")
+                print(f"{formatted_addr}    (Big-endian Port = {port_value})")
 
             except gdb.error as e:
                 print(f"Error: {e}")
@@ -204,6 +214,8 @@ class PrettyPrintMemory(gdb.Command):
         try:
             if "ip_addr_t" in str(type) or 'wad_addr' in str(type):
                 self.print_ip_address(address, type)
+            elif "wad_session_context" in str(type):
+                self.print_session_ctx(address, type)
             else:
                 mem = f"({type} *) {address}"
                 self.print_memory_bytes(mem, size)
@@ -282,11 +294,6 @@ class PrettyPrintMemory(gdb.Command):
             help="Size of memory bytes to print (1, 2, 4, 8, 16 bytes), default: 0"
         )
         parser.add_argument(
-            "-c", "--context",
-            action="store_true",
-            help="Print the session context details"
-        )
-        parser.add_argument(
             "-h", "--help",
             action="store_true",
             help="Show this help message"
@@ -299,7 +306,6 @@ class PrettyPrintMemory(gdb.Command):
         print("\nExamples:")
         print("  pp 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
         print("  pp 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
-        print("  pp -c                        # Print session context")
 
     def parse_args(self, args):
         current_args = []
@@ -307,7 +313,7 @@ class PrettyPrintMemory(gdb.Command):
         in_quotes = False
 
         # Args Input: &fs->new_ip.sa4.sin_port -l 2
-        # print(f"Args Input: {arg}")
+        # print(f"Args Input: {args}")
 
         for char in args:
             if char == '"':
@@ -341,10 +347,6 @@ class PrettyPrintMemory(gdb.Command):
 
         if parsed_args.help:
             self.print_help()
-            return
-
-        if parsed_args.context:
-            self.print_session_ctx()
             return
 
         if parsed_args.address:

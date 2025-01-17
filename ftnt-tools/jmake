@@ -490,9 +490,9 @@ if [ -n "$fNeedBuild" ]; then
     done
 
     if [[ $eval_status -ne 0 ]]; then
-        COLOR="$MAGENTA"
-        echo -e "$USER_NOTATION ${RED}Build projects failed.${RESET}"
-        echo -e "$USER_NOTATION Please search for ${COLOR}error:${RESET} to find the error message."
+        COLOR="$LIGHTYELLOW"
+        echo -e "$USER_NOTATION ${COLOR}Build projects failed.${RESET}"
+        echo -e "$USER_NOTATION Search for ${COLOR}error:${RESET} to find the error message."
         exit 1
     fi
 
