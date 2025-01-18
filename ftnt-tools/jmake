@@ -19,7 +19,7 @@ fNeedBuild=
 fPrintBuildFlags= # Print build flags
 fGitClean=
 fRMCompileCommandsJson=
-fEnableOptimization=
+fDisableOptimization=
 fInputCmd=
 # Sync Options
 fSyncTarget=false
@@ -82,7 +82,7 @@ Build Flags:
     -o      Run build commands (set automatically if any of the [bmjwT] options is set)
     -b      Use Bear to generate $compileCommandsFile (default: ${fUseBear:-false})
     -f      Remove $compileCommandsFile (default: ${fRMCompileCommandsJson:-false})
-    -O      Enable optimization (default: ${fEnableOptimization:-false})
+    -O      Disable optimization (default: ${fDisableOptimization:-false})
 
 Build Options:
     -T      Set the maximum number of build attempts (default: $fMaxBuildAttempt)
@@ -139,7 +139,7 @@ while getopts "hm:w:j:cCbB:ofT:t:s:P:p:u:l:kO" opt; do
             fNeedBuild=true
             ;;
         O)
-            fEnableOptimization=true
+            fDisableOptimization=true
             fNeedBuild=true
             ;;
         b)
@@ -293,7 +293,7 @@ if [ -n "$fPrintBuildFlags" ]; then
     [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} Rebuild"
     [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Generate${RESET} compile_commands.json using bear"
     [ -n "$fRMCompileCommandsJson" ] && echo -e "[f] ${COLOR}Remove${RESET} the existing $compileCommandsFile"
-    [ -n "$fEnableOptimization" ]    && echo -e "[O] ${COLOR}Enable${RESET} optimization"
+    [ -n "$fDisableOptimization" ]   && echo -e "[O] ${COLOR}Disable${RESET} optimization"
 fi
 
 # Print the build options
@@ -382,10 +382,10 @@ if [ -n "$fRunConfigure" ]; then
     fi
 
     COLOR=$BLUE
-    # -O   Disable optimization (For Comfigure)
-    # -c   Enable code coverage (For Configure)
+    # -O   Disable optimization
+    # -c   Enable code coverage
     param="-m $fBuildModel -d y -c"
-    if [ -z "$fEnableOptimization" ]; then
+    if [ -n "$fDisableOptimization" ]; then
         param+=" -O"
     fi
     CONFIGURE_CMD="./Configure $param"
