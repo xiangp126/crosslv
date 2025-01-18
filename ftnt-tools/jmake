@@ -349,7 +349,7 @@ if [ -n "$fGitClean" ]; then
     eval "$gitCleanCmd"
     if [[ $? -ne 0 ]]; then
         echo -e "$USER_NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
-        echo -e "$USER_NOTATION ${COLOR}But going on anyway${RESET}"
+        echo -e "$USER_NOTATION ${NORMAL}But going on anyway${RESET}"
     else
         echo -e "$USER_NOTATION ${COLOR}Cleaned the working directory successfully${RESET}"
     fi
@@ -525,13 +525,13 @@ fi
 
 # Step 3: Sync the SYNC_FILE to the target machine
 if [[ "$fSyncTarget" != false ]]; then
-    debugTool="jdebug"
+    # debugTool="jdebug"
     loginTool="jssh"
 
-    if ! command -v $debugTool &> /dev/null; then
-        echo -e "$USER_NOTATION ${MAGENTA}Debug tool $debugTool not found${RESET}"
-        exit 1
-    fi
+    # if ! command -v $debugTool &> /dev/null; then
+    #     echo -e "$USER_NOTATION ${MAGENTA}Debug tool $debugTool not found${RESET}"
+    #     exit 1
+    # fi
 
     if ! command -v $loginTool &> /dev/null; then
         echo -e "$USER_NOTATION ${MAGENTA}Login tool $loginTool not found${RESET}"
@@ -545,13 +545,13 @@ if [[ "$fSyncTarget" != false ]]; then
         exit 1
     fi
 
-    echo -e "$USER_NOTATION Invoking ${LIGHTGREEN}$debugTool${RESET} to kill all existing debug sessions on $fSyncTarget"
-    $debugTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget" -k -s
-    if [[ $? -ne 0 ]]; then
-        COLOR=$MAGENTA
-        echo -e "$USER_NOTATION ${COLOR}$debugTool run failed, please check the server status manually.${RESET}"
-        echo -e "$USER_NOTATION ${NORMAL}But going on anyway${RESET}"
-    fi
+    # echo -e "$USER_NOTATION Invoking ${LIGHTGREEN}$debugTool${RESET} to kill all existing debug sessions on $fSyncTarget"
+    # $debugTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget" -k -s
+    # if [[ $? -ne 0 ]]; then
+    #     COLOR=$MAGENTA
+    #     echo -e "$USER_NOTATION ${COLOR}$debugTool run failed, please check the server status manually.${RESET}"
+    #     echo -e "$USER_NOTATION ${NORMAL}But going on anyway${RESET}"
+    # fi
 
     # Only sync the first file that is found.
     syncFile="${syncFiles[0]}"
