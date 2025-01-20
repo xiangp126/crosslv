@@ -67,17 +67,17 @@ EOF
 # Parse command line options
 while getopts ":hdg:" opt; do
     case $opt in
-        h)
-            usage
+        g)
+            fGateway="$OPTARG"
             ;;
         d)
             fDryRun=true
             ;;
-        g)
-            fGateway="$OPTARG"
+        h)
+            usage
             ;;
         ?)
-            echo "Invalid option: -$OPTARG" >&2
+            echo -e "$USER_NOTATION ${MAGENTA}Invalid option: $OPTARG${RESET}"
             exit 1
             ;;
     esac
