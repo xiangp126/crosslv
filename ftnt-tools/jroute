@@ -105,7 +105,7 @@ validate_environment() {
 }
 
 change_gateway() {
-    COLOR=$MANGENTA
+    COLOR=$MAGENTA
     local curr
     read -r curr device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
 
@@ -144,8 +144,8 @@ fi
 # Get new gateway IP
 fNewGatewayIP=${gatewayIPs[$fNewGateway]}
 if [[ -z $fNewGatewayIP ]]; then
-    echo "$USER_NOTATION Error: Gateway name '$fNewGateway' not found"
-    usage
+    echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid gateway name '$fNewGateway'${RESET}"
+    exit 1
 fi
 
 [ "$fDryRun" = true ] && echo "$USER_NOTATION Dry run mode enabled"
