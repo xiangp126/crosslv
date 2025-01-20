@@ -5,7 +5,7 @@
 GETCOLORS="$HOME/Templates/getcolors.sh"
 USER_NOTATION="@@@@"
 BANNER1="---------------------------------"
-BANNER2="--------------NOW----------------"
+BANNER2="----------------------NOW----------------------"
 # Variables
 fUsername=$(whoami)
 fHostname=$(hostname)
