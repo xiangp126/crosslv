@@ -9,7 +9,7 @@ BANNER2="--------------NOW----------------"
 # Variables
 fUsername=$(whoami)
 fHostname=$(hostname)
-fDryRun=false
+fDryRun=""
 fNewGateway=""
 fNewGatewayIP=""
 
@@ -114,14 +114,14 @@ change_gateway() {
         return 0
     fi
 
-    if [ "$fDryRun" = true ]; then
-        echo "$USER_NOTATION DRY RUN: ${COLOR}sudo ip route replace default via $fNewGatewayIP${RESET}"
+    if [ -n "$fDryRun" ]; then
+        echo -e "$USER_NOTATION DRY RUN: ${COLOR}sudo ip route replace default via $fNewGatewayIP${RESET}"
         return 0
     fi
 
     echo "$USER_NOTATION Changing default gateway to $fNewGatewayIP"
     if ! sudo ip route replace default via "$fNewGatewayIP"; then
-        echo "$USER_NOTATION Failed to change the default gateway to $fNewGatewayIP"
+        echo -e "$USER_NOTATION ${COLOR}Error: Failed to change default gateway to $fNewGatewayIP${RESET}"
         return 1
     fi
 
@@ -148,7 +148,7 @@ if [[ -z $fNewGatewayIP ]]; then
     exit 1
 fi
 
-[ "$fDryRun" = true ] && echo "$USER_NOTATION Dry run mode enabled"
+[ -n "$fDryRun" ] && echo "$USER_NOTATION Dry run mode enabled"
 
 # Change gateway
 change_gateway "$fNewGatewayIP"
