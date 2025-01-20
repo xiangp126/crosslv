@@ -62,6 +62,8 @@ EOF
     exit 1
 }
 
+[[ $# -eq 0 ]] && usage
+
 # Parse command line options
 while getopts ":hdg:" opt; do
     case $opt in
