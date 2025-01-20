@@ -62,47 +62,6 @@ EOF
     exit 1
 }
 
-validate_environment() {
-    if [[ "$fUsername" != "corsair" || ! "$fHostname" =~ ^client[0-9]+$ || "$OSTYPE" != "linux-gnu" ]]; then
-        echo "$USER_NOTATION Environment validation failed:"
-        echo "$USER_NOTATION USERNAME: $fUsername"
-        echo "$USER_NOTATION HOSTNAME: $fHostname"
-        echo "$USER_NOTATION OSTYPE: $OSTYPE"
-        echo -e "$USER_NOTATION ${COLOR}Dangerous! This script is only for client VMs with username 'corsair' on Linux${RESET}"
-        return 1
-    fi
-    return 0
-}
-
-change_gateway() {
-    local new_gateway_ip=$1
-    local current_gw_ip
-    COLOR=$MANGENTA
-    read -r current_gw_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
-
-    if [ "$current_gw_ip" = "$new_gateway_ip" ]; then
-        echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]:-'-'})${RESET}"
-        return 0
-    fi
-
-    if [ "$fDryRun" = true ]; then
-        echo "$USER_NOTATION DRY RUN: Would execute: ${COLOR}sudo ip route replace default via $new_gateway_ip${RESET}"
-        return 0
-    fi
-
-    echo "$USER_NOTATION Changing default gateway to $new_gateway_ip"
-    if ! sudo ip route replace default via "$new_gateway_ip"; then
-        echo "$USER_NOTATION Failed to change the default gateway"
-        return 1
-    fi
-
-    echo "$USER_NOTATION Default gateway changed successfully"
-    read -r new_gateway_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
-    echo "$BANNER2"
-    echo -e "$USER_NOTATION ${COLOR}default via $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]:-'-'}) dev $device${RESET}"
-    return 0
-}
-
 # Parse command line options
 while getopts ":hdg:" opt; do
     case $opt in
@@ -122,12 +81,60 @@ while getopts ":hdg:" opt; do
     esac
 done
 
+# Shift to process non-option arguments. New $1, $2, ..., $@
+shift $((OPTIND - 1))
+if [[ $# -gt 0 ]]; then
+    echo "$USER_NOTATION Illegal non-option arguments: $@"
+    exit
+fi
+
+validate_environment() {
+    if [[ "$fUsername" != "corsair" || ! "$fHostname" =~ ^client[0-9]+$ || "$OSTYPE" != "linux-gnu" ]]; then
+        echo "$USER_NOTATION Environment validation failed:"
+        echo "$USER_NOTATION USERNAME: $fUsername"
+        echo "$USER_NOTATION HOSTNAME: $fHostname"
+        echo "$USER_NOTATION OSTYPE: $OSTYPE"
+        echo -e "$USER_NOTATION ${COLOR}Dangerous! This script is only for client VMs with username 'corsair' on Linux${RESET}"
+        return 1
+    fi
+    return 0
+}
+
+change_gateway() {
+    local new_gateway_ip=$fGateway
+    local current_gw_ip
+    COLOR=$MANGENTA
+    read -r current_gw_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+
+    if [ "$current_gw_ip" = "$new_gateway_ip" ]; then
+        echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]:-'-'})${RESET}"
+        return 0
+    fi
+
+    if [ "$fDryRun" = true ]; then
+        echo "$USER_NOTATION DRY RUN: ${COLOR}sudo ip route replace default via $new_gateway_ip${RESET}"
+        return 0
+    fi
+
+    echo "$USER_NOTATION Changing default gateway to $new_gateway_ip"
+    if ! sudo ip route replace default via "$new_gateway_ip"; then
+        echo "$USER_NOTATION Failed to change the default gateway"
+        return 1
+    fi
+
+    echo "$USER_NOTATION Default gateway changed successfully"
+    read -r new_gateway_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+    echo "$BANNER2"
+    echo -e "$USER_NOTATION ${COLOR}default via $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]:-'-'}) dev $device${RESET}"
+    return 0
+}
+
 # Validate environment
 validate_environment || exit 1
 
 # Check for gateway argument
 if [[ -z $fGateway ]]; then
-    echo "$USER_NOTATION Error: Gateway name or IP required (use -g option)"
+    echo "$USER_NOTATION Error: Gateway name required (use -g option)"
     usage
 fi
 
