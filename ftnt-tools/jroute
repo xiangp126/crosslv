@@ -44,7 +44,7 @@ Usage: $(basename "$0") [OPTIONS]
 Options:
     -h, --help           Show this help message
     -d, --dry-run        Show what would be done without making changes
-    -g, --gateway NAME   Specify the gateway to use (Only available gateways are allowed)
+    -t, --gateway NAME   Specify the gateway to use (Only available gateways are allowed)
 
 Available gateways:
 $BANNER1
@@ -68,7 +68,7 @@ EOF
 [[ $# -eq 0 ]] && usage
 
 # Parse command line options
-while getopts ":hdg:" opt; do
+while getopts ":hdt:" opt; do
     case $opt in
         g)
             fNewGateway="$OPTARG"
@@ -147,8 +147,6 @@ if [[ -z $fNewGatewayIP ]]; then
     echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid gateway name '$fNewGateway'${RESET}"
     exit 1
 fi
-
-[ -n "$fDryRun" ] && echo "$USER_NOTATION Dry run mode enabled"
 
 # Change gateway
 change_gateway "$fNewGatewayIP"
