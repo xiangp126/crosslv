@@ -10,14 +10,15 @@ BANNER2="--------------NOW----------------"
 fUsername=$(whoami)
 fHostname=$(hostname)
 fDryRun=false
-fGateway=""
+fNewGateway=""
+fNewGatewayIP=""
 
 # Check for required files
 [ ! -f "$GETCOLORS" ] && echo "File not found: $GETCOLORS" && exit 1
 source "$GETCOLORS"
 
 # Gateway IP mappings
-declare -A gateway_ips=(
+declare -A gatewayIPs=(
     ["fgt1"]="192.168.103.6"
     ["fgt2"]="192.168.103.1"
     ["fgt3"]="192.168.103.4"
@@ -31,9 +32,9 @@ declare -A gateway_ips=(
 )
 
 # Create reverse mapping
-declare -A reverse_gateway_ips
-for key in "${!gateway_ips[@]}"; do
-    reverse_gateway_ips["${gateway_ips[$key]}"]=$key
+declare -A reverseGatewayIPs
+for key in "${!gatewayIPs[@]}"; do
+    reverseGatewayIPs["${gatewayIPs[$key]}"]=$key
 done
 
 usage() {
@@ -43,22 +44,24 @@ Usage: $(basename "$0") [OPTIONS]
 Options:
     -h, --help           Show this help message
     -d, --dry-run        Show what would be done without making changes
-    -g, --gateway NAME   Specify the gateway to use
+    -g, --gateway NAME   Specify the gateway to use (Only available gateways are allowed)
 
 Available gateways:
 $BANNER1
 EOF
+    local gatewayName
+    local currGatewayIP
     # Sort and display available gateways
     printf "%-15s %s\n" "GATEWAY" "IP ADDRESS"
     echo "$BANNER1"
-    for gateway_name in $(echo "${!gateway_ips[@]}" | tr ' ' '\n' | sort); do
-        printf "%-15s %s\n" "$gateway_name" "${gateway_ips[$gateway_name]}"
+    for gatewayName in $(echo "${!gatewayIPs[@]}" | tr ' ' '\n' | sort); do
+        printf "%-15s %s\n" "$gatewayName" "${gatewayIPs[$gatewayName]}"
     done
 
     # Show current gateway
     echo "$BANNER1"
-    read -r current_gw_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
-    echo -e "Current: ${COLOR}default via $current_gw_ip(${reverse_gateway_ips[$current_gw_ip]:-'-'}) dev $device${RESET}"
+    read -r currGatewayIP device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+    echo -e "Current: ${COLOR}default via $currGatewayIP(${reverseGatewayIPs[$currGatewayIP]:-'-'}) dev $device${RESET}"
     exit 1
 }
 
@@ -68,7 +71,7 @@ EOF
 while getopts ":hdg:" opt; do
     case $opt in
         g)
-            fGateway="$OPTARG"
+            fNewGateway="$OPTARG"
             ;;
         d)
             fDryRun=true
@@ -83,7 +86,6 @@ while getopts ":hdg:" opt; do
     esac
 done
 
-# Shift to process non-option arguments. New $1, $2, ..., $@
 shift $((OPTIND - 1))
 if [[ $# -gt 0 ]]; then
     echo "$USER_NOTATION Illegal non-option arguments: $@"
@@ -103,31 +105,30 @@ validate_environment() {
 }
 
 change_gateway() {
-    local new_gateway_ip=$fGateway
-    local current_gw_ip
     COLOR=$MANGENTA
-    read -r current_gw_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+    local curr
+    read -r curr device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
 
-    if [ "$current_gw_ip" = "$new_gateway_ip" ]; then
-        echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]:-'-'})${RESET}"
+    if [ "$curr" = "$fNewGatewayIP" ]; then
+        echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $fNewGatewayIP(${reverseGatewayIPs[$fNewGatewayIP]:-'-'})${RESET}"
         return 0
     fi
 
     if [ "$fDryRun" = true ]; then
-        echo "$USER_NOTATION DRY RUN: ${COLOR}sudo ip route replace default via $new_gateway_ip${RESET}"
+        echo "$USER_NOTATION DRY RUN: ${COLOR}sudo ip route replace default via $fNewGatewayIP${RESET}"
         return 0
     fi
 
-    echo "$USER_NOTATION Changing default gateway to $new_gateway_ip"
-    if ! sudo ip route replace default via "$new_gateway_ip"; then
-        echo "$USER_NOTATION Failed to change the default gateway"
+    echo "$USER_NOTATION Changing default gateway to $fNewGatewayIP"
+    if ! sudo ip route replace default via "$fNewGatewayIP"; then
+        echo "$USER_NOTATION Failed to change the default gateway to $fNewGatewayIP"
         return 1
     fi
 
     echo "$USER_NOTATION Default gateway changed successfully"
-    read -r new_gateway_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+    read -r curr device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
     echo "$BANNER2"
-    echo -e "$USER_NOTATION ${COLOR}default via $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]:-'-'}) dev $device${RESET}"
+    echo -e "$USER_NOTATION ${COLOR}default via $curr(${reverseGatewayIPs[$curr]:-'-'}) dev $device${RESET}"
     return 0
 }
 
@@ -135,19 +136,19 @@ change_gateway() {
 validate_environment || exit 1
 
 # Check for gateway argument
-if [[ -z $fGateway ]]; then
+if [[ -z $fNewGateway ]]; then
     echo "$USER_NOTATION Error: Gateway name required (use -g option)"
     usage
 fi
 
 # Get new gateway IP
-new_gateway_ip=${gateway_ips[$fGateway]}
-if [[ -z $new_gateway_ip ]]; then
-    echo "$USER_NOTATION Error: Gateway name '$fGateway' not found"
+fNewGatewayIP=${gatewayIPs[$fNewGateway]}
+if [[ -z $fNewGatewayIP ]]; then
+    echo "$USER_NOTATION Error: Gateway name '$fNewGateway' not found"
     usage
 fi
 
 [ "$fDryRun" = true ] && echo "$USER_NOTATION Dry run mode enabled"
 
 # Change gateway
-change_gateway "$new_gateway_ip"
+change_gateway "$fNewGatewayIP"
