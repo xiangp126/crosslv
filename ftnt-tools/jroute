@@ -111,7 +111,7 @@ change_gateway() {
     read -r curr device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
 
     if [ "$curr" = "$fNewGatewayIP" ]; then
-        echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $fNewGatewayIP(${reverseGatewayIPs[$fNewGatewayIP]:-'-'})${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $fNewGatewayIP(${reverseGatewayIPs[$fNewGatewayIP]:-'-'}) dev $device${RESET}"
         return 0
     fi
 
@@ -148,6 +148,11 @@ fi
 fNewGatewayIP=${gatewayIPs[$fNewGateway]}
 if [[ -z $fNewGatewayIP ]]; then
     echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid gateway name '$fNewGateway'${RESET}"
+    exit 1
+fi
+
+if ! ping -c 1 -W 1 "$fNewGatewayIP" &>/dev/null; then
+    echo -e "$USER_NOTATION ${MAGENTA}Error: Gateway $fNewGatewayIP is not reachable${RESET}"
     exit 1
 fi
 
