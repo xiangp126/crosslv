@@ -106,7 +106,8 @@ validate_environment() {
 
 change_gateway() {
     COLOR=$MAGENTA
-    local curr
+    local curr=
+    local cmd=
     read -r curr device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
 
     if [ "$curr" = "$fNewGatewayIP" ]; then
@@ -114,15 +115,17 @@ change_gateway() {
         return 0
     fi
 
+    cmd="sudo ip route replace default via $fNewGatewayIP dev $device"
     if [ -n "$fDryRun" ]; then
-        echo -e "$USER_NOTATION DRY RUN: ${COLOR}sudo ip route replace default via $fNewGatewayIP${RESET}"
+        echo -e "$USER_NOTATION DRY RUN: ${COLOR}$cmd${RESET}"
         return 0
     fi
 
     echo "$USER_NOTATION Changing default gateway to $fNewGatewayIP"
-    if ! sudo ip route replace default via "$fNewGatewayIP"; then
+    eval "$cmd"
+    if [ $? -ne 0 ]; then
         echo -e "$USER_NOTATION ${COLOR}Error: Failed to change default gateway to $fNewGatewayIP${RESET}"
-        return 1
+        exit 1
     fi
 
     echo "$USER_NOTATION Default gateway changed successfully"
