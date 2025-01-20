@@ -10,19 +10,34 @@
     requireForce = false
 [alias]
     st = status
+    ls-files = lf
+    lf = ls-files
     ad = add
     df = diff
     lgg = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)'
     cm = commit -v
+    cp = cherry-pick
+    br = branch
     co = checkout
+    dt = difftool
+    mt = mergetool
     cmm = commit -v -m
     dfc = diff --cached
     dfs = diff --stat
-    br = branch
+[push]
+    followTags = true
+    default = current
+[filter "lfs"]
+    clean = git-lfs clean -- %f
+    smudge = git-lfs smudge -- %f
+    process = git-lfs filter-process
+    required = true
 [http]
     sslverify = false
-# git config color.diff.meta blue
 [color "diff"]
     ui = auto
-    # meta = blue
     new = magenta
+[color "status"]
+    modified = yellow     # Color for modified but unstaged files
+    untracked = red       # Color for untracked files
+    branch = magenta      # Color for the branch name

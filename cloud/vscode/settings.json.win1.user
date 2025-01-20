@@ -26,7 +26,8 @@
     },
     "remote.SSH.remotePlatform": {
         "remotedev": "linux",
-        "remoteclient1": "linux"
+        "remoteclient1": "linux",
+        "remotedev2": "linux"
     },
     "telemetry.telemetryLevel": "off",
     "terminal.integrated.enableMultiLinePasteWarning": "never",
@@ -72,7 +73,7 @@
                 "scope": "variable.other.enummember",
                 "settings": {
                     // "foreground": "#4FC1FF",
-                    "foreground": "#53afe1",
+                    "foreground": "#4ba4d3",
                 },
             },
             {
@@ -146,10 +147,31 @@
                 },
             },
             {
-                "scope": "variable.other.object.access.c",
+                "scope": "meta.bracket.square.access",
                 "settings": {
-                    // "foreground": "#9CDCFE",
-                    "foreground": "#abd1e5",
+                    // "foreground": "#569CD6",
+                    "foreground": "#c69696",
+                },
+            },
+            {
+                "scope": "meta.member.access.python",
+                "settings": {
+                    // "foreground": "#CCCCCC",
+                    "foreground": "#d98f72",
+                },
+            },
+                        {
+                "scope": "meta.member.access.python",
+                "settings": {
+                    // "foreground": "#CCCCCC",
+                    "foreground": "#d98f72",
+                },
+            },
+            {
+                "scope": "entity.name.namespace",
+                "settings": {
+                    // "foreground": "#4EC9B0",
+                    "foreground": "#48b29d",
                 },
             },
             {
@@ -248,7 +270,7 @@
                 "scope": "constant.other.placeholder",
                 "settings": {
                     // "foreground": "#9CDCFE",
-                    "foreground": "#88caed",
+                    "foreground": "#86c6e9",
                 },
             },
             {
@@ -330,14 +352,18 @@
     "git.detectSubmodulesLimit": 40,
     "chat.editor.fontSize": 16,
     "gitlens.graph.minimap.enabled": false,
+    "editor.fontSize": 16,
+    "editor.minimap.size": "fill",
+    "editor.minimap.maxColumn": 60,
     "editor.largeFileOptimizations": false,
     "workbench.editor.empty.hint": "hidden",
+    "workbench.editor.tabSizing": "shrink",
+    "workbench.editor.wrapTabs": true,
+    "workbench.editor.navigationScope": "editorGroup",
     "gitlens.graph.allowMultiple": false,
     "gitlens.graph.pageItemLimit": 100,
     "gitlens.graph.searchItemLimit": 50,
     "gitlens.graph.defaultItemLimit": 5,
-    "workbench.editor.tabSizing": "shrink",
-    "workbench.editor.wrapTabs": true,
     "gitlens.views.searchAndCompare.files.layout": "tree",
     "gitlens.views.commits.avatars": false,
     "gitlens.plusFeatures.enabled": false,
@@ -367,14 +393,12 @@
     "markdown-preview-enhanced.codeBlockTheme": "auto.css",
     "files.autoGuessEncoding": true,
     "C_Cpp.intelliSenseEngine": "disabled",
-    "editor.fontSize": 16,
     "settingsSync.keybindingsPerPlatform": false,
     "files.exclude": {
         "**/.vscode-server": true
     },
     "workbench.preferredLightColorTheme": "Default Dark Modern",
     "terminal.integrated.ignoreBracketedPasteMode": true,
-    "workbench.editor.navigationScope": "editorGroup",
     "diffEditor.renderSideBySide": true,
     "github.copilot.chat.runCommand.enabled": false,
     "github.copilot.chat.fixTestFailure.enabled": false,
@@ -393,8 +417,6 @@
     "gitlens.views.commitDetails.pullRequests.enabled": false,
     "gitlens.views.commitDetails.autolinks.enabled": false,
     "gitlens.views.commitDetails.files.layout": "tree",
-    "editor.minimap.size": "fill",
-    "editor.minimap.maxColumn": 60,
     "gitlens.views.commitDetails.autolinks.enhanced": false,
     "gitlens.hovers.autolinks.enhanced": false,
     "gitlens.hovers.autolinks.enabled": false,

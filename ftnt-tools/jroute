@@ -1,17 +1,22 @@
 #!/bin/bash
 # set -x
 
+# Constants
 GETCOLORS="$HOME/Templates/getcolors.sh"
 USER_NOTATION="@@@@"
-BANNER="---------------------------------"
-BANNER2="------------CURRENT--------------"
-BANNER3="--------------NOW----------------"
-USERNAME=$(whoami)
-HOSTNAME=$(hostname)
+BANNER1="---------------------------------"
+BANNER2="--------------NOW----------------"
+# Variables
+fUsername=$(whoami)
+fHostname=$(hostname)
+fDryRun=false
+fGateway=""
 
+# Check for required files
 [ ! -f "$GETCOLORS" ] && echo "File not found: $GETCOLORS" && exit 1
 source "$GETCOLORS"
 
+# Gateway IP mappings
 declare -A gateway_ips=(
     ["fgt1"]="192.168.103.6"
     ["fgt2"]="192.168.103.1"
@@ -25,70 +30,115 @@ declare -A gateway_ips=(
     ["host_router"]="172.16.67.1"
 )
 
-# To have bidirectional mapping between the keys and values.
+# Create reverse mapping
 declare -A reverse_gateway_ips
 for key in "${!gateway_ips[@]}"; do
     reverse_gateway_ips["${gateway_ips[$key]}"]=$key
 done
 
-# for key in "${!reverse_gateway_ips[@]}"; do
-#     echo "$key => ${reverse_gateway_ips[$key]}"
-# done
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
 
-help() {
-    # Extract keys into a separate array and sort them
-    sorted_keys=($(for key in "${!gateway_ips[@]}"; do echo "$key"; done | sort))
-    echo "Usage: $(basename "$0") <fpx1>"
-    echo $BANNER
-    echo "AVAILABLE GATEWAYS TO PICK FROM"
-    echo $BANNER
-    for gateway_name in "${sorted_keys[@]}"; do
-        echo "[$gateway_name == ${gateway_ips[$gateway_name]}]"
+Options:
+    -h, --help           Show this help message
+    -d, --dry-run        Show what would be done without making changes
+    -g, --gateway NAME   Specify the gateway to use
+
+Available gateways:
+$BANNER1
+EOF
+    # Sort and display available gateways
+    printf "%-15s %s\n" "GATEWAY" "IP ADDRESS"
+    echo "$BANNER1"
+    for gateway_name in $(echo "${!gateway_ips[@]}" | tr ' ' '\n' | sort); do
+        printf "%-15s %s\n" "$gateway_name" "${gateway_ips[$gateway_name]}"
     done
-    echo $BANNER2
-    echo -e "$USER_NOTATION ${COLOR}default via $current_gw_ip(${reverse_gateway_ips[$current_gw_ip]}) dev $device${RESET}"
+
+    # Show current gateway
+    echo "$BANNER1"
+    read -r current_gw_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+    echo -e "Current: ${COLOR}default via $current_gw_ip(${reverse_gateway_ips[$current_gw_ip]:-'-'}) dev $device${RESET}"
     exit 1
 }
 
-read -r current_gw_ip device <<< $(ip route show default | awk '/default/ {print $3, $5}')
-
-# In Bash, =~ is used for regular expression matching
-if [[ "$USERNAME" != "corsair" || ! "$HOSTNAME" =~ ^client[0-9]+$ || "$OSTYPE" != "linux-gnu" ]]; then
-    echo "$USER_NOTATION USERNAME: $USERNAME"
-    echo "$USER_NOTATION HOSTNAME: $HOSTNAME"
-    echo "$USER_NOTATION OSTYPE: $OSTYPE"
-    echo -e "$USER_NOTATION ${COLOR}This script is only for client VMs and the USERNAME corsair and the os platform to be Linux${RESET}"
-    help
-fi
-
-if [[ -z $1 ]]; then
-    help
-else
-    new_gateway_ip=${gateway_ips[$1]}
-    if [[ -z $new_gateway_ip ]]; then
-        echo "$USER_NOTATION Error: Gateway name not found"
-        exit 1
+validate_environment() {
+    if [[ "$fUsername" != "corsair" || ! "$fHostname" =~ ^client[0-9]+$ || "$OSTYPE" != "linux-gnu" ]]; then
+        echo "$USER_NOTATION Environment validation failed:"
+        echo "$USER_NOTATION USERNAME: $fUsername"
+        echo "$USER_NOTATION HOSTNAME: $fHostname"
+        echo "$USER_NOTATION OSTYPE: $OSTYPE"
+        echo -e "$USER_NOTATION ${COLOR}Dangerous! This script is only for client VMs with username 'corsair' on Linux${RESET}"
+        return 1
     fi
+    return 0
+}
+
+change_gateway() {
+    local new_gateway_ip=$1
+    local current_gw_ip
+    COLOR=$MANGENTA
+    read -r current_gw_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+
+    if [ "$current_gw_ip" = "$new_gateway_ip" ]; then
+        echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]:-'-'})${RESET}"
+        return 0
+    fi
+
+    if [ "$fDryRun" = true ]; then
+        echo "$USER_NOTATION DRY RUN: Would execute: ${COLOR}sudo ip route replace default via $new_gateway_ip${RESET}"
+        return 0
+    fi
+
+    echo "$USER_NOTATION Changing default gateway to $new_gateway_ip"
+    if ! sudo ip route replace default via "$new_gateway_ip"; then
+        echo "$USER_NOTATION Failed to change the default gateway"
+        return 1
+    fi
+
+    echo "$USER_NOTATION Default gateway changed successfully"
+    read -r new_gateway_ip device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+    echo "$BANNER2"
+    echo -e "$USER_NOTATION ${COLOR}default via $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]:-'-'}) dev $device${RESET}"
+    return 0
+}
+
+# Parse command line options
+while getopts ":hdg:" opt; do
+    case $opt in
+        h)
+            usage
+            ;;
+        d)
+            fDryRun=true
+            ;;
+        g)
+            fGateway="$OPTARG"
+            ;;
+        ?)
+            echo "Invalid option: -$OPTARG" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validate environment
+validate_environment || exit 1
+
+# Check for gateway argument
+if [[ -z $fGateway ]]; then
+    echo "$USER_NOTATION Error: Gateway name or IP required (use -g option)"
+    usage
 fi
 
-echo "$USER_NOTATION Changing the default gateway to $new_gateway_ip"
-
-if [ "$current_gw_ip" = "$new_gateway_ip" ]; then
-    echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]})${RESET}"
-    exit 0
+# Get new gateway IP
+new_gateway_ip=${gateway_ips[$fGateway]}
+if [[ -z $new_gateway_ip ]]; then
+    echo "$USER_NOTATION Error: Gateway name '$fGateway' not found"
+    usage
 fi
 
-# Change the default gateway
-echo "$USER_NOTATION sudo ip route replace default via $new_gateway_ip"
-sudo ip route replace default via "$new_gateway_ip"
-if [ $? -ne 0 ]; then
-    echo "Failed to change the default gateway"
-    exit 1
-fi
+[ "$fDryRun" = true ] && echo "$USER_NOTATION Dry run mode enabled"
 
-# ip route show default
-# @@@@ default via 172.16.67.1 dev enp0s31f6 proto static metric 100
-echo "$USER_NOTATION Default gateway has been changed successfully"
-read -r new_gateway_ip device <<< $(ip route show default | awk '/default/ {print $3, $5}')
-echo $BANNER3
-echo -e "$USER_NOTATION ${COLOR}default via $new_gateway_ip(${reverse_gateway_ips[$new_gateway_ip]}) dev $device${RESET}"
+# Change gateway
+change_gateway "$new_gateway_ip"

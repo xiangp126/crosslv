@@ -351,7 +351,7 @@ if [ -n "$fGitClean" ]; then
         echo -e "$USER_NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
         echo -e "$USER_NOTATION ${NORMAL}But going on anyway${RESET}"
     else
-        echo -e "$USER_NOTATION ${COLOR}Cleaned the working directory successfully${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Cleaned the working directory successfully.${RESET}"
     fi
 fi
 
