@@ -70,7 +70,7 @@ EOF
 # Parse command line options
 while getopts ":hdt:" opt; do
     case $opt in
-        g)
+        t)
             fNewGateway="$OPTARG"
             ;;
         d)
