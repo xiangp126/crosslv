@@ -47,7 +47,7 @@
         "terminal.background": "#1a1a1a",
         "tab.activeBorderTop": "#989c9a",
         "terminal.ansiBrightYellow": "#b49414",
-        "terminal.ansiYellow": "#d5b227",
+        "terminal.ansiYellow": "#cfad24",
         "terminal.ansiBrightRed": "#c52121",
         "terminal.ansiRed": "#c52121",
         "terminal.ansiBrightGreen": "#12aaaf",
@@ -108,7 +108,7 @@
                 "scope": "variable.other.assignment",
                 "settings": {
                     // "foreground": "#9CDCFE",
-                    "foreground": "#7bb6d5",
+                    "foreground": "#74b0d0",
                 },
             },
             {
@@ -306,6 +306,13 @@
                 "settings": {
                     // "foreground": "#4EC9B0",
                     "foreground": "#49bea6",
+                },
+            },
+            {
+                "scope": "entity.other.attribute-name",
+                "settings": {
+                    // "foreground": "#9CDCFE",
+                    "foreground": "#45b39d",
                 },
             },
             {

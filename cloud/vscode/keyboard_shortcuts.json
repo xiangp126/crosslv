@@ -556,10 +556,6 @@
 },
 {
 	"key": "ctrl+x",
-	"command": "editor.action.clipboardCutAction"
-},
-{
-	"key": "ctrl+x",
 	"command": "-editor.action.clipboardCutAction"
 },
 {
@@ -631,7 +627,7 @@
 	"when": "editorTextFocus && config.gitlens.keymap == 'alternate' && resource in 'gitlens:tabs:tracked'"
 },
 {
-	"key": "ctrl+shift+/",
+	"key": "ctrl+shift+,",
 	"command": "gitlens.diffLineWithPrevious",
 	"when": "editorTextFocus && config.gitlens.keymap == 'chorded' && resource in 'gitlens:tabs:tracked'"
 },
