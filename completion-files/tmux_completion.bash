@@ -105,6 +105,23 @@ _tmux() {
         COMPREPLY=( ${COMPREPLY[@]:-} $(compgen -W "$(tmux start-server \; list-commands | cut -d' ' -f1)" -- "${cur}") )
     else
         case ${cmd} in
+            link-window|linkw)
+            case "$prev" in
+                -s) _tmux_complete_window "${cur}" ;;
+                -t) _tmux_complete_window "${cur}" ;;
+                *) options="-s -t" ;;
+            esac ;;
+            unlink-window|unlinkw)
+            case "$prev" in
+                -t) _tmux_complete_window "${cur}" ;;
+                *) options="-t" ;;
+            esac ;;
+            move-window|movew)
+            case "$prev" in
+                -s) _tmux_complete_window "${cur}" ;;
+                -t) _tmux_complete_window "${cur}" ;;
+                *) options="-s -t" ;;
+            esac ;;
             attach-session|attach)
             case "$prev" in
                 -t) _tmux_complete_session "${cur}" ;;
