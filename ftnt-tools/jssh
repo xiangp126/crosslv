@@ -10,8 +10,8 @@ SSH_MODE="SSH"
 SFTP_MODE="SFTP"
 SSHFS_MODE="SSHFS"
 TELNET_MODE="TELNET"
-LOCAL_FORWARDER="LForwarder"
-REVERSE_FORWARDER="RForwarder"
+LOCAL_FORWARD="LOCAL_FORWARD"
+REVERSE_FORWARD="REVERSE_FORWARD"
 fMode=$SSH_MODE
 # Shared Variables
 # Match "$ ", "# " or "sftp> " at the end of the line
@@ -98,43 +98,42 @@ usage() {
 cat << _EOF
 $SCRIPT_NAME 1.0
 
-usage:
-    $SCRIPT_NAME [options]
-    $SCRIPT_NAME [-l/-u user] [-p passwd] [-P ssh_port] [-v vdom] [-d] [-h] -t [user@]target[:port]
-         [-c command] [-C]
-         [-J user@jumpserver[:port]] [-W jump_passwd]
-         [-L [local_listen_addr:]local_listen_port:target_addr:target_port]
-         [-R [remote_listen_addr:]remote_listen_port:target_addr:target_port]
-         [-m [remote_dir:]mountpoint]
-         [-S] [-T] [-X]
+Usage:
+$SCRIPT_NAME [-t|--target [username@]target[:port]] [-l/-u|--username username] [-p|--password passwd]
+         [-P|--port ssh_port] [-v|--vdom vdom] [-d|--debug] [-h|--help]
+         [-c|--command command] [-C|--live-capture]
+         [-J|--jump username@jumpserver[:port]] [-W|--jump-password jump_passwd]
+         [-L|--local-forward [local_listen_addr:]local_listen_port:target_addr:target_port]
+         [-R|--reverse-forward [remote_listen_addr:]remote_listen_port:target_addr:target_port]
+         [-m|--mount [remote_dir:]mountpoint]
+         [-S|--sftp] [-T|--telnet] [-X|--x11]
 
 Basic Options:
-    -t     Target        The device to connect to
-    -l/-u  Username      Username for login (default: $fTargetUser)
-    -p     Password      Password for login (default: $fTargetPwd)
-    -P     Port          SSH Port to connect to (default: $fTargetPort)
-    -c     Command       Execute commands remotely without opening an interactive login session
-    -C     Capture       Live capture packets from the remote device
-    -d     Debug         Enable debug mode (-vvv)
-    -h     Help          Print this help message
+    -t, --target             The device to connect to
+    -l/-u, --username        Username for login (default: $fTargetUser)
+    -p, --password           Password for login (default: $fTargetPwd)
+    -P, --port               SSH Port to connect to (default: $fTargetPort)
+    -c, --command            Execute commands remotely without opening an interactive login session
+    -C, --live-capture       Live capture packets from the remote device
+    -d, --debug              Enable debug mode (-vvv)
+    -h, --help               Print this help message
 
-Forwarder Options:
-    -L     Forwarder     Local Forwarder. Format: [local_listen_addr:]local_listen_port:target_addr:target_port
-    -R     Reverse       Reverse Forwarder. Format: [remote_listen_addr:]remote_listen_port:target_addr:target_port
-    -J     Jump Server   The jump server to connect to. Format: user@jumpserver[:port]
-    -W     Jump Passwd   Password for jump server (default: $fJumpPwd)
+Forward Options:
+    -L, --local-forward      Format: [local_listen_addr:]local_listen_port:target_listen_addr:target_listen_port
+    -R, --reverse-forward    Format: [remote_listen_addr:]remote_listen_port:target_listen_addr:target_listen_port
+    -J, --jump               The jump server to connect to. Format: user@jumpserver[:port]
+    --jump-password          Password for jump server (default: $fJumpPwd)
 
 Advanced Options:
-    -X     X11 Forward   Enable X11 forwarding
-    -v     Vdom          Specify the VDOM (Useful for FGT/FPX devices)
-    -m     Mountpoint    SSHFS Mode. Mount remote directory to local directory. Format: [remote_dir:]mountpoint
-    -S     SFTP Mode     Connect to the target device via SFTP
-    -T     Telnet Mode   Auth to the target device via Telnet
+    -X, --x11        Enable X11 forwarding
+    -v, --vdom       Specify the VDOM (Used for FGT/FPX devices)
+    -m, --mount      Mount a remote directory to a local directory using sshfs. Format: [remote_dir:]mountpoint
+    -S, --sftp       Connect to the target device via SFTP
+    -T, --telnet     Auth to the target device via Telnet
 
 Examples:
     # SSH Connection
     $SCRIPT_NAME -t fpx1
-    $SCRIPT_NAME -t 172.18.20.214 -l admin -p 1
     $SCRIPT_NAME -t fpxauto@172.18.20.84:22 -p qaz
 
     # SSH with a Jump Server
@@ -169,80 +168,108 @@ _EOF
 
 [[ $# -eq 0 ]] && usage
 
-# Parse command-line options
 fInputCmd="$SCRIPT_NAME $*"
-while getopts "t:l:u:p:P:J:W:v:c:TSm:CL:R:Xdh" opt; do
-    case ${opt} in
-        t)
-            fTarget=$OPTARG
+SHORTOPTS="t:l:u:p:P:dc:CJ:L:R:v:TSm:Xh"
+LONGOPTS="target:,username:,password:,port:,debug,command:,live-capture,jump:,jump-password:,\
+local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,help"
+
+# Use getopt to parse command-line options
+if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
+    echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
+    exit 1
+fi
+
+# Reset positional parameters to the parsed values
+eval set -- "$PARSED"
+
+while true; do
+    case "$1" in
+        -t|--target)
+            fTarget="$2"
+            shift 2
             ;;
-        l) # User
-            fTargetUser=$OPTARG
+        -l|-u|--username)
+            fTargetUser="$2"
+            shift 2
             ;;
-        u) # User
-            fTargetUser=$OPTARG
+        -p|--password)
+            fTargetPwd="$2"
+            shift 2
             ;;
-        p)
-            fTargetPwd=$OPTARG
+        -P|--port)
+            fTargetPort="$2"
+            shift 2
             ;;
-        P)
-            fTargetPort=$OPTARG
-            ;;
-        c)
+        -c|--command)
             COLOR=$MAGENTA
-            fSSHCmd=$OPTARG
+            fSSHCmd="$2"
             if [ -n "$fSSHCmd" ]; then
-                # Only set this flag when $fSSHCmd is not empty
                 fNoLoginShell=true
             fi
+            shift 2
             ;;
-        C)
+        -C|--live-capture)
             fLiveCapture=true
+            shift
             ;;
-        L)
-            fForwarderMode=$LOCAL_FORWARDER
-            fLocalForwarder=true
-            fForwarderOptions+=("$OPTARG")
+        -L|--local-forward)
+            fForwarderMode=$LOCAL_FORWARD
+            fLocalForward=true
+            fForwarderOptions+=("$2")
+            shift 2
             ;;
-        R)
-            fForwarderMode=$REVERSE_FORWARDER
-            fReverseForwarder=true
-            fForwarderOptions+=("$OPTARG")
+        -R|--reverse-forward)
+            fForwarderMode=$REVERSE_FORWARD
+            fReverseForward=true
+            fForwarderOptions+=("$2")
+            shift 2
             ;;
-        J)
+        -J|--jump)
             fNeedJumpServer=true
-            fJumpOptions=$OPTARG
+            fJumpOptions="$2"
+            shift 2
             ;;
-        W)
-            fJumpPwd=$OPTARG
+        --jump-password)
+            fJumpPwd="$2"
+            shift 2
             ;;
-        v)
-            fVdom=$OPTARG
+        -v|--vdom)
+            fVdom="$2"
+            shift 2
             ;;
-        d)
+        -d|--debug)
             fDebug=true
+            shift
             ;;
-        X)
+        -X|--x11)
             fX11Forwarding=true
+            shift
             ;;
-        m)
+        -m|--mount)
             fMode=$SSHFS_MODE
             fSwitchToSShfs=true
-            fFSOptions=$OPTARG
+            fFSOptions="$2"
+            shift 2
             ;;
-        S)
+        -S|--sftp)
             fMode=$SFTP_MODE
             fSwitchToSftp=true
+            shift
             ;;
-        T)
+        -T|--telnet)
             fMode=$TELNET_MODE
+            shift
             ;;
-        h)
+        -h|--help)
             usage
             ;;
-        ?)
+        --)
+            shift
+            break
+            ;;
+        *)
             COLOR=$MAGENTA
-            echo -e "${COLOR}Error: Invalid option: -$OPTARG${RESET}" >&2
+            echo -e "${COLOR}Error: Internal error!${RESET}" >&2
             exit 1
             ;;
     esac
@@ -327,13 +354,13 @@ parseOptions() {
                 # BASH_REMATCH[0]: Contains the entire matched string.
                 # BASH_REMATCH[1], BASH_REMATCH[2], etc.: Contain the results of any capturing groups in the regex.
                 case $fForwarderMode in
-                "$LOCAL_FORWARDER")
+                "$LOCAL_FORWARD")
                     # [ -n "${BASH_REMATCH[2]}" ] && fLFLocalAddr="${BASH_REMATCH[2]}"
                     # fLFLocalPort="${BASH_REMATCH[4]}"
                     [ -n "${BASH_REMATCH[2]}" ] && fLFLocalLisAddr+=("${BASH_REMATCH[2]}")
                     fLFLocalLisPort+=("${BASH_REMATCH[4]}")
                     ;;
-                "$REVERSE_FORWARDER")
+                "$REVERSE_FORWARD")
                     # [ -n "${BASH_REMATCH[2]}" ] && fRFRemoteAddr="${BASH_REMATCH[2]}"
                     # fRFRemotePort="${BASH_REMATCH[4]}"
                     [ -n "${BASH_REMATCH[2]}" ] && fRFRemoteLisAddr+=("${BASH_REMATCH[2]}")
@@ -355,7 +382,7 @@ parseOptions() {
         #     echo -e "$USER_NOTATION ${COLOR}BASH_REMATCH[$i]: ${BASH_REMATCH[$i]}${RESET}"
         # done
 
-        if [ "$fForwarderMode" == "$LOCAL_FORWARDER" ]; then
+        if [ "$fForwarderMode" == "$LOCAL_FORWARD" ]; then
             for port in "${fLFLocalLisPort[@]:1}"; do
                 if lsof -i:"$port" -t &>/dev/null; then
                     lsof -i:"$port"
@@ -453,7 +480,7 @@ checkSanity() {
         fi
 
         # Local Forwarder and Reverse Forwarder are mutually exclusive
-        if [ -n "$fLocalForwarder" ] && [ -n "$fReverseForwarder" ]; then
+        if [ -n "$fLocalForward" ] && [ -n "$fReverseForward" ]; then
             COLOR=$MAGENTA
             echo -e "$USER_NOTATION ${COLOR}Local Forwarder and Reverse Forwarder cannot be set at the same time.${RESET}"
             exit 1
@@ -513,12 +540,12 @@ makeSpawnCmd() {
     # Local Port Forwarding
     if [ -n "$fForwarderMode" ]; then
         case "$fForwarderMode" in
-        "$LOCAL_FORWARDER")
+        "$LOCAL_FORWARD")
             for ((i=1; i<${#fForwarderOptions[@]}; i++)); do
                 param+="-L ${fLFLocalLisAddr[$i]}:${fLFLocalLisPort[$i]}:${fForwardTarget[$i]}:${fForwardTargetPort[$i]} "
             done
             ;;
-        "$REVERSE_FORWARDER")
+        "$REVERSE_FORWARD")
             for ((i=1; i<${#fForwarderOptions[@]}; i++)); do
                 param+="-R ${fRFRemoteLisAddr[$i]}:${fRFRemoteLisPort[$i]}:${fForwardTarget[$i]}:${fForwardTargetPort[$i]} "
             done
@@ -626,14 +653,14 @@ dumpPreTips() {
     local param=""
     local COLOR=$LIGHTRED
     case $fForwarderMode in
-    "$LOCAL_FORWARDER")
+    "$LOCAL_FORWARD")
         param="Local"
         echo -e "${BOLD}$param Forwarder Options:${RESET}" >&2
         for ((i=1; i<${#fForwarderOptions[@]}; i++)); do
             echo -e "[L] Set $param Forwarder: ${COLOR}${fLFLocalLisAddr[$i]}:${fLFLocalLisPort[$i]} -> ${fForwardTarget[$i]}:${fForwardTargetPort[$i]}${RESET}" >&2
         done
         ;;
-    "$REVERSE_FORWARDER")
+    "$REVERSE_FORWARD")
         param="Reverse"
         echo -e "${BOLD}$param Forwarder Options:${RESET}" >&2
         for ((i=1; i<${#fForwarderOptions[@]}; i++)); do

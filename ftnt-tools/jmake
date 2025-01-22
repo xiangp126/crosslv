@@ -112,7 +112,6 @@ _EOF
 
 [[ $# -eq 0 ]] && usage
 
-# Only for show the input command
 fInputCmd="$SCRIPT_NAME $*"
 SHORTOPTS="hcCobOm:j:w:kB:s:t:P:u:l:p:"
 LONGOPTS="help,clean,configure,build,disable-optimization,bear,bear-remove,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
@@ -120,6 +119,7 @@ sync-file:,sync_port:,target:,username:,password:"
 
 # Parse options using getopt
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
+    echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
     exit 1
 fi
 
