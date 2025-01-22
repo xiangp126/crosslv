@@ -111,13 +111,15 @@ _EOF
 }
 
 [[ $# -eq 0 ]] && usage
-
 fInputCmd="$SCRIPT_NAME $*"
+
 SHORTOPTS="hcCobOm:j:w:kB:s:t:P:u:l:p:"
 LONGOPTS="help,clean,configure,build,disable-optimization,bear,bear-remove,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
 sync-file:,sync_port:,target:,username:,password:"
-
-# Parse options using getopt
+# getopt is a command that standardizes and validates command-line arguments.
+# It takes the messy input arguments and converts them into a standardized format.
+# CLI Input: jmake TEST --model=VMWARE -j 8 --disable-optimization
+# getopt will convert it into:  --model 'VMWARE' -j '8' --disable-optimization -- 'TEST'
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
     exit 1
@@ -125,6 +127,17 @@ fi
 
 # Reset positional parameters to the parsed values
 eval set -- "$PARSED"
+
+# for ((i=1; i<=$#; i++)); do
+#     echo "\$$i = ${!i}"
+# done
+# $1 = --model
+# $2 = VMWARE
+# $3 = -j
+# $4 = 8
+# $5 = --disable-optimization
+# $6 = --
+# $7 = TEST
 
 while true; do
     case "$1" in

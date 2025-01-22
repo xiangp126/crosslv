@@ -168,12 +168,11 @@ _EOF
 }
 
 [[ $# -eq 0 ]] && usage
-
 fInputCmd="$SCRIPT_NAME $*"
+
 SHORTOPTS="t:l:u:p:P:dc:CJ:L:R:v:TSm:Xh"
 LONGOPTS="help,target:,username:,password:,port:,debug,command:,live-capture,jump:,jump-password:,\
 local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status"
-
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
