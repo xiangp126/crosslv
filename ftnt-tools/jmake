@@ -33,8 +33,7 @@ gitExcludePattern1=$compileCommandsFile
 gitExcludePattern2="\*.code-workspace"
 gitExcludeList="$gitExcludePattern1 $gitExcludePattern2"
 # Common Constants
-SEPARATOR1="================================"
-SEPARATOR2="==================================================="
+SEPARATOR="==================================================="
 SCRIPT_NAME=$(basename $0)
 USER_NOTATION="@@@@"
 # Colors
@@ -59,11 +58,11 @@ getCurrentTime() {
 # https://patorjk.com/software/taag/
 showLogo() {
     cat << _EOF
-      _              __
-     (_)__ _  ___ _ / /__ ___
-    / //  ' \/ _  //  '_// -_)
- __/ //_/_/_/\_,_//_/\_\ \__/
-|___/
+  ____                      _              __
+ / __ \ ___  ___  ___      (_)__ _  ___ _ / /__ ___
+/ /_/ // _ \/ -_)/ _ \    / //  ' \/ _ '//  '_// -_)
+\____// .__/\__//_//_/ __/ //_/_/_/\_,_//_/\_\ \__/
+     /_/              |___/
 _EOF
 }
 
@@ -311,7 +310,7 @@ preParseOptions
 # exit 0 # Just for debugging
 showLogo
 
-echo $SEPARATOR1
+echo $SEPARATOR
 # Print the build flags
 if [ -n "$fPrintBuildFlags" ]; then
     COLOR="$GREEN"
@@ -319,10 +318,10 @@ if [ -n "$fPrintBuildFlags" ]; then
     [ -n "$fGitClean" ]              && echo -e "[c] ${COLOR}Clean${RESET} the repo"
     [ -n "$fRunConfigure" ]          && echo -e "[C] ${COLOR}Configure${RESET} the project"
     [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
-    [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} Rebuild"
-    [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Generate${RESET} compile_commands.json using bear"
-    [ -n "$fRMCompileCommandsJson" ] && echo -e "[f] ${COLOR}Remove${RESET} the existing $compileCommandsFile"
-    [ -n "$fDisableOptimization" ]   && echo -e "[O] ${COLOR}Disable${RESET} optimization"
+    [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} rebuild"
+    [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Bear${RESET} to generate compile_commands.json"
+    [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} the existing $compileCommandsFile"
+    [ -n "$fDisableOptimization" ]   && echo -e "[O] ${COLOR}Optimization${RESET} disabled"
 fi
 
 # Print the build options
@@ -332,7 +331,7 @@ if [ -n "$fNeedBuild" ]; then
     echo -e "[m] Build Modle:  ${COLOR}$fBuildModel${RESET}"
     COLOR="$CYAN"
     echo -e "[B] Build Target: ${COLOR}$fBuildTarget${RESET}"
-    echo -e "[w] Working Directory: ${COLOR}$fWorkingDir${RESET}"
+    echo -e "[w] Build Directory: ${COLOR}$fWorkingDir${RESET}"
     echo -e "[T] Maximum Build Attempts: ${COLOR}$fMaxBuildAttempt${RESET}"
     echo -e "[j] Concurrent Build Jobs:  ${COLOR}$fNumOfJobs${RESET}"
 fi
@@ -341,12 +340,12 @@ if [ -n "$fSyncTarget" ]; then
     COLOR="$RED"
     echo -e "${BOLD}Sync Optioins:${RESET}"
     echo -e "[/] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
-    echo -e "[l] User:     (${COLOR}$fSyncUsername${RESET})"
+    echo -e "[l] Username: (${COLOR}$fSyncUsername${RESET})"
     echo -e "[p] Password: (${COLOR}$fSyncPassword${RESET})"
     echo -e "[s] Sync File:   (${COLOR}$fSyncFile${RESET})"
     echo -e "[t] Sync Target: (${COLOR}$fSyncTarget${RESET})"
 fi
-echo "$SEPARATOR2"
+echo "$SEPARATOR"
 echo -en "${BOLD}Input Command: ${RESET}" >&2
 echo -e "${LIGHTYELLOW}$fInputCmd${RESET}" >&2
 
