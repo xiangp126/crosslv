@@ -33,12 +33,9 @@ gitExcludePattern1=$compileCommandsFile
 gitExcludePattern2="\*.code-workspace"
 gitExcludeList="$gitExcludePattern1 $gitExcludePattern2"
 # Common Constants
+SEPARATOR="==================================================="
 SCRIPT_NAME=$(basename $0)
 USER_NOTATION="@@@@"
-# SHORT_SEPARATOR="--------------"
-# SEPARATOR="---------------------------------------------------"
-# SHORT_SEPARATOR2="=============="
-SEPARATOR2="==================================================="
 # Colors
 CYAN='\033[36m'
 RED='\033[31m'
@@ -51,6 +48,7 @@ LIGHTYELLOW='\033[93m'
 LIGHTGREEN='\033[92m'
 # YELLOW='\033[33m'
 RESET='\033[0m'
+COLOR=$MAGENTA
 
 getCurrentTime() {
     COLOR="$RED"
@@ -70,41 +68,41 @@ _EOF
 
 usage() {
     cat << _EOF
-Usage: $SCRIPT_NAME [options]
-       $SCRIPT_NAME [-m model] [-w working_dir] [-j num_of_jobs] [-T max_attempt]
-             [-s sync_target] [-S sync_file] [-P sync_port] [-l/-u username] [-p password]
-             [-B build_target]
-             [-bcCohfkO]
+Usage: $SCRIPT_NAME [-m|--model model] [-w|--working-dir working_dir] [-j|--jobs num_of_jobs]
+             [--bear-remove] [--max-build-attempt max_attempt] [-t|--target sync_target]
+             [-s|--sync-file sync_file] [-P|--sync-port sync_port] [-l/-u|--username username]
+             [-p|--password password] [-B|--build-target build_target]
+             [-bcCohkO|--bear --clean --configure --build --help --kernel --disable-optimization]
 
 Build Flags:
-    -c      Clean the repo (default: ${fGitClean:-false})
-    -C      Run Configure intelligently (default: ${fRunConfigure:-false})
-    -o      Run build commands (set automatically if any of the [bmjwT] options is set)
-    -b      Use Bear to generate $compileCommandsFile (default: ${fUseBear:-false})
-    -f      Remove $compileCommandsFile (default: ${fRMCompileCommandsJson:-false})
-    -O      Disable optimization (default: ${fDisableOptimization:-false})
+    -c, --clean                 Clean the repo (default: ${fGitClean:-false})
+    -C, --configure             Run Configure intelligently (default: ${fRunConfigure:-false})
+    -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
+    -b, --bear                  Use Bear to generate $compileCommandsFile (default: ${fUseBear:-false})
+    --bear-remove               Remove $compileCommandsFile (default: ${fRMCompileCommandsJson:-false})
+    -O, --disable-optimization  Disable optimization (default: ${fDisableOptimization:-false})
 
 Build Options:
-    -T      Set the maximum number of build attempts (default: $fMaxBuildAttempt)
-    -B      Set the build target (default: $fBuildTarget)
-    -m      Set the build model  (default: ${fBuildModel:-KVM})
-    -j      Set the number of jobs (default: $fNumOfJobs)
-    -w      Set working directory  (default: $fWorkingDir)
-    -k      Rebuild the kernel (default: ${fRebuildKernel:-false})
+    -m, --model                 Set the build model  (default: ${fBuildModel:-KVM})
+    -j, --jobs                  Set the number of jobs (default: $fNumOfJobs)
+    -w, --working-dir           Set working directory  (default: $fWorkingDir)
+    -k, --kernel                Rebuild the kernel (default: ${fRebuildKernel:-false})
+    --max-build-attempt         Set the maximum number of build attempts (default: $fMaxBuildAttempt)
+    -B, --build-target          Set the build target (default: $fBuildTarget)
 
 Sync Options:
-    -s      Set the sync source file (default: $fSyncFile)
-    -t      Set the sync target machine (default: $fSyncTarget)
-    -P      Set the sync ssh port (default: $fSyncPort)
-    -l/-u   Set the sync username (default: $fSyncUsername)
-    -p      Set the sync password (default: $fSyncPassword)
+    -s, --sync-file             Set the sync source file (default: $fSyncFile)
+    -t, --target                Set the sync target machine (default: $fSyncTarget)
+    -P, --sync_port             Set the sync ssh port (default: $fSyncPort)
+    -l/-u, --username           Set the sync username (default: $fSyncUsername)
+    -p, --password              Set the sync password (default: $fSyncPassword)
 
 Other Options:
-    -h      Print this help message
+    -h, --help                  Print this help message
 
 Example:
     $SCRIPT_NAME -m FGT_VM64_KVM -c -T1 -j4 -b
-    $SCRIPT_NAME -m vmware
+    $SCRIPT_NAME -m VMWARE
     $SCRIPT_NAME -t fgt1 -s FGT_VM64_KVM-v7-build1662.out -l "admin" -p "password" -P 22
     $SCRIPT_NAME -h
 
@@ -114,79 +112,109 @@ _EOF
 
 [[ $# -eq 0 ]] && usage
 
-# Parse command line options
+# Only for show the input command
 fInputCmd="$SCRIPT_NAME $*"
-while getopts "hm:w:j:cCbB:ofT:t:s:P:p:u:l:kO" opt; do
-    case $opt in
-        m)
-            fBuildModel=$OPTARG
-            fNeedBuild=true
+SHORTOPTS="hcCobOm:j:w:kB:s:t:P:u:l:p:"
+LONGOPTS="help,clean,configure,build,disable-optimization,bear,bear-remove,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
+sync-file:,sync_port:,target:,username:,password:"
+
+# Parse options using getopt
+if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
+    exit 1
+fi
+
+# Reset positional parameters to the parsed values
+eval set -- "$PARSED"
+
+while true; do
+    case "$1" in
+        -h|--help)
+            usage
+            shift
             ;;
-        w)
-            fWorkingDir=$OPTARG
+        -m|--model)
+            fBuildModel="$2"
             fNeedBuild=true
+            shift 2
             ;;
-        j)
-            fNumOfJobs=$OPTARG
+        -w|--working-dir)
+            fWorkingDir="$2"
             fNeedBuild=true
+            shift 2
             ;;
-        T)
-            fMaxBuildAttempt=$OPTARG
+        -j|--jobs)
+            fNumOfJobs="$2"
             fNeedBuild=true
+            shift 2
             ;;
-        k)
+        --max-build-attempt)
+            fMaxBuildAttempt="$2"
+            fNeedBuild=true
+            shift 2
+            ;;
+        -k|--kernel)
             fRebuildKernel=true
             fNeedBuild=true
+            shift
             ;;
-        O)
+        -o|--build)
+            fNeedBuild=true
+            shift
+            ;;
+        -O|--disable-optimization)
             fDisableOptimization=true
             fNeedBuild=true
+            shift
             ;;
-        b)
+        -B|--build-target)
+            fBuildTarget="$2"
+            fNeedBuild=true
+            shift 2
+            ;;
+        -C|--configure)
+            fRunConfigure=true
+            shift
+            ;;
+        -c|--clean)
+            fGitClean=true
+            shift
+            ;;
+        -t|--target)
+            fSyncTarget="$2"
+            shift 2
+            ;;
+        -b|--bear)
             fUseBear=true
             fRMCompileCommandsJson=true
             fNeedBuild=true
+            shift
             ;;
-        B)
-            fBuildTarget=$OPTARG
-            fNeedBuild=true
-            ;;
-        C)
-            fRunConfigure=true
-            ;;
-        c)
-            # Ignore compile_commands.json by default
-            fGitClean=true
-            ;;
-        f)
+        --bear-remove)
             fRMCompileCommandsJson=true
+            shift
             ;;
-        t)
-            fSyncTarget=$OPTARG
+        -s|--sync-file)
+            fSyncFile="$2"
+            shift 2
             ;;
-        s)
-            fSyncFile=$OPTARG
+        -P|--sync_port)
+            fSyncPort="$2"
+            shift 2
             ;;
-        P)
-            fSyncPort=$OPTARG
+        -l|-u|--username)
+            fSyncUsername="$2"
+            shift 2
             ;;
-        l)
-            fSyncUsername=$OPTARG
+        -p|--password)
+            fSyncPassword="$2"
+            shift 2
             ;;
-        u)
-            fSyncUsername=$OPTARG
+        --)
+            shift
+            break
             ;;
-        p)
-            fSyncPassword=$OPTARG
-            ;;
-        o)
-            fNeedBuild=true
-            ;;
-        h)
-            usage
-            ;;
-        ?)
-            echo -e "$USER_NOTATION ${MAGENTA}Invalid option: $OPTARG${RESET}"
+        *)
+            echo -e "$USER_NOTATION ${MAGENTA}Invalid option: $1${RESET}"
             exit 1
             ;;
     esac
@@ -195,8 +223,8 @@ done
 # Shift to process non-option arguments. New $1, $2, ..., $@
 shift $((OPTIND - 1))
 if [[ $# -gt 0 ]]; then
-    echo "$USER_NOTATION Illegal non-option arguments: $@"
-    exit
+    echo -e "$USER_NOTATION ${COLOR}Illegal non-option arguments: $@${RESET}"
+    exit 1
 fi
 
 # $1: available models, $2: target model
@@ -282,7 +310,7 @@ preParseOptions
 # exit 0 # Just for debugging
 showLogo
 
-echo $SEPARATOR2
+echo $SEPARATOR
 # Print the build flags
 if [ -n "$fPrintBuildFlags" ]; then
     COLOR="$GREEN"
@@ -317,7 +345,7 @@ if [[ "$fSyncTarget" != false ]]; then
     echo -e "[s] Sync File:   (${COLOR}$fSyncFile${RESET})"
     echo -e "[t] Sync Target: (${COLOR}$fSyncTarget${RESET})"
 fi
-echo "$SEPARATOR2"
+echo "$SEPARATOR"
 echo -en "${BOLD}Input Command: ${RESET}" >&2
 echo -e "${LIGHTYELLOW}$fInputCmd${RESET}" >&2
 
@@ -345,7 +373,7 @@ if [ -n "$fGitClean" ]; then
     echo -e "$USER_NOTATION Running: ${COLOR}$gitCleanCmd${RESET}"
 
     sleep 1
-    COLOR="$RED"
+    COLOR=$MAGENTA
     eval "$gitCleanCmd"
     if [[ $? -ne 0 ]]; then
         echo -e "$USER_NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
