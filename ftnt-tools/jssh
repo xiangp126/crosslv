@@ -69,6 +69,8 @@ fFSOptions=""
 fFSMountPoint=""
 fFSRemoteDir=""
 fFSDemoMountPoint="$HOME/mmt"
+# Get the system status
+fGetSysStatus=""
 # Colors
 RED='\033[31m'
 LIGHTRED='\033[91m'
@@ -100,7 +102,7 @@ $SCRIPT_NAME 1.0
 
 Usage:
 $SCRIPT_NAME [-t|--target [username@]target[:port]] [-l/-u|--username username] [-p|--password passwd]
-         [-P|--port ssh_port] [-v|--vdom vdom] [-d|--debug] [-h|--help]
+         [-P|--port ssh_port] [-v|--vdom vdom] [-d|--debug] [-h|--help] [--get-system-status]
          [-c|--command command] [-C|--live-capture]
          [-J|--jump username@jumpserver[:port]] [-W|--jump-password jump_passwd]
          [-L|--local-forward [local_listen_addr:]local_listen_port:target_addr:target_port]
@@ -109,14 +111,15 @@ $SCRIPT_NAME [-t|--target [username@]target[:port]] [-l/-u|--username username] 
          [-S|--sftp] [-T|--telnet] [-X|--x11]
 
 Basic Options:
+    -h, --help               Print this help message
     -t, --target             The device to connect to
     -l/-u, --username        Username for login (default: $fTargetUser)
     -p, --password           Password for login (default: $fTargetPwd)
     -P, --port               SSH Port to connect to (default: $fTargetPort)
+    -d, --debug              Enable debug mode (-vvv)
     -c, --command            Execute commands remotely without opening an interactive login session
     -C, --live-capture       Live capture packets from the remote device
-    -d, --debug              Enable debug mode (-vvv)
-    -h, --help               Print this help message
+    --get-system-status      Get the system status of the target device
 
 Forward Options:
     -L, --local-forward      Format: [local_listen_addr:]local_listen_port:target_listen_addr:target_listen_port
@@ -170,8 +173,8 @@ _EOF
 
 fInputCmd="$SCRIPT_NAME $*"
 SHORTOPTS="t:l:u:p:P:dc:CJ:L:R:v:TSm:Xh"
-LONGOPTS="target:,username:,password:,port:,debug,command:,live-capture,jump:,jump-password:,\
-local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,help"
+LONGOPTS="help,target:,username:,password:,port:,debug,command:,live-capture,jump:,jump-password:,\
+local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
@@ -201,7 +204,6 @@ while true; do
             shift 2
             ;;
         -c|--command)
-            COLOR=$MAGENTA
             fSSHCmd="$2"
             if [ -n "$fSSHCmd" ]; then
                 fNoLoginShell=true
@@ -243,6 +245,12 @@ while true; do
             ;;
         -X|--x11)
             fX11Forwarding=true
+            shift
+            ;;
+        --get-system-status)
+            fGetSysStatus=true
+            fSSHCmd="get system status"
+            fNoLoginShell=true
             shift
             ;;
         -m|--mount)
@@ -1014,7 +1022,8 @@ expect -c "
 
     if {\"$fNoLoginShell\" != \"\"} {
         expect eof {
-            puts stderr \"\n$USER_NOTATION \${COLOR}Session \$session_id executed commands successfully.\${RESET}\"
+            # puts stderr \"\n$USER_NOTATION \${COLOR}Session \$session_id executed commands successfully.\${RESET}\"
+            puts stderr \"\"
             exit 0
         }
     }

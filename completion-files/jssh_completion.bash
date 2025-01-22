@@ -11,7 +11,7 @@ _jssh_complete() {
     long_opts="--target --username --password --port --debug --help \
               --command --live-capture --jump --jump-password \
               --local-forward --reverse-forward --vdom \
-              --sftp --telnet --x11 --mount"
+              --sftp --telnet --x11 --mount --get-system-status"
 
     # Handle option arguments
     case $prev in
