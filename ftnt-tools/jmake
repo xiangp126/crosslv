@@ -22,7 +22,7 @@ fRMCompileCommandsJson=
 fDisableOptimization=
 fInputCmd=
 # Sync Options
-fSyncTarget=false
+fSyncTarget=
 fSyncFile=$fBuildTarget
 fSyncPort=22
 fSyncUsername="admin"
@@ -91,8 +91,8 @@ Build Options:
     -B, --build-target          Set the build target (default: $fBuildTarget)
 
 Sync Options:
+    -t, --target                Set the sync target machine
     -s, --sync-file             Set the sync source file (default: $fSyncFile)
-    -t, --target                Set the sync target machine (default: $fSyncTarget)
     -P, --sync_port             Set the sync ssh port (default: $fSyncPort)
     -l/-u, --username           Set the sync username (default: $fSyncUsername)
     -p, --password              Set the sync password (default: $fSyncPassword)
@@ -336,7 +336,7 @@ if [ -n "$fNeedBuild" ]; then
     echo -e "[j] Concurrent Build Jobs:  ${COLOR}$fNumOfJobs${RESET}"
 fi
 
-if [[ "$fSyncTarget" != false ]]; then
+if [ -n "$fSyncTarget" ]; then
     COLOR="$RED"
     echo -e "${BOLD}Sync Optioins:${RESET}"
     echo -e "[/] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
@@ -552,9 +552,14 @@ if [ -n "$fNeedBuild" ]; then
 fi
 
 # Step 3: Sync the SYNC_FILE to the target machine
-if [[ "$fSyncTarget" != false ]]; then
+if [[ -n "$fSyncTarget" ]]; then
     # debugTool="jdebug"
     loginTool="jssh"
+
+    if ! ping -c 1 -W 1 "$fSyncTarget" &> /dev/null; then
+        echo -e "$USER_NOTATION ${MAGENTA}Host $fSyncTarget not reachable${RESET}"
+        exit 1
+    fi
 
     # if ! command -v $debugTool &> /dev/null; then
     #     echo -e "$USER_NOTATION ${MAGENTA}Debug tool $debugTool not found${RESET}"
