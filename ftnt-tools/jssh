@@ -69,8 +69,6 @@ fFSOptions=""
 fFSMountPoint=""
 fFSRemoteDir=""
 fFSDemoMountPoint="$HOME/mmt"
-# Get the system status
-fGetSysStatus=""
 # Colors
 RED='\033[31m'
 LIGHTRED='\033[91m'
@@ -248,7 +246,6 @@ while true; do
             shift
             ;;
         --get-system-status)
-            fGetSysStatus=true
             fSSHCmd="get system status"
             fNoLoginShell=true
             shift
@@ -943,7 +940,7 @@ expect -c "
                     continue
                 }
                 eof {
-                    puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Reached EOF. Program ended.\${RESET}\"
+                    puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Reached EOF and Ended.\${RESET}\"
                     exit 0
                 }
             }
@@ -1009,7 +1006,7 @@ expect -c "
                 continue
             }
             eof {
-                puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Reached EOF. Program ended.\${RESET}\"
+                puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Reached EOF and Ended.\${RESET}\"
                 exit 0
             }
         }
@@ -1022,7 +1019,18 @@ expect -c "
 
     if {\"$fNoLoginShell\" != \"\"} {
         expect eof {
-            # puts stderr \"\n$USER_NOTATION \${COLOR}Session \$session_id executed commands successfully.\${RESET}\"
+            set COLOR \$LIGHTYELLOW
+            set output \$expect_out(buffer)
+            set pattern {build[0-9]+}  ;# Regex pattern to match 'build' followed by digits
+
+            set lines [split \$output \"\n\"]
+
+            foreach line \$lines {
+                if {[regexp \$pattern \$line]} {
+                    puts -nonewline stderr \"\${COLOR}\$line\${RESET}\"
+                }
+            }
+
             puts stderr \"\"
             exit 0
         }
