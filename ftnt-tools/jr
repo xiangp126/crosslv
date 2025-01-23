@@ -1,17 +1,18 @@
 #!/bin/bash
 # set -x
 
-# Variables
-fEditor="code"
-fDebug=""
-fOnlyRg=""
-fzfSelected=""
-fExtendedSearch="" # Include the linux kernel source code in the search
 # Constants
 SCRIPTNAME=$(basename $0)
 SEPARATOR_LEFT="<---------------------------------------------------"
 SEPARATOR_RIGHT="--------------------------------------------------->"
 # USER_NOTATION="@@@@"
+# Variables
+fEditor="code"
+fDebug=""
+fOnlyRg=""
+fzfSelected=""
+fZeroQuery=""
+fExtendedSearch="" # Include the linux kernel source code in the search
 # Colors
 MAGENTA='\033[35m'
 NORMAL='\033[0m'
@@ -21,64 +22,89 @@ RESET='\033[0m'
 COLOR=$MAGENTA
 
 usage() {
-    cat << _EOF_
-$SCRIPTNAME v0.0
-
-Usage: $SCRIPTNAME [vzd] <search term>
+    cat << _EOF
+Usage: $SCRIPTNAME [OPTIONS] <search term>
 
 Options:
-    -z  Search with empty query (you can also use jz command directly)
-    -v  Open the file with vim (default is $fEditor)
-    -e  Extended Search. Include the linux kernel source code in the search
-    -d  Print debug information
-    -r  Only use rg to search, not use fzf
+    -h, --help               Print this help message
+    -z, --zero-query         Search with zero query (you can also use jz command directly)
+    -r, --rg-only            Only use rg to search, not use fzf
+    -e, --extended-search    Extended Search. Include the linux kernel source code in the search
+    -v, --vim                Open the file with vim (default is $fEditor)
+    -d, --debug              Print debug information
 
-Example: $SCRIPTNAME "search term"
+Example: $SCRIPTNAME msg_wrong_user_pass_format
          $SCRIPTNAME -z
 
-Notice: The search term must be the last argument!
-
-_EOF_
+_EOF
     exit 1
 }
 
-[[ $# -eq 0 ]] && usage
+# Define short and long options
+SHORTOPTS="hvdrez"
+LONGOPTS="help,vim,debug,extended-search,rg-only,zero-query"
 
-# parse the arguments, -v is for vim, -c is for code
-while getopts "hvdrez" opt; do
-    case ${opt} in
-        v)
-            fEditor="vim"
-            ;;
-        z)
-            query=""
-            ;;
-        d)
-            fDebug=true
-            ;;
-        e)
-            fExtendedSearch=true
-            ;;
-        r)
-            fOnlyRg=true
-            ;;
-        h)
+# Use getopt to parse command-line options
+if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
+    echo "Error: Failed to parse command-line options." >&2
+    exit 1
+fi
+
+# Reset positional parameters to the parsed values
+eval set -- "$PARSED"
+
+# Parse options
+while true; do
+    case "$1" in
+        -h|--help)
             usage
             ;;
-        ?)
-            echo "Invalid option: $OPTARG" 1>&2
+        -v|--vim)
+            fEditor="vim"
+            shift
+            ;;
+        -z|--zero-query)
+            fZeroQuery=true
+            query=""
+            shift
+            ;;
+        -d|--debug)
+            fDebug=true
+            shift
+            ;;
+        -e|--extended-search)
+            fExtendedSearch=true
+            shift
+            ;;
+        -r|--rg-only)
+            fOnlyRg=true
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "Internal error!" >&2
             exit 1
             ;;
     esac
 done
 
-# OPTIND is a special variable used by getopts
-# that keeps track of the next index in the positional parameters to be processed.
-# After processing options, OPTIND will point to the first non-option argument.
-shift $((OPTIND -1))
-# [[ $# -gt 1 ]] && usage
-
-query="$@"
+case "$#" in
+    0)
+        if [ -z "$fZeroQuery" ]; then
+            usage
+        fi
+        ;;
+    1)
+        query="$1"
+        ;;
+    *)
+        echo -e "Error: ${COLOR}Too many arguments${RESET}"
+        exit 1
+        ;;
+esac
 
 # Only need to run for the first time
 checkDependencies() {
@@ -101,8 +127,7 @@ parserAndPolish() {
 
 searchAndOpen() {
     # --glob='*.{c,h,cpp,js,ts,py,html,css,sh,php}'
-    local globForOnlyCFile="--glob='*.{c}'"
-    local globForNoKernel="--glob='!linux-*/*'"
+    local extSearch="--glob='!linux-*/*'"
     local rgParams="--smart-case \
                     --color=ansi \
                     --colors 'match:fg:204,51,153' --colors 'match:style:bold' \
@@ -119,12 +144,8 @@ searchAndOpen() {
                      --cycle \
                     "
     if [ -z "$fExtendedSearch" ]; then
-        rgParams="$rgParams $globForNoKernel"
+        rgParams="$rgParams $extSearch"
     fi
-
-    # if [ -z "$query" ]; then
-    #     rgParams="$rgParams $globForOnlyCFile"
-    # fi
 
     # Squash multiple whitespaces
     rgParams=$(echo "$rgParams" | tr -s ' ')
