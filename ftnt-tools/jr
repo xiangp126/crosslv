@@ -5,7 +5,7 @@
 SCRIPTNAME=$(basename $0)
 SEPARATOR_LEFT="<---------------------------------------------------"
 SEPARATOR_RIGHT="--------------------------------------------------->"
-# USER_NOTATION="@@@@"
+USER_NOTATION="@@@@"
 # Variables
 fEditor="code"
 fDebug=""
@@ -33,7 +33,7 @@ Options:
     -v, --vim                Open the file with vim (default is $fEditor)
     -d, --debug              Print debug information
 
-Example: $SCRIPTNAME msg_wrong_user_pass_format
+Example: $SCRIPTNAME wad_tcp_bind
          $SCRIPTNAME -z
 
 _EOF
@@ -46,7 +46,7 @@ LONGOPTS="help,vim,debug,extended-search,rg-only,zero-query"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
-    echo "Error: Failed to parse command-line options." >&2
+    echo -e "$USER_NOTATION ${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
     exit 1
 fi
 
@@ -85,7 +85,7 @@ while true; do
             break
             ;;
         *)
-            echo "Internal error!" >&2
+            echo -e "$USER_NOTATION ${COLOR}Invalid option: $1${RESET}"
             exit 1
             ;;
     esac
@@ -101,7 +101,7 @@ case "$#" in
         query="$1"
         ;;
     *)
-        echo -e "Error: ${COLOR}Too many arguments${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Too many arguments${RESET}"
         exit 1
         ;;
 esac
@@ -112,7 +112,7 @@ checkDependencies() {
 
     for dep in "${dependencies[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
-            echo -e "Error: ${COLOR}$dep${RESET} is not installed."
+            echo -e "$USER_NOTATION Error: ${COLOR}$dep${RESET} is not installed."
             exit 1
         fi
     done
