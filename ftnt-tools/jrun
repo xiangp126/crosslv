@@ -8,13 +8,12 @@ fSendNewLine=""
 # If the command file is a dos file, there will be a '\r\n' ending in each command.
 fCmdFile="/data/bugzilla/debug.c"
 fTmuxPrefix="C-x"
+fCleanedCmd=""
 SCRIPT_NAME=$(basename $0)
 USER_NOTATION="@@@@"
 
 usage() {
     cat << _EOF
-jrun 0.0.0
-
 Usage: $SCRIPT_NAME [-s session_id] [-w window_id] [-p pane_id] [-f command_file]
             [-n] [-h]
 
@@ -23,7 +22,6 @@ Options:
     -w      Set window ID (default: $fWinId)
     -p      Set pane ID (default: $fPaneId)
     -f      Specify command file (default: $fCmdFile)
-    -n      Send Enter at the end of each command
     -h      Print this help message
 
 Examples:
@@ -42,7 +40,7 @@ _EOF
 [[ $# -eq 0 ]] && usage
 
 # Parse options
-while getopts "s:w:p:nf:h" opt; do
+while getopts "s:w:p:f:h" opt; do
     case $opt in
         s)
             fSessionId="$OPTARG"
@@ -55,9 +53,6 @@ while getopts "s:w:p:nf:h" opt; do
             ;;
         f)
             fCmdFile="$OPTARG"
-            ;;
-        n)
-            fSendNewLine="true"
             ;;
         h)
             usage
@@ -88,9 +83,7 @@ fi
 # done < "$command_file"
 
 # Read commands from file line by line
-tail -n +1 "$fCmdFile" | while IFS= read -r command; do
-	# echo "$USER_NOTATION Original command: $command"
-
+tail -n +1 "$fCmdFile" | while IFS= read -r command || [[ -n "$command" ]]; do
 	# In Bash, the <<< operator is used for here-strings.
 	# Here-strings are a way to pass a string as input to a command.
 
@@ -98,35 +91,38 @@ tail -n +1 "$fCmdFile" | while IFS= read -r command; do
 	# 1. Eliminates comments that begin with //, accounting for possible leading spaces.
 	# 2. Deletes everything preceding the first colon (:) or hash (#) encountered.
 	# 3. Clears any leading spaces that remain after the previous operations.
-	cleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
+	fCleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
 
 	# If the cleaned command starts with an exclamation mark, exit
-    if [[ ${cleanedCmd:0:1} == "!" ]]; then
+    if [[ ${fCleanedCmd:0:1} == "!" ]]; then
         exit 0
     fi
 
-    if [[ -z "$cleanedCmd" ]]; then
-        # echo "$USER_NOTATION Cleaned command: Empty"
+    if [[ -z "$fCleanedCmd" ]]; then
         continue
     fi
 
-	# echo "$USER_NOTATION Original command: $command"
-	echo "$USER_NOTATION Sending: $cleanedCmd"
+    # For dos file, there will be a '\r\n' ending in each command. No need to send extra new line.
+    if [[ "$fCleanedCmd" != *$'\r' ]]; then
+        fSendNewLine="true"
+    fi
 
-    # Because there's a '\r\n' ending in each command already if the command file is a dos file,
-    # We don't need to add an 'Enter' at the end of the send-keys command anymore.
-    # But I still provide an option to add an 'Enter' at the end of each command forcefully.
+	echo "$USER_NOTATION Sending: $fCleanedCmd"
+
+    # exit
+
     if [[ -n "$fSendNewLine" ]]; then
         # String end and home will be treated as key home and key end if not send them as literal strings.
         # Use -l to send the command as a literal string
-        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" -l "$cleanedCmd"
-        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" C-m
+        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" -l "$fCleanedCmd"
+        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" Enter
+        # tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" C-m
     else
-        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" -l "$cleanedCmd"
+        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" -l "$fCleanedCmd"
     fi
 
 	if [[ $? -ne 0 ]]; then
-		echo "$USER_NOTATION Failed to send command: $cleanedCmd"
+		echo "$USER_NOTATION Failed to send command: $fCleanedCmd"
 		exit 1
 	fi
 done
