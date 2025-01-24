@@ -245,9 +245,15 @@ searchModel() {
     matchedModels=()
     local availModels="$1"
     local targetModel="$2"
+
+    # Collect exact and partial matched models
     for model in $availModels; do
         if [[ "$model" == *"$targetModel"* ]]; then
             matchedModels+=("$model")
+            if [[ "$model" == "$targetModel" ]]; then
+                fBuildModel="$model"
+                # return
+            fi
         fi
     done
 
@@ -264,7 +270,7 @@ searchModel() {
             echo "$USER_NOTATION Multiple matched models found for $targetModel"
             echo "$USER_NOTATION Please specify the model from the following list:"
             for model in "${matchedModels[@]}"; do
-                echo -e "$USER_NOTATION ${COLOR}$model${RESET}"
+                echo -e "${COLOR}$model${RESET}"
             done
             exit 1
             ;;
