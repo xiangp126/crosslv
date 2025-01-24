@@ -18,7 +18,6 @@ fRunConfigure=
 fNeedBuild=
 fPrintBuildFlags= # Print build flags
 fGitClean=
-fRMCompileCommandsJson=
 fDisableOptimization=
 fInputCmd=
 # Sync Options
@@ -28,10 +27,11 @@ fSyncPort=22
 fSyncUsername="admin"
 fSyncPassword="password"
 # Git associated variables
-compileCommandsFile="compile_commands.json"
-gitExcludePattern1=$compileCommandsFile
+fCompileCommandsJson="compile_commands.json"
+gitExcludePattern1=$fCompileCommandsJson
 gitExcludePattern2="\*.code-workspace"
-gitExcludeList="$gitExcludePattern1 $gitExcludePattern2"
+fGitExcludeList="$gitExcludePattern1 $gitExcludePattern2"
+fRMCompileCommandsJson=
 # Common Constants
 SEPARATOR="==================================================="
 SCRIPT_NAME=$(basename $0)
@@ -49,11 +49,6 @@ LIGHTGREEN='\033[92m'
 # YELLOW='\033[33m'
 RESET='\033[0m'
 COLOR=$MAGENTA
-
-getCurrentTime() {
-    COLOR="$RED"
-    echo -e "${COLOR}$(date +"%m/%d/%Y %H:%M:%S")${RESET}"
-}
 
 # https://patorjk.com/software/taag/
 showLogo() {
@@ -78,8 +73,8 @@ Build Flags:
     -c, --clean                 Clean the repo (default: ${fGitClean:-false})
     -C, --configure             Run Configure intelligently (default: ${fRunConfigure:-false})
     -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
-    -b, --bear                  Use Bear to generate $compileCommandsFile (default: ${fUseBear:-false})
-    --bear-remove               Remove $compileCommandsFile (default: ${fRMCompileCommandsJson:-false})
+    -b, --bear                  Use Bear to generate $fCompileCommandsJson (default: ${fUseBear:-false})
+    --bear-remove               Remove $fCompileCommandsJson (default: ${fRMCompileCommandsJson:-false})
     -O, --disable-optimization  Disable optimization (default: ${fDisableOptimization:-false})
 
 Build Options:
@@ -240,8 +235,20 @@ if [[ $# -gt 0 ]]; then
     exit 1
 fi
 
+getCurrentTime() {
+    COLOR="$RED"
+    echo -e "${COLOR}$(date +"%m/%d/%Y %H:%M:%S")${RESET}"
+}
+
+checkCmdAvailability() {
+    if ! command -v "$1" &> /dev/null; then
+        echo -e "$USER_NOTATION ${RED}Error: Command $1 not found.${RESET}"
+        exit 1
+    fi
+}
+
 # $1: available models, $2: target model
-searchModel() {
+searchBuildModel() {
     matchedModels=()
     local availModels="$1"
     local targetModel="$2"
@@ -285,17 +292,10 @@ preParseOptions() {
 
     [ -z "$fPrintBuildFlags" ] && return
 
-    command -v realpath >/dev/null 2>&1 && fWorkingDir=$(realpath "$fWorkingDir")
-    if [[ ! -d "$fWorkingDir" ]]; then
-        echo "$USER_NOTATION Directory $fWorkingDir not found"
-        exit 1
-    fi
+    fWorkingDir=$(realpath "$fWorkingDir")
+    cd "$fWorkingDir" || exit 1
 
-    cd "$fWorkingDir" || exit
-    if [[ ! -x "$(command -v ./Configure)" ]]; then
-        echo "$USER_NOTATION Command Configure not found in $fWorkingDir"
-        exit 1
-    fi
+    checkCmdAvailability "./Configure"
     availModels="$(./Configure list)"
     for model in $availModels; do
         if [[ "$model" == "FPX"* ]]; then
@@ -311,7 +311,7 @@ preParseOptions() {
         if [ -z "$fBuildModel" ]; then
             fBuildModel="FPX_KVM"
         else
-            searchModel "$availModels" "$fBuildModel"
+            searchBuildModel "$availModels" "$fBuildModel"
         fi
     else
         # The platform is FOS
@@ -320,66 +320,67 @@ preParseOptions() {
         elif [[ "$fBuildModel" == "VMWARE" ]]; then
             fBuildModel="FGT_VM64"
         else
-            searchModel "$availModels" "$fBuildModel"
+            searchBuildModel "$availModels" "$fBuildModel"
         fi
     fi
 }
 
-preParseOptions
-# exit 0 # Just for debugging
-showLogo
+printBuildFlags() {
+    echo $SEPARATOR
+    # Print the build flags
+    if [ -n "$fPrintBuildFlags" ]; then
+        COLOR="$GREEN"
+        echo -e "${BOLD}Build Flags:${RESET}"
+        [ -n "$fGitClean" ]              && echo -e "[c] ${COLOR}Clean${RESET} the repo"
+        [ -n "$fRunConfigure" ]          && echo -e "[C] ${COLOR}Configure${RESET} the project"
+        [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
+        [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} rebuild"
+        [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Bear${RESET} to generate compile_commands.json"
+        [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} the existing $fCompileCommandsJson"
+        [ -n "$fDisableOptimization" ]   && echo -e "[O] ${COLOR}Optimization${RESET} disabled"
+    fi
 
-echo $SEPARATOR
-# Print the build flags
-if [ -n "$fPrintBuildFlags" ]; then
-    COLOR="$GREEN"
-    echo -e "${BOLD}Build Flags:${RESET}"
-    [ -n "$fGitClean" ]              && echo -e "[c] ${COLOR}Clean${RESET} the repo"
-    [ -n "$fRunConfigure" ]          && echo -e "[C] ${COLOR}Configure${RESET} the project"
-    [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
-    [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} rebuild"
-    [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Bear${RESET} to generate compile_commands.json"
-    [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} the existing $compileCommandsFile"
-    [ -n "$fDisableOptimization" ]   && echo -e "[O] ${COLOR}Optimization${RESET} disabled"
-fi
+    # Print the build options
+    if [ -n "$fNeedBuild" ]; then
+        echo -e "${BOLD}Build Optioins:${RESET}"
+        COLOR="$RED"
+        echo -e "[m] Build Modle:  ${COLOR}$fBuildModel${RESET}"
+        COLOR="$CYAN"
+        echo -e "[B] Build Target: ${COLOR}$fBuildTarget${RESET}"
+        echo -e "[w] Build Directory: ${COLOR}$fWorkingDir${RESET}"
+        echo -e "[T] Maximum Build Attempts: ${COLOR}$fMaxBuildAttempt${RESET}"
+        echo -e "[j] Concurrent Build Jobs:  ${COLOR}$fNumOfJobs${RESET}"
+    fi
 
-# Print the build options
-if [ -n "$fNeedBuild" ]; then
-    echo -e "${BOLD}Build Optioins:${RESET}"
-    COLOR="$RED"
-    echo -e "[m] Build Modle:  ${COLOR}$fBuildModel${RESET}"
-    COLOR="$CYAN"
-    echo -e "[B] Build Target: ${COLOR}$fBuildTarget${RESET}"
-    echo -e "[w] Build Directory: ${COLOR}$fWorkingDir${RESET}"
-    echo -e "[T] Maximum Build Attempts: ${COLOR}$fMaxBuildAttempt${RESET}"
-    echo -e "[j] Concurrent Build Jobs:  ${COLOR}$fNumOfJobs${RESET}"
-fi
+    if [ -n "$fSyncTarget" ]; then
+        COLOR="$RED"
+        echo -e "${BOLD}Sync Optioins:${RESET}"
+        echo -e "[/] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
+        echo -e "[l] Username: (${COLOR}$fSyncUsername${RESET})"
+        echo -e "[p] Password: (${COLOR}$fSyncPassword${RESET})"
+        echo -e "[s] Sync File:   (${COLOR}$fSyncFile${RESET})"
+        echo -e "[t] Sync Target: (${COLOR}$fSyncTarget${RESET})"
+    fi
+    echo "$SEPARATOR"
+    echo -en "${BOLD}Input Command: ${RESET}" >&2
+    echo -e "${LIGHTYELLOW}$fInputCmd${RESET}" >&2
+}
 
-if [ -n "$fSyncTarget" ]; then
-    COLOR="$RED"
-    echo -e "${BOLD}Sync Optioins:${RESET}"
-    echo -e "[/] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
-    echo -e "[l] Username: (${COLOR}$fSyncUsername${RESET})"
-    echo -e "[p] Password: (${COLOR}$fSyncPassword${RESET})"
-    echo -e "[s] Sync File:   (${COLOR}$fSyncFile${RESET})"
-    echo -e "[t] Sync Target: (${COLOR}$fSyncTarget${RESET})"
-fi
-echo "$SEPARATOR"
-echo -en "${BOLD}Input Command: ${RESET}" >&2
-echo -e "${LIGHTYELLOW}$fInputCmd${RESET}" >&2
+cleanTheRepo() {
+    if [[ -z "$fGitClean" ]]; then
+        return
+    fi
 
-# Clean the working directory
-if [ -n "$fGitClean" ]; then
+    cd "$fWorkingDir" || exit
     echo "$USER_NOTATION Cleaning the working directory ..."
 
     COLOR="$MAGENTA"
-    cd "$fWorkingDir" || exit
     gitExcludePattern=""
-    for patt in $gitExcludeList; do
+    for patt in $fGitExcludeList; do
         if [ -n "$fRMCompileCommandsJson" ]; then
-            if [[ "$patt" == "$compileCommandsFile" ]]; then
+            if [[ "$patt" == "$fCompileCommandsJson" ]]; then
                 # Do not add it to the exclude list
-                echo -e "$USER_NOTATION ${COLOR}Remove $compileCommandsFile${RESET}"
+                echo -e "$USER_NOTATION ${COLOR}Remove $fCompileCommandsJson${RESET}"
                 continue
             fi
         fi
@@ -400,20 +401,15 @@ if [ -n "$fGitClean" ]; then
     else
         echo -e "$USER_NOTATION ${COLOR}Cleaned the working directory successfully.${RESET}"
     fi
-fi
+}
 
-expectPath=$(command -v expect)
-if [[ -z "$expectPath" ]]; then
-    echo "$USER_NOTATION Command expect not found"
-    exit 1
-fi
-
-# Step 1: Run Configure
-if [ -n "$fRunConfigure" ]; then
-    if ! command -v get_credentials &> /dev/null; then
-        echo -e "$USER_NOTATION ${RED}Error: Command get_credentials not found.${RESET}"
-        exit 1
+runConfigure() {
+    if [[ -z "$fRunConfigure" ]]; then
+        return
     fi
+
+    checkCmdAvailability "expect"
+    checkCmdAvailability "get_credentials"
 
     if ! credentials_output=$(eval get_credentials); then
         echo -e "$USER_NOTATION ${RED}Error: Failed to get credentials.${RESET}"
@@ -431,11 +427,11 @@ if [ -n "$fRunConfigure" ]; then
     COLOR=$BLUE
     # -O   Disable optimization
     # -c   Enable code coverage
-    param="-m $fBuildModel -d y -c"
+    params="-m $fBuildModel -d y -c"
     if [ -n "$fDisableOptimization" ]; then
-        param+=" -O"
+        params+=" -O"
     fi
-    CONFIGURE_CMD="./Configure $param"
+    CONFIGURE_CMD="./Configure $params"
     echo -e "$USER_NOTATION Running Configure: ${COLOR}$CONFIGURE_CMD${RESET}"
     COLOR=$MAGENTA
     echo -e "$USER_NOTATION ${COLOR}Spawning a new bash session${RESET}"
@@ -483,12 +479,14 @@ if [ -n "$fRunConfigure" ]; then
     else
         echo -e "$USER_NOTATION ${COLOR}Configure completed successfully.${RESET}"
     fi
-fi
+}
 
-# Step 2: Run build commands
-if [ -n "$fNeedBuild" ]; then
+runBuildCommands() {
+    if [[ -z "$fNeedBuild" ]]; then
+        return
+    fi
+
     cd "$fWorkingDir" || exit
-
     makeCommand="make -j$fNumOfJobs $fBuildTarget"
     if [ -n "$fRebuildKernel" ]; then
         makeCommand="make kernel_only && $makeCommand"
@@ -517,17 +515,20 @@ if [ -n "$fNeedBuild" ]; then
         makeCommand="$bear $makeCommand"
     fi
 
+    local attempt=1
+    local maxAttempt=$fMaxBuildAttempt
+    local buildStartTime buildEndTime
     # Loop to build the projects
-    attempt=1
-    maxAttempt=$fMaxBuildAttempt
     while [[ $attempt -le $maxAttempt ]]; do
         COLOR="$GREEN"
         echo -e "$USER_NOTATION Running build commands: ${LIGHTYELLOW}$makeCommand${RESET}"
         echo -e "$USER_NOTATION ${COLOR}Build attempt $attempt/$maxAttempt${RESET}"
-        # [[ $attempt -gt 1 ]] && sleep 2
         sleep 2
 
+        buildStartTime=$(date +%s)
         eval "$makeCommand"
+        buildEndTime=$(date +%s)
+
         eval_status=$?
         if [[ $eval_status -eq 0 ]]; then
             break
@@ -543,10 +544,10 @@ if [ -n "$fNeedBuild" ]; then
         exit 1
     fi
 
-    # Remove the write privilege of compile_commands.json if it is writable
-    jsonFile=$compileCommandsFile
-    jsonPath=$fWorkingDir/$jsonFile
     COLOR=$MAGENTA
+    local jsonFile=$fCompileCommandsJson
+    local jsonPath=$fWorkingDir/$jsonFile
+    # Remove the write privilege of compile_commands.json if it is writable
     if [[ -f "$jsonPath" ]]; then
         if [[ -w "$jsonPath" ]]; then
             echo -e "$USER_NOTATION ${COLOR}$jsonPath is writable${RESET}"
@@ -567,28 +568,38 @@ if [ -n "$fNeedBuild" ]; then
         fi
     fi
 
-    echo "$USER_NOTATION Congratulations! You have built projects successfully at $(getCurrentTime)"
-fi
+    local buildTime=$((buildEndTime - buildStartTime))
+    local hours=$((buildTime / 3600))
+    local minutes=$((buildTime % 3600 / 60))
+    local seconds=$((buildTime % 60))
+    local buildTimeFormatted="${seconds}s."
 
-# Step 3: Sync the SYNC_FILE to the target machine
-if [[ -n "$fSyncTarget" ]]; then
-    # debugTool="jdebug"
-    loginTool="jssh"
+    if [[ $minutes -gt 0 ]]; then
+        buildTimeFormatted="${minutes}m${buildTimeFormatted}"
+    fi
+
+    if [[ $hours -gt 0 ]]; then
+        buildTimeFormatted="${hours}h${buildTimeFormatted}"
+    fi
+
+    echo "$USER_NOTATION Congratulations! You have built projects successfully at $(getCurrentTime) for $buildTimeFormatted"
+}
+
+runSyncCommands() {
+    if [[ -z "$fSyncTarget" ]]; then
+        return
+    fi
 
     if ! ping -c 1 -W 1 "$fSyncTarget" &> /dev/null; then
         echo -e "$USER_NOTATION ${MAGENTA}Host $fSyncTarget not reachable${RESET}"
         exit 1
     fi
 
-    # if ! command -v $debugTool &> /dev/null; then
-    #     echo -e "$USER_NOTATION ${MAGENTA}Debug tool $debugTool not found${RESET}"
-    #     exit 1
-    # fi
+    # local debugTool="jdebug"
+    # checkCmdAvailability "$debugTool"
 
-    if ! command -v $loginTool &> /dev/null; then
-        echo -e "$USER_NOTATION ${MAGENTA}Login tool $loginTool not found${RESET}"
-        exit 1
-    fi
+    local loginTool="jssh"
+    checkCmdAvailability "$loginTool"
 
     # The -t option tells mapfile to strip the trailing newlines from each line it reads.
     mapfile -t syncFiles < <(find "$fWorkingDir" -name "$fSyncFile")
@@ -800,4 +811,12 @@ if [[ -n "$fSyncTarget" ]]; then
             exit $EFAILED
             ;;
     esac
-fi
+}
+
+preParseOptions
+showLogo
+printBuildFlags
+cleanTheRepo
+runConfigure
+runBuildCommands
+runSyncCommands
