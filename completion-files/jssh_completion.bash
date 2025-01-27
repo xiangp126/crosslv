@@ -17,8 +17,9 @@ _jssh_complete() {
     case $prev in
         # Target and Jump server options
         -t|--target|-J|--jump)
-            # Common targets and jump servers
-            local targets="fgt1 fgt2 fpx1 fpx3"
+            # List all hosts from /etc/hosts
+            local targets=
+            targets="$(awk '/^[^#]/ { print $2 }' /etc/hosts)"
             COMPREPLY=( $(compgen -W "${targets}" -- ${cur}) )
             return 0
             ;;
