@@ -1,29 +1,30 @@
 #!/bin/bash
 # set -x
 
-findCmd="find $HOME/.vscode-server/bin -type f -name code -executable"
-codePaths=$($findCmd)
-numOfCodePaths=${#codePaths[@]}
+numOfCodePaths=
+codeBinPaths=
 
-splitPaths() {
-    [[ $numOfCodePaths -le 1 ]] && return
+searchAndParse() {
+    local paths
+    findCmd="find $HOME/.vscode-server/bin -type f -name code -executable"
+    paths=$($findCmd)
     # Originally, codePaths contains only one element joined by \n;
     # It needs to be split into two separate elements.
     # /home/userid/.vscode-server/bin/fee1edb8d6d72a0ddff41e5f71a671c23ed924b9/bin/remote-cli/code
     # /home/userid/.vscode-server/bin/b1c0a14de1414fcdaa400695b4db1c0799bc3124/bin/remote-cli/code
-    IFS=$'\n' read -d '' -r -a codePaths <<< "$codePaths"
-    for i in "${!codePaths[@]}"
+    IFS=$'\n' read -d '' -r -a codeBinPaths <<< "$paths"
+    numOfCodePaths=${#codeBinPaths[@]}
+    for i in "${!codeBinPaths[@]}"
     do
-        version=$(${codePaths[$i]} --version | head -n 1 | awk '{print $1}')
+        version=$(${codeBinPaths[$i]} --version | head -n 1 | awk '{print $1}')
         versionMap[$i]=$version
-        # echo "Version: $version"
     done
 }
 
 printPathInfo () {
-    for i in "${!codePaths[@]}"
+    for i in "${!codeBinPaths[@]}"
     do
-        echo "${versionMap[$i]} : ${codePaths[$i]}"
+        echo "${versionMap[$i]} : ${codeBinPaths[$i]}"
     done
 }
 
@@ -36,18 +37,18 @@ function fcode() {
     then
         echo "Error: No vscode code command found"
         exit 1
-    elif [[ ${#codePaths[@]} -gt 1 ]]
+    elif [[ $numOfCodePaths -gt 1 ]]
     then
-        splitPaths
         echo "Error: More than one vscode code command found, please delete the older version(s) and try again."
         printPathInfo
         exit 1
     fi
 
-    codePath=${codePaths[0]}
-    sysPath="/run/user/$UID"
+    local code syspath
+    code=${codeBinPaths[0]}
+    syspath="/run/user/$UID"
     # Get the latest vscode-ipc-*.sock file
-    new_IPC_HOOK=$(ls -t ${sysPath}/vscode-ipc-*.sock | head -1)
+    new_IPC_HOOK=$(ls -t ${syspath}/vscode-ipc-*.sock | head -1)
     if [[ -z $new_IPC_HOOK ]]
     then
         echo "Error: vscode-ipc-*.sock file not found";
@@ -60,8 +61,9 @@ function fcode() {
 
     # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
     export VSCODE_IPC_HOOK_CLI=$new_IPC_HOOK
-    # echo the passed arguments
-    $codePath "$@"
+
+    $code "$@"
 }
 
+searchAndParse
 fcode -g "$@"

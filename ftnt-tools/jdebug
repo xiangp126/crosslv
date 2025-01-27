@@ -5,6 +5,12 @@
 # FPX (global) # set wad-worker-count 1
 # FPX (global) # end
 
+# Constants
+SCRIPT_NAME=$(basename "$0")
+USER_NOTATION="@@@@"
+SUB_USER_NOTATION="@@@@ @"
+SEPARATOR_LT="<----------------------------------------------------------------"
+SEPARATOR_RT="---------------------------------------------------------------->"
 # Variables
 fTarget=""
 fWorkerType="worker"
@@ -12,53 +18,61 @@ fSSHConnPort=22
 fUsername="admin"
 fPasswd="password"
 fExpectRoot="# "
-fKillExisting="" # Kill the existing gdbserver process attached to the worker PID
-fNoDebug=""
+fOnlyDisplay=""
 fReboot=""
 fSilent=""
-# GDB Server listen port
-fGDBSrvLisPort=444
-# 0: unlimited, 1: 1 worker, -1: not change
-fWADWorkerCnt=-1
 fMaxAttempts=2
-# Constants
-SCRIPT_NAME=$(basename "$0")
-USER_NOTATION="@@@@"
-SUB_USER_NOTATION="@@@@ @"
-SEPARATOR_LT="<----------------------------------------------------------------"
-SEPARATOR_RT="---------------------------------------------------------------->"
+fKill=""            # Kill the existing gdbserver process attached to the worker PID
+fGDBSrvLisPort=444  # GDB Server listen port
+fWADWorkerCnt=-1    # 0: unlimited, 1: 1 worker, -1: not change
+# Colors
+RED='\033[31m'
+LIGHTRED='\033[91m'
+MAGENTA='\033[35m'
+CYAN='\033[36m'
+LIGHTCYAN='\033[96m'
+BLACK='\033[30m'
+PURPLE='\033[35m'
+YELLOW='\033[33m'
+LIGHTYELLOW='\033[93m'
+GREEN='\033[32m'
+LIGHTGREEN='\033[92m'
+GREY='\033[90m'
+BLUE='\033[34m'
+LIGHTBLUE='\033[94m'
+PURPLE='\033[35m'
+LIGHTPURPLE='\033[95m'
+NORMAL='\033[0m'
+BOLD='\033[1m'
+RESET='\033[0m'
+COLOR=$MAGENTA
 
 usage() {
     cat << _EOF
-$SCRIPT_NAME 0.1
-
-Usage: $SCRIPT_NAME [-t target] [-w worker_type] [-P gdbserver_listen_port] [-T max_attempts]
+Usage: $SCRIPT_NAME [-t target] [-w worker_type] [-d gdbserver_listen_port] [-T max_attempts]
               [-u/-l username] [-p password] [-P ssh_conn_port] [-h]
               [-N wad_worker_count]
-              [-n] [-k] [-r]
-
+              [-k] [-r] [-s] [--only-display]
 Options:
-    -t      Target device name or IP address(must be set)
-    -w      Worker type(default: $fWorkerType)
-    -d      GDB Server listen port(default: $fGDBSrvLisPort)
-    -l/-u   Username(default: $fUsername)
-    -p      Password(default: $fPasswd)
-    -P      SSH connection port(default: $fSSHConnPort)
-    -N      Set wad worker count(default: $fWADWorkerCnt)
-            0: unlimited, 1: 1 worker to make life easier, -1: keep the original value
-    -r      Reboot the device
-    -s      Silent mode. Suppress the output of the wad process info
-    -n      Just display the WAD process info without entering the debug session
-    -k      Kill the existing gdbserver process attached to the worker PID
-    -T      Maximum attempt(default: $fMaxAttempts)
-    -h      Print this help message
+    -h, --help           Print this help message
+    -t, --target         Target device name or IP address(must be set)
+    -w, --worker-type    Worker type(default: $fWorkerType)
+    -d, --debug-port     GDB Server listen port(default: $fGDBSrvLisPort)
+    -l/-u, --username    Username(default: $fUsername)
+    -p, --password       Password(default: $fPasswd)
+    -P, --port           SSH connection port(default: $fSSHConnPort)
+    -N, --worker-cnt     Set wad worker count(default: $fWADWorkerCnt)
+                         0: unlimited, 1: 1 worker to make life easier, -1: keep the original value
+    -r, --reboot         Reboot the device
+    -s, --silent         Silent mode. Suppress the output of the wad process info
+    --only-display       Only display the WAD process info without entering the debug session
+    -k, --kill           Kill the existing gdbserver process attached to the worker PID
+    -T, --max-attempts   Maximum attempt(default: $fMaxAttempts)
 
 Example:
     $SCRIPT_NAME -t fgt1
     $SCRIPT_NAME -t fgt1 -k
-    $SCRIPT_NAME -t fgt1 -P 22
     $SCRIPT_NAME -t fgt1 -p "123" -N1
-    $SCRIPT_NAME -t fgt1 -w algo -d 9229
     $SCRIPT_NAME -t fgt1 -w algo -d 9229 -l "admin" -p "123"
     $SCRIPT_NAME -h
 
@@ -68,73 +82,87 @@ _EOF
 
 [[ $# -eq 0 ]] && usage
 
-# Parse the options
-while getopts "t:w:d:T:l:u:p:P:N:nrksh" opt; do
-    case $opt in
-        t)
-            fTarget=$OPTARG
-            ;;
-        w)
-            fWorkerType=$OPTARG
-            ;;
-        d)
-            fGDBSrvLisPort=$OPTARG
-            ;;
-        T)
-            fMaxAttempts=$OPTARG
-            ;;
-        P)
-            fSSHConnPort=$OPTARG
-            ;;
-        l)
-            fUsername=$OPTARG
-            ;;
-        u)
-            fUsername=$OPTARG
-            ;;
-        p)
-            fPasswd=$OPTARG
-            ;;
-        N)
-            fWADWorkerCnt=$OPTARG
-            ;;
-        n)
-            fNoDebug=true
-            ;;
-        r)
-            fReboot=true
-            ;;
-        s)
-            fSilent=true
-            ;;
-        k)
-            fKillExisting=true
-            ;;
-        h)
+SHORTOPTS="t:w:d:T:l:u:p:P:N:rksh"
+LONGOPTS="target:,worker-type:,debug-port:,max-attempts:,username:,password:,port:,worker-cnt:,only-display,reboot,silent,kill,help"
+if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
+    echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
+    exit 1
+fi
+
+eval set -- "$PARSED"
+
+while true; do
+    case "$1" in
+        -h|--help)
             usage
             ;;
-        ?)
-            echo "$USER_NOTATION Invalid option: -$OPTARG" >&2
+        -t|--target)
+            fTarget="$2"
+            shift 2
+            ;;
+        -w|--worker-type)
+            fWorkerType="$2"
+            shift 2
+            ;;
+        -d|--debug-port)
+            fGDBSrvLisPort="$2"
+            shift 2
+            ;;
+        -T|--max-attempts)
+            fMaxAttempts="$2"
+            shift 2
+            ;;
+        -l|-u|--username)
+            fUsername="$2"
+            shift 2
+            ;;
+        -p|--password)
+            fPasswd="$2"
+            shift 2
+            ;;
+        -P|--port)
+            fSSHConnPort="$2"
+            shift 2
+            ;;
+        -N|--worker-cnt)
+            fWADWorkerCnt="$2"
+            shift 2
+            ;;
+        --only-display)
+            fOnlyDisplay=true
+            shift
+            ;;
+        -r|--reboot)
+            fReboot=true
+            shift
+            ;;
+        -s|--silent)
+            fSilent=true
+            shift
+            ;;
+        -k|--kill)
+            fKill=true
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo -e "$USER_NOTATION Invalid option: $1"
             exit 1
             ;;
     esac
 done
 
-# Shift to process non-option arguments. New $1, $2, ..., $@
-shift $((OPTIND - 1))
-if [[ $# -gt 0 ]]; then
-    echo "$USER_NOTATION Illegal non-option arguments: $@"
-    exit
+# Check for remaining arguments
+if [ $# -gt 0 ]; then
+    echo "$USER_NOTATION Illegal non-option arguments: $*"
+    exit 1
 fi
 
-RED='\033[31m'
-MAGENTA='\033[35m'
-RESET='\033[0m'
-COLOR="$RED"
-
 parseOptions() {
-    # ftarget must be set
-    if [ "$fTarget" == "" ]; then
+    if [[ -z $fTarget ]]; then
         echo -e "$USER_NOTATION ${MAGENTA}Target device name or IP address must be set.${RESET}"
         exit 1
     fi
@@ -154,9 +182,7 @@ echo -e "[w] Set WAD Worker Type to: ${COLOR}$fWorkerType${RESET}(Search Pattern
 if [ "$fWADWorkerCnt" -ge 0 ]; then
     echo -e "[N] Set WAD Worker Count to: ${COLOR}$fWADWorkerCnt${RESET}"
 fi
-# COLOR="$MAGENTA"
-# echo -e "$USER_NOTATION ${COLOR}Connecting to $fTarget${RESET} ..."
-echo "Connecting to $fTarget ..."
+echo -e "${GREY}Connecting to $fTarget ...${RESET}"
 echo $SEPARATOR_RT
 
 # expect -d -c "
@@ -328,11 +354,11 @@ expect -c "
     log_user 1
 
     # Only display the wad process info and exit
-    if {\"$fNoDebug\" != \"\"} {
+    if {\"$fOnlyDisplay\" != \"\"} {
         send \"exit\r\"
         expect eof {
             set COLOR \$MAGENTA
-            puts stderr \"$USER_NOTATION \${COLOR}Only display the WAD process info in No Debug mode\${RESET}\"
+            puts stderr \"$USER_NOTATION \${COLOR}Only display the WAD process info.\${RESET}\"
             exit 0
         }
     }
@@ -405,7 +431,7 @@ $USER_NOTATION Or simply retry the same command with -N1
     }
 
     # Kill the existing gdbserver process attached to the worker PID
-    if {\"$fKillExisting\" != \"\"} {
+    if {\"$fKill\" != \"\"} {
         set COLOR \$MAGENTA
         # The output maybe like:
         # ps aux | grep gdbserver | grep 4527 | grep -v grep\r\r\n

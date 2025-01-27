@@ -3,7 +3,9 @@
 # COMPREPLY is an array variable
 # COMPREPLY stores the list of possible completion suggestions that will be shown to the user when they press the Tab key.
 # COMP_WORDS is an array that contains all the words in the current command line.
-# COMP_CWORD is an integer that represents the index of the word that the user is currently typing or trying to complete.
+# COMP_CWORD is an integer that represents the index of the word that the user is currently typing
+# COMP_CWORD is a special shell variable that's automatically set by the bash completion system when a completion function is triggered
+# COMP_CWORD can be used without the $ prefix
 # The -- in a command is used to signal the end of options, ensuring that subsequent arguments are treated as positional parameters
 # rather than options, even if they start with a dash (-).
 

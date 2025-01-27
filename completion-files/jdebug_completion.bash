@@ -1,0 +1,86 @@
+# Bash completion for jdebug command
+_jdebug_complete() {
+    local cur prev opts long_opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # List of all short options
+    opts="-t -w -d -T -l -u -p -P -N -r -k -s -h"
+
+    # List of all long options
+    long_opts="--target --worker-type --debug-port --max-attempts --username --password --port \
+               --worker-cnt --only-display --reboot --silent --kill --help"
+
+    # Handle option arguments
+    case $prev in
+        # Target options
+        -t|--target)
+            # List all hosts from /etc/hosts
+            local targets
+            targets="$(awk '/^[^#]/ { print $2 }' /etc/hosts)"
+            COMPREPLY=( $(compgen -W "${targets}" -- ${cur}) )
+            return 0
+            ;;
+        # Worker type options
+        -w|--worker-type)
+            local workers="manager worker algo informer user-info dev-vuln cert-inspection cert-manager \
+                           YouTube-filter-cache-service reverse-connector debug config-notify tls-fgpt-service \
+                           ia-cache isolator"
+            COMPREPLY=( $(compgen -W "${workers}" -- ${cur}) )
+            return 0
+            ;;
+        # Debug Port options
+        -d|--debug-port)
+            local ports="444 9229"
+            COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
+            return 0
+            ;;
+        -P|--port)
+            local ports="22 8822"
+            COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
+            return 0
+            ;;
+        # Worker count options
+        -N|--worker-cnt)
+            local counts="-1 0 1 2 4 8"
+            COMPREPLY=( $(compgen -W "${counts}" -- ${cur}) )
+            return 0
+            ;;
+        # Max attempts options
+        -T|--max-attempts)
+            local attempts="1 2 3 4 5"
+            COMPREPLY=( $(compgen -W "${attempts}" -- ${cur}) )
+            return 0
+            ;;
+        # Username options
+        -l|-u|--username)
+            local users="admin root corsair"
+            COMPREPLY=( $(compgen -W "${users}" -- ${cur}) )
+            return 0
+            ;;
+        # Password options (no completion)
+        -p|--password)
+            return 0
+            ;;
+        # Boolean options (no completion)
+        --only-display|-r|--reboot|-s|--silent|-k|--kill|-h|--help)
+            return 0
+            ;;
+    esac
+
+    # Handle initial options
+    if [[ ${cur} == -* ]]; then
+        # If it starts with --, only suggest long options
+        if [[ ${cur} == --* ]]; then
+            COMPREPLY=( $(compgen -W "${long_opts}" -- ${cur}) )
+        else
+            # Suggest only short options
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        fi
+        return 0
+    fi
+}
+
+# Register the completion function for jdebug
+complete -F _jdebug_complete jdebug

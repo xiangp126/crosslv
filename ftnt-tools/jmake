@@ -228,8 +228,6 @@ while true; do
     esac
 done
 
-# Shift to process non-option arguments. New $1, $2, ..., $@
-shift $((OPTIND - 1))
 if [[ $# -gt 0 ]]; then
     echo -e "$USER_NOTATION ${COLOR}Illegal non-option arguments: $@${RESET}"
     exit 1
