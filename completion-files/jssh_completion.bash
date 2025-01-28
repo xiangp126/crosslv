@@ -13,14 +13,16 @@ _jssh_complete() {
                --local-forward --reverse-forward --vdom \
                --sftp --telnet --x11 --mount --get-system-status"
 
+    # Function to get hosts from /etc/hosts
+    _get_hosts() {
+        awk '/^[^#]/ { print $2 }' /etc/hosts
+    }
+
     # Handle option arguments
     case $prev in
         # Target and Jump server options
         -t|--target|-J|--jump)
-            # List all hosts from /etc/hosts
-            local targets=
-            targets="$(awk '/^[^#]/ { print $2 }' /etc/hosts)"
-            COMPREPLY=( $(compgen -W "${targets}" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "$(_get_hosts)" -- ${cur}) )
             return 0
             ;;
 
@@ -96,6 +98,10 @@ _jssh_complete() {
         fi
         return 0
     fi
+
+    # If no options match, return all hosts from /etc/hosts
+    COMPREPLY=( $(compgen -W "$(_get_hosts)" -- ${cur}) )
+    return 0
 }
 
 # Register the completion function for jssh

@@ -25,6 +25,11 @@ _jmake_complete() {
                --target --sync-file --sync-port --username --password --kernel \
                --disable-optimization"
 
+    # Function to get hosts from /etc/hosts
+    _get_hosts() {
+        awk '/^[^#]/ { print $2 }' /etc/hosts
+    }
+
     # Handle option arguments
     case $prev in
         # Build options
@@ -59,9 +64,7 @@ _jmake_complete() {
             ;;
         # Sync options
         -t|--target)
-            # Common FortiGate targets
-            local targets="fgt1 fgt2 fpx1 fpx3"
-            COMPREPLY=( $(compgen -W "${targets}" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "$(_get_hosts)" -- ${cur}) )
             return 0
             ;;
         -s|--sync-file)
@@ -77,7 +80,7 @@ _jmake_complete() {
             ;;
         -l|-u|--username)
             # Common FortiGate usernames
-            local users="admin corsair"
+            local users="admin corsair root"
             COMPREPLY=( $(compgen -W "${users}" -- ${cur}) )
             return 0
             ;;
