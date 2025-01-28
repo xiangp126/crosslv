@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # compgen filters the word list based on what the user has already typed ($cur)
 # COMPREPLY is an array variable
 # COMPREPLY stores the list of possible completion suggestions that will be shown to the user when they press the Tab key.

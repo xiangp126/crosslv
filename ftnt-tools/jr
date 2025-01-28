@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # set -x
 
 # Constants
@@ -8,11 +8,12 @@ SEPARATOR_RIGHT="--------------------------------------------------->"
 USER_NOTATION="@@@@"
 # Variables
 fEditor="code"
-fDebug=""
-fOnlyRg=""
-fzfSelected=""
-fZeroQuery=""
-fExtendedSearch="" # Include the linux kernel source code in the search
+fDebug=
+fOnlyRg=
+fzfSelected=
+fZeroQuery=
+fQuery=
+fExtendedSearch=  # Include the linux kernel source code in the search
 # Colors
 MAGENTA='\033[35m'
 NORMAL='\033[0m'
@@ -65,7 +66,7 @@ while true; do
             ;;
         -z|--zero-query)
             fZeroQuery=true
-            query=""
+            fQuery=""
             shift
             ;;
         -d|--debug)
@@ -91,20 +92,11 @@ while true; do
     esac
 done
 
-case "$#" in
-    0)
-        if [ -z "$fZeroQuery" ]; then
-            usage
-        fi
-        ;;
-    1)
-        query="$1"
-        ;;
-    *)
-        echo -e "$USER_NOTATION ${COLOR}Too many arguments${RESET}"
-        exit 1
-        ;;
-esac
+fQuery="$*"
+if [ $# -eq 0 ] && [ -z "$fZeroQuery" ]; then
+    echo -e "${COLOR}Error: No search term provided.${RESET}"
+    usage
+fi
 
 # Only need to run for the first time
 checkDependencies() {
@@ -119,10 +111,10 @@ checkDependencies() {
 }
 
 parserAndPolish() {
-    [[ -z "$query" ]] && return
+    [[ -z "$fQuery" ]] && return
     local param
-    param=$(echo "$query" | sed -E 's/^[[:space:]]*|[[:space:]]*$//g; s/^[&!]//; s/;$//; s/^<|>$//g; s/:[0-9]+$//; s/^func=//')
-    query="$param"
+    param=$(echo "$fQuery" | sed -E 's/^[[:space:]]*|[[:space:]]*$//g; s/^[&!]//; s/;$//; s/^<|>$//g; s/:[0-9]+$//; s/^func=//')
+    fQuery="$param"
 }
 
 searchAndOpen() {
@@ -152,9 +144,9 @@ searchAndOpen() {
     fzfParams=$(echo "$fzfParams" | tr -s ' ')
 
     # Make the query command
-    rgQuery="rg $rgParams \"$query\""
+    rgQuery="rg $rgParams \"$fQuery\""
     # Remove the backslashes from the fzf query. Only fzf needs to remove the backslashes
-    fzfQuery="fzf $fzfParams --query \"${query//\\/}\""
+    fzfQuery="fzf $fzfParams --query \"${fQuery//\\/}\""
 
     # Debugging
     if [ -n "$fDebug" ]; then
@@ -164,12 +156,12 @@ searchAndOpen() {
         echo $SEPARATOR_LEFT
     fi
 
-    if [ -z "$query" ]; then
+    if [ -z "$fQuery" ]; then
         fzfSelected=$(eval "$rgQuery" | eval "$fzfQuery")
     else
         rgResult=$(eval "$rgQuery")
         if [ -z "$rgResult" ]; then
-            echo -e "No result found for query: ${COLOR}$query${RESET}"
+            echo -e "No result found for query: ${COLOR}$fQuery${RESET}"
             exit 1
         fi
         [ -n "$fOnlyRg" ] && echo "$rgResult" && exit 0

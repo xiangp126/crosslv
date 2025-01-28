@@ -49,13 +49,10 @@ COLOR=$MAGENTA
 
 usage() {
     cat << _EOF
-Usage: $SCRIPT_NAME [-t target] [-w worker_type] [-d gdbserver_listen_port] [-T max_attempts]
-              [-u/-l username] [-p password] [-P ssh_conn_port] [-h]
-              [-N wad_worker_count]
-              [-k] [-r] [-s] [--only-display]
+Usage: $SCRIPT_NAME [OPTIONS] Target
+
 Options:
     -h, --help           Print this help message
-    -t, --target         Target device name or IP address(must be set)
     -w, --worker-type    Worker type(default: $fWorkerType)
     -d, --debug-port     GDB Server listen port(default: $fGDBSrvLisPort)
     -l/-u, --username    Username(default: $fUsername)
@@ -70,17 +67,15 @@ Options:
     -T, --max-attempts   Maximum attempt(default: $fMaxAttempts)
 
 Example:
-    $SCRIPT_NAME -t fgt1
-    $SCRIPT_NAME -t fgt1 -k
-    $SCRIPT_NAME -t fgt1 -p "123" -N1
-    $SCRIPT_NAME -t fgt1 -w algo -d 9229 -l "admin" -p "123"
+    $SCRIPT_NAME fgt1
+    $SCRIPT_NAME fgt1 -k
+    $SCRIPT_NAME fgt1 -p "123" -N1
+    $SCRIPT_NAME fgt1 -w algo -d 9229 -l "admin" -p "123"
     $SCRIPT_NAME -h
 
 _EOF
     exit 0
 }
-
-[[ $# -eq 0 ]] && usage
 
 SHORTOPTS="t:w:d:T:l:u:p:P:N:rksh"
 LONGOPTS="target:,worker-type:,debug-port:,max-attempts:,username:,password:,port:,worker-cnt:,only-display,reboot,silent,kill,help"
@@ -155,19 +150,24 @@ while true; do
     esac
 done
 
-# Check for remaining arguments
-if [ $# -gt 0 ]; then
-    echo "$USER_NOTATION Illegal non-option arguments: $*"
-    exit 1
+[ -n "$1" ] && fTarget="$1"
+
+if [ $# -gt 1 ]; then
+    echo -e "${MAGENTA}Too many arguments.${RESET}" >&2
+    usage
 fi
 
-parseOptions() {
+sanityCheck() {
     if [[ -z $fTarget ]]; then
-        echo -e "$USER_NOTATION ${MAGENTA}Target device name or IP address must be set.${RESET}"
+        echo -e "${MAGENTA}Target must be set.${RESET}" >&2
+        exit 1
+    fi
+    if ! ping -c 1 -W 1 "$fTarget" &>/dev/null; then
+        echo -e "$USER_NOTATION ${MAGENTA}$fTarget is unreachable.${RESET}"
         exit 1
     fi
 }
-parseOptions
+sanityCheck
 
 fSearchPatt="type=.*$fWorkerType"
 echo $SEPARATOR_LT

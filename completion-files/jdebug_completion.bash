@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # Bash completion for jdebug command
 _jdebug_complete() {
     local cur prev opts long_opts
@@ -12,14 +14,16 @@ _jdebug_complete() {
     long_opts="--target --worker-type --debug-port --max-attempts --username --password --port \
                --worker-cnt --only-display --reboot --silent --kill --help"
 
+    # Function to get hosts from /etc/hosts
+    _get_hosts() {
+        awk '/^[^#]/ { print $2 }' /etc/hosts
+    }
+
     # Handle option arguments
     case $prev in
         # Target options
         -t|--target)
-            # List all hosts from /etc/hosts
-            local targets
-            targets="$(awk '/^[^#]/ { print $2 }' /etc/hosts)"
-            COMPREPLY=( $(compgen -W "${targets}" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "$(_get_hosts)" -- ${cur}) )
             return 0
             ;;
         # Worker type options
@@ -63,10 +67,6 @@ _jdebug_complete() {
         -p|--password)
             return 0
             ;;
-        # Boolean options (no completion)
-        --only-display|-r|--reboot|-s|--silent|-k|--kill|-h|--help)
-            return 0
-            ;;
     esac
 
     # Handle initial options
@@ -80,6 +80,10 @@ _jdebug_complete() {
         fi
         return 0
     fi
+
+    # If no options match, return all hosts from /etc/hosts
+    COMPREPLY=( $(compgen -W "$(_get_hosts)" -- ${cur}) )
+    return 0
 }
 
 # Register the completion function for jdebug
