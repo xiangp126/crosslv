@@ -24,7 +24,7 @@ fSilent=""
 fMaxAttempts=2
 fKill=""            # Kill the existing gdbserver process attached to the worker PID
 fGDBSrvLisPort=444  # GDB Server listen port
-fWADWorkerCnt=-1    # 0: unlimited, 1: 1 worker, -1: not change
+fWADWorkerCnt=-1    # 0: unlimited, 1: 1 worker,  N: N workers
 # Colors
 RED='\033[31m'
 LIGHTRED='\033[91m'
@@ -59,7 +59,7 @@ Options:
     -p, --password       Password(default: $fPasswd)
     -P, --port           SSH connection port(default: $fSSHConnPort)
     -N, --worker-cnt     Set wad worker count(default: $fWADWorkerCnt)
-                         0: unlimited, 1: 1 worker to make life easier, -1: keep the original value
+                         0: unlimited, 1: 1 worker to make life easier, N: N workers
     -r, --reboot         Reboot the device
     -s, --silent         Silent mode. Suppress the output of the wad process info
     --only-display       Only display the WAD process info without entering the debug session
@@ -388,13 +388,8 @@ expect -c "
     if {\$worker_cnt > 1} {
         if {[string match -nocase \"*work*\" $fWorkerType]} {
             set COLOR \$RED
-            puts stderr \"\n$USER_NOTATION Warning: Found \$worker_cnt PIDs: \${COLOR}\$worker_pids\${RESET} for WAD process of type $fWorkerType\"
-            puts stderr {$USER_NOTATION Recommend to set wad worker count to 1 to make life easier
-$SUB_USER_NOTATION FPX # config system global
-$SUB_USER_NOTATION FPX (global) # set wad-worker-count 1
-$SUB_USER_NOTATION FPX (global) # end
-$USER_NOTATION Or simply retry the same command with -N1
-            }
+            puts stderr \"\n$USER_NOTATION Warning: Found \${MAGENTA}\$worker_cnt\${RESET} PIDs: \${COLOR}\$worker_pids\${RESET} for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
+            puts stderr \"$USER_NOTATION Please retry the same command with \${BLUE}-N1\${RESET}\"
         } else {
             set COLOR \$GREEN
             set worker_pid [lindex \$worker_pids 0]
@@ -404,7 +399,7 @@ $USER_NOTATION Or simply retry the same command with -N1
         }
     } elseif {\$worker_cnt == 1} {
         set COLOR \$LIGHTGREEN
-        puts stderr \"$USER_NOTATION (\${COLOR}PID: \$worker_pids\${RESET}) (\${COLOR}$fWorkerType\${RESET})\"
+        puts stderr \"$USER_NOTATION PID(\${COLOR}\$worker_pids\${RESET}) TYPE(\${COLOR}$fWorkerType\${RESET})\"
     } else {
         puts stderr \"\n$USER_NOTATION \${COLOR}Could not find WAD process of type $fWorkerType.\${RESET}\"
         exit 1

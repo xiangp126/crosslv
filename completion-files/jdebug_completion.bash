@@ -47,7 +47,7 @@ _jdebug_complete() {
             ;;
         # Worker count options
         -N|--worker-cnt)
-            local counts="-1 0 1 2 4 8"
+            local counts="0 1 2 4 8"
             COMPREPLY=( $(compgen -W "${counts}" -- ${cur}) )
             return 0
             ;;

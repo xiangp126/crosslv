@@ -448,7 +448,7 @@ runConfigure() {
         expect \"\$config_bash_prompt\"
         send \"$CONFIGURE_CMD\r\"
 
-        set timeout 180
+        set timeout 300
         expect {
             {Username} {
                 send \"$ftntUser\r\"
@@ -771,7 +771,7 @@ runSyncCommands() {
                 send \"config global\r\"
                 expect {
                     -re {Command fail.|not found,} {
-                        puts stderr \"$USER_NOTATION This device does not support has_vdom. Roll back to normal mode.\"
+                        puts stderr \"$USER_NOTATION \${BLUE}This device does not support vdom. Roll back to normal mode.\${RESET}\"
                     }
                     -re {$fPoundPattern} {
                         set has_vdom 1
