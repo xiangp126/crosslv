@@ -697,8 +697,10 @@ dumpPreTips() {
     echo -e "${COLOR}$fInputCmd${RESET}" >&2
 
     COLOR=$LIGHTYELLOW
+    local spawnedCmdDisplay=
+    spawnedCmdDisplay=$(echo "$fSpawnCmd" | sed -E 's/ -o ((ServerAliveInterval|ServerAliveCountMax)=[0-9]+)//g')
     echo -e "${BOLD}Spawned Command:${RESET}" >&2
-    echo -e "${COLOR}$fSpawnCmd${RESET}" >&2
+    echo -e "${COLOR}$spawnedCmdDisplay${RESET}" >&2
 }
 
 dumpForwardTips() {
