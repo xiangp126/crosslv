@@ -296,7 +296,7 @@ expect -c "
         send \"exit\r\"
         expect eof {
             set COLOR \$MAGENTA
-            puts stderr \"$USER_NOTATION \${COLOR}The worker count of WAD has been set to $fWADWorkerCnt successfully.\${RESET}\"
+            puts stderr \"$USER_NOTATION \${COLOR}The worker count of WAD has been set to $fWADWorkerCnt successfully\${RESET}\"
             exit 0
         }
     }
@@ -357,8 +357,6 @@ expect -c "
     if {\"$fOnlyDisplay\" != \"\"} {
         send \"exit\r\"
         expect eof {
-            set COLOR \$MAGENTA
-            puts stderr \"$USER_NOTATION \${COLOR}Only display the WAD process info.\${RESET}\"
             exit 0
         }
     }
