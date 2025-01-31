@@ -177,7 +177,7 @@ echo -e "[p] Set Password to: ${COLOR}$fPasswd${RESET}"
 echo -e "[P] Set SSH Connection Port to: ${COLOR}$fSSHConnPort${RESET}"
 echo -e "[T] Set SSH Maximum Attempts to: ${COLOR}$fMaxAttempts${RESET}"
 echo -e "[d] Set GDB Server Listen Port to: ${COLOR}$fGDBSrvLisPort${RESET}"
-echo -e "[w] Set WAD Worker Type to: ${COLOR}$fWorkerType${RESET}(Search Pattern: ${COLOR}$fSearchPatt)${RESET}"
+echo -e "[w] Set WAD Worker Type to: ${COLOR}$fWorkerType${RESET}(Search Pattern: ${COLOR}$fSearchPatt${RESET})"
 # if $wadWorkerCnt is larger or equal to 0, then print the message.
 if [ "$fWADWorkerCnt" -ge 0 ]; then
     echo -e "[N] Set WAD Worker Count to: ${COLOR}$fWADWorkerCnt${RESET}"
@@ -362,48 +362,62 @@ expect -c "
     }
 
     set output \$expect_out(buffer)
-    # Search for the line with \"type=worker\" and extract the PID
-    set worker_pid \"\"
+    set worker_pids [list]
+    set worker_indexes [list]
+    set pid_index_list [list]
     set worker_cnt 0
-    set worker_pids {}
 
-    # Define the pattern to match
-    set search_patt $fSearchPatt
-    # puts stderr \"$USER_NOTATION Searching for \$search_patt\"
+    set lines [split \$output \"\r\"]
+    foreach line \$lines {
+        if {![regexp \"$fSearchPatt\" \$line]} {
+            continue
+        }
 
-    foreach line [split \$output \"\n\"] {
-            if {[regexp -nocase \$search_patt \$line]} {
-            # Extract the PID from the line
-            set pid_regex {pid=(\d+)}
-            if {[regexp \$pid_regex \$line match worker_pid]} {
-                # Add the matched PID to the list. lappend: list append.
-                lappend worker_pids \$worker_pid
-                incr worker_cnt
-            }
+        set index 0
+        set pid \"\"
+        # Extract index if present
+        if {[regexp -nocase {index=(\d+)} \$line -> index]} {}
+
+        # Extract the PID from the line
+        if {[regexp -nocase {pid=(\d+)} \$line -> pid]} {
+            incr worker_cnt
+            lappend worker_pids \$pid
+            lappend worker_indexes \$index
+            lappend pid_index_list [list \$pid \$index]
         }
     }
 
+    set worker_pid [lindex \$worker_pids 0]
+    set worker_index [lindex \$worker_indexes 0]
+
+    proc dump_pid_index_list {pid_index_list} {
+        global USER_NOTATION MAGENTA RESET
+        puts -nonewline stderr \"$USER_NOTATION \"
+        foreach pair \$pid_index_list {
+            lassign \$pair pid index
+            puts -nonewline stderr \"\[\$MAGENTA\${pid}, \${index}\${RESET}\] \"
+        }
+        puts stderr \"\"
+    }
+
+    set COLOR \$MAGENTA
     if {\$worker_cnt > 1} {
+        puts stderr \"\n$USER_NOTATION Warning: Found \${LIGHTYELLOW}\$worker_cnt\${RESET} for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
+        dump_pid_index_list \$pid_index_list
         if {[string match -nocase \"*work*\" $fWorkerType]} {
-            set COLOR \$RED
-            puts stderr \"\n$USER_NOTATION Warning: Found \${MAGENTA}\$worker_cnt\${RESET} PIDs: \${COLOR}\$worker_pids\${RESET} for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
+            puts stderr \"$USER_NOTATION Default to choose the first PID: \${RED}\$worker_pid\${RESET}\"
+            puts stderr \"$USER_NOTATION If you want to make life easier\"
             puts stderr \"$USER_NOTATION Please retry the same command with \${BLUE}-N1\${RESET}\"
         } else {
-            set COLOR \$GREEN
-            set worker_pid [lindex \$worker_pids 0]
-            puts stderr \"\n$USER_NOTATION Warning: Found \$worker_cnt PIDs: \${COLOR}\$worker_pids\${RESET} for WAD process of type $fWorkerType\"
-            puts stderr \"\n$USER_NOTATION Default to choose the first PID: \${COLOR}\$worker_pid\${RESET}\"
             puts stderr \"$USER_NOTATION Recommend to check the input WAD process type\"
+            exit 1
         }
     } elseif {\$worker_cnt == 1} {
-        set COLOR \$LIGHTGREEN
-        puts stderr \"$USER_NOTATION PID(\${COLOR}\$worker_pids\${RESET}) TYPE(\${COLOR}$fWorkerType\${RESET})\"
+        puts stderr \"\n$USER_NOTATION Info: Found exact match \[\$MAGENTA\${pid}, \${index}\${RESET}\] for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
     } else {
         puts stderr \"\n$USER_NOTATION \${COLOR}Could not find WAD process of type $fWorkerType.\${RESET}\"
         exit 1
     }
-
-    set worker_pid [lindex \$worker_pids 0]
 
     send \"\r\"
     expect \"$fExpectRoot\"
