@@ -1,4 +1,5 @@
 #!/bin/bash
+# set -x
 
 # Recommend to set wad worker count to 1 to make life easier.
 # FPX # config system global
@@ -21,10 +22,11 @@ fExpectRoot="# "
 fOnlyDisplay=""
 fReboot=""
 fSilent=""
-fMaxAttempts=2
 fKill=""            # Kill the existing gdbserver process attached to the worker PID
+fIndex=0            # Set which worker to attach to if multiple workers are found
 fGDBSrvLisPort=444  # GDB Server listen port
 fWADWorkerCnt=-1    # 0: unlimited, 1: 1 worker,  N: N workers
+fMaxAttempts=2
 # Colors
 RED='\033[31m'
 LIGHTRED='\033[91m'
@@ -62,6 +64,7 @@ Options:
                          0: unlimited, 1: 1 worker to make life easier, N: N workers
     -r, --reboot         Reboot the device
     -s, --silent         Silent mode. Suppress the output of the wad process info
+    --select             Select the worker index(default: $fIndex) to attach to if multiple workers are found
     --only-display       Only display the WAD process info without entering the debug session
     -k, --kill           Kill the existing gdbserver process attached to the worker PID
     -T, --max-attempts   Maximum attempt(default: $fMaxAttempts)
@@ -77,8 +80,8 @@ _EOF
     exit 0
 }
 
-SHORTOPTS="t:w:d:T:l:u:p:P:N:rksh"
-LONGOPTS="target:,worker-type:,debug-port:,max-attempts:,username:,password:,port:,worker-cnt:,only-display,reboot,silent,kill,help"
+SHORTOPTS="ht:w:d:T:l:u:p:P:N:rks"
+LONGOPTS="help,target:,worker-type:,debug-port:,max-attempts:,username:,password:,port:,worker-cnt:,only-display,reboot,silent,kill,select:"
 if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
     echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
     exit 1
@@ -139,6 +142,10 @@ while true; do
             fKill=true
             shift
             ;;
+        --select)
+            fIndex="$2"
+            shift 2
+            ;;
         --)
             shift
             break
@@ -178,6 +185,9 @@ echo -e "[P] Set SSH Connection Port to: ${COLOR}$fSSHConnPort${RESET}"
 echo -e "[T] Set SSH Maximum Attempts to: ${COLOR}$fMaxAttempts${RESET}"
 echo -e "[d] Set GDB Server Listen Port to: ${COLOR}$fGDBSrvLisPort${RESET}"
 echo -e "[w] Set WAD Worker Type to: ${COLOR}$fWorkerType${RESET}(Search Pattern: ${COLOR}$fSearchPatt${RESET})"
+if [ "$fIndex" -gt 0 ]; then
+    echo -e "[/] Set Worker Index to: ${COLOR}$fIndex${RESET}"
+fi
 # if $wadWorkerCnt is larger or equal to 0, then print the message.
 if [ "$fWADWorkerCnt" -ge 0 ]; then
     echo -e "[N] Set WAD Worker Count to: ${COLOR}$fWADWorkerCnt${RESET}"
@@ -321,6 +331,8 @@ expect -c "
         }
     }
 
+    send \"diagnose debug reset\r\"
+    expect \"$fExpectRoot\"
     send \"diagnose debug disable\r\"
     set timeout 30
     expect {
@@ -387,8 +399,14 @@ expect -c "
         }
     }
 
-    set worker_pid [lindex \$worker_pids 0]
-    set worker_index [lindex \$worker_indexes 0]
+    set worker_pid [lindex \$worker_pids $fIndex]
+    set worker_index [lindex \$worker_indexes $fIndex]
+
+    if {\$worker_pid == \"\"} {
+        set COLOR \$MAGENTA
+        puts stderr \"\n$USER_NOTATION \${COLOR}Could not find the specific WAD process of type $fWorkerType.\${RESET}\"
+        exit 1
+    }
 
     proc dump_pid_index_list {pid_index_list} {
         global USER_NOTATION MAGENTA RESET
@@ -405,7 +423,7 @@ expect -c "
         puts stderr \"\n$USER_NOTATION Warning: Found \${LIGHTYELLOW}\$worker_cnt\${RESET} for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
         dump_pid_index_list \$pid_index_list
         if {[string match -nocase \"*work*\" $fWorkerType]} {
-            puts stderr \"$USER_NOTATION Default to choose the first PID: \${RED}\$worker_pid\${RESET}\"
+            puts stderr \"$USER_NOTATION Select \[\${RED}\${pid}, ${fIndex}\${RESET}\]\"
             puts stderr \"$USER_NOTATION If you want to make life easier\"
             puts stderr \"$USER_NOTATION Please retry the same command with \${BLUE}-N1\${RESET}\"
         } else {
@@ -429,7 +447,7 @@ expect -c "
     send \"sys sh\r\"
     expect {
         \"Unknown action\" {
-            puts stderr \"\n$USER_NOTATION \${MAGENTA}This image does not support 'sys sh' command, use a debug image instead\${RESET}\"
+            puts stderr \"\n$USER_NOTATION \${MAGENTA}This image does not support 'sys sh' command, Consider to use a debug image instead.\${RESET}\"
             exit 1
         }
         \"$fExpectRoot\" {

@@ -12,7 +12,7 @@ _jdebug_complete() {
 
     # List of all long options
     long_opts="--target --worker-type --debug-port --max-attempts --username --password --port \
-               --worker-cnt --only-display --reboot --silent --kill --help"
+               --worker-cnt --only-display --reboot --silent --kill --help --select"
 
     # Function to get hosts from /etc/hosts
     _get_hosts() {
@@ -48,6 +48,11 @@ _jdebug_complete() {
         # Worker count options
         -N|--worker-cnt)
             local counts="0 1 2 4 8"
+            COMPREPLY=( $(compgen -W "${counts}" -- ${cur}) )
+            return 0
+            ;;
+        --select)
+            local counts="0 1 2 3 4"
             COMPREPLY=( $(compgen -W "${counts}" -- ${cur}) )
             return 0
             ;;
