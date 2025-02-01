@@ -1,4 +1,4 @@
-# To configure GDB, put the file as ~/.gdbinit.
+# This file should be in the path of ~/.gdbinit.
 
 # Display source code layout in TUI
 layout src
@@ -21,6 +21,13 @@ set trace-commands on
 set logging on
 set can-use-hw-watchpoints 1
 set follow-fork-mode child
+define connect
+    source ~/target.sh
+end
+define ftnt
+    set sysroot .
+    set solib-search-path ./rlib:./fortipkg/lib/x86_64:./fortipkg/lib/x86_64/providers
+end
 
 # Do not remove the trailing space
 set prompt (gdb) 
