@@ -65,7 +65,7 @@ Options:
     -r, --reboot         Reboot the device
     -s, --silent         Silent mode. Suppress the output of the wad process info
     --select             Select the worker index(default: $fIndex) to attach to if multiple workers are found
-    --only-display       Only display the WAD process info without entering the debug session
+    --display-only       Only display the WAD process info without entering the debug session
     -k, --kill           Kill the existing gdbserver process attached to the worker PID
     -T, --max-attempts   Maximum attempt(default: $fMaxAttempts)
 
@@ -81,7 +81,7 @@ _EOF
 }
 
 SHORTOPTS="ht:w:d:T:l:u:p:P:N:rks"
-LONGOPTS="help,target:,worker-type:,debug-port:,max-attempts:,username:,password:,port:,worker-cnt:,only-display,reboot,silent,kill,select:"
+LONGOPTS="help,target:,worker-type:,debug-port:,max-attempts:,username:,password:,port:,worker-cnt:,display-only,reboot,silent,kill,select:"
 if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
     echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
     exit 1
@@ -126,7 +126,7 @@ while true; do
             fWADWorkerCnt="$2"
             shift 2
             ;;
-        --only-display)
+        --display-only)
             fOnlyDisplay=true
             shift
             ;;
