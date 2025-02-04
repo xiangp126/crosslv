@@ -1,9 +1,9 @@
-# This file should be in the path of ~/.gdbinit.
-
+# Save this file as ~/.gdbinit
 # Display source code layout in TUI
 layout src
-
 set tui active-border-mode normal
+set tui tab-width 8
+set tui compact-source
 set style function foreground magenta
 set style function intensity normal
 set style filename foreground red
@@ -11,8 +11,6 @@ set style filename intensity normal
 set logging file ~/.gdb.log
 set print pretty on
 set pagination off
-set tui tab-width 8
-set tui compact-source
 set disassembly-flavor intel
 winheight cmd +6
 fs cmd
@@ -21,21 +19,30 @@ set trace-commands on
 set logging on
 set can-use-hw-watchpoints 1
 set follow-fork-mode child
+# Connect to the target defined in target.sh
 define connect
     source ~/target.sh
 end
+# Load the shared library from local path
+# Usage: ftnt [sysroot], if sysroot is not specified, use the current directory
+# Use info sharedlibrary to check the shared library
 define ftnt
-    set sysroot .
-    set solib-search-path ./rlib:./fortipkg/lib/x86_64:./fortipkg/lib/x86_64/providers
+    if $argc == 0
+        set sysroot .
+        set solib-search-path ./rlib:./fortipkg/lib/x86_64:./fortipkg/lib/x86_64/providers
+    else
+        set sysroot $arg0
+        set solib-search-path $arg0/rlib:$arg0/fortipkg/lib/x86_64:$arg0/fortipkg/lib/x86_64/providers
+    end
 end
-
-# Do not remove the trailing space
-set prompt (gdb) 
-# After recomplie, reload the binary and source code
+# Reload the binary and source code after the binary is updated
 define reload
     file sysinit/init
     directory
 end
+
+# Do not remove the trailing space
+set prompt (gdb) 
 
 # Specify your custom GDB aliases (if any)
 # For example, alias "run" to "r"

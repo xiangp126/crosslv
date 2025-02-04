@@ -367,6 +367,8 @@ expect -c "
 
     # Only display the wad process info and exit
     if {\"$fOnlyDisplay\" != \"\"} {
+        send \"diagnose debug reset\r\"
+        expect \"$fExpectRoot\"
         send \"exit\r\"
         expect eof {
             exit 0
