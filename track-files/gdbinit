@@ -1,6 +1,7 @@
 # Save this file as ~/.gdbinit
 # Display source code layout in TUI
 layout src
+set confirm off
 set tui active-border-mode normal
 set tui tab-width 8
 set tui compact-source

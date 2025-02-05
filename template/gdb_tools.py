@@ -1,8 +1,62 @@
-import os
 import re
 import gdb
 import argparse
-from pathlib import Path
+
+class CircularDoublyLinkedList(gdb.Command):
+    """Command to print and count elements in a circular doubly linked list."""
+
+    def __init__(self):
+        super(CircularDoublyLinkedList, self).__init__("ptlist", gdb.COMMAND_USER)
+
+    def get_node(self, ptr):
+        """Retrieve node data from the given pointer."""
+        return gdb.parse_and_eval(f"(struct list_head *){ptr}")
+
+    def invoke(self, arg, from_tty):
+        """Execute the command."""
+        if not arg:
+            print("Usage: ptlist <head_pointer>")
+            return
+
+        try:
+            head = self.get_node(f"(struct list_head *){arg}")
+            # print(f"Value of arg: {head_ptr}")
+            # print(f"Type of arg: {type(head_ptr)}")
+            # return
+
+            # +p g_wad_app_sessions.sessions
+            # $77 = {
+            #   next = 0x7f36fc296700,
+            #   prev = 0x7f364883df60
+            # }
+
+            elements = []
+            count = 0
+            curr = self.get_node(head['next'])  # Start from head->next
+            max_count = 20
+
+            while True:
+                if curr == head:
+                    break
+                if count >= max_count:
+                    break
+                elements.append(f"{curr}")
+                count += 1
+                curr = self.get_node(curr['next'])
+
+            for i in range(0, len(elements), 5):
+                print(" -> ".join(elements[i:i+5]))
+
+            if count < max_count:
+                print(f"Total number of elements: {count}")
+            else:
+                print(f"Note: Displayed only the first {max_count} elements")
+
+        except gdb.error as e:
+            print(f"Error: {e}")
+
+# Instantiate the command
+CircularDoublyLinkedList()
 
 class PrintErrno(gdb.Command):
     """Custom GDB command 'perrno' to display the current errno value."""
@@ -359,7 +413,7 @@ class PrettyPrintMemory(gdb.Command):
             size = 0
 
             if code != gdb.TYPE_CODE_PTR:
-                # print(f"Warning: {addr} is not a pointer, use its address instead")
+                print(f"Warning: {addr} is not a pointer, use its address instead")
                 addr = ret.address
                 type = ret.type
             else:
@@ -376,132 +430,40 @@ class PrettyPrintMemory(gdb.Command):
 # Instantiate the command
 PrettyPrintMemory()
 
-class CircularDoublyLinkedList(gdb.Command):
-    """Command to print and count elements in a circular doubly linked list."""
-
+class SetWatch(gdb.Command):
+    """Set a watchpoint on the memory location of the given input."""
     def __init__(self):
-        super(CircularDoublyLinkedList, self).__init__("ptlist", gdb.COMMAND_USER)
+        super(SetWatch, self).__init__("setwatch", gdb.COMMAND_USER)
 
-    def get_node(self, ptr):
-        """Retrieve node data from the given pointer."""
-        return gdb.parse_and_eval(f"(struct list_head *){ptr}")
-
-    def invoke(self, arg, from_tty):
-        """Execute the command."""
-        if not arg:
-            print("Usage: ptlist <head_pointer>")
+    def invoke(self, args, from_tty):
+        # Parse the input argument
+        if not args:
+            print("Usage: setwatch <variable>")
             return
 
         try:
-            head = self.get_node(f"(struct list_head *){arg}")
-            # print(f"Value of arg: {head_ptr}")
-            # print(f"Type of arg: {type(head_ptr)}")
-            # return
+            # Evaluate the input argument to get its address
+            ret = gdb.parse_and_eval(args)
+            code = ret.type.code
+            type = None
+            address = None
+            watch_point = None
 
-            # +p g_wad_app_sessions.sessions
-            # $77 = {
-            #   next = 0x7f36fc296700,
-            #   prev = 0x7f364883df60
-            # }
-
-            elements = []
-            count = 0
-            curr = self.get_node(head['next'])  # Start from head->next
-            max_count = 20
-
-            while True:
-                if curr == head:
-                    break
-                if count >= max_count:
-                    break
-                elements.append(f"{curr}")
-                count += 1
-                curr = self.get_node(curr['next'])
-
-            for i in range(0, len(elements), 5):
-                print(" -> ".join(elements[i:i+5]))
-
-            if count < max_count:
-                print(f"Total number of elements: {count}")
+            if code != gdb.TYPE_CODE_PTR:
+                address = ret.address
+                type = ret.type
+                watch_point=f'({type} *) {address}'
             else:
-                print(f"Note: Displayed only the first {max_count} elements")
+                address = ret
+                type = ret.type.target()
+                watch_point=f'({type}*) {address}'
+
+            # Set a watchpoint on the memory location
+            gdb.execute(f"watch *({watch_point})")
 
         except gdb.error as e:
             print(f"Error: {e}")
+            return
 
 # Instantiate the command
-CircularDoublyLinkedList()
-
-# class LibraryDumper(gdb.Command):
-#     """Dump loaded libraries from local memory to files"""
-
-#     def __init__(self):
-#         super(LibraryDumper, self).__init__("dump_libraries", gdb.COMMAND_USER)
-
-#     def get_shared_libraries(self):
-#         """Get list of loaded libraries"""
-#         print("Getting shared libraries...")
-#         libraries = []
-#         output = gdb.execute('info sharedlibrary', to_string=True)
-#         print(output)
-
-#         for line in output.split('\n'):
-#             if 'target:' in line:
-#                 parts = line.split()
-#                 if len(parts) >= 5:
-#                     start_addr = parts[0]  # From address
-#                     end_addr = parts[1]    # To address
-#                     lib_path = parts[-1].replace('target:', '')
-#                     libraries.append((start_addr, end_addr, lib_path))
-#         return libraries
-
-#     def dump_library(self, start_addr, end_addr, lib_path, output_dir):
-#         """Dump library from local memory to file"""
-#         try:
-#             full_path = os.path.join(output_dir, lib_path.lstrip('/'))
-#             os.makedirs(os.path.dirname(full_path), exist_ok=True)
-
-#             cmd = f'dump memory {full_path} {start_addr} {end_addr}'
-#             gdb.execute(cmd)
-#             os.chmod(full_path, 0o755)
-#             print(f"Dumped: {lib_path}")
-#             return True
-
-#         except gdb.error as e:
-#             print(f"Failed to dump {lib_path}: {e}")
-#             return False
-
-#     def invoke(self, args, from_tty):
-#         try:
-#             argv = gdb.string_to_argv(args)
-#             if argv and argv[0] in ['-h', '--help', 'help']:
-#                 print("Usage: dump_libraries [output_directory]")
-#                 print("Dumps all loaded libraries from memory to the specified directory")
-#                 print("\nArguments:")
-#                 print("  output_directory  Directory to store libraries (default: ~/.remote)")
-#                 print("\nExample:")
-#                 print("  dump_libraries /path/to/output/dir")
-#                 return
-
-#             # Use default path if none specified
-#             output_dir = argv[0] if argv else os.path.expanduser("~/.remote")
-#             os.makedirs(output_dir, exist_ok=True)
-#             print(f"Using output directory: {output_dir}")
-
-#             libraries = self.get_shared_libraries()
-#             if not libraries:
-#                 print("No shared libraries found.")
-#                 return
-
-#             success_count = 0
-#             for start_addr, end_addr, lib_path in libraries:
-#                 if self.dump_library(start_addr, end_addr, lib_path, output_dir):
-#                     success_count += 1
-
-#             print(f"Dumped {success_count}/{len(libraries)} libraries")
-
-#         except Exception as e:
-#             print(f"Error: {e}")
-
-# # Register the command
-# LibraryDumper()
+SetWatch()

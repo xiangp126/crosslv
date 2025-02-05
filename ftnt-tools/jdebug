@@ -306,7 +306,7 @@ expect -c "
         send \"exit\r\"
         expect eof {
             set COLOR \$MAGENTA
-            puts stderr \"$USER_NOTATION \${COLOR}The worker count of WAD has been set to $fWADWorkerCnt successfully\${RESET}\"
+            puts stderr \"$USER_NOTATION \${COLOR}The worker count of WAD has been set to $fWADWorkerCnt successfully.\${RESET}\"
             exit 0
         }
     }
@@ -325,7 +325,7 @@ expect -c "
                 exp_continue
             }
             eof {
-                puts stderr \"$USER_NOTATION \${RED}System is rebooting\${RESET}\"
+                puts stderr \"$USER_NOTATION \${RED}System is rebooting at $(date +"%m/%d/%Y %H:%M:%S").\${RESET}\"
                 exit 0
             }
         }
