@@ -425,7 +425,7 @@ expect -c "
         puts stderr \"\n$USER_NOTATION Warning: Found \${LIGHTYELLOW}\$worker_cnt\${RESET} for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
         dump_pid_index_list \$pid_index_list
         if {[string match -nocase \"*work*\" $fWorkerType]} {
-            puts stderr \"$USER_NOTATION Select \[\${RED}\${pid}, ${fIndex}\${RESET}\]\"
+            puts stderr \"$USER_NOTATION Select \[\${RED}\${worker_pid}, \${worker_index}\${RESET}\]\"
             puts stderr \"$USER_NOTATION If you want to make life easier\"
             puts stderr \"$USER_NOTATION Please retry the same command with \${BLUE}-N1\${RESET}\"
         } else {

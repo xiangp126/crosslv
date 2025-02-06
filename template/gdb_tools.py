@@ -2,62 +2,6 @@ import re
 import gdb
 import argparse
 
-class CircularDoublyLinkedList(gdb.Command):
-    """Command to print and count elements in a circular doubly linked list."""
-
-    def __init__(self):
-        super(CircularDoublyLinkedList, self).__init__("ptlist", gdb.COMMAND_USER)
-
-    def get_node(self, ptr):
-        """Retrieve node data from the given pointer."""
-        return gdb.parse_and_eval(f"(struct list_head *){ptr}")
-
-    def invoke(self, arg, from_tty):
-        """Execute the command."""
-        if not arg:
-            print("Usage: ptlist <head_pointer>")
-            return
-
-        try:
-            head = self.get_node(f"(struct list_head *){arg}")
-            # print(f"Value of arg: {head_ptr}")
-            # print(f"Type of arg: {type(head_ptr)}")
-            # return
-
-            # +p g_wad_app_sessions.sessions
-            # $77 = {
-            #   next = 0x7f36fc296700,
-            #   prev = 0x7f364883df60
-            # }
-
-            elements = []
-            count = 0
-            curr = self.get_node(head['next'])  # Start from head->next
-            max_count = 20
-
-            while True:
-                if curr == head:
-                    break
-                if count >= max_count:
-                    break
-                elements.append(f"{curr}")
-                count += 1
-                curr = self.get_node(curr['next'])
-
-            for i in range(0, len(elements), 5):
-                print(" -> ".join(elements[i:i+5]))
-
-            if count < max_count:
-                print(f"Total number of elements: {count}")
-            else:
-                print(f"Note: Displayed only the first {max_count} elements")
-
-        except gdb.error as e:
-            print(f"Error: {e}")
-
-# Instantiate the command
-CircularDoublyLinkedList()
-
 class PrintErrno(gdb.Command):
     """Custom GDB command 'perrno' to display the current errno value."""
     def __init__(self):
@@ -467,3 +411,170 @@ class SetWatch(gdb.Command):
 
 # Instantiate the command
 SetWatch()
+
+class PrintListCommand(gdb.Command):
+    """Traverse and print a linked list in GDB.
+
+    Modes:
+      1. Raw mode (one argument): plist <list_head>
+         - Simply prints the raw list element addresses in groups of 5 per line.
+      2. Container mode (three or four arguments):
+             plist <list_head> <container_type> <field_name> [field_to_print]
+         - Computes the container from the list node and prints additional details.
+         - If [field_to_print] is provided, only that field from the container is printed.
+         - Otherwise, the entire container is printed.
+    """
+
+    def __init__(self):
+        super(PrintListCommand, self).__init__('plist', gdb.COMMAND_USER)
+        # Maximum nodes to search/traverse to avoid infinite loops.
+        self._max_searched_nodes = 1000
+        # Maximum nodes to print.
+        self._max_printed_nodes = 10
+
+    def get_offset_of(self, container_type, field_name):
+        # Compute the offset of the field in the container type.
+        return int(gdb.parse_and_eval(f"(unsigned long)&(({container_type} *)0)->{field_name}"))
+
+    def container_of(self, list_ptr, container_type, field_name):
+        # Given a pointer to a list element, compute the pointer to the container structure.
+        offset = self.get_offset_of(container_type, field_name)
+        return (list_ptr.cast(gdb.lookup_type("unsigned long")) - offset).cast(
+            gdb.lookup_type(container_type).pointer()
+        )
+
+    def traverse_list(self, head, container_type, field_name, field_to_print=None):
+        # Container mode traversal.
+        node_ptrs = []
+        current = head['next']
+        head_addr = head.address
+
+        while current != head_addr:
+            node_ptrs.append(current)
+            current = current['next']
+            # Prevent infinite loops.
+            if len(node_ptrs) >= self._max_searched_nodes:
+                print(f"Warning: More than {self._max_searched_nodes} nodes found. Only count {self._max_searched_nodes}.")
+                break
+
+        total_nodes = len(node_ptrs)
+        print(f"=== Total nodes found: {total_nodes} ===")
+
+        # Second pass: print node information, stopping after _max_printed_nodes.
+        for idx, node in enumerate(node_ptrs, start=1):
+            if idx > self._max_printed_nodes:
+                print(f"\n=== Max printed nodes reached: {self._max_printed_nodes} ===")
+                break
+
+            try:
+                # Compute the container from the list element.
+                real_node_ptr = self.container_of(node, container_type, field_name)
+                real_node = real_node_ptr.dereference()
+
+                print(f"\n=== Node {idx}/{total_nodes} ===")
+                print(f"Linked List Elem: {node}, field: {field_name}")
+                print(f"Container Node:   {real_node_ptr}, (({container_type} *) {real_node_ptr})")
+                # print(f"Container Addr:   {real_node_ptr.cast(gdb.lookup_type('void').pointer())}")
+                # print(f"Container Addr:   {real_node_ptr}")
+
+                # If a specific field is provided, print only that field.
+                if field_to_print:
+                    field_val = real_node[field_to_print]
+                    field_type = field_val.type
+                    print(f"Field to Print:   {field_to_print}, Type: {field_type}")
+                    print(f"Field Info:       ((({container_type} *) {real_node_ptr})->{field_to_print}), {field_val.address}")
+                    print(f"Value:")
+                    print(field_val)
+                else:
+                    print("Content:")
+                    print(real_node)
+
+                # Print the embedded list pointers for verification.
+                list_entry = real_node[field_name]
+                print("\nCurrent pointers:")
+                print(f"  next: {list_entry['next']}")
+                print(f"  prev: {list_entry['prev']}")
+
+            except Exception as e:
+                print(f"\n=== Error at Node {idx} ===")
+                print(f"Failed to process node: {str(e)}")
+                print("=== Stopping traversal ===")
+                return # Exit loop immediately on error
+
+        print(f"=== Summary: {total_nodes} nodes found, {min(total_nodes, self._max_printed_nodes)} nodes printed. ===")
+
+    def traverse_raw_list(self, head):
+        # Raw mode: simply collect the linked list element addresses.
+        node_ptrs = []
+        current = head['next']
+        head_addr = head.address
+
+        while current != head_addr:
+            node_ptrs.append(current)
+            current = current['next']
+            if len(node_ptrs) >= self._max_searched_nodes:
+                print(f"Warning: More than {self._max_searched_nodes} nodes found. Breaking to avoid infinite loop.")
+                break
+
+        total_nodes = len(node_ptrs)
+        print(f"=== Total nodes found: {total_nodes} ===")
+        print("Raw List Nodes (addresses):")
+
+        # Print 5 nodes per line.
+        for i in range(0, total_nodes, 5):
+            group = node_ptrs[i:i+5]
+            # Format each node's address as hex.
+            addresses = [hex(int(n)) for n in group]
+            print("  " + " => ".join(addresses))
+
+        print(f"=== Summary: {total_nodes} nodes found. ===")
+
+    def invoke(self, arg, from_tty):
+        argv = gdb.string_to_argv(arg)
+
+        # Raw mode: only one argument provided.
+        if len(argv) == 1:
+            try:
+                list_head = gdb.parse_and_eval(argv[0])
+                if list_head.type.code != gdb.TYPE_CODE_PTR:
+                    list_head = list_head.address
+                self.traverse_raw_list(list_head)
+            except Exception as e:
+                print(f"Error: {str(e)}")
+                raise
+
+        # Container mode: three or four arguments.
+        elif len(argv) in (3, 4):
+            try:
+                list_head = gdb.parse_and_eval(argv[0])
+                container_type = argv[1]
+                field_name = argv[2]
+                field_to_print = argv[3] if len(argv) == 4 else None
+
+                # Look up the provided type. If not found, try prepending "struct ".
+                try:
+                    gdb.lookup_type(container_type)
+                except gdb.error:
+                    container_type = "struct " + container_type
+                    gdb.lookup_type(container_type)
+
+                if list_head.type.code != gdb.TYPE_CODE_PTR:
+                    list_head = list_head.address
+
+                self.traverse_list(list_head, container_type, field_name, field_to_print)
+
+            except Exception as e:
+                print(f"Error: {str(e)}")
+                raise
+
+        else:
+            print("Usage:")
+            print("  Raw mode: plist <list_head>")
+            print("    Example: plist resp->headers")
+            print("")
+            print("  Container mode: plist <list_head> <container_type> <field_name> [field_to_print]")
+            print("    Example: plist req->headers wad_http_hdr link")
+            print("    Example: plist req->headers wad_http_hdr link name")
+            print("    (If the type is not found, 'struct ' is prepended automatically.)")
+
+PrintListCommand()
