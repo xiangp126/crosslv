@@ -430,7 +430,7 @@ class PrintListCommand(gdb.Command):
         # Maximum nodes to search/traverse to avoid infinite loops.
         self._max_searched_nodes = 1000
         # Maximum nodes to print.
-        self._max_printed_nodes = 10
+        self._max_printed_nodes = 30
 
     def get_offset_of(self, container_type, field_name):
         # Compute the offset of the field in the container type.
@@ -447,7 +447,8 @@ class PrintListCommand(gdb.Command):
         # Container mode traversal.
         node_ptrs = []
         current = head['next']
-        head_addr = head.address
+        head_addr = head
+        print(f"Head: {head_addr}")
 
         while current != head_addr:
             node_ptrs.append(current)
@@ -492,7 +493,7 @@ class PrintListCommand(gdb.Command):
                 # Print the embedded list pointers for verification.
                 list_entry = real_node[field_name]
                 print("\nCurrent pointers:")
-                print(f"  next: {list_entry['next']}")
+                print(f"  next: {list_entry['next']} (head: {head_addr})")
                 print(f"  prev: {list_entry['prev']}")
 
             except Exception as e:
@@ -501,13 +502,14 @@ class PrintListCommand(gdb.Command):
                 print("=== Stopping traversal ===")
                 return # Exit loop immediately on error
 
-        print(f"=== Summary: {total_nodes} nodes found, {min(total_nodes, self._max_printed_nodes)} nodes printed. ===")
+        print(f"=== Summary: {total_nodes} nodes found, {min(total_nodes, self._max_printed_nodes)} nodes printed ===")
 
     def traverse_raw_list(self, head):
         # Raw mode: simply collect the linked list element addresses.
         node_ptrs = []
         current = head['next']
-        head_addr = head.address
+        head_addr = head
+        print(f"Head {head_addr} =>")
 
         while current != head_addr:
             node_ptrs.append(current)
@@ -516,6 +518,8 @@ class PrintListCommand(gdb.Command):
                 print(f"Warning: More than {self._max_searched_nodes} nodes found. Breaking to avoid infinite loop.")
                 break
 
+        # Add the head node to the list.
+        # node_ptrs.append(head_addr)
         total_nodes = len(node_ptrs)
         print(f"=== Total nodes found: {total_nodes} ===")
         print("Raw List Nodes (addresses):")
@@ -525,9 +529,9 @@ class PrintListCommand(gdb.Command):
             group = node_ptrs[i:i+5]
             # Format each node's address as hex.
             addresses = [hex(int(n)) for n in group]
-            print("  " + " => ".join(addresses))
+            print("     " + " => ".join(addresses))
 
-        print(f"=== Summary: {total_nodes} nodes found. ===")
+        print(f"=== Summary: {total_nodes} nodes found ===")
 
     def invoke(self, arg, from_tty):
         argv = gdb.string_to_argv(arg)

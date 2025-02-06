@@ -36,6 +36,7 @@ define ftnt
         set solib-search-path $arg0/rlib:$arg0/fortipkg/lib/x86_64:$arg0/fortipkg/lib/x86_64/providers
     end
 end
+ftnt
 # Reload the binary and source code after the binary is updated
 define reload
     file sysinit/init
