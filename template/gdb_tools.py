@@ -574,7 +574,69 @@ class PrintListCommand(gdb.Command):
             print("")
             print("  Container mode: plist <list_head> <container_type> <field_name> [field_to_print]")
             print("    Example: plist req->headers wad_http_hdr link")
-            print("    Example: plist req->headers wad_http_hdr link name")
+            print("    Example: plist req->headers wad_http_hdr link val")
             print("    (If the type is not found, 'struct ' is prepended automatically.)")
 
 PrintListCommand()
+
+class PDataCommand(gdb.Command):
+    """Print a substring from a wad_sstr structure.
+    Usage: pdata <wad_sstr_ptr/wad_sstr_val>
+
+    For a given pointer to a struct wad_sstr
+    This command builds and executes the GDB command:
+       p <var>->buff->data[<var>->start]@<var>->len
+
+    The expected definitions are:
+
+        struct wad_sstr {
+            struct wad_str *buff;
+            unsigned int start;
+            int len;
+        };
+
+    and the field "data" is assumed to be a member of struct wad_str.
+    """
+    def __init__(self):
+        super(PDataCommand, self).__init__("pdata", gdb.COMMAND_DATA)
+
+    def invoke(self, argument, from_tty):
+        arg = argument.strip()
+        if not arg:
+            print("Usage: pdata <wad_sstr_ptr/wad_sstr_val>")
+            print("Example: pdata resp->req_line->data")
+            return
+
+        try:
+            var = gdb.parse_and_eval(arg)
+            # Look up the canonical type for 'struct wad_sstr'
+            wad_sstr_type = gdb.lookup_type("struct wad_sstr")
+
+            type = var.type
+            addr = var.address
+
+            if type.code == gdb.TYPE_CODE_PTR:
+                addr = var
+                type = var.type.target()
+
+            # Strip qualifiers (const, volatile) and compare
+            if type.unqualified() != wad_sstr_type:
+                print(f"Error: Expected type 'struct wad_sstr' or 'struct wad_sstr *', but got: {var.type}")
+                return False
+
+            # Print the complete wad_sstr variable.
+            print(var)
+
+            # Extract the start field from the wad_sstr struct.
+            var_start = var['start']
+            var_length = var['len']
+
+            # Construct the command string for the substring.
+            cmd = "p (({0} *){1})->buff->data[{2}]@{3}".format(type, addr, var_start, var_length)
+            result = gdb.execute(cmd, to_string=True)
+            print(result, end="")
+        except gdb.error as e:
+            print("Error executing command: {}".format(e))
+
+# Register the command with GDB.
+PDataCommand()
