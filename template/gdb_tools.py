@@ -564,7 +564,7 @@ class PrintListCommand(gdb.Command):
                 print(f"  prev: {list_entry['prev']}")
 
             except Exception as e:
-                print(f"\n=== Error at Node {cnt} ===")
+                print(f"\n=== Error at Node {idx} ===")
                 print(f"Failed to process node: {str(e)}")
                 print("=== Stopping traversal ===")
                 return # Exit loop immediately on error
@@ -573,8 +573,12 @@ class PrintListCommand(gdb.Command):
                 idx -= 1
             else:
                 idx += 1
-
-        print(f"=== Summary: {total_nodes} nodes found, {min(total_nodes, self._max_print_nodes)} nodes printed ===")
+        # Print a summary message.
+        summary_message = "=== Summary: {0} nodes found, {1} nodes printed ".format(total_nodes, min(total_nodes, self._max_print_nodes))
+        if reverse:
+            summary_message += "(in reverse order) ==="
+        summary_message += "===\n"
+        print(summary_message)
 
     def traverse_raw_list(self, head):
         # Raw mode: simply collect the linked list element addresses.
