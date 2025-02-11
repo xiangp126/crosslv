@@ -9,13 +9,12 @@ _jroute_complete() {
     opts="-t -d -h"
     # List of all long options
     long_opts="--gateway --dry-run --help"
+    gateways="fgt1 fgt2 fgt3 fpx1 fpx2 fpx3 host_br1 host_br2 host_br3 host_router"
 
     # Handle option arguments
     case $prev in
         # Gateway selection options
         -t|--gateway)
-            # List all available gateways from the script's mapping
-            local gateways="fgt1 fgt2 fgt3 fpx1 fpx2 fpx3 host_br1 host_br2 host_br3 host_router"
             COMPREPLY=( $(compgen -W "${gateways}" -- ${cur}) )
             return 0
             ;;
@@ -36,6 +35,10 @@ _jroute_complete() {
         fi
         return 0
     fi
+
+    # If no options match, return all possible gateways
+    COMPREPLY=( $(compgen -W "${gateways}" -- ${cur}) )
+    return 0
 }
 
 # Register the completion function for jroute

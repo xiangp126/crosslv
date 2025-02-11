@@ -80,6 +80,10 @@ _EOF
     exit 0
 }
 
+if [ "$#" -eq 0 ]; then
+    usage
+fi
+
 SHORTOPTS="ht:w:d:T:l:u:p:P:N:rks"
 LONGOPTS="help,target:,worker-type:,debug-port:,max-attempts:,username:,password:,port:,worker-cnt:,display-only,reboot,silent,kill,select:"
 if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
@@ -158,7 +162,6 @@ while true; do
 done
 
 [ -n "$1" ] && fTarget="$1"
-
 if [ $# -gt 1 ]; then
     echo -e "${MAGENTA}Too many arguments.${RESET}" >&2
     usage

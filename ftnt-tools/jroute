@@ -95,15 +95,16 @@ while true; do
             break
             ;;
         *)
-            echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid option $1${RESET}"
+            echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid option $1${RESET}" >&2
             exit 1
             ;;
     esac
 done
 
-if [[ $# -gt 0 ]]; then
-    echo -e "$USER_NOTATION ${MAGENTA}Error: Illegal non-option argument: $@${RESET}"
-    exit
+[ -n "$1" ] && fNewGateway="$1"
+if [ $# -gt 1 ]; then
+    echo -e "$USER_NOTATION ${MAGENTA}Error: Too many arguments${RESET}" >&2
+    exit 1
 fi
 
 validate_environment() {
@@ -112,7 +113,7 @@ validate_environment() {
         echo "$USER_NOTATION USERNAME: $fUsername"
         echo "$USER_NOTATION HOSTNAME: $fHostname"
         echo "$USER_NOTATION OSTYPE: $OSTYPE"
-        echo -e "$USER_NOTATION ${COLOR}Dangerous! This script is only for client VMs with username 'corsair' on Linux${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Stopped! This script is only for client VMs with username 'corsair' on Linux.${RESET}" >&2
         return 1
     fi
     return 0
