@@ -550,8 +550,8 @@ class PrintListCommand(gdb.Command):
                     field_val = real_node[field_to_print]
                     field_type = field_val.type
                     print(f"Field to Print:   {field_to_print}, Type: {field_type}")
-                    print(f"Field Info:       ((({container_type} *) {real_node_ptr})->{field_to_print}), {field_val.address}")
-                    print(f"Value:")
+                    print(f"Field Info:       ((({container_type} *) {real_node_ptr})->{field_to_print}) => {field_val.address}")
+                    print(f"=>")
                     print(field_val)
                 else:
                     print("Content:")
@@ -622,6 +622,7 @@ class PrintListCommand(gdb.Command):
                     "  Container mode:\n"
                     "    plist req->headers wad_http_hdr link\n"
                     "    plist req->headers wad_http_hdr link val\n"
+                    "    plist ib->regions wad_buff_region link data"
                     "  Reverse traversal (default) vs. forward traversal:\n"
                     "    plist req->headers wad_http_hdr link  # Reverse order (default)\n"
                     "    plist --no-reverse req->headers wad_http_hdr link  # Forward order\n",
