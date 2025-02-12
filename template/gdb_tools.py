@@ -463,10 +463,8 @@ class PDataCommand(gdb.Command):
                     print(f"Error: Expected type 'struct wad_sstr' or 'struct wad_sstr *', but got: {unqualified_type}")
                     return False
 
-            # Print the complete wad_sstr variable.
             print(var)
 
-            # Extract the start field from the wad_sstr struct.
             var_start = var['start']
             var_length = var['len']
 
@@ -487,9 +485,9 @@ class PrintListCommand(gdb.Command):
       1. Raw mode (one argument): plist <list_head>
          - Simply prints the raw list element addresses in groups of 5 per line.
       2. Container mode (three or four arguments):
-             plist <list_head> <container_type> <field_name> [fields_to_print]
+             plist <list_head> <container_type> <member_name> [fields_to_print]
          - Computes the container from the list node and prints additional details.
-         - If [fields_to_print] is provided, only that field from the container is printed.
+         - If [fields_to_print] is provided, only the fields specified will be printed.
          - Otherwise, the entire container is printed.
     """
 
@@ -500,18 +498,18 @@ class PrintListCommand(gdb.Command):
         # Maximum nodes to print.
         self._max_print_nodes = 50
 
-    def get_offset_of(self, container_type, field_name):
-        # Compute the offset of the field in the container type.
-        return int(gdb.parse_and_eval(f"(unsigned long)&(({container_type} *)0)->{field_name}"))
+    def get_offset_of(self, container_type, member_name):
+        # Compute the offset of the member in the container type.
+        return int(gdb.parse_and_eval(f"(unsigned long)&(({container_type} *)0)->{member_name}"))
 
-    def container_of(self, list_ptr, container_type, field_name):
+    def container_of(self, list_ptr, container_type, member_name):
         # Given a pointer to a list element, compute the pointer to the container structure.
-        offset = self.get_offset_of(container_type, field_name)
+        offset = self.get_offset_of(container_type, member_name)
         return (list_ptr.cast(gdb.lookup_type("unsigned long")) - offset).cast(
             gdb.lookup_type(container_type).pointer()
         )
 
-    def traverse_list(self, reverse, head, container_type, field_name, fields_to_print=None):
+    def traverse_list(self, reverse, head, container_type, member_name, fields_to_print=None):
         # Container mode traversal.
         node_ptrs = []
 
@@ -543,11 +541,11 @@ class PrintListCommand(gdb.Command):
         for node in nodes_to_print:
             try:
                 # Compute the container from the list element.
-                real_node_ptr = self.container_of(node, container_type, field_name)
+                real_node_ptr = self.container_of(node, container_type, member_name)
                 real_node = real_node_ptr.dereference()
 
                 print(f"\n=== Node {idx}/{total_nodes} ===")
-                print(f"{'List Elem:':<10} {node}, field in container: {field_name}")
+                print(f"{'List Elem:':<10} {node}, member in container: {member_name}")
                 print(f"{'Container:':<10} {real_node_ptr}, (({container_type} *) {real_node_ptr})")
 
                 if fields_to_print:
@@ -565,7 +563,7 @@ class PrintListCommand(gdb.Command):
                     print(real_node)
 
                 # Print the embedded list pointers for verification.
-                list_entry = real_node[field_name]
+                list_entry = real_node[member_name]
                 print("\nCurrent pointers:")
                 print(f"  next: {list_entry['next']} (head: {head})")
                 print(f"  prev: {list_entry['prev']}")
@@ -646,8 +644,8 @@ class PrintListCommand(gdb.Command):
         parser.add_argument("list_head", help="The head pointer for the list.")
         parser.add_argument("container_type", nargs="?", default=None,
                             help="The container type.")
-        parser.add_argument("field_name", nargs="?", default=None,
-                            help="The field name of the list node in the container.")
+        parser.add_argument("member_name", nargs="?", default=None,
+                            help="The member name of the list node in the container.")
         parser.add_argument("fields_to_print", nargs="*", default=None,
                             help="Optional fields from the container to print.")
 
@@ -669,11 +667,11 @@ class PrintListCommand(gdb.Command):
             except Exception as e:
                 print(f"Error: {str(e)}")
                 raise
-        elif args.container_type is not None and args.field_name is not None:
+        elif args.container_type is not None and args.member_name is not None:
             try:
                 list_head = gdb.parse_and_eval(args.list_head)
                 container_type = args.container_type
-                field_name = args.field_name
+                member_name = args.member_name
                 fields_to_print = args.fields_to_print
 
                 try:
@@ -685,7 +683,7 @@ class PrintListCommand(gdb.Command):
                 if list_head.type.code != gdb.TYPE_CODE_PTR:
                     list_head = list_head.address
 
-                self.traverse_list(args.reverse, list_head, container_type, field_name, fields_to_print)
+                self.traverse_list(args.reverse, list_head, container_type, member_name, fields_to_print)
             except Exception as e:
                 print(f"Error: {str(e)}")
                 raise
