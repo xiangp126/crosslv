@@ -445,6 +445,7 @@ class PDataCommand(gdb.Command):
             var = gdb.parse_and_eval(arg)
             # Look up the canonical type for 'struct wad_sstr'
             wad_sstr_type = gdb.lookup_type("struct wad_sstr")
+            wad_buff_region_type = gdb.lookup_type("struct wad_buff_region")
 
             type = var.type
             addr = var.address
@@ -454,9 +455,13 @@ class PDataCommand(gdb.Command):
                 type = var.type.target()
 
             # Strip qualifiers (const, volatile) and compare
-            if type.unqualified() != wad_sstr_type:
-                print(f"Error: Expected type 'struct wad_sstr' or 'struct wad_sstr *', but got: {var.type}")
-                return False
+            unqualified_type = type.unqualified()
+            if unqualified_type != wad_sstr_type:
+                if unqualified_type in [wad_buff_region_type, wad_buff_region_type.pointer()]:
+                    var = gdb.parse_and_eval(f"((struct wad_buff_region *){addr})->data")
+                else:
+                    print(f"Error: Expected type 'struct wad_sstr' or 'struct wad_sstr *', but got: {unqualified_type}")
+                    return False
 
             # Print the complete wad_sstr variable.
             print(var)
@@ -482,9 +487,9 @@ class PrintListCommand(gdb.Command):
       1. Raw mode (one argument): plist <list_head>
          - Simply prints the raw list element addresses in groups of 5 per line.
       2. Container mode (three or four arguments):
-             plist <list_head> <container_type> <field_name> [field_to_print]
+             plist <list_head> <container_type> <field_name> [fields_to_print]
          - Computes the container from the list node and prints additional details.
-         - If [field_to_print] is provided, only that field from the container is printed.
+         - If [fields_to_print] is provided, only that field from the container is printed.
          - Otherwise, the entire container is printed.
     """
 
@@ -506,7 +511,7 @@ class PrintListCommand(gdb.Command):
             gdb.lookup_type(container_type).pointer()
         )
 
-    def traverse_list(self, reverse, head, container_type, field_name, field_to_print=None):
+    def traverse_list(self, reverse, head, container_type, field_name, fields_to_print=None):
         # Container mode traversal.
         node_ptrs = []
 
@@ -542,19 +547,21 @@ class PrintListCommand(gdb.Command):
                 real_node = real_node_ptr.dereference()
 
                 print(f"\n=== Node {idx}/{total_nodes} ===")
-                print(f"Linked List Elem: {node}, field: {field_name}")
-                print(f"Container Node:   {real_node_ptr}, (({container_type} *) {real_node_ptr})")
-                # print(f"Container Addr:   {real_node_ptr.cast(gdb.lookup_type('void').pointer())}")
+                print(f"{'List Elem:':<10} {node}, field in container: {field_name}")
+                print(f"{'Container:':<10} {real_node_ptr}, (({container_type} *) {real_node_ptr})")
 
-                if field_to_print:
-                    field_val = real_node[field_to_print]
-                    field_type = field_val.type
-                    print(f"Field to Print:   {field_to_print}, Type: {field_type}")
-                    print(f"Field Info:       ((({container_type} *) {real_node_ptr})->{field_to_print}) => {field_val.address}")
-                    print(f"=>")
-                    print(field_val)
+                if fields_to_print:
+                    for field in fields_to_print:
+                        # field_val = real_node[fields_to_print]
+                        # field_type = field_val.type
+                        formatted_field=f"((({container_type} *) {real_node_ptr})->{field})"
+                        field_val = gdb.parse_and_eval(formatted_field)
+                        field_type = field_val.type
+                        print(f"{'Field:':<{6}} {field}, Type: {field_type}")
+                        print(f"{'Value:':<{6}} ((({container_type} *) {real_node_ptr})->{field})")
+                        print(field_val)
                 else:
-                    print("Content:")
+                    print(f"{'Content:':<10}")
                     print(real_node)
 
                 # Print the embedded list pointers for verification.
@@ -641,8 +648,8 @@ class PrintListCommand(gdb.Command):
                             help="The container type.")
         parser.add_argument("field_name", nargs="?", default=None,
                             help="The field name of the list node in the container.")
-        parser.add_argument("field_to_print", nargs="?", default=None,
-                            help="Optional field from the container to print.")
+        parser.add_argument("fields_to_print", nargs="*", default=None,
+                            help="Optional fields from the container to print.")
 
         try:
             argv = gdb.string_to_argv(arg)
@@ -667,7 +674,7 @@ class PrintListCommand(gdb.Command):
                 list_head = gdb.parse_and_eval(args.list_head)
                 container_type = args.container_type
                 field_name = args.field_name
-                field_to_print = args.field_to_print
+                fields_to_print = args.fields_to_print
 
                 try:
                     gdb.lookup_type(container_type)
@@ -678,7 +685,7 @@ class PrintListCommand(gdb.Command):
                 if list_head.type.code != gdb.TYPE_CODE_PTR:
                     list_head = list_head.address
 
-                self.traverse_list(args.reverse, list_head, container_type, field_name, field_to_print)
+                self.traverse_list(args.reverse, list_head, container_type, field_name, fields_to_print)
             except Exception as e:
                 print(f"Error: {str(e)}")
                 raise
