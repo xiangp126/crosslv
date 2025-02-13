@@ -166,8 +166,8 @@ PrintErrno()
 
 class PrettyPrintMemory(gdb.Command):
     """Print memory at the specified address using various formats."""
-    def __init__(self):
-        super(PrettyPrintMemory, self).__init__("pp", gdb.COMMAND_USER)
+    def __init__(self, name):
+        super(PrettyPrintMemory, self).__init__(name, gdb.COMMAND_USER)
         self.parser = self._create_parser()
 
     def print_session_ctx(self, address, type):
@@ -357,7 +357,6 @@ class PrettyPrintMemory(gdb.Command):
             size = 0
 
             if code != gdb.TYPE_CODE_PTR:
-                print(f"Warning: {addr} is not a pointer, use its address instead")
                 addr = ret.address
                 type = ret.type
             else:
@@ -372,7 +371,8 @@ class PrettyPrintMemory(gdb.Command):
             self.print_help()
 
 # Instantiate the command
-PrettyPrintMemory()
+PrettyPrintMemory("pm")
+PrettyPrintMemory("pmem")
 
 class SetWatch(gdb.Command):
     """Set a watchpoint on the memory location of the given input."""
@@ -430,8 +430,8 @@ class PDataCommand(gdb.Command):
 
     and the field "data" is assumed to be a member of struct wad_str.
     """
-    def __init__(self):
-        super(PDataCommand, self).__init__("pdata", gdb.COMMAND_DATA)
+    def __init__(self, name):
+        super(PDataCommand, self).__init__(name, gdb.COMMAND_DATA)
 
     def invoke(self, argument, from_tty):
         arg = argument.strip()
@@ -457,6 +457,10 @@ class PDataCommand(gdb.Command):
                 addr = var
                 var = var.dereference()
 
+            if addr == 0:
+                gdb.execute(f"p {arg}")
+                return
+
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
             if unqualified_type == wad_buff_region_type:
@@ -477,7 +481,7 @@ class PDataCommand(gdb.Command):
             buff_length = var['len']
 
             if buff_addr == 0:
-                print("Error: buff is NULL")
+                gdb.execute(f"p {buff_addr}")
                 return
 
             # Construct the command string for the substring.
@@ -487,7 +491,8 @@ class PDataCommand(gdb.Command):
             print("Error executing command: {}".format(e))
 
 # Register the command with GDB.
-PDataCommand()
+PDataCommand("pdata")
+PDataCommand("pd")
 
 class PrintListCommand(gdb.Command):
     """Traverse and print a linked list in GDB.
@@ -502,8 +507,8 @@ class PrintListCommand(gdb.Command):
          - Otherwise, the entire container is printed.
     """
 
-    def __init__(self):
-        super(PrintListCommand, self).__init__('plist', gdb.COMMAND_USER)
+    def __init__(self, name):
+        super(PrintListCommand, self).__init__(name, gdb.COMMAND_USER)
         # Maximum nodes to search/traverse to avoid infinite loops.
         self._max_search_nodes = 1000
         # Maximum nodes to print.
@@ -532,7 +537,6 @@ class PrintListCommand(gdb.Command):
             current = head['next']
             next_field = 'next'
 
-        print(f"Head: {head}")
         while current != head:
             node_ptrs.append(current)
             current = current[next_field]
@@ -570,7 +574,7 @@ class PrintListCommand(gdb.Command):
                         print(f"{'Value:':<{6}} ((({container_type} *) {real_node_ptr})->{field})")
                         print(field_val)
                 else:
-                    print(f"{'Content:':<10}")
+                    # print(f"{'Content:':<9}")
                     print(real_node)
 
                 # Print the embedded list pointers for verification.
@@ -600,10 +604,8 @@ class PrintListCommand(gdb.Command):
         # Raw mode: simply collect the linked list element addresses.
         node_ptrs = []
         current = head['next']
-        head_addr = head
-        print(f"Head {head_addr} =>")
 
-        while current != head_addr:
+        while current != head:
             node_ptrs.append(current)
             current = current['next']
             if len(node_ptrs) >= self._max_search_nodes:
@@ -707,10 +709,14 @@ class PrintListCommand(gdb.Command):
         unqualified_type = type.unqualified()
         if unqualified_type == wad_buff_type:
             list_head = parsed['regions'].address
+            print(f"Origin: (({type} *) {addr})")
         elif unqualified_type == list_head_type:
             list_head = addr
         else:
             print(f"Error: Unexpected type: {unqualified_type}")
+
+        # print(f"Head:  (({list_head_type} *) {list_head})")
+        print(f"Head: {list_head}")
 
         if args.container_type is None:
             try:
@@ -740,4 +746,5 @@ class PrintListCommand(gdb.Command):
         else:
             parser.print_help()
 
-PrintListCommand()
+PrintListCommand("plist")
+PrintListCommand("pl")
