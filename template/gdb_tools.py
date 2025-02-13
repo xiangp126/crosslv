@@ -446,32 +446,43 @@ class PDataCommand(gdb.Command):
             # Look up the canonical type for 'struct wad_sstr'
             wad_sstr_type = gdb.lookup_type("struct wad_sstr")
             wad_buff_region_type = gdb.lookup_type("struct wad_buff_region")
+            wad_str_type = gdb.lookup_type("struct wad_str")
 
             type = var.type
             addr = var.address
 
             if type.code == gdb.TYPE_CODE_PTR:
-                addr = var
+                # Get the type of the object that the pointer points to
                 type = var.type.target()
+                addr = var
+                var = var.dereference()
 
-            # Strip qualifiers (const, volatile) and compare
+            # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
-            if unqualified_type != wad_sstr_type:
-                if unqualified_type in [wad_buff_region_type, wad_buff_region_type.pointer()]:
-                    var = gdb.parse_and_eval(f"((struct wad_buff_region *){addr})->data")
-                else:
-                    print(f"Error: Expected type 'struct wad_sstr' or 'struct wad_sstr *', but got: {unqualified_type}")
-                    return False
+            if unqualified_type == wad_buff_region_type:
+                var = gdb.parse_and_eval(f"(({type} *){addr})->data")
+            elif unqualified_type == wad_str_type:
+                gdb.execute(f"p *(({type} *){addr})")
+                return True
+            elif unqualified_type == wad_sstr_type:
+                pass
+            else:
+                print(f"Error: Unexpected type: {unqualified_type}")
+                return False
 
             print(var)
 
-            var_start = var['start']
-            var_length = var['len']
+            buff_addr = var['buff']
+            buff_start = var['start']
+            buff_length = var['len']
+
+            if buff_addr == 0:
+                print("Error: buff is NULL")
+                return
 
             # Construct the command string for the substring.
-            cmd = "p (({0} *){1})->buff->data[{2}]@{3}".format(type, addr, var_start, var_length)
-            result = gdb.execute(cmd, to_string=True)
-            print(result, end="")
+            cmd = "p (({0} *){1})->buff->data[{2}]@{3}".format(type, addr, buff_start, buff_length)
+            gdb.execute(cmd)
         except gdb.error as e:
             print("Error executing command: {}".format(e))
 
@@ -627,19 +638,25 @@ class PrintListCommand(gdb.Command):
                     "  Container mode:\n"
                     "    plist req->headers wad_http_hdr link\n"
                     "    plist req->headers wad_http_hdr link val\n"
-                    "    plist ib->regions wad_buff_region link data"
-                    "  Reverse traversal (default) vs. forward traversal:\n"
-                    "    plist req->headers wad_http_hdr link  # Reverse order (default)\n"
-                    "    plist --no-reverse req->headers wad_http_hdr link  # Forward order\n",
+                    "    plist ib->regions --http-header --fields data\n"
+                    "    plist ib->regions --buff-region --fields data\n"
+                    "    plist buff --buff-region --fields ref_count data\n",
         formatter_class=argparse.RawTextHelpFormatter  # Preserves newlines in help text
         )
         # Optional arguments for the list traversal.
+        # If dest is specified, the attribute will use the name provided in dest instead of the default derived name.
         parser.add_argument("--no-reverse", action="store_false", dest="reverse",
                             default=True, help="Disable reverse traversal. Only for container mode.")
         parser.add_argument("--max-search", type=int, default=self._max_search_nodes,
                             help="Max nodes to search before stopping (default: 1000).")
         parser.add_argument("--max-print", type=int, default=self._max_print_nodes,
                             help="Max nodes to print before stopping (default: 50).")
+        parser.add_argument("--buff-region", action="store_true",
+                        help="Set container type to 'struct wad_buff_region' and member name to 'link'.")
+        parser.add_argument("--http-header", action="store_true",
+                        help="Set container type to 'struct wad_http_hdr' and member name to 'link'.")
+        parser.add_argument("--fields", nargs="*", default=[],
+                        help="List of fields from the container to print.")
         # Positional arguments for the list traversal.
         parser.add_argument("list_head", help="The head pointer for the list.")
         parser.add_argument("container_type", nargs="?", default=None,
@@ -648,28 +665,61 @@ class PrintListCommand(gdb.Command):
                             help="The member name of the list node in the container.")
         parser.add_argument("fields_to_print", nargs="*", default=None,
                             help="Optional fields from the container to print.")
-
         try:
             argv = gdb.string_to_argv(arg)
             args = parser.parse_args(argv)
         except SystemExit:
             return
 
+        if args.buff_region:
+            args.container_type = "struct wad_buff_region"
+            args.member_name = "link"
+
+        if args.http_header:
+            args.container_type = "struct wad_http_hdr"
+            args.member_name = "link"
+
+        if args.fields:
+            args.fields_to_print = args.fields
+
         self._max_search_nodes = args.max_search
         self._max_print_nodes = args.max_print
 
+	    # Process list_head argument.
+        try:
+            parsed = gdb.parse_and_eval(args.list_head)
+        except gdb.error as e:
+            print(f"Error: {e}")
+            return
+        list_head_type = gdb.lookup_type("struct list_head")
+        wad_buff_type = gdb.lookup_type("struct wad_buff")
+
+        type = parsed.type
+        addr = parsed.address
+
+        if type.code == gdb.TYPE_CODE_PTR:
+            # Get the type of the object that the pointer points to
+            type = parsed.type.target()
+            addr = parsed
+            parsed = parsed.dereference()
+
+        # Strip qualifiers (const, volatile) from the type
+        unqualified_type = type.unqualified()
+        if unqualified_type == wad_buff_type:
+            list_head = parsed['regions'].address
+        elif unqualified_type == list_head_type:
+            list_head = addr
+        else:
+            print(f"Error: Unexpected type: {unqualified_type}")
+
         if args.container_type is None:
             try:
-                list_head = gdb.parse_and_eval(args.list_head)
-                if list_head.type.code != gdb.TYPE_CODE_PTR:
-                    list_head = list_head.address
                 self.traverse_raw_list(list_head)
             except Exception as e:
                 print(f"Error: {str(e)}")
                 raise
         elif args.container_type is not None and args.member_name is not None:
             try:
-                list_head = gdb.parse_and_eval(args.list_head)
                 container_type = args.container_type
                 member_name = args.member_name
                 fields_to_print = args.fields_to_print
