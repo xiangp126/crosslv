@@ -7,8 +7,8 @@ _jr_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define options
-    opts="-h -v -d -e -r -z"
-    long_opts="--help --vim --debug --extended-search --rg-only --zero-query"
+    opts="-h -v -d -k -r"
+    long_opts="--help --vim --debug --kernel --rg-only"
 
     case "${prev}" in
 	*)

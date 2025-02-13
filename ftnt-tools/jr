@@ -11,9 +11,8 @@ fEditor="code"
 fDebug=
 fOnlyRg=
 fzfSelected=
-fZeroQuery=
 fQuery=
-fExtendedSearch=  # Include the linux kernel source code in the search
+fKernelIncluded=  # Include the linux kernel source code in the search
 # Colors
 MAGENTA='\033[35m'
 NORMAL='\033[0m'
@@ -24,26 +23,25 @@ COLOR=$MAGENTA
 
 usage() {
     cat << _EOF
-Usage: $SCRIPTNAME [OPTIONS] <search term>
+Usage: $SCRIPTNAME [OPTIONS] [search_term]
 
 Options:
     -h, --help               Print this help message
-    -z, --zero-query         Search with zero query (you can also use jz command directly)
     -r, --rg-only            Only use rg to search, not use fzf
-    -e, --extended-search    Extended Search. Include the linux kernel source code in the search
+    -k, --kernel             Include the linux kernel source code in the search
     -v, --vim                Open the file with vim (default is $fEditor)
     -d, --debug              Print debug information
 
 Example: $SCRIPTNAME wad_tcp_bind
-         $SCRIPTNAME -z
+         $SCRIPTNAME --kernel
 
 _EOF
     exit 1
 }
 
 # Define short and long options
-SHORTOPTS="hvdrez"
-LONGOPTS="help,vim,debug,extended-search,rg-only,zero-query"
+SHORTOPTS="hvdrk"
+LONGOPTS="help,vim,debug,kernel,rg-only"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
@@ -64,17 +62,12 @@ while true; do
             fEditor="vim"
             shift
             ;;
-        -z|--zero-query)
-            fZeroQuery=true
-            fQuery=""
-            shift
-            ;;
         -d|--debug)
             fDebug=true
             shift
             ;;
-        -e|--extended-search)
-            fExtendedSearch=true
+        -k|--kernel)
+            fKernelIncluded=true
             shift
             ;;
         -r|--rg-only)
@@ -93,10 +86,6 @@ while true; do
 done
 
 fQuery="$*"
-if [ $# -eq 0 ] && [ -z "$fZeroQuery" ]; then
-    echo -e "${COLOR}Error: No search term provided.${RESET}"
-    usage
-fi
 
 # Only need to run for the first time
 checkDependencies() {
@@ -119,7 +108,7 @@ parserAndPolish() {
 
 searchAndOpen() {
     # --glob='*.{c,h,cpp,js,ts,py,html,css,sh,php}'
-    local extSearch="--glob='!linux-*/*'"
+    local kernelSearch="--glob='!linux-*/*'"
     local rgParams="--smart-case \
                     --color=ansi \
                     --colors 'match:fg:204,51,153' --colors 'match:style:bold' \
@@ -135,8 +124,8 @@ searchAndOpen() {
                      --preview-window 'top,60%,border-bottom,+{2}+3/3,~3' \
                      --cycle \
                     "
-    if [ -z "$fExtendedSearch" ]; then
-        rgParams="$rgParams $extSearch"
+    if [ -z "$fKernelIncluded" ]; then
+        rgParams="$rgParams $kernelSearch"
     fi
 
     # Squash multiple whitespaces

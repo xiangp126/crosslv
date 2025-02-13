@@ -413,30 +413,13 @@ class SetWatch(gdb.Command):
 SetWatch()
 
 class PDataCommand(gdb.Command):
-    """Print a substring from a wad_sstr structure.
-    Usage: pdata <wad_sstr_ptr/wad_sstr_val>
-
-    For a given pointer to a struct wad_sstr
-    This command builds and executes the GDB command:
-       p <var>->buff->data[<var>->start]@<var>->len
-
-    The expected definitions are:
-
-        struct wad_sstr {
-            struct wad_str *buff;
-            unsigned int start;
-            int len;
-        };
-
-    and the field "data" is assumed to be a member of struct wad_str.
-    """
     def __init__(self, name):
         super(PDataCommand, self).__init__(name, gdb.COMMAND_DATA)
 
     def invoke(self, argument, from_tty):
         arg = argument.strip()
         if not arg:
-            print("Usage: pdata <wad_sstr_ptr/wad_sstr_val>")
+            print("Usage: pdata <data_to_print>")
             print("Example: pdata req->req_line->data")
             print("Example: pdata resp->req_line->data")
             return
