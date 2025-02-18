@@ -272,6 +272,7 @@ class PrettyPrintMemory(gdb.Command):
         print(f'Big-endian Dec string: {dec_string}')
         print(f"Big-endian Decimal:    {be_val}")
         print(f"Little-endian Decimal: {le_val}")
+        gdb.execute(f"x/{size}bt {mem}")
 
     def _create_parser(self):
         # Note: We can't use argparse directly with GDB's argument string
@@ -430,6 +431,9 @@ class PDataCommand(gdb.Command):
             wad_sstr_type = gdb.lookup_type("struct wad_sstr")
             wad_buff_region_type = gdb.lookup_type("struct wad_buff_region")
             wad_str_type = gdb.lookup_type("struct wad_str")
+            wad_line_type = gdb.lookup_type("struct wad_line")
+            wad_http_hdr_type = gdb.lookup_type("struct wad_http_hdr")
+            wad_http_hdr_line_type = gdb.lookup_type("struct wad_http_hdr_line")
 
             type = var.type
             addr = var.address
@@ -446,7 +450,7 @@ class PDataCommand(gdb.Command):
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
-            if unqualified_type == wad_buff_region_type:
+            if unqualified_type in [wad_buff_region_type, wad_line_type, wad_http_hdr_type, wad_http_hdr_line_type]:
                 var = gdb.parse_and_eval(f"(({type} *){addr})->data")
             elif unqualified_type == wad_str_type:
                 gdb.execute(f"p *(({type} *){addr})")
@@ -468,7 +472,7 @@ class PDataCommand(gdb.Command):
                 return
 
             # Construct the command string for the substring.
-            cmd = "p (({0} *){1})->buff->data[{2}]@{3}".format(type, addr, buff_start, buff_length)
+            cmd = "p (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
             gdb.execute(cmd)
         except gdb.error as e:
             print("Error executing command: {}".format(e))
@@ -496,6 +500,8 @@ class PrintListCommand(gdb.Command):
         self._max_search_nodes = 1000
         # Maximum nodes to print.
         self._max_print_nodes = 50
+        # Initialize the PData command.
+        self.pdata = PDataCommand("pdata")
 
     def get_offset_of(self, container_type, member_name):
         # Compute the offset of the member in the container type.
@@ -511,6 +517,7 @@ class PrintListCommand(gdb.Command):
     def traverse_list(self, reverse, head, container_type, member_name, fields_to_print=None):
         # Container mode traversal.
         node_ptrs = []
+        wad_sstr_type = gdb.lookup_type("struct wad_sstr")
 
         # By default, reverse is enabled (using 'prev'); if --no-reverse is provided, use 'next'.
         if reverse:
@@ -554,8 +561,12 @@ class PrintListCommand(gdb.Command):
                         field_val = gdb.parse_and_eval(formatted_field)
                         field_type = field_val.type
                         print(f"{'Field:':<{6}} {field}, Type: {field_type}")
-                        print(f"{'Value:':<{6}} ((({container_type} *) {real_node_ptr})->{field})")
-                        print(field_val)
+                        print(f"((({container_type} *) {real_node_ptr})->{field})")
+
+                        if field_type == wad_sstr_type:
+                            self.pdata.invoke(f"((({container_type} *) {real_node_ptr})->{field})", False)
+                        else:
+                            print(field_val)
                 else:
                     # print(f"{'Content:':<9}")
                     print(real_node)
@@ -623,9 +634,11 @@ class PrintListCommand(gdb.Command):
                     "  Container mode:\n"
                     "    plist req->headers wad_http_hdr link\n"
                     "    plist req->headers wad_http_hdr link val\n"
-                    "    plist ib->regions --http-header --fields data\n"
-                    "    plist ib->regions --buff-region --fields data\n"
-                    "    plist buff --buff-region --fields ref_count data\n",
+                    "    plist buff --buff-region\n"
+                    "    plist buff --buff-region-data\n"
+                    "    plist buff --buff-region --fields data\n"
+                    "    plist buff --buff-region --fields ref_count data\n"
+                    "    plist req->headers --http-header\n",
         formatter_class=argparse.RawTextHelpFormatter  # Preserves newlines in help text
         )
         # Optional arguments for the list traversal.
@@ -638,8 +651,14 @@ class PrintListCommand(gdb.Command):
                             help="Max nodes to print before stopping (default: 50).")
         parser.add_argument("--buff-region", action="store_true",
                         help="Set container type to 'struct wad_buff_region' and member name to 'link'.")
+        parser.add_argument("--buff-region-data", action="store_true",
+                        help="Set container type to 'struct wad_buff_region', member name to 'link', and fields to 'data'.")
         parser.add_argument("--http-header", action="store_true",
                         help="Set container type to 'struct wad_http_hdr' and member name to 'link'.")
+        parser.add_argument("--http-header-data", action="store_true",
+                        help="Set container type to 'struct wad_http_hdr' member name to 'link', and fields to 'data'.")
+        parser.add_argument("--dynamic-proc", action="store_true",
+                        help="Set container type to 'struct wad_http_dyn_proc' and member name to 'link'.")
         parser.add_argument("--fields", nargs="*", default=[],
                         help="List of fields from the container to print.")
         # Positional arguments for the list traversal.
@@ -659,11 +678,20 @@ class PrintListCommand(gdb.Command):
         if args.buff_region:
             args.container_type = "struct wad_buff_region"
             args.member_name = "link"
-
+        if args.buff_region_data:
+            args.container_type = "struct wad_buff_region"
+            args.member_name = "link"
+            args.fields_to_print = ["data"]
         if args.http_header:
             args.container_type = "struct wad_http_hdr"
             args.member_name = "link"
-
+        if args.http_header_data:
+            args.container_type = "struct wad_http_hdr"
+            args.member_name = "link"
+            args.fields_to_print = ["data"]
+        if args.dynamic_proc:
+            args.container_type = "struct wad_http_dyn_proc"
+            args.member_name = "link"
         if args.fields:
             args.fields_to_print = args.fields
 
@@ -692,7 +720,7 @@ class PrintListCommand(gdb.Command):
         unqualified_type = type.unqualified()
         if unqualified_type == wad_buff_type:
             list_head = parsed['regions'].address
-            print(f"Origin: (({type} *) {addr})")
+            print(f"(({type} *) {addr})")
         elif unqualified_type == list_head_type:
             list_head = addr
         else:

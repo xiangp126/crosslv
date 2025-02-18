@@ -480,9 +480,7 @@ runConfigure() {
 }
 
 runBuildCommands() {
-    if [[ -z "$fNeedBuild" ]]; then
-        return
-    fi
+    [ -z $fNeedBuild ] && return
 
     cd "$fWorkingDir" || exit
     makeCommand="make -j$fNumOfJobs $fBuildTarget"
@@ -516,6 +514,7 @@ runBuildCommands() {
     local attempt=1
     local maxAttempt=$fMaxBuildAttempt
     local buildStartTime buildEndTime
+    buildStartTime=$(date +%s)
     # Loop to build the projects
     while [[ $attempt -le $maxAttempt ]]; do
         COLOR="$GREEN"
@@ -523,24 +522,43 @@ runBuildCommands() {
         echo -e "$USER_NOTATION ${COLOR}Build attempt $attempt/$maxAttempt${RESET}"
         sleep 2
 
-        buildStartTime=$(date +%s)
         eval "$makeCommand"
-        buildEndTime=$(date +%s)
-
         eval_status=$?
+
         if [[ $eval_status -eq 0 ]]; then
             break
         else
             attempt=$((attempt + 1))
         fi
     done
+    buildEndTime=$(date +%s)
 
     if [[ $eval_status -ne 0 ]]; then
-        COLOR="$LIGHTYELLOW"
+        COLOR="$MAGENTA"
         echo -e "$USER_NOTATION ${COLOR}Build projects failed.${RESET}"
         echo -e "$USER_NOTATION Search for ${COLOR}error:${RESET} to find the error message."
         exit 1
     fi
+
+    local buildTime=$((buildEndTime - buildStartTime))
+    local hours=$((buildTime / 3600))
+    local minutes=$((buildTime % 3600 / 60))
+    local seconds=$((buildTime % 60))
+    local buildTimeFormatted="${seconds}s."
+
+    if [[ $minutes -gt 0 ]]; then
+        buildTimeFormatted="${minutes}m${buildTimeFormatted}"
+    fi
+
+    if [[ $hours -gt 0 ]]; then
+        buildTimeFormatted="${hours}h${buildTimeFormatted}"
+    fi
+
+    echo "$USER_NOTATION Congratulations! You have built projects successfully at $(getCurrentTime) for $buildTimeFormatted"
+}
+
+jsonRemoveWritePrivilege() {
+    [ -z $fNeedBuild ] && return
 
     COLOR=$MAGENTA
     local jsonFile=$fCompileCommandsJson
@@ -565,22 +583,6 @@ runBuildCommands() {
             exit 1
         fi
     fi
-
-    local buildTime=$((buildEndTime - buildStartTime))
-    local hours=$((buildTime / 3600))
-    local minutes=$((buildTime % 3600 / 60))
-    local seconds=$((buildTime % 60))
-    local buildTimeFormatted="${seconds}s."
-
-    if [[ $minutes -gt 0 ]]; then
-        buildTimeFormatted="${minutes}m${buildTimeFormatted}"
-    fi
-
-    if [[ $hours -gt 0 ]]; then
-        buildTimeFormatted="${hours}h${buildTimeFormatted}"
-    fi
-
-    echo "$USER_NOTATION Congratulations! You have built projects successfully at $(getCurrentTime) for $buildTimeFormatted"
 }
 
 runSyncCommands() {
@@ -678,11 +680,13 @@ runSyncCommands() {
                     exp_continue
                 }
                 \"Host key verification failed.\" {
-                    puts stderr \"$USER_NOTATION Host key verification failed. Updating known_hosts file...\"
-                    puts stderr \"$USER_NOTATION Executing: ssh-keygen -R $fSyncTarget\"
+                    set COLOR \$LIGHTYELLOW
+                    puts stderr \"$USER_NOTATION \${COLOR}Host key verification failed. Updating known_hosts ...\${RESET}\"
+                    puts stderr \"$USER_NOTATION \${COLOR}ssh-keygen -R $fSyncTarget\${RESET}\"
                     system \"ssh-keygen -R $fSyncTarget\"
-                    puts stderr \"$USER_NOTATION Host key removed from known_hosts file.\"
+                    puts stderr \"$USER_NOTATION \${COLOR}Host key removed from known_hosts file.\${RESET}\n\"
                     puts stderr \"$USER_NOTATION Retrying SCP immediately...\"
+                    set COLOR \$MAGENTA
                     continue
                 }
                 -re {Connection refused|No route to host} {
@@ -817,4 +821,5 @@ printBuildFlags
 cleanTheRepo
 runConfigure
 runBuildCommands
+jsonRemoveWritePrivilege
 runSyncCommands
