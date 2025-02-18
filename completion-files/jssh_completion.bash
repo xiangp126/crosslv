@@ -10,8 +10,8 @@ _jssh_complete() {
     # List of all long options
     long_opts="--target --username --password --port --debug --help \
                --command --live-capture --jump --jump-password \
-               --local-forward --reverse-forward --vdom \
-               --sftp --telnet --x11 --mount --get-system-status"
+               --local-forward --reverse-forward --vdom --sftp --telnet \
+               --x11 --mount --get-system-status --tls-keylog-file"
 
     # Function to get hosts from /etc/hosts
     _get_hosts() {
@@ -74,6 +74,14 @@ _jssh_complete() {
             # The IFS variable is used to control how strings are split into fields. By default, it is set to whitespace.
             local IFS=$'\n'
             COMPREPLY=( \"$(compgen -W "${commands[@]}" -- "$cur")\" )
+            return 0
+            ;;
+
+        # TLS key log file options
+        --tls-keylog-file)
+            # Directory completion
+            local params="$HOME/mmt/${SSLKEYLOGFILE##*/}"
+            COMPREPLY=( $(compgen -W "${params}" -- ${cur}) )
             return 0
             ;;
 

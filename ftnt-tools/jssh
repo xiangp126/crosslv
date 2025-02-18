@@ -19,8 +19,6 @@ fGroupPattern='(\$|#|sftp>)\s*$' # For Literal Interpretation, use single quotes
 fDollarPattern='\$\s*$'
 fPoundPattern='#\s*$'
 # fSftpPattern='sftp>\s*$'
-fSSHpassInstalled=""
-fLCWithSSHpass=""
 # SSH Variables
 fInputCmd=""
 fTarget=""
@@ -42,7 +40,11 @@ fX11Forwarding=""
 # Live Capture
 fLiveCapture=""
 fLCPort="7777"
-fLCInterface="any"
+fSSHpassInstalled=""
+fWiresharkInstalled=""
+fLCReady=""
+fTlsKeyFileName=${SSLKEYLOGFILE##*/}
+fTlsKeyLogFile="$HOME/${fTlsKeyFileName}"
 # Jump Server
 fNeedJumpServer=""
 fJumpOptions=""
@@ -104,6 +106,7 @@ Basic Options:
     -d, --debug              Enable debug mode (-vvv)
     -c, --command            Execute commands remotely without opening an interactive login session
     -C, --live-capture       Live capture packets from the remote device
+    --tls-keylog-file        Set the path to the TLS key log file (default: $fTlsKeyLogFile)
     --get-system-status      Get the system status of the target device
 
 Forward Options:
@@ -171,7 +174,7 @@ fInputCmd="$SCRIPT_NAME $*"
 
 SHORTOPTS="t:l:u:p:P:dc:CJ:L:R:v:TSm:Xh"
 LONGOPTS="help,target:,username:,password:,port:,debug,command:,live-capture,jump:,jump-password:,\
-local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status"
+local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status,tls-keylog-file:"
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -213,6 +216,10 @@ while true; do
         -C|--live-capture)
             fLiveCapture=true
             shift
+            ;;
+        --tls-keylog-file)
+            fTlsKeyLogFile="$2"
+            shift 2
             ;;
         -L|--local-forward)
             fForwardMode=$LOCAL_FORWARD
@@ -287,22 +294,18 @@ if [ $# -gt 1 ]; then
 fi
 
 checkSSHpass() {
-    local path=""
-    path=$(command -v sshpass)
-    if [ -n "$path" ]; then
-        if [ -x "$path" ]; then
-            fSSHpassInstalled=true
-        fi
+    if command -v sshpass &>/dev/null; then
+        fSSHpassInstalled=true
     else
-        fSSHpassInstalled=""
         echo -e "$USER_NOTATION ${MAGENTA}sshpass is not installed. Please install sshpass.${RESET}" >&2
     fi
 }
 
 checkWireshark() {
-    if ! command -v wireshark &>/dev/null; then
-        COLOR=$MAGENTA
-        echo -e "$USER_NOTATION ${COLOR}Wireshark is not installed. Please install Wireshark.${RESET}" >&2
+    if command -v wireshark &>/dev/null; then
+        fWiresharkInstalled=true
+    else
+        echo -e "$USER_NOTATION ${MAGENTA}Wireshark is not installed. Please install Wireshark.${RESET}" >&2
         exit 1
     fi
 }
@@ -522,16 +525,14 @@ checkSanity() {
 
     [ -n "$fNoLoginShell" ] && fVdom=""
 
-    # If $fLiveCapture is set, $fsshCmd must contain "tcpdump"
-    if [ -n "$fLiveCapture" ]; then
-        if [[ ! $fSSHCmd == *"tcpdump"* ]]; then
-            # Disable the live capture if the command does not contain "tcpdump"
-            fLiveCapture=""
-        else
-            checkSSHpass
-            checkWireshark
-            [ -n "$fSSHpassInstalled" ] && fLCWithSSHpass=true
-        fi
+    # Check if the command contains "tcpdump"
+    if [[ $fSSHCmd == *"tcpdump"* ]]; then
+        checkSSHpass
+        checkWireshark
+        [ -n "$fSSHpassInstalled" ] && [ -n "$fWiresharkInstalled" ] && fLCReady=true
+    else
+        # Disable the live capture if the command does not contain "tcpdump" even if -C is set
+        fLiveCapture=""
     fi
 }
 
@@ -566,12 +567,18 @@ makeSpawnCmd() {
 
             # Live Capture with sshpass
             # Launch a local Wireshark session to capture the packets live.
-            if [ -n "$fLCWithSSHpass" ]; then
+            if [ -n "$fLCReady" ]; then
                 param=""
+
                 if [ -n "$fNeedJumpServer" ]; then
                     param="-o \"ProxyCommand=sshpass -p $fJumpPwd ssh -W %h:%p $fJumpUser@$fJumpServer\""
                 fi
-                fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort -l $fTargetUser $fTarget \"$cmd\" | wireshark -k -i -"
+
+                if [ -n "$fLiveCapture" ]; then
+                    fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\" | wireshark -k -i - -o \"tls.keylog_file:${fTlsKeyLogFile}\""
+                else
+                    fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\""
+                fi
                 return
             fi
 
@@ -617,18 +624,12 @@ makeSpawnCmd() {
 
         "$SSHFS_MODE")
             # Do not use expect to spawn sshfs session, as it will not work as expected
-            param="$fFSBasicMountParams -o StrictHostKeyChecking=no -o sshfs_debug"
+            param="$fFSBasicMountParams -o StrictHostKeyChecking=no -o sshfs_debug -o password_stdin"
 
-            # Case: no Jump Server
-            if [ -z $fNeedJumpServer ]; then
-                param="$param -o password_stdin"
-            else
-                # Case: with Jump Server
+            # Case: with Jump Server
+            if [ -n "$fNeedJumpServer" ]; then
                 if [ -n "$fSSHpassInstalled" ]; then
-                    param="$param -o password_stdin"
-                    if [ -n "$fNeedJumpServer" ]; then
-                        param="$param -o \"ProxyCommand=sshpass -p $fJumpPwd ssh -W %h:%p $fJumpUser@$fJumpServer\""
-                    fi
+                    param="$param -o \"ProxyCommand=sshpass -p $fJumpPwd ssh -W %h:%p $fJumpUser@$fJumpServer\""
                 else
                     param="$param -o \"ProxyJump=$fJumpUser@$fJumpServer\""
                 fi
@@ -739,7 +740,7 @@ dumpForwardTips() {
 dumpLCTips() {
     local COLOR=$1
     echo -e "${BOLD}Live Capture Command Tips:${RESET}" >&2
-    local cmd="tcpdump -i $fLCInterface -s 0 -U -n -w - 'not port 22 and not arp'"
+    local cmd="tcpdump -i any -s 0 -U -n -w - 'not port 22 and not arp'"
     # Live Capture Commands
     if [ -n "$fNeedJumpServer" ]; then
         echo -e "${COLOR}${SCRIPT_NAME} -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -J $fJumpUser@$fJumpServer:$fJumpPort -W \"$fJumpPwd\" -c \"$cmd\" -C${RESET}" >&2
@@ -750,10 +751,9 @@ dumpLCTips() {
     if [ -n "$fForwardMode" ]; then
         echo -e "${COLOR}nc ${fLFLocalLisAddr[1]} $fLCPort | wireshark -k -${RESET}" >&2
     else
-        local sslKeyFilename="${SSLKEYLOGFILE##*/}"
         echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -k -i -${RESET}" >&2
-        echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:/home/$fTargetUser/$sslKeyFilename\" -k -i -${RESET}" >&2
-        echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:$fFSDemoMountPoint/$sslKeyFilename\" -k -i -${RESET}" >&2
+        echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:/home/$fTargetUser/$fTlsKeyFileName\" -k -i -${RESET}" >&2
+        echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:$fFSDemoMountPoint/$fTlsKeyFileName\" -k -i -${RESET}" >&2
     fi
 }
 
@@ -826,7 +826,7 @@ if [ -n "$fSwitchToSShfs" ]; then
     fi
 fi
 
-if [ -n "$fLCWithSSHpass" ]; then
+if [ -n "$fLCReady" ]; then
     COLOR=$MAGENTA
     # Execute the ssh command directly without using expect
     eval "$fSpawnCmd"
