@@ -434,6 +434,7 @@ class PDataCommand(gdb.Command):
             wad_line_type = gdb.lookup_type("struct wad_line")
             wad_http_hdr_type = gdb.lookup_type("struct wad_http_hdr")
             wad_http_hdr_line_type = gdb.lookup_type("struct wad_http_hdr_line")
+            wad_http_start_line_type = gdb.lookup_type("struct wad_http_start_line")
 
             type = var.type
             addr = var.address
@@ -450,7 +451,8 @@ class PDataCommand(gdb.Command):
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
-            if unqualified_type in [wad_buff_region_type, wad_line_type, wad_http_hdr_type, wad_http_hdr_line_type]:
+            if unqualified_type in [wad_buff_region_type, wad_line_type, wad_http_hdr_type, wad_http_hdr_line_type,
+                                    wad_http_start_line_type]:
                 var = gdb.parse_and_eval(f"(({type} *){addr})->data")
             elif unqualified_type == wad_str_type:
                 gdb.execute(f"p *(({type} *){addr})")
@@ -563,12 +565,18 @@ class PrintListCommand(gdb.Command):
                         print(f"{'Field:':<{6}} {field}, Type: {field_type}")
                         print(f"((({container_type} *) {real_node_ptr})->{field})")
 
+                        if field_type.code == gdb.TYPE_CODE_PTR:
+                            field_val = field_val.dereference()
+                            field_type = field_val.type
+
+                        # for wad_sstr_type, call pdata to print the data
                         if field_type == wad_sstr_type:
                             self.pdata.invoke(f"((({container_type} *) {real_node_ptr})->{field})", False)
+                            gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->name")
+                            gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->id")
                         else:
                             print(field_val)
                 else:
-                    # print(f"{'Content:':<9}")
                     print(real_node)
 
                 # Print the embedded list pointers for verification.
@@ -638,7 +646,8 @@ class PrintListCommand(gdb.Command):
                     "    plist buff --buff-region-data\n"
                     "    plist buff --buff-region --fields data\n"
                     "    plist buff --buff-region --fields ref_count data\n"
-                    "    plist req->headers --http-header\n",
+                    "    plist req->headers --http-header\n"
+                    "    plist &msg->headers --http-header --fields hdr_attr data",
         formatter_class=argparse.RawTextHelpFormatter  # Preserves newlines in help text
         )
         # Optional arguments for the list traversal.
