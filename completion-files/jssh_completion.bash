@@ -53,7 +53,8 @@ _jssh_complete() {
         # Mount options
         -m|--mount)
             # Directory completion
-            COMPREPLY=( $(compgen -d -- ${cur}) )
+            local params=":$HOME/mmt"
+            COMPREPLY=( $(compgen -W "${params}" -- ${cur}) )
             return 0
             ;;
 
@@ -67,17 +68,12 @@ _jssh_complete() {
 
         # Command options with complex commands
         -c|--command)
-            # Define commands as an array to preserve spaces and quotes
             local commands=(
-                'tcpdump -i any -s 0 -U -n -w - "not port 22 and not arp"'
-                'tcpdump -i any -s 0 -U -n -vv "not port 22 and not arp"'
+                "tcpdump -i any -s 0 -U -n -w - \'not port 22 and not arp\'"
             )
-
-            # Convert commands array to a format suitable for completion
+            # The IFS variable is used to control how strings are split into fields. By default, it is set to whitespace.
             local IFS=$'\n'
-            COMPREPLY=( $(compgen -W "$(printf '%q\n' "${commands[@]}")" -- ${cur}) )
-            # Disable space appending for command completion
-            compopt -o nospace
+            COMPREPLY=( \"$(compgen -W "${commands[@]}" -- "$cur")\" )
             return 0
             ;;
 

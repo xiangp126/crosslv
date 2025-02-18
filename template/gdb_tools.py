@@ -502,6 +502,8 @@ class PrintListCommand(gdb.Command):
         self._max_search_nodes = 1000
         # Maximum nodes to print.
         self._max_print_nodes = 50
+        self.list_head_type = gdb.lookup_type("struct list_head")
+        self.wad_buff_type = gdb.lookup_type("struct wad_buff")
         # Initialize the PData command.
         self.pdata = PDataCommand("pdata")
 
@@ -572,8 +574,9 @@ class PrintListCommand(gdb.Command):
                         # for wad_sstr_type, call pdata to print the data
                         if field_type == wad_sstr_type:
                             self.pdata.invoke(f"((({container_type} *) {real_node_ptr})->{field})", False)
-                            gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->name")
-                            gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->id")
+                            if real_node_ptr == f"{self.wad_buff_type} *":
+                                gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->name")
+                                gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->id")
                         else:
                             print(field_val)
                 else:
@@ -713,8 +716,6 @@ class PrintListCommand(gdb.Command):
         except gdb.error as e:
             print(f"Error: {e}")
             return
-        list_head_type = gdb.lookup_type("struct list_head")
-        wad_buff_type = gdb.lookup_type("struct wad_buff")
 
         type = parsed.type
         addr = parsed.address
@@ -727,10 +728,10 @@ class PrintListCommand(gdb.Command):
 
         # Strip qualifiers (const, volatile) from the type
         unqualified_type = type.unqualified()
-        if unqualified_type == wad_buff_type:
+        if unqualified_type == self.wad_buff_type:
             list_head = parsed['regions'].address
             print(f"(({type} *) {addr})")
-        elif unqualified_type == list_head_type:
+        elif unqualified_type == self.list_head_type:
             list_head = addr
         else:
             print(f"Error: Unexpected type: {unqualified_type}")

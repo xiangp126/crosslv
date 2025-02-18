@@ -91,9 +91,7 @@ BOLD='\033[1m'
 RESET='\033[0m'
 COLOR=$MAGENTA
 
-usage() {
-    local dumpOptions=""
-    dumpOptions="not port 22 and not arp"
+__help() {
 cat << _EOF
 Usage: $SCRIPT_NAME [OPTIONS] Target
 
@@ -121,6 +119,18 @@ Advanced Options:
     -S, --sftp       Connect to the target device via SFTP
     -T, --telnet     Auth to the target device via Telnet
 
+_EOF
+}
+
+help() {
+    __help
+    exit 0
+}
+
+usage() {
+    local dumpOptions=""
+    dumpOptions="not port 22 and not arp"
+cat << _EOF
 Examples:
     # SSH Connection
     $SCRIPT_NAME -t fpx1
@@ -156,7 +166,7 @@ _EOF
     exit 0
 }
 
-[[ $# -eq 0 ]] && usage
+[[ $# -eq 0 ]] && help
 fInputCmd="$SCRIPT_NAME $*"
 
 SHORTOPTS="t:l:u:p:P:dc:CJ:L:R:v:TSm:Xh"
@@ -174,6 +184,7 @@ eval set -- "$PARSED"
 while true; do
     case "$1" in
         -h|--help)
+            __help
             usage
             ;;
         -t|--target)
@@ -272,7 +283,7 @@ done
 
 if [ $# -gt 1 ]; then
     echo -e "${MAGENTA}Too many arguments.${RESET}" >&2
-    usage
+    help
 fi
 
 checkSSHpass() {
@@ -820,10 +831,10 @@ if [ -n "$fLCWithSSHpass" ]; then
     # Execute the ssh command directly without using expect
     eval "$fSpawnCmd"
     if [ $? -ne 0 ]; then
-        echo -e "$USER_NOTATION ${COLOR}Failed to capture packets from $fTarget${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Failed to capture packets from $fTarget.${RESET}"
         exit 1
     else
-        echo -e "$USER_NOTATION ${COLOR}Successfully captured packets from $fTarget${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Successfully captured packets from $fTarget.${RESET}"
         exit 0
     fi
 fi
