@@ -425,12 +425,11 @@ expect -c "
 
     set COLOR \$MAGENTA
     if {\$worker_cnt > 1} {
-        puts stderr \"\n$USER_NOTATION Warning: Found \${LIGHTYELLOW}\$worker_cnt\${RESET} for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
+        puts stderr \"\n$USER_NOTATION Found \${LIGHTYELLOW}\$worker_cnt\${RESET} WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
         dump_pid_index_list \$pid_index_list
         if {[string match -nocase \"*work*\" $fWorkerType]} {
-            puts stderr \"$USER_NOTATION Select \[\${RED}\${worker_pid}, \${worker_index}\${RESET}\]\"
-            puts stderr \"$USER_NOTATION If you want to make life easier\"
-            puts stderr \"$USER_NOTATION Please retry the same command with \${BLUE}-N1\${RESET}\"
+            puts stderr \"$USER_NOTATION Select #\${worker_index}: \[\${RED}\${worker_pid}, \${worker_index}\${RESET}\]\"
+            puts stderr \"$USER_NOTATION Warning: If you want to make life easier, retry the same command with \${BLUE}-N1\${RESET}\"
         } else {
             puts stderr \"$USER_NOTATION Recommend to check the input WAD process type\"
             exit 1

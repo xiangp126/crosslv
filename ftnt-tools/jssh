@@ -4,8 +4,8 @@
 # Constants
 SCRIPT_NAME=$(basename "$0")
 USER_NOTATION="@@@@"
-SEPARATOR_LEFT="<--------------------------------------------"
-SEPARATOR_RIGHT="--------------------------------------------------------------------->"
+SEPARATOR_LEFT="-------------------------------------------->"
+SEPARATOR_RIGHT="<---------------------------------------------------------------------"
 SSH_MODE="SSH"
 SFTP_MODE="SFTP"
 SSHFS_MODE="SSHFS"
