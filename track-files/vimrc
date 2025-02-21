@@ -40,9 +40,8 @@ set t_Co=256          " number of colors
 " Reduce the 'updatetime' to 500 milliseconds for responsiveness
 autocmd CursorHold,CursorHoldI * set updatetime=500
 set background=dark
-" colorscheme solarized
 colorscheme darkcoding
-" highlight Normal ctermbg=0
+" colorscheme solarized
 
 """"""""""""""""""""""""""""""
 " VIM-PLUG CONFIG

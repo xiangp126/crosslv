@@ -826,7 +826,7 @@ if [ -n "$fSwitchToSShfs" ]; then
     fi
 fi
 
-if [ -n "$fLCReady" ]; then
+if [ -n "$fLiveCapture" ]; then
     COLOR=$MAGENTA
     # Execute the ssh command directly without using expect
     eval "$fSpawnCmd"

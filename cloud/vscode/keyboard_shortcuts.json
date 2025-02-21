@@ -644,5 +644,19 @@
 {
 	"key": "ctrl+shift+q",
 	"command": "workbench.action.closeOtherEditors"
+},
+{
+	"key": "ctrl+\\",
+	"command": "inlineChat.start",
+	"when": "editorFocus && inlineChatHasProvider && inlineChatPossible && !editorReadonly && !editorSimpleInput"
+},
+{
+	"key": "ctrl+i",
+	"command": "-inlineChat.start",
+	"when": "editorFocus && inlineChatHasProvider && inlineChatPossible && !editorReadonly && !editorSimpleInput"
+},
+{
+	"key": "ctrl+shift+\\",
+	"command": "github.copilot.chat.explain"
 }
 ]
