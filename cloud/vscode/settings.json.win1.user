@@ -46,7 +46,7 @@
         // "terminal.foreground": "#adadad",
         // "sideBar.foreground": "#b5b2b2",
         "tab.activeBorderTop": "#989c9a",
-        "sideBar.foreground": "#b5b2b2",
+        "sideBar.foreground": "#b8b7b7",
         "terminal.foreground": "#a19c95",
         "terminal.background": "#1a1a1a",
         "terminal.ansiBrightYellow": "#cfad24",

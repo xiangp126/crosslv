@@ -1,32 +1,70 @@
-# Save this file as ~/.gdbinit
-# Display source code layout in TUI
+# Put this file as ~/.gdbinit
+# This file is sourced by GDB when it starts up
+# Set up TUI and basic settings
 layout src
+fs cmd
+winheight cmd +6
+
+# Configure logging
+set logging file ~/.gdb.log
+set logging enabled on
+set trace-commands on
+
+# Basic settings
+set prompt (gdb) 
 set confirm off
+set print pretty on
+set pagination off
+
+# TUI settings
 set tui active-border-mode normal
 set tui tab-width 8
 set tui compact-source
 set style function foreground magenta
+set style tui-border foreground none
 set style function intensity normal
 set style filename foreground red
 set style filename intensity normal
-set logging file ~/.gdb.log
-set print pretty on
-set pagination off
+
+# Debugging settings
 set disassembly-flavor intel
-winheight cmd +6
-fs cmd
-set logging off
-set trace-commands on
-set logging on
 set can-use-hw-watchpoints 1
 set follow-fork-mode child
+
+# Initialize convenience variables
+set $_gdb_tools_sourced = 0
+set $_gdb_target_script = "~/target.sh"
+set $_gdb_tools_script = "~/Templates/gdb_tools.py"
+
 # Connect to the target defined in target.sh
 define connect
-    source ~/target.sh
+    python
+import os
+target_path = os.path.expanduser(gdb.parse_and_eval("$_gdb_target_script").string())
+tools_path = os.path.expanduser(gdb.parse_and_eval("$_gdb_tools_script").string())
+
+if not os.path.exists(target_path):
+    gdb.write(f"Error: Target script {target_path} not found\n")
+else:
+    gdb.execute(f"source {target_path}")
+
+if int(gdb.parse_and_eval("$_gdb_tools_sourced")) == 0:
+    if not os.path.exists(tools_path):
+        gdb.write(f"Error: Tools script {tools_path} not found\n")
+    else:
+        gdb.execute(f"source {tools_path}")
+        gdb.execute("set $_gdb_tools_sourced = 1")
+        gdb.write("GDB tools loaded successfully\n")
+else:
+    pass
+    end
 end
+document connect
+    Connect to remote target and load debugging tools.
+    Usage: connect
+end
+
 # Load the shared library from local path
-# Usage: ftnt [sysroot], if sysroot is not specified, use the current directory
-# Use info sharedlibrary to check the shared library
 define ftnt
     if $argc == 0
         set sysroot .
@@ -36,19 +74,22 @@ define ftnt
         set solib-search-path $arg0/rlib:$arg0/fortipkg/lib/x86_64:$arg0/fortipkg/lib/x86_64/providers
     end
 end
-ftnt
+document ftnt
+    Set sysroot and solib-search-path for shared libraries.
+    Usage: ftnt [sysroot_path]
+    If sysroot_path is not specified, current directory is used.
+    Use 'info sharedlibrary' to check the shared library status.
+end
+
 # Reload the binary and source code after the binary is updated
 define reload
     file sysinit/init
     directory
 end
+document reload
+    Reload the binary and reset source directory.
+    Usage: reload
+end
 
-# Do not remove the trailing space
-set prompt (gdb) 
-
-# Specify your custom GDB aliases (if any)
-# For example, alias "run" to "r"
-# alias r run
-
-# Load the custom gdb tools
-source ~/Templates/gdb_tools.py
+# Initialize shared library paths
+ftnt
