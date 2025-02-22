@@ -47,7 +47,7 @@
         // "sideBar.foreground": "#b5b2b2",
         "tab.activeBorderTop": "#989c9a",
         "sideBar.foreground": "#b8b7b7",
-        "terminal.foreground": "#a19c95",
+        "terminal.foreground": "#a8a49f",
         "terminal.background": "#1a1a1a",
         "terminal.ansiBrightYellow": "#cfad24",
         "terminal.ansiYellow": "#cfad24",
@@ -58,8 +58,9 @@
         "terminal.ansiBrightBlue": "#1259bd",
         "terminal.ansiBrightMagenta": "#b02f98",
         "terminal.ansiMagenta": "#b02f98",
-        "terminal.ansiBrightCyan": "#0a55be",
-        "terminal.ansiCyan": "#0a55be",
+        "terminal.ansiBrightCyan": "#17a7a7",
+        "terminal.ansiCyan": "#d08c71",
+        // "terminal.ansiCyan": "#0a55be",
         // "terminal.ansiBrightBlack": "#7f7f7f",
         // "terminal.ansiBlack": "#7f7f7f",
         // "terminal.ansiBrightWhite": "#d3d3d3",
@@ -70,6 +71,7 @@
         "peekViewResult.selectionForeground": "#bdb9af",
         "editorHoverWidget.foreground": "#b3b5b7",
         "editorHoverWidget.highlightForeground": "#b0b5b9",
+        "editor.foreground": "#a8a49f",
     },
     "editor.tokenColorCustomizations": {
         // Setting -> Inspect Editor Tokens and Scopes
@@ -443,4 +445,5 @@
     "gitlens.hovers.autolinks.enabled": false,
     "bookmarks.keepBookmarksOnLineDelete": true,
     "editor.minimap.enabled": false,
+    "bookmarks.experimental.enableNewStickyEngine": false,
 }
