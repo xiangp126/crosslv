@@ -454,6 +454,7 @@ class PDataCommand(gdb.Command):
             if unqualified_type in [wad_buff_region_type, wad_line_type, wad_http_hdr_type, wad_http_hdr_line_type,
                                     wad_http_start_line_type]:
                 var = gdb.parse_and_eval(f"(({type} *){addr})->data")
+                addr = var.address
             elif unqualified_type == wad_str_type:
                 gdb.execute(f"p *(({type} *){addr})")
                 return True
@@ -501,7 +502,7 @@ class PrintListCommand(gdb.Command):
         # Maximum nodes to search/traverse to avoid infinite loops.
         self._max_search_nodes = 1000
         # Maximum nodes to print.
-        self._max_print_nodes = 50
+        self._max_print_nodes = 80
         self.list_head_type = gdb.lookup_type("struct list_head")
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
         # Initialize the PData command.

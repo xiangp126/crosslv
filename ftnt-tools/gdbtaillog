@@ -22,4 +22,4 @@ then
     exit
 fi
 
-$commandPrefix tail -f "$gdbLogFile" | bat --paging=never -pp --color=always -l c
+$commandPrefix tail -f "$gdbLogFile" | bat --paging=never -pp  --theme="TwoDark" --color=always -l c

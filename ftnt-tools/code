@@ -1,30 +1,35 @@
 #!/bin/bash
-# set -x
+set -x
 
-numOfCodePaths=
-codeBinPaths=
+fNumOfCodePaths=
+fCodePaths=
+MAGENTA='\033[0;35m'
+RESET='\033[0m'
 
 searchAndParse() {
     local paths
-    findCmd="find $HOME/.vscode-server/bin -type f -name code -executable"
+    findCmd="find $HOME/.vscode-server -maxdepth 1 -type f -name code-* -executable"
     paths=$($findCmd)
+    if [[ -z $paths ]]; then
+        paths=$(find "$HOME"/.vscode-server -type f -name code -executable)
+    fi
     # Originally, codePaths contains only one element joined by \n;
     # It needs to be split into two separate elements.
     # /home/userid/.vscode-server/bin/fee1edb8d6d72a0ddff41e5f71a671c23ed924b9/bin/remote-cli/code
     # /home/userid/.vscode-server/bin/b1c0a14de1414fcdaa400695b4db1c0799bc3124/bin/remote-cli/code
-    IFS=$'\n' read -d '' -r -a codeBinPaths <<< "$paths"
-    numOfCodePaths=${#codeBinPaths[@]}
-    for i in "${!codeBinPaths[@]}"
+    IFS=$'\n' read -d '' -r -a fCodePaths <<< "$paths"
+    fNumOfCodePaths=${#fCodePaths[@]}
+    for i in "${!fCodePaths[@]}"
     do
-        version=$(${codeBinPaths[$i]} --version | head -n 1 | awk '{print $1}')
+        version=$(${fCodePaths[$i]} --version | head -n 1 | awk '{print $1}')
         versionMap[$i]=$version
     done
 }
 
 printPathInfo () {
-    for i in "${!codeBinPaths[@]}"
+    for i in "${!fCodePaths[@]}"
     do
-        echo "${versionMap[$i]} : ${codeBinPaths[$i]}"
+        echo "${versionMap[$i]} : ${fCodePaths[$i]}"
     done
 }
 
@@ -33,19 +38,19 @@ function fcode() {
     # https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
     # https://github.com/microsoft/vscode-remote-release/issues/6362#issuecomment-1046458477
 
-    if [[ $numOfCodePaths -eq 0 ]]
+    if [[ $fNumOfCodePaths -eq 0 ]]
     then
         echo "Error: No vscode code command found"
         exit 1
-    elif [[ $numOfCodePaths -gt 1 ]]
+    elif [[ $fNumOfCodePaths -gt 1 ]]
     then
-        echo "Error: More than one vscode code command found, please delete the older version(s) and try again."
+        echo -e "${MAGENTA}Error: More than one vscode code command found, please delete the older version(s) and try again.${RESET}"
         printPathInfo
         exit 1
     fi
 
     local code syspath
-    code=${codeBinPaths[0]}
+    code=${fCodePaths[0]}
     syspath="/run/user/$UID"
     # Get the latest vscode-ipc-*.sock file
     new_IPC_HOOK=$(ls -t ${syspath}/vscode-ipc-*.sock | head -1)
