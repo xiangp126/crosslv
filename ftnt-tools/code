@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x
+# set -x
 
 fNumOfCodePaths=
 fCodePaths=
@@ -8,10 +8,11 @@ RESET='\033[0m'
 
 searchAndParse() {
     local paths
-    findCmd="find $HOME/.vscode-server -maxdepth 1 -type f -name code-* -executable"
+    findCmd="find $HOME/.vscode-server/cli -type f -name code -executable"
     paths=$($findCmd)
     if [[ -z $paths ]]; then
-        paths=$(find "$HOME"/.vscode-server -type f -name code -executable)
+        echo -e "${MAGENTA}Error: No code binary found in $HOME/.vscode-server/cli${RESET}"
+        exit 1
     fi
     # Originally, codePaths contains only one element joined by \n;
     # It needs to be split into two separate elements.
