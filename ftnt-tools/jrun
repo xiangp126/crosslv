@@ -1,128 +1,332 @@
 #!/bin/bash
 # set -x
 
-fSessionId="log"
-fWinId="1"
-fPaneId="1"
-fSendNewLine=""
-# If the command file is a dos file, there will be a '\r\n' ending in each command.
-fCmdFile="/data/bugzilla/debug.c"
-fTmuxPrefix="C-x"
-fCleanedCmd=""
-SCRIPT_NAME=$(basename $0)
+# Constants
+SCRIPT_NAME=$(basename "$0")
 USER_NOTATION="@@@@"
+SEPARATOR_LT="<---------------------------------------------"
+SEPARATOR_RT="--------------------------------------------->"
+
+# Variables
+fSessionId=
+fWinId=1
+fPaneId=1
+fTmuxTarget=
+fSendNewLine=
+fCmdFile=
+fTmuxPrefix="C-x"
+fCleanedCmd=
+# Flags for quick options
+fWadDebug=
+fKernelDebug=
+fOutputDirectly=
+fPacketTrace=
+fPacketTraceAddr=
+fIPSDebug=
+fScanUnitDebug=
+fDNSDebug=
+fAutoCmdMode=
+
+# Define FortiGate debug commands as global array
+declare -a fWadDebugCommands=(
+    "diagnose debug reset"
+    "diagnose wad debug enable all"
+    "diagnose debug enable"
+)
+
+# Define output configuration commands
+declare -a fOutputCommands=(
+    "config system console"
+    "set output standard"
+    "end"
+)
+
+# Define kernel debug commands
+declare -a fKernelDebugCommands=(
+    "diagnose debug reset"
+    "diagnose debug enable"
+    "diagnose debug application kmiglogd -1"
+)
+
+# Define packet trace commands
+declare -a fPacketTraceCommands=(
+    "diag debug reset"
+    "diag debug flow filter clear"
+    "diag debug enable"
+    "diag debug flow filter addr $fPacketTraceAddr"
+    "diag debug flow show function-name enable"
+    "diag debug flow show iprope enable"
+    "diag debug flow trace start 100"
+)
+
+# Define IPS debug commands
+declare -a fIPSDebugCommands=(
+    "diagnose debug reset"
+    "diag wad debug ips-filter all"
+    "dia ips debug enable all"
+    "diagnose wad debug enable all"
+    "diagnose debug enable"
+)
+
+# Define scanunit debug commands
+declare -a fScanUnitDebugCommands=(
+    "diagnose debug reset"
+    "diagnose sys scanunit debug all"
+    "diagnose wad debug enable all"
+    "diagnose debug enable"
+)
+
+# Define DNS debug commands
+declare -a fDNSDebugCommands=(
+    "diagnose debug reset"
+    "diagnose debug application dnsproxy -1"
+    "diagnose wad debug enable all"
+    "diagnose debug enable"
+)
+
+# Colors
+RED='\033[31m'
+MAGENTA='\033[35m'
+CYAN='\033[36m'
+YELLOW='\033[33m'
+GREEN='\033[32m'
+RESET='\033[0m'
+COLOR=$MAGENTA
 
 usage() {
     cat << _EOF
-Usage: $SCRIPT_NAME [-s session_id] [-w window_id] [-p pane_id] [-f command_file]
-            [-n] [-h]
+Usage: $SCRIPT_NAME [OPTIONS]
 
 Options:
-    -s      Set session ID (default: $fSessionId)
-    -w      Set window ID (default: $fWinId)
-    -p      Set pane ID (default: $fPaneId)
-    -f      Specify command file (default: $fCmdFile)
-    -h      Print this help message
+    -h, --help               Print this help message
+    -s, --session            Set session ID (default: $fSessionId)
+    -w, --window             Set window ID (default: $fWinId)
+    -p, --pane               Set pane ID (default: $fPaneId)
+    -f, --file               Specify command file (default: $fCmdFile)
+    -W, --wad-debug          Send WAD debug commands automatically
+    -o, --output-directly    Configure console to output directly (no pagination)
+    -k, --kernel-debug       Send kernel debug commands automatically
+    -t, --packet-trace       Send packet trace commands automatically
+    -i, --ips-debug          Send IPS debug commands automatically
+    -S, --scanunit-debug     Send scanunit debug commands automatically
+    -D, --dns-debug          Send DNS debug commands automatically
+    --packet-trace-addr      Set IP address for packet trace (default: $fPacketTraceAddr)
 
 Examples:
     $SCRIPT_NAME -s log -w 2 -p 2 -f $fCmdFile
+    $SCRIPT_NAME --session=log --window=2 --pane=2 --file=$fCmdFile
+    $SCRIPT_NAME -s log -w 2 -p 2 -W
+    $SCRIPT_NAME -s log -w 2 -p 2 --wad-debug
+    $SCRIPT_NAME -s log -w 2 -p 2 -t --packet-trace-addr=192.168.1.100
 
 Tips:
     1. Type $fTmuxPrefix, then q to view the pane number within the tmux window.
     2. Type $fTmuxPrefix, then s to view the session name in tmux.
-    3. use // to comment out a line in the command file.
-    4. use ! to omit the rest of the commands in the command file.
+    3. Use // to comment out a line in the command file.
+    4. Use ! to omit the rest of the commands in the command file.
 
 _EOF
-    exit
+    exit 0
 }
 
-[[ $# -eq 0 ]] && usage
+if [ "$#" -eq 0 ]; then
+    usage
+fi
 
-# Parse options
-while getopts "s:w:p:f:h" opt; do
-    case $opt in
-        s)
-            fSessionId="$OPTARG"
-            ;;
-        w)
-            fWinId="$OPTARG"
-            ;;
-        p)
-            fPaneId="$OPTARG"
-            ;;
-        f)
-            fCmdFile="$OPTARG"
-            ;;
-        h)
+SHORTOPTS="hs:w:p:f:WoktiSD"
+LONGOPTS="help,session:,window:,pane:,file:,wad-debug,output-directly,kernel-debug,packet-trace,ips-debug,scanunit-debug,dns-debug,packet-trace-addr:"
+if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
+    echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
+    exit 1
+fi
+
+eval set -- "$PARSED"
+unset PARSED
+
+while true; do
+    case "$1" in
+        -h|--help)
             usage
             ;;
-        ?)
-            echo "$USER_NOTATION Invalid option: -$OPTARG" >&2
+        -s|--session)
+            fSessionId="$2"
+            shift 2
+            ;;
+        -w|--window)
+            fWinId="$2"
+            shift 2
+            ;;
+        -p|--pane)
+            fPaneId="$2"
+            shift 2
+            ;;
+        -f|--file)
+            fCmdFile="$2"
+            shift 2
+            ;;
+        -W|--wad-debug)
+            fWadDebug="true"
+            shift
+            ;;
+        -o|--output-directly)
+            fOutputDirectly="true"
+            shift
+            ;;
+        -k|--kernel-debug)
+            fKernelDebug="true"
+            shift
+            ;;
+        -t|--packet-trace)
+            fPacketTrace="true"
+            shift
+            ;;
+        -i|--ips-debug)
+            fIPSDebug="true"
+            shift
+            ;;
+        -S|--scanunit-debug)
+            fScanUnitDebug="true"
+            shift
+            ;;
+        -D|--dns-debug)
+            fDNSDebug="true"
+            shift
+            ;;
+        --packet-trace-addr)
+            fPacketTraceAddr="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo -e "$USER_NOTATION ${MAGENTA}Invalid option: $1${RESET}"
             exit 1
             ;;
     esac
 done
 
-# Shift to process non-option arguments. New $1, $2, ..., $@
-shift $((OPTIND - 1))
-if [[ $# -gt 0 ]]; then
-    echo "$USER_NOTATION Illegal non-option arguments: $@"
-    exit
-fi
-
-if [[ ! -f "$fCmdFile" ]]; then
-    echo "$USER_NOTATION Command file '$fCmdFile' not found."
+if [ $# -gt 0 ]; then
+    echo -e "$USER_NOTATION ${MAGENTA}Illegal non-option arguments: $@${RESET}"
     exit 1
 fi
 
-# The following method will cache the entire file in memory before processing it.
-# So if the file will be modified during the processing, this method is not suitable.
-# while IFS= read -r command; do
-# 	echo "Original command: $command"
-# done < "$command_file"
+[ -z "$fSessionId" ] && echo -e "$USER_NOTATION ${MAGENTA}Session ID is required.${RESET}" && exit 1
+fTmuxTarget="$fSessionId:$fWinId.$fPaneId"
+
+echo $SEPARATOR_LT
+echo -e "[s] Set Session ID to: ${COLOR}$fSessionId${RESET}"
+echo -e "[w] Set Window ID to: ${COLOR}$fWinId${RESET}"
+echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
+echo -e "[\] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
+[ -n "$fWadDebug" ]      && fAutoCmdMode="true" && echo -e "[W] Sending WAD debug commands"
+[ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[o] Configuring console for direct output"
+[ -n "$fKernelDebug" ]   && fAutoCmdMode="true" && echo -e "[k] Sending kernel debug commands"
+[ -n "$fIPSDebug" ]      && fAutoCmdMode="true" && echo -e "[i] Sending IPS debug commands"
+[ -n "$fScanUnitDebug" ] && fAutoCmdMode="true" && echo -e "[S] Sending scanunit debug commands"
+[ -n "$fDNSDebug" ]      && fAutoCmdMode="true" && echo -e "[D] Sending DNS debug commands"
+if [[ -n "$fPacketTrace" ]]; then
+    if [[ -z "$fPacketTraceAddr" ]]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Packet trace address is required.${RESET}"
+        exit 1
+    fi
+    fAutoCmdMode="true"
+    echo -e "[t] Sending packet trace commands for IP: ${COLOR}$fPacketTraceAddr${RESET}"
+fi
+if [[ -z "$fAutoCmdMode" ]]; then
+    if [[ ! -f "$fCmdFile" ]]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Command file not found.${RESET}"
+        exit 1
+    fi
+    echo -e "[f] Set command file to: ${COLOR}$fCmdFile${RESET}"
+fi
+echo $SEPARATOR_RT
+
+# If FortiGate debug option is set, send those commands directly
+sendDebugCmds() {
+    local -n commands=$1
+    for cmd in "${commands[@]}"; do
+        echo -e "$USER_NOTATION Sending: ${CYAN}$cmd${RESET}"
+        tmux send-keys -t "$fTmuxTarget" -l "$cmd"
+        tmux send-keys -t "$fTmuxTarget" Enter
+
+        if [[ $? -ne 0 ]]; then
+            echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $cmd${RESET}"
+            exit 1
+        fi
+        sleep 0.5
+    done
+}
+
+if [[ -n "$fWadDebug" ]]; then
+    # Send the debug commands using the global array
+    sendDebugCmds fWadDebugCommands
+    exit 0
+fi
+
+if [[ -n "$fOutputDirectly" ]]; then
+    # Send the output commands using the global array
+    sendDebugCmds fOutputCommands
+    exit 0
+fi
+
+if [[ -n "$fKernelDebug" ]]; then
+    # Send the kernel debug commands using the global array
+    sendDebugCmds fKernelDebugCommands
+    exit 0
+fi
+
+if [[ -n "$fIPSDebug" ]]; then
+    # Send the IPS debug commands using the global array
+    sendDebugCmds fIPSDebugCommands
+    exit 0
+fi
+
+if [[ -n "$fScanUnitDebug" ]]; then
+    # Send the scanunit debug commands using the global array
+    sendDebugCmds fScanUnitDebugCommands
+    exit 0
+fi
+
+if [[ -n "$fDNSDebug" ]]; then
+    # Send the DNS debug commands using the global array
+    sendDebugCmds fDNSDebugCommands
+    exit 0
+fi
+
+if [[ -n "$fPacketTrace" ]]; then
+    sendDebugCmds fPacketTraceCommands
+    exit 0
+fi
 
 # Read commands from file line by line
 tail -n +1 "$fCmdFile" | while IFS= read -r command || [[ -n "$command" ]]; do
-	# In Bash, the <<< operator is used for here-strings.
-	# Here-strings are a way to pass a string as input to a command.
+    # Eliminates comments, deletes everything before : or #, and clears leading spaces
+    fCleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
 
-	# The sed command consists of three components:
-	# 1. Eliminates comments that begin with //, accounting for possible leading spaces.
-	# 2. Deletes everything preceding the first colon (:) or hash (#) encountered.
-	# 3. Clears any leading spaces that remain after the previous operations.
-	fCleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
+    [ -z "$fCleanedCmd" ] && continue
 
-	# If the cleaned command starts with an exclamation mark, exit
-    if [[ ${fCleanedCmd:0:1} == "!" ]]; then
-        exit 0
-    fi
-
-    if [[ -z "$fCleanedCmd" ]]; then
-        continue
-    fi
+    # If the cleaned command starts with an exclamation mark, exit
+    [ "${fCleanedCmd:0:1}" == "!" ] && exit 0
 
     # For dos file, there will be a '\r\n' ending in each command. No need to send extra new line.
     if [[ "$fCleanedCmd" != *$'\r' ]]; then
         fSendNewLine="true"
     fi
 
-	echo "$USER_NOTATION Sending: $fCleanedCmd"
-
-    # exit
+    echo -e "$USER_NOTATION Sending: ${CYAN}$fCleanedCmd${RESET}"
 
     if [[ -n "$fSendNewLine" ]]; then
-        # String end and home will be treated as key home and key end if not send them as literal strings.
         # Use -l to send the command as a literal string
-        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" -l "$fCleanedCmd"
-        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" Enter
-        # tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" C-m
+        tmux send-keys -t "$fTmuxTarget" -l "$fCleanedCmd"
+        tmux send-keys -t "$fTmuxTarget" Enter
     else
-        tmux send-keys -t "$fSessionId:$fWinId.$fPaneId" -l "$fCleanedCmd"
+        tmux send-keys -t "$fTmuxTarget" -l "$fCleanedCmd"
     fi
 
-	if [[ $? -ne 0 ]]; then
-		echo "$USER_NOTATION Failed to send command: $fCleanedCmd"
-		exit 1
-	fi
+    if [[ $? -ne 0 ]]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $fCleanedCmd${RESET}"
+        exit 1
+    fi
 done
