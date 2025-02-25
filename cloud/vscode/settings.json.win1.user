@@ -43,14 +43,15 @@
     "update.enableWindowsBackgroundUpdates": false,
     "window.autoDetectColorScheme": true,
     "workbench.colorCustomizations": {
-        // "terminal.foreground": "#adadad",
+        "inlineChat.foreground": "#b4b2b0",
         // "sideBar.foreground": "#b5b2b2",
-        "tab.activeBorderTop": "#989c9a",
         "sideBar.foreground": "#b8b7b7",
+        "tab.activeBorderTop": "#989c9a",
+        // "terminal.foreground": "#adadad",
         "terminal.foreground": "#a8a49f",
         "terminal.background": "#1a1a1a",
-        "terminal.ansiBrightYellow": "#cfad24",
-        "terminal.ansiYellow": "#cfad24",
+        "terminal.ansiBrightYellow": "#c8a519",
+        "terminal.ansiYellow": "#c8a519",
         "terminal.ansiBrightRed": "#c52121",
         "terminal.ansiRed": "#c52121",
         "terminal.ansiBrightGreen":"#1199a3",
@@ -59,7 +60,7 @@
         "terminal.ansiBrightMagenta": "#b02f98",
         "terminal.ansiMagenta": "#b02f98",
         "terminal.ansiBrightCyan": "#17a7a7",
-        "terminal.ansiCyan": "#d08c71",
+        "terminal.ansiCyan": "#cc886d",
         // "terminal.ansiCyan": "#0a55be",
         // "terminal.ansiBrightBlack": "#7f7f7f",
         // "terminal.ansiBlack": "#7f7f7f",
@@ -69,13 +70,42 @@
         "peekViewResult.fileForeground": "#f3a2ec",
         "peekViewResult.lineForeground": "#d3d3d3",
         "peekViewResult.selectionForeground": "#bdb9af",
+        "editor.foreground": "#b4b2b0",
         "editorHoverWidget.foreground": "#b3b5b7",
         "editorHoverWidget.highlightForeground": "#b0b5b9",
-        "editor.foreground": "#a8a49f",
+        "editorBracketHighlight.foreground1": "#b4b412",
     },
     "editor.tokenColorCustomizations": {
         // Setting -> Inspect Editor Tokens and Scopes
         "textMateRules": [
+            {
+                "scope": "variable.argument.css",
+                "settings": {
+                    // "foreground": "#9CDCFE",
+                    "foreground": "#64b0d8",
+                },
+            },
+            {
+                "scope": "source.css",
+                "settings": {
+                    // "foreground": "#9CDCFE",
+                    "foreground": "#64b0d8",
+                },
+            },
+            {
+                "scope": "variable.css",
+                "settings": {
+                    // "foreground": "#9CDCFE",
+                    "foreground": "#64b0d8",
+                },
+            },
+            {
+                "scope": "entity.other.attribute-name.class.css",
+                "settings": {
+                    // "foreground": "#D7BA7D",
+                    "foreground": "#c29c4b",
+                },
+            },
             {
                 "scope": "variable.other",
                 "settings": {
@@ -192,7 +222,7 @@
                 "scope": "variable.other.member.c",
                 "settings": {
                     // "foreground": "#9CDCFE",
-                    "foreground": "#abd1e5",
+                    "foreground": "#9bc1d5",
                 },
             },
             {
@@ -206,7 +236,7 @@
                 "scope": "support.function.builtin.shell",
                 "settings": {
                     // "foreground": "#DCDCAA",
-                    "foreground": "#b7b776",
+                    "foreground": "#aaaa88",
                 },
             },
             {
@@ -355,7 +385,7 @@
                 "scope": "punctuation.separator",
                 "settings": {
                     // "foreground": "#CCCCCC",
-                    "foreground": "#c9adad",
+                    "foreground": "#a6a4a4",
                 },
             },
             {
@@ -374,7 +404,7 @@
     "gitlens.graph.minimap.enabled": false,
     "chat.editor.fontSize": 15,
     "editor.fontSize": 16,
-    "editor.suggestFontSize": 0,
+    "editor.suggestFontSize": 16,
     "editor.minimap.size": "fill",
     "editor.minimap.maxColumn": 60,
     "editor.largeFileOptimizations": false,
@@ -446,4 +476,6 @@
     "bookmarks.keepBookmarksOnLineDelete": true,
     "editor.minimap.enabled": false,
     "bookmarks.experimental.enableNewStickyEngine": false,
+    "gitlens.ai.model": "vscode",
+    "gitlens.ai.vscode.model": "copilot:gpt-4",
 }

@@ -107,10 +107,10 @@ Options:
     -o, --output-directly    Configure console to output directly (no pagination)
     -k, --kernel-debug       Send kernel debug commands automatically
     -t, --packet-trace       Send packet trace commands automatically
+    --packet-trace-addr      Set IP address for packet trace (default: $fPacketTraceAddr)
     -i, --ips-debug          Send IPS debug commands automatically
     -S, --scanunit-debug     Send scanunit debug commands automatically
     -D, --dns-debug          Send DNS debug commands automatically
-    --packet-trace-addr      Set IP address for packet trace (default: $fPacketTraceAddr)
 
 Examples:
     $SCRIPT_NAME -s log -w 2 -p 2 -f $fCmdFile
@@ -243,7 +243,6 @@ if [[ -z "$fAutoCmdMode" ]]; then
 fi
 echo $SEPARATOR_RT
 
-# If FortiGate debug option is set, send those commands directly
 sendDebugCmds() {
     local -n commands=$1
     for cmd in "${commands[@]}"; do
@@ -259,55 +258,22 @@ sendDebugCmds() {
     done
 }
 
-if [[ -n "$fWadDebug" ]]; then
-    # Send the debug commands using the global array
-    sendDebugCmds fWadDebugCommands
-    exit 0
-fi
+[ -n "$fWadDebug" ]       && sendDebugCmds fWadDebugCommands      && exit 0
+[ -n "$fOutputDirectly" ] && sendDebugCmds fOutputCommands        && exit 0
+[ -n "$fKernelDebug" ]    && sendDebugCmds fKernelDebugCommands   && exit 0
+[ -n "$fIPSDebug" ]       && sendDebugCmds fIPSDebugCommands      && exit 0
+[ -n "$fScanUnitDebug" ]  && sendDebugCmds fScanUnitDebugCommands && exit 0
+[ -n "$fDNSDebug" ]       && sendDebugCmds fDNSDebugCommands      && exit 0
+[ -n "$fPacketTrace" ]    && sendDebugCmds fPacketTraceCommands   && exit 0
 
-if [[ -n "$fOutputDirectly" ]]; then
-    # Send the output commands using the global array
-    sendDebugCmds fOutputCommands
-    exit 0
-fi
-
-if [[ -n "$fKernelDebug" ]]; then
-    # Send the kernel debug commands using the global array
-    sendDebugCmds fKernelDebugCommands
-    exit 0
-fi
-
-if [[ -n "$fIPSDebug" ]]; then
-    # Send the IPS debug commands using the global array
-    sendDebugCmds fIPSDebugCommands
-    exit 0
-fi
-
-if [[ -n "$fScanUnitDebug" ]]; then
-    # Send the scanunit debug commands using the global array
-    sendDebugCmds fScanUnitDebugCommands
-    exit 0
-fi
-
-if [[ -n "$fDNSDebug" ]]; then
-    # Send the DNS debug commands using the global array
-    sendDebugCmds fDNSDebugCommands
-    exit 0
-fi
-
-if [[ -n "$fPacketTrace" ]]; then
-    sendDebugCmds fPacketTraceCommands
-    exit 0
-fi
-
-# Read commands from file line by line
+# Line Processing
 tail -n +1 "$fCmdFile" | while IFS= read -r command || [[ -n "$command" ]]; do
     # Eliminates comments, deletes everything before : or #, and clears leading spaces
     fCleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
 
     [ -z "$fCleanedCmd" ] && continue
 
-    # If the cleaned command starts with an exclamation mark, exit
+    # If the cleaned command starts with an exclamation mark
     [ "${fCleanedCmd:0:1}" == "!" ] && exit 0
 
     # For dos file, there will be a '\r\n' ending in each command. No need to send extra new line.
