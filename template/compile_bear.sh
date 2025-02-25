@@ -93,16 +93,16 @@ if [ -z "$FORCE_INSTALL" ] && [ -x "$(command -v bear)" ]; then
     # Compare versions with safe handling of bc output
     comparison=$(echo "$current_version >= $BEAR_TARG_VERSION" | bc -l 2>/dev/null)
     if [ -n "$comparison" ] && [ "$comparison" -eq 1 ]; then
+        echo -e "${USER_NOTATION} Bear version $current_version is already installed in $bear_path${RESET}"
         cat << _EOF_
-${USER_NOTATION} ${MAGENTA}Bear version $current_version is already installed in $bear_path
 Current Bear version ($current_version) is greater than or equal to $BEAR_TARG_VERSION
-Use -c to force the installation${RESET}
+Use -c to force the installation
 _EOF_
         exit
     else
         cat << _EOF_
-${USER_NOTATION} ${MAGENTA}Current Bear version ($current_version) is older than $BEAR_TARG_VERSION
-Start installing Bear $BEAR_TARG_VERSION${RESET}
+Current Bear version ($current_version) is older than $BEAR_TARG_VERSION
+Start installing Bear $BEAR_TARG_VERSION
 _EOF_
     fi
 fi

@@ -1,6 +1,14 @@
-# Put this file as ~/.gdbinit
-# This file is sourced by GDB when it starts up
-# Set up TUI and basic settings
+# Put this file as ~/.gdbinit and it is sourced by GDB when it starts up
+# TUI settings
+set style tui-border foreground none
+set tui active-border-mode normal
+set style function foreground magenta
+set style function intensity normal
+set style filename foreground red
+set style filename intensity normal
+set tui tab-width 8
+set tui compact-source
+
 layout src
 fs cmd
 winheight cmd +6
@@ -15,16 +23,6 @@ set prompt (gdb)
 set confirm off
 set print pretty on
 set pagination off
-
-# TUI settings
-set tui active-border-mode normal
-set tui tab-width 8
-set tui compact-source
-set style function foreground magenta
-set style tui-border foreground none
-set style function intensity normal
-set style filename foreground red
-set style filename intensity normal
 
 # Debugging settings
 set disassembly-flavor intel

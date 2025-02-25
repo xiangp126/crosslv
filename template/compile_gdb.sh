@@ -9,7 +9,8 @@
 # Codename:       focal
 
 # Define the target GDB version
-GDB_TARG_VERSION="15.2"
+# GDB_TARG_VERSION="15.2"
+GDB_TARG_VERSION="16.2"
 GDB_SOURCE_URL="https://ftp.gnu.org/gnu/gdb/gdb-$GDB_TARG_VERSION.tar.gz"
 
 # Define installation directory
@@ -95,20 +96,19 @@ if [ -z "$FORCE_INSTALL" ] && [ -x "$(command -v gdb)" ]; then
     # current_version=$(gdb --version | grep -oE "[0-9]+\.[0-9]+")
     current_version=$(gdb --version | head -n 1 | awk '{print $NF}')
 
-    # Compare the versions
-    # use bc to compare the versions
-    comparison=$(echo "$current_version >= $BEAR_TARG_VERSION" | bc -l 2>/dev/null)
+    # Use bc to compare the versions
+    comparison=$(echo "$current_version >= $GDB_TARG_VERSION" | bc -l 2>/dev/null)
     if [ -n "$comparison" ] && [ "$comparison" -eq 1 ]; then
+        echo -e "${USER_NOTATION} ${MAGENTA}GDB version $current_version is already installed in $gdb_path${RESET}"
         cat << _EOF_
-${USER_NOTATION} ${MAGENTA}GDB version $current_version is already installed in $gdb_path
 Current GDB version ($current_version) is greater than or equal to $GDB_TARG_VERSION
-Use -f to force the installation${RESET}
+Use -f to force the installation.
 _EOF_
         exit
     else
         cat << _EOF_
-${USER_NOTATION} ${MAGENTA}Current GDB version ($current_version) is older than $GDB_TARG_VERSION
-Start installing GDB $GDB_TARG_VERSION${RESET}
+Current GDB version ($current_version) is older than $GDB_TARG_VERSION
+Start installing GDB $GDB_TARG_VERSION
 _EOF_
     fi
 fi
