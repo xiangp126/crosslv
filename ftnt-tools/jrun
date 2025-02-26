@@ -96,6 +96,7 @@ COLOR=$MAGENTA
 usage() {
     cat << _EOF
 Usage: $SCRIPT_NAME [OPTIONS]
+       $SCRIPT_NAME session[:window[.pane]] [OPTIONS]
 
 Options:
     -h, --help               Print this help message
@@ -113,11 +114,12 @@ Options:
     -D, --dns-debug          Send DNS debug commands automatically
 
 Examples:
-    $SCRIPT_NAME -s log -w 2 -p 2 -f $fCmdFile
     $SCRIPT_NAME --session=log --window=2 --pane=2 --file=$fCmdFile
-    $SCRIPT_NAME -s log -w 2 -p 2 -W
-    $SCRIPT_NAME -s log -w 2 -p 2 --wad-debug
-    $SCRIPT_NAME -s log -w 2 -p 2 -t --packet-trace-addr=192.168.1.100
+    $SCRIPT_NAME log -f $fCmdFile                # Uses default window $fWinId and pane $fPaneId
+    $SCRIPT_NAME log:2 -f $fCmdFile              # Uses default pane $fPaneId
+    $SCRIPT_NAME log:2.3 -f $fCmdFile            # Specifies all parts
+    $SCRIPT_NAME log:2.3 --wad-debug
+    $SCRIPT_NAME log -t --packet-trace-addr=192.168.1.100
 
 Tips:
     1. Type $fTmuxPrefix, then q to view the pane number within the tmux window.
@@ -128,10 +130,6 @@ Tips:
 _EOF
     exit 0
 }
-
-if [ "$#" -eq 0 ]; then
-    usage
-fi
 
 SHORTOPTS="hs:w:p:f:WoktiSD"
 LONGOPTS="help,session:,window:,pane:,file:,wad-debug,output-directly,kernel-debug,packet-trace,ips-debug,scanunit-debug,dns-debug,packet-trace-addr:"
@@ -207,8 +205,20 @@ while true; do
     esac
 done
 
-if [ $# -gt 0 ]; then
-    echo -e "$USER_NOTATION ${MAGENTA}Illegal non-option arguments: $@${RESET}"
+if [ "$#" == 0 ]; then
+    usage
+elif [ "$#" == 1 ]; then
+    target="$1"
+    if [[ "$target" =~ ^([^:]+)(:([0-9]+)(\.([0-9]+))?)?$ ]]; then
+        fSessionId="${BASH_REMATCH[1]}"
+        fWinId="${BASH_REMATCH[3]:-$fWinId}"
+        fPaneId="${BASH_REMATCH[5]:-$fPaneId}"
+    else
+        echo -e "$USER_NOTATION ${MAGENTA}Invalid tmux target format. Use: session[:window[.pane]]${RESET}" >&2
+        exit 1
+    fi
+else
+    echo -e "$USER_NOTATION ${MAGENTA}Too many arguments.${RESET}"
     exit 1
 fi
 

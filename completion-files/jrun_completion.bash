@@ -1,4 +1,11 @@
 #!/bin/bash
+#
+# Bash completion for jrun command
+# Supports completing:
+# - tmux sessions, windows, and panes in session[:window[.pane]] format
+# - command-line options
+# - file paths for -f/--file option
+#
 
 _jrun_completion() {
     local cur prev opts longopts
@@ -6,9 +13,19 @@ _jrun_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
+    #---------------------------------------------------------------
+    # OPTION DEFINITIONS
+    #---------------------------------------------------------------
+
     # Define short and long options
     opts="-h -s -w -p -f -W -o -k -t -i -S -D"
-    longopts="--help --session --window --pane --file --wad-debug --output-directly --kernel-debug --packet-trace --ips-debug --scanunit-debug --dns-debug --packet-trace-addr"
+    longopts="--help --session --window --pane --file --wad-debug --output-directly \
+              --kernel-debug --packet-trace --ips-debug --scanunit-debug --dns-debug \
+              --packet-trace-addr"
+
+    #---------------------------------------------------------------
+    # HELPER FUNCTIONS
+    #---------------------------------------------------------------
 
     # Function to get active tmux sessions
     _get_tmux_sessions() {
@@ -33,19 +50,50 @@ _jrun_completion() {
         echo "/data/bugzilla/debug.c /data/fos/command.txt $HOME/commands.txt"
     }
 
-    # Handle option arguments
+    #---------------------------------------------------------------
+    # TMUX TARGET COMPLETION HANDLER
+    #---------------------------------------------------------------
+    function _complete_tmux_target() {
+        local IFS=$'\n'
+        local cur="${1}"
+        local session_name="$(echo "${cur}" | sed 's/\\//g' | cut -d ':' -f 1)"
+        local sessions
+
+        # Get list of sessions
+        sessions="$(tmux -q list-sessions 2>/dev/null | sed -re 's/([^:]+:).*$/\1/')"
+
+        # If session name is provided, get windows for that session
+        if [[ -n "${session_name}" ]]; then
+            sessions="${sessions}
+            $(tmux -q list-windows -t "${session_name}" 2>/dev/null | sed -re 's/^([^:]+):.*$/'"${session_name}"':\1/')"
+        fi
+
+        # Escape colons for proper completion
+        cur="$(echo "${cur}" | sed -e 's/:/\\\\:/')"
+        sessions="$(echo "${sessions}" | sed -e 's/:/\\\\:/')"
+
+        COMPREPLY=( ${COMPREPLY[@]:-} $(compgen -W "${sessions}" -- "${cur}") )
+    }
+
+    #---------------------------------------------------------------
+    # OPTION-SPECIFIC COMPLETION HANDLERS
+    #---------------------------------------------------------------
+
+    # Handle option-specific arguments
     case $prev in
-        # Session options
+        # Session option
         -s|--session)
             local sessions=$(_get_tmux_sessions)
             COMPREPLY=( $(compgen -W "${sessions}" -- ${cur}) )
             return 0
             ;;
 
-        # Window options
+        # Window option
         -w|--window)
-            # Try to find the session from previous arguments
-            local session="log"  # Default session
+            # Get first session as default if none specified
+            local session=$(_get_tmux_sessions | head -n 1)
+
+            # Try to find session from previous arguments
             for (( i=1; i<COMP_CWORD; i++ )); do
                 if [[ "${COMP_WORDS[i]}" == "-s" || "${COMP_WORDS[i]}" == "--session" ]]; then
                     if [[ -n "${COMP_WORDS[i+1]}" && "${COMP_WORDS[i+1]:0:1}" != "-" ]]; then
@@ -53,17 +101,19 @@ _jrun_completion() {
                     fi
                 fi
             done
+
             local windows=$(_get_tmux_windows "$session")
             COMPREPLY=( $(compgen -W "${windows}" -- ${cur}) )
             return 0
             ;;
 
-        # Pane options
+        # Pane option
         -p|--pane)
-            # Try to find the session and window from previous arguments
-            local session="log"  # Default session
-            local window="1"     # Default window
+            # Get defaults if none specified
+            local session=$(_get_tmux_sessions | head -n 1)
+            local window=$(_get_tmux_windows "$session" | head -n 1)
 
+            # Try to find session and window from previous arguments
             for (( i=1; i<COMP_CWORD; i++ )); do
                 if [[ "${COMP_WORDS[i]}" == "-s" || "${COMP_WORDS[i]}" == "--session" ]]; then
                     if [[ -n "${COMP_WORDS[i+1]}" && "${COMP_WORDS[i+1]:0:1}" != "-" ]]; then
@@ -81,11 +131,13 @@ _jrun_completion() {
             return 0
             ;;
 
-        # File options
+        # File option
         -f|--file)
             # First suggest common command files, then fall back to regular file completion
             local common_files=$(_get_common_files)
             COMPREPLY=( $(compgen -W "${common_files}" -- ${cur}) )
+
+            # If no matches found among common files, use normal file completion
             if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
                 COMPREPLY=( $(compgen -f -- "${cur}") )
             fi
@@ -95,32 +147,35 @@ _jrun_completion() {
         # Packet trace address option
         --packet-trace-addr)
             # Suggest some common IP addresses
-            local ips="192.168.1.1 127.0.0.1"
-            COMPREPLY=( $(compgen -W "${ips}" -- ${cur}) )
+            local common_ips="192.168.1.1 127.0.0.1 10.0.0.1 172.16.0.1"
+            COMPREPLY=( $(compgen -W "${common_ips}" -- ${cur}) )
             return 0
             ;;
     esac
 
-    # Handle initial options
+    #---------------------------------------------------------------
+    # OPTION AND DEFAULT COMPLETION LOGIC
+    #---------------------------------------------------------------
+
+    # Handle options (arguments starting with - or --)
     if [[ ${cur} == -* ]]; then
-        # If it starts with --, only suggest long options
         if [[ ${cur} == --* ]]; then
+            # Long options
             COMPREPLY=( $(compgen -W "${longopts}" -- ${cur}) )
         else
-            # Suggest only short options
+            # Short options
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
         fi
         return 0
     fi
 
-    # Default to tmux session completion if no options have been specified
-    if [[ ${COMP_CWORD} -eq 1 ]]; then
-        local sessions=$(_get_tmux_sessions)
-        COMPREPLY=( $(compgen -W "${sessions}" -- ${cur}) )
+    # For any non-option argument, try tmux target completion first
+    _complete_tmux_target $cur
+    if [[ ${#COMPREPLY[@]} -gt 0 ]]; then
         return 0
     fi
 
-    # Default to file completion for first argument if no option specified
+    # Fall back to file completion if tmux target completion didn't produce results
     COMPREPLY=( $(compgen -f -- "${cur}") )
     return 0
 }
