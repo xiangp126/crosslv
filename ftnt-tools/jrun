@@ -95,8 +95,7 @@ COLOR=$MAGENTA
 
 usage() {
     cat << _EOF
-Usage: $SCRIPT_NAME [OPTIONS]
-       $SCRIPT_NAME session[:window[.pane]] [OPTIONS]
+Usage: $SCRIPT_NAME session[:window[.pane]] [OPTIONS]
 
 Options:
     -h, --help               Print this help message
@@ -114,11 +113,10 @@ Options:
     -D, --dns-debug          Send DNS debug commands automatically
 
 Examples:
-    $SCRIPT_NAME --session=log --window=2 --pane=2 --file=$fCmdFile
-    $SCRIPT_NAME log -f $fCmdFile                # Uses default window $fWinId and pane $fPaneId
-    $SCRIPT_NAME log:2 -f $fCmdFile              # Uses default pane $fPaneId
-    $SCRIPT_NAME log:2.3 -f $fCmdFile            # Specifies all parts
-    $SCRIPT_NAME log:2.3 --wad-debug
+    $SCRIPT_NAME --session=log --window=2 --pane=2 --file=$HOME/commands.txt
+    $SCRIPT_NAME log --wad-debug      # Uses default window $fWinId and pane $fPaneId
+    $SCRIPT_NAME log:2 --wad-debug    # Uses default pane $fPaneId
+    $SCRIPT_NAME log:2.3 --wad-debug  # Specifies all parts
     $SCRIPT_NAME log -t --packet-trace-addr=192.168.1.100
 
 Tips:
