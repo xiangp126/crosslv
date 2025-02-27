@@ -23,7 +23,7 @@ COLOR=$MAGENTA
 
 usage() {
     cat << _EOF
-Usage: $SCRIPTNAME [OPTIONS] [search_term]
+Usage: $SCRIPTNAME [OPTIONS] [SEARCH_TERM]
 
 Options:
     -h, --help               Print this help message

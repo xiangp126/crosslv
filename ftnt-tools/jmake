@@ -756,6 +756,19 @@ runSyncCommands() {
         $EPERMDENIED)
             echo -e "$USER_NOTATION ${LIGHTYELLOW}Enable the admin-scp for you intelligently${RESET}"
             expect -c "
+                set RESET       \"\033\[0m\"
+                set BOLD        \"\033\[1m\"
+                set RED         \"\033\[31m\"
+                set GREEN       \"\033\[32m\"
+                set LIGHTGREEN  \"\033\[92m\"
+                set YELLOW      \"\033\[33m\"
+                set LIGHTYELLOW \"\033\[93m\"
+                set BLUE        \"\033\[34m\"
+                set MAGENTA     \"\033\[35m\"
+                set CYAN        \"\033\[36m\"
+                set GREY        \"\033\[90m\"
+                set COLOR       \$MAGENTA
+
                 set has_vdom 0
                 spawn -noecho ssh -p $fSyncPort $fSyncUsername@$fSyncTarget
                 expect {
