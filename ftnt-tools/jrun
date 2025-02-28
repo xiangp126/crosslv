@@ -27,6 +27,16 @@ fScanUnitDebug=
 fDNSDebug=
 fAutoCmdMode=
 
+# Colors
+RED='\033[31m'
+MAGENTA='\033[35m'
+CYAN='\033[36m'
+YELLOW='\033[33m'
+LIGHTGREEN='\033[92m'
+GREEN='\033[32m'
+RESET='\033[0m'
+COLOR=$MAGENTA
+
 # Define FortiGate debug commands as global array
 declare -a fWadDebugCommands=(
     "diagnose debug reset"
@@ -83,15 +93,6 @@ declare -a fDNSDebugCommands=(
     "diagnose wad debug enable all"
     "diagnose debug enable"
 )
-
-# Colors
-RED='\033[31m'
-MAGENTA='\033[35m'
-CYAN='\033[36m'
-YELLOW='\033[33m'
-GREEN='\033[32m'
-RESET='\033[0m'
-COLOR=$MAGENTA
 
 usage() {
     cat << _EOF
@@ -254,7 +255,7 @@ echo $SEPARATOR_RT
 sendDebugCmds() {
     local -n commands=$1
     for cmd in "${commands[@]}"; do
-        echo -e "$USER_NOTATION Sending: ${CYAN}$cmd${RESET}"
+        echo -e "$USER_NOTATION Sending: ${LIGHTGREEN}$cmd${RESET}"
         tmux send-keys -t "$fTmuxTarget" -l "$cmd"
         tmux send-keys -t "$fTmuxTarget" Enter
 

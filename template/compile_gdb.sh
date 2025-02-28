@@ -9,8 +9,8 @@
 # Codename:       focal
 
 # Define the target GDB version
-# GDB_TARG_VERSION="15.2"
-GDB_TARG_VERSION="16.2"
+GDB_TARG_VERSION="15.2"
+# GDB_TARG_VERSION="16.2"
 GDB_SOURCE_URL="https://ftp.gnu.org/gnu/gdb/gdb-$GDB_TARG_VERSION.tar.gz"
 
 # Define installation directory
@@ -32,8 +32,9 @@ usage() {
 
 Install GDB $GDB_TARG_VERSION with the patch applied into $INSTALL_DIR
 
-Usage: $(basename $0) [-c] [-h] [--skip] [--clean]
+Usage: $(basename $0) [-c] [-f] [-h] [--skip] [--clean] [--force]
     -c, --clean: Clean and force the installation
+    -f, --force: Force the installation even if the current version is up-to-date
     -h: Display this help message
     --skip: Skip installation of build tools
 
