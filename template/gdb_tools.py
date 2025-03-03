@@ -278,7 +278,7 @@ class PrettyPrintMemory(gdb.Command):
         # Note: We can't use argparse directly with GDB's argument string
         # so we'll create a custom parser
         parser = argparse.ArgumentParser(
-            prog="pp",
+            prog="pm",
             description="Print memory at the specified address using various formats",
             add_help=False  # Disable built-in help to handle it ourselves
         )
@@ -305,8 +305,8 @@ class PrettyPrintMemory(gdb.Command):
         """Print command help."""
         self.parser.print_help()
         print("\nExamples:")
-        print("  pp 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
-        print("  pp 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
+        print("  pm 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
+        print("  pm 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
 
     def parse_args(self, args):
         current_args = []
@@ -475,7 +475,7 @@ class PDataCommand(gdb.Command):
                 return
 
             # Construct the command string for the substring.
-            cmd = "p (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+            cmd = "p/s (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
             gdb.execute(cmd)
         except gdb.error as e:
             print("Error executing command: {}".format(e))
