@@ -4,8 +4,8 @@
 # Constants
 SCRIPT_NAME=$(basename "$0")
 USER_NOTATION="@@@@"
-SEPARATOR_LT="<---------------------------------------------"
-SEPARATOR_RT="--------------------------------------------->"
+SEPARATOR_LT="=================================="
+SEPARATOR_RT="=================================="
 
 # Variables
 fSessionId=
@@ -30,12 +30,24 @@ fAutoCmdMode=
 # Colors
 RED='\033[31m'
 MAGENTA='\033[35m'
+LIGHTMAGENTA='\033[95m'
 CYAN='\033[36m'
 YELLOW='\033[33m'
 LIGHTGREEN='\033[92m'
 GREEN='\033[32m'
+GREY='\033[90m'
 RESET='\033[0m'
 COLOR=$MAGENTA
+
+logo() {
+cat << _EOF
+      _  ___   __  __ _  __
+     (_)/ _ \ / / / // |/ /
+    / // , _// /_/ //    /
+ __/ //_/|_| \____//_/|_/
+|___/
+_EOF
+}
 
 # Define FortiGate debug commands as global array
 declare -a fWadDebugCommands=(
@@ -224,17 +236,20 @@ fi
 [ -z "$fSessionId" ] && echo -e "$USER_NOTATION ${MAGENTA}Session ID is required.${RESET}" && exit 1
 fTmuxTarget="$fSessionId:$fWinId.$fPaneId"
 
+logo
 echo $SEPARATOR_LT
 echo -e "[s] Set Session ID to: ${COLOR}$fSessionId${RESET}"
 echo -e "[w] Set Window ID to: ${COLOR}$fWinId${RESET}"
 echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
 echo -e "[\] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
-[ -n "$fWadDebug" ]      && fAutoCmdMode="true" && echo -e "[W] Sending WAD debug commands"
-[ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[o] Configuring console for direct output"
-[ -n "$fKernelDebug" ]   && fAutoCmdMode="true" && echo -e "[k] Sending kernel debug commands"
-[ -n "$fIPSDebug" ]      && fAutoCmdMode="true" && echo -e "[i] Sending IPS debug commands"
-[ -n "$fScanUnitDebug" ] && fAutoCmdMode="true" && echo -e "[S] Sending scanunit debug commands"
-[ -n "$fDNSDebug" ]      && fAutoCmdMode="true" && echo -e "[D] Sending DNS debug commands"
+COLOR=$GREY
+[ -n "$fWadDebug" ]      && fAutoCmdMode="true" && echo -e "[W] ${COLOR}Sending WAD debug commands${RESET}"
+[ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[o] ${COLOR}Configuring console for direct output${RESET}"
+[ -n "$fKernelDebug" ]   && fAutoCmdMode="true" && echo -e "[k] ${COLOR}Sending kernel debug commands${RESET}"
+[ -n "$fIPSDebug" ]      && fAutoCmdMode="true" && echo -e "[i] ${COLOR}Sending IPS debug commands${RESET}"
+[ -n "$fScanUnitDebug" ] && fAutoCmdMode="true" && echo -e "[S] ${COLOR}Sending scanunit debug commands${RESET}"
+[ -n "$fDNSDebug" ]      && fAutoCmdMode="true" && echo -e "[D] ${COLOR}Sending DNS debug commands${RESET}"
+COLOR=$MAGENTA
 if [[ -n "$fPacketTrace" ]]; then
     if [[ -z "$fPacketTraceAddr" ]]; then
         echo -e "$USER_NOTATION ${MAGENTA}Packet trace address is required.${RESET}"
@@ -290,7 +305,7 @@ tail -n +1 "$fCmdFile" | while IFS= read -r command || [[ -n "$command" ]]; do
         fSendNewLine="true"
     fi
 
-    echo -e "$USER_NOTATION Sending: ${CYAN}$fCleanedCmd${RESET}"
+    echo -e "$USER_NOTATION Sending: ${MAGENTA}$fCleanedCmd${RESET}"
 
     if [[ -n "$fSendNewLine" ]]; then
         # Use -l to send the command as a literal string
