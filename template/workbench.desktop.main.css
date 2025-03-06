@@ -28522,7 +28522,7 @@ body.issue-reporter-body {
     /* you can change these values */
     --vscode-copilot-chat-font-size: 16px;
     --vscode-copilot-chat-font-family: var(--monaco-monospace-font);
-    --vscode-copilot-chat-user-font-size: calc(var(--vscode-copilot-chat-font-size));
+    --vscode-copilot-chat-user-font-size: calc(var(--vscode-copilot-chat-font-size) -5px);
 }
 
 .monaco-tl-contents .username {
