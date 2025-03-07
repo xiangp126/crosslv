@@ -44,16 +44,15 @@
     "window.autoDetectColorScheme": true,
     "workbench.colorCustomizations": {
         "inlineChat.foreground": "#b4b2b0",
-        // "sideBar.foreground": "#b5b2b2",
         "sideBar.foreground": "#afaeae",
-        // "sideBar.foreground": "#a8a49f",
+        // "sideBar.foreground": "#b4b3b3",
         // "sideBar.background": "#212121",
         "tab.activeBorderTop": "#989c9a",
         // "terminal.foreground": "#adadad",
         "terminal.foreground": "#a8a49f",
         "terminal.background": "#1a1a1a",
-        "terminal.ansiBrightYellow": "#a58a1a",
-        "terminal.ansiYellow": "#a58a1a",
+        "terminal.ansiBrightYellow": "#bc9b1a",
+        "terminal.ansiYellow": "#bc9b1a",
         "terminal.ansiBrightRed": "#c52121",
         "terminal.ansiRed": "#c52121",
         "terminal.ansiBrightGreen": "#129ea8",
@@ -171,7 +170,7 @@
                 "scope": "variable.other.readwrite",
                 "settings": {
                     // "foreground": "#9CDCFE",
-                    "foreground": "#b7b7b7",
+                    "foreground": "#b7b7b7"
                 },
             },
             {
@@ -480,8 +479,8 @@
     "gitlens.hovers.autolinks.enhanced": false,
     "gitlens.hovers.autolinks.enabled": false,
     "bookmarks.keepBookmarksOnLineDelete": true,
-    "editor.minimap.enabled": false,
     "bookmarks.experimental.enableNewStickyEngine": false,
     "gitlens.ai.model": "vscode",
     "gitlens.ai.vscode.model": "copilot:gpt-4",
+    "editor.minimap.enabled": false,
 }
