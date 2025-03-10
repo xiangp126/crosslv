@@ -290,9 +290,9 @@ class PrettyPrintMemory(gdb.Command):
         parser.add_argument(
             "-s", "--size",
             type=int,
-            choices=[1, 2, 4, 8, 16],
+            choices=[1, 2, 4, 8, 16, 32],
             default=0,
-            help="Size of memory bytes to print (1, 2, 4, 8, 16 bytes), default: 0"
+            help="Size of memory bytes to print (1, 2, 4, 8, 16, 32 bytes), default: 0"
         )
         parser.add_argument(
             "-h", "--help",
@@ -429,6 +429,7 @@ class PDataCommand(gdb.Command):
             var = gdb.parse_and_eval(arg)
             # Look up the canonical type for 'struct wad_sstr'
             wad_sstr_type = gdb.lookup_type("struct wad_sstr")
+            wad_fts_sstr = gdb.lookup_type("struct fts_sstr")
             wad_buff_region_type = gdb.lookup_type("struct wad_buff_region")
             wad_str_type = gdb.lookup_type("struct wad_str")
             wad_line_type = gdb.lookup_type("struct wad_line")
@@ -451,24 +452,29 @@ class PDataCommand(gdb.Command):
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
-            if unqualified_type in [wad_buff_region_type, wad_line_type, wad_http_hdr_type, wad_http_hdr_line_type,
-                                    wad_http_start_line_type]:
-                var = gdb.parse_and_eval(f"(({type} *){addr})->data")
-                addr = var.address
-            elif unqualified_type == wad_str_type:
+
+            # Define type-specific behaviors
+            if unqualified_type == wad_str_type:
                 gdb.execute(f"p *(({type} *){addr})")
                 return True
-            elif unqualified_type == wad_sstr_type:
-                pass
-            else:
+
+            # Handle types with 'data' member
+            if unqualified_type in [wad_buff_region_type, wad_line_type, wad_http_hdr_type,
+                                   wad_http_hdr_line_type, wad_http_start_line_type]:
+                var = gdb.parse_and_eval(f"(({type} *){addr})->data")
+                addr = var.address
+            elif unqualified_type not in [wad_sstr_type, wad_fts_sstr]:
                 print(f"Error: Unexpected type: {unqualified_type}")
                 return False
 
             print(var)
-
-            buff_addr = var['buff']
+            if unqualified_type == wad_fts_sstr:
+                buff_addr = var['data']
+            else:
+                buff_addr = var['buff']
             buff_start = var['start']
             buff_length = var['len']
+
 
             if buff_addr == 0:
                 gdb.execute(f"p {buff_addr}")
@@ -505,6 +511,7 @@ class PrintListCommand(gdb.Command):
         self._max_print_nodes = 80
         self.list_head_type = gdb.lookup_type("struct list_head")
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
+        self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
         # Initialize the PData command.
         self.pdata = PDataCommand("pdata")
 
@@ -646,6 +653,7 @@ class PrintListCommand(gdb.Command):
                     "  Container mode:\n"
                     "    plist req->headers wad_http_hdr link\n"
                     "    plist req->headers wad_http_hdr link val\n"
+                    "    pl cr fts_pkt link\n"
                     "    plist buff --buff-region\n"
                     "    plist buff --buff-region-data\n"
                     "    plist buff --buff-region --fields data\n"
@@ -672,6 +680,8 @@ class PrintListCommand(gdb.Command):
                         help="Set container type to 'struct wad_http_hdr' member name to 'link', and fields to 'data'.")
         parser.add_argument("--dynamic-proc", action="store_true",
                         help="Set container type to 'struct wad_http_dyn_proc' and member name to 'link'.")
+        parser.add_argument("--fts-pkt", action="store_true",
+                        help="Set container type to 'struct fts_pkt_queue' and member name to 'link'.")
         parser.add_argument("--fields", nargs="*", default=[],
                         help="List of fields from the container to print.")
         # Positional arguments for the list traversal.
@@ -705,6 +715,9 @@ class PrintListCommand(gdb.Command):
         if args.dynamic_proc:
             args.container_type = "struct wad_http_dyn_proc"
             args.member_name = "link"
+        if args.fts_pkt:
+            args.container_type = "struct fts_pkt"
+            args.member_name = "link"
         if args.fields:
             args.fields_to_print = args.fields
 
@@ -731,14 +744,15 @@ class PrintListCommand(gdb.Command):
         unqualified_type = type.unqualified()
         if unqualified_type == self.wad_buff_type:
             list_head = parsed['regions'].address
-            print(f"(({type} *) {addr})")
+        elif unqualified_type == self.fts_pkt_queue_type:
+            list_head = parsed['pkts'].address
         elif unqualified_type == self.list_head_type:
             list_head = addr
         else:
             print(f"Error: Unexpected type: {unqualified_type}")
+            return
 
-        # print(f"Head:  (({list_head_type} *) {list_head})")
-        print(f"Head: {list_head}")
+        print(f"Head: {list_head}, Input: (({type} *) {addr})")
 
         if args.container_type is None:
             try:
