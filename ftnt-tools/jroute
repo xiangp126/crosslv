@@ -12,10 +12,13 @@ fHostname=$(hostname)
 fDryRun=""
 fNewGateway=""
 fNewGatewayIP=""
-
-# Check for required files
-[ ! -f "$GETCOLORS" ] && echo "File not found: $GETCOLORS" && exit 1
-source "$GETCOLORS"
+# Colors
+MAGENTA='\033[35m'
+NORMAL='\033[0m'
+BOLD='\033[1m'
+BLUE='\033[34m'
+RESET='\033[0m'
+COLOR=$MAGENTA
 
 # Gateway IP mappings
 declare -A gatewayIPs=(
@@ -38,7 +41,7 @@ for key in "${!gatewayIPs[@]}"; do
 done
 
 usage() {
-    cat <<EOF
+    cat <<_EOF_
 Usage: $(basename "$0") [OPTIONS]
 
 Options:
@@ -46,11 +49,13 @@ Options:
     -d, --dry-run        Show what would be done without making changes
     -t, --gateway NAME   Specify the gateway to use (Only available gateways are allowed)
 
-Available gateways:
-$BANNER1
-EOF
+_EOF_
+}
+
+info() {
     local gatewayName
     local currGatewayIP
+    echo $BANNER1
     # Sort and display available gateways
     printf "%-15s %s\n" "GATEWAY" "IP ADDRESS"
     echo "$BANNER1"
@@ -65,7 +70,12 @@ EOF
     exit 1
 }
 
-[[ $# -eq 0 ]] && usage
+help() {
+    usage
+    info
+}
+
+[[ $# -eq 0 ]] && info
 
 SHORTOPTS="hdt:"
 LONGOPTS="help,dry-run,gateway:"
@@ -80,7 +90,7 @@ eval set -- "$PARSED"
 while true; do
     case "$1" in
         -h|--help)
-            usage
+            help
             ;;
         -d|--dry-run)
             fDryRun=true
