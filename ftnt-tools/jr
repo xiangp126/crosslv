@@ -142,7 +142,6 @@ searchAndOpen() {
         echo $SEPARATOR_RIGHT
         echo -e "rgQuery: ${COLOR}$rgQuery${RESET}"
         echo -e "fzfQuery: ${COLOR}$fzfQuery${RESET}"
-        echo $SEPARATOR_LEFT
     fi
 
     if [ -z "$fQuery" ]; then
@@ -161,20 +160,31 @@ searchAndOpen() {
 
     # Sample output of fzfResult:
     # daemon/wad/wad_app_eng.c:3071:          goto session_make_failed;
-    pattern='([a-zA-Z0-9/.%_-]+):([0-9]+)'
+    # or
+    # Z15 Bug 0996624 FTP fails active in TP mode/debug2_passive.c:398:CLNT lftp/4.9.2
+    # Replace the space with '\ ' for the file path
+    fzfSelected="${fzfSelected// /\\ }"
+    pattern='([^:]+):([0-9]+):'
     if [[ $fzfSelected =~ $pattern ]]; then
-        file="${BASH_REMATCH[1]}"
+        filepath="${BASH_REMATCH[1]}"
         linenumber="${BASH_REMATCH[2]}"
     else
         echo -e "${COLOR}Error: The result is in unexpected format${RESET}"
         exit 1
     fi
 
+    if [ -n "$fDebug" ]; then
+        echo -e "fzf select: ${COLOR}$fzfSelected${RESET}"
+        echo -e "filepath:   ${COLOR}$filepath${RESET}"
+        echo -e "linenumber: ${COLOR}$linenumber${RESET}"
+        echo $SEPARATOR_LEFT
+    fi
+
     if [ "$fEditor" == "vim" ]; then
-        $fEditor +"${linenumber}" "$file"
+        eval $fEditor +"${linenumber}" "$filepath"
         exit 0
     else
-        $fEditor "$file":"$linenumber"
+        eval $fEditor "$filepath":"$linenumber"
     fi
 }
 
@@ -184,6 +194,5 @@ searchAndOpen
 
 if [ -n "$fzfSelected" ];
 then
-    # echo -e "The file opened: ${COLOR}$file:$linenumber${RESET}"
     echo -e "Line opened: ${COLOR}${fzfSelected:0:80}${RESET}"
 fi
