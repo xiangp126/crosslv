@@ -140,7 +140,7 @@ hi rubyidentifier guifg=#c6b6fe guibg=NONE guisp=NONE gui=NONE ctermfg=147 cterm
 " ---- Self modify
 hi LineNr term=underline ctermfg=59 ctermbg=NONE
 " hi normal ctermfg=249 ctermbg=NONE cterm=NONE
-hi normal ctermfg=246 ctermbg=NONE cterm=NONE
+hi normal ctermfg=247 ctermbg=NONE cterm=NONE
 hi Function ctermfg=137 guifg=#fad07a
 hi Identifier ctermfg=140 ctermbg=NONE cterm=NONE
 hi Operator ctermfg=144 ctermbg=None cterm=NONE
