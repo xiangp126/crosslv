@@ -471,6 +471,7 @@ class PDataCommand(gdb.Command):
         try:
             args = parser.parse_args(gdb.string_to_argv(argument))
         except SystemExit:
+            print("Error parsing arguments")
             return
 
         if not args.data:
@@ -642,7 +643,8 @@ class PrintListCommand(gdb.Command):
 
                         # for wad_sstr_type, call pdata to print the data
                         if field_type == wad_sstr_type:
-                            self.pdata.invoke(f"((({container_type} *) {real_node_ptr})->{field})", False)
+                            # Pass the field expression as a quoted string to prevent parsing issues
+                            self.pdata.invoke(f"\"((({container_type} *) {real_node_ptr})->{field})\"", False)
                             if real_node_ptr == f"{self.wad_buff_type} *":
                                 gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->name")
                                 gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->id")
