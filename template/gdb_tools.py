@@ -171,6 +171,8 @@ class PrettyPrintMemory(gdb.Command):
         super(PrettyPrintMemory, self).__init__(name, gdb.COMMAND_USER)
         self.parser = self._create_parser()
         self.max_print_size_for_decimal = 8
+        self.max_print_size_for_all = 360
+        self.struct_size = 0
 
     def print_session_ctx(self, address, type):
         mem = f"({type} *) {address}"
@@ -232,13 +234,53 @@ class PrettyPrintMemory(gdb.Command):
         self.print_memory_bytes(_port, 2)
 
     def print_memory_bytes(self, mem, size):
+        print(f"++x/{size}bu {mem}, {self.struct_size} bytes in struct")
         result = gdb.execute(f"x/{size}bu {mem}", to_string=True)
         if size > self.max_print_size_for_decimal:
-            print(result, end="")
-            gdb.execute(f"x/{size}bx {mem}")
-            gdb.execute(f"x/{size}bt {mem}")
+            # ++x/32bu (struct wad_port_ops *) 0x55cb770625a0
+            # 0x55cb770625a0 <g_wad_app_trap_port_ops>:       155     221     76      115     203     85      0       0
+            # 0x55cb770625a8 <g_wad_app_trap_port_ops+8>:     59      222     76      115     203     85      0       0
+            # 0x55cb770625b0 <g_wad_app_trap_port_ops+16>:    213     222     76      115     203     85      0       0
+            # 0x55cb770625b8 <g_wad_app_trap_port_ops+24>:    0       223     76      115     203     85      0       0
+            output = {}
+            line_formatted = {
+                'dec': ["Big-endian Dec string:"],
+                'hex': ["Big-endian Hex string:"],
+                'bin': ["Big-endian Bin string:"],
+            }
+
+            lines = result.strip().split('\n')
+            if not lines:
+                print("No lines found in the command output")
+                return
+
+            for line in lines[1:]:
+                # Remove anything in angle brackets including the brackets
+                line_without_brackets = re.sub(r'<[^>]*>', '', line)
+                # Extract the address and numbers
+                parts = line_without_brackets.split(':')
+                if len(parts) > 1:
+                    address = parts[0].strip()
+                    numbers = re.findall(r'\d+', parts[1])
+                    bytes_list = []
+                    for group in numbers:
+                        bytes_list.extend([int(x) for x in group.split()])
+
+                    dec_string = ' '.join(f'{byte:<8}' for byte in bytes_list)
+                    hex_string = ' '.join(f'0x{format(byte, "02X"):<6}' for byte in bytes_list)
+                    bin_string = ' '.join(f'{bin(byte)[2:].zfill(8)}' for byte in bytes_list)
+
+                    line_formatted["dec"].append(f"{address}: {dec_string}")
+                    line_formatted["hex"].append(f"{address}: {hex_string}")
+                    line_formatted["bin"].append(f"{address}: {bin_string}")
+
+            output['dec'] = '\n'.join(line_formatted['dec'])
+            output['hex'] = '\n'.join(line_formatted['hex'])
+            output['bin'] = '\n'.join(line_formatted['bin'])
+
+            for formatted_output in output.values():
+                print(formatted_output)
         else:
-            print(f"++x/{size}bu {mem}")
             # ========================================================
             # Use re.findall() to extract the values from the result.
             # re.findall(): Returns a list of all non-overlapping matches of the RE pattern in the input string.
@@ -271,11 +313,11 @@ class PrettyPrintMemory(gdb.Command):
             # bytes_list = [int(x) for x in numbers.group(1).split()]
             # ========================================================
 
-            hex_string = ' '.join(f'0x{format(byte, "02X"):<6}' for byte in bytes_list)
             dec_string = ' '.join(f'{byte:<8}' for byte in bytes_list)
+            hex_string = ' '.join(f'0x{format(byte, "02X"):<6}' for byte in bytes_list)
             bin_string = ' '.join(f'{bin(byte)[2:].zfill(8)}' for byte in bytes_list)
-            print(f"Big-endian Hex string: {hex_string}")
             print(f'Big-endian Dec string: {dec_string}')
+            print(f"Big-endian Hex string: {hex_string}")
             print(f'Big-endian Bin string: {bin_string}')
 
             be_val = le_val = 0
@@ -374,12 +416,11 @@ class PrettyPrintMemory(gdb.Command):
                 type = ret.type.target()
 
             addr = str(addr).split()[0]
-            size = type.sizeof
-            print(f"Memory address: {addr}, Type: {type}, Size: {size} bytes")
-
+            size = self.struct_size = type.sizeof
+            # print(f"Memory address: {addr}, Type: {type}, Size: {size} bytes")
             if parsed_args.size:
                 size = parsed_args.size
-            self.print_memory(addr, type, min(32, size))
+            self.print_memory(addr, type, min(self.max_print_size_for_all, size))
         else:
             self.print_help()
 
