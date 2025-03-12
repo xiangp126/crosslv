@@ -4,8 +4,8 @@ import argparse
 
 class PrintErrno(gdb.Command):
     """Custom GDB command 'perrno' to display the current errno value."""
-    def __init__(self):
-        super().__init__("perrno", gdb.COMMAND_USER)
+    def __init__(self, name):
+        super().__init__(name, gdb.COMMAND_USER)
 
     def invoke(self, arg, from_tty):
         try:
@@ -162,13 +162,15 @@ class PrintErrno(gdb.Command):
     }
 
 # Instantiate the command
-PrintErrno()
+PrintErrno("perrno")
+PrintErrno("pe")
 
 class PrettyPrintMemory(gdb.Command):
     """Print memory at the specified address using various formats."""
     def __init__(self, name):
         super(PrettyPrintMemory, self).__init__(name, gdb.COMMAND_USER)
         self.parser = self._create_parser()
+        self.max_print_size_for_decimal = 8
 
     def print_session_ctx(self, address, type):
         mem = f"({type} *) {address}"
@@ -223,56 +225,65 @@ class PrettyPrintMemory(gdb.Command):
             print(f"Error accessing memory at {address}: {e}")
 
     def print_ip_address(self, address, type):
-        size = 4
         _addr = f"&(({type} *) {address})->sa4.sin_addr"
-        self.print_memory_bytes(_addr, size)
+        self.print_memory_bytes(_addr, 4)
 
-        size = 2
         _port = f"&(({type} *) {address})->sa4.sin_port"
-        self.print_memory_bytes(_port, size)
+        self.print_memory_bytes(_port, 2)
 
     def print_memory_bytes(self, mem, size):
-        print(f"++x/{size}bu {mem}")
         result = gdb.execute(f"x/{size}bu {mem}", to_string=True)
+        if size > self.max_print_size_for_decimal:
+            print(result, end="")
+            gdb.execute(f"x/{size}bx {mem}")
+            gdb.execute(f"x/{size}bt {mem}")
+        else:
+            print(f"++x/{size}bu {mem}")
+            # ========================================================
+            # Use re.findall() to extract the values from the result.
+            # re.findall(): Returns a list of all non-overlapping matches of the RE pattern in the input string.
+            # It returns all matched substrings based on the capturing groups.
+            # 0x7f9c1ba2e83c: 172     16      67      185
+            # (?:...): A non-capturing group, which groups part of the RE but does not create a separate capturing group.
+            # \s matches any whitespace character, including spaces, tabs, and newlines (\n).
+            # ========================================================
+            numbers = re.findall(r':\s*((?:\d+\s+)+)', result)
+            if not numbers:
+                print("No values found in memory")
+                return
+            # numbers[0]: Represents the first matched group
+            bytes_list = []
+            for group in numbers:
+                bytes_list.extend([int(x) for x in group.split()])
 
-        # 0x7f9c1ba2e83c: 172     16      67      185
-        # (?:...): A non-capturing group, which groups part of the RE but does not create a separate capturing group.
-        # re.findall(): Returns a list of all non-overlapping matches of the RE pattern in the input string.
-        # It returns all matched substrings based on the capturing groups.
-        # re.search(): Searches for the first location where the regular RE matches in the input string.
-        # numbers = ['172     16      67      185 ']
+            # ========================================================
+            # Use re.search() to extract the values from the result.
+            # re.search(): Searches for the first location where the regular RE matches in the input string.
+            # numbers = ['172     16      67      185 ']
 
-        # numbers = re.findall(r':\s*((?:\d+\s+)+)', result)
-        # if not numbers:
-        #     print("No values found in memory")
-        #     return
+            # numbers = re.search(r':\s*((?:\d+\s+)+)', result)
+            # if not numbers:
+            #     print("No values found in memory")
+            #     return
 
-        # # numbers[0]: Represents the first matched group
-        # bytes_list = [int(x) for x in numbers[0].split()]
+            # match.group(0): This corresponds to the entire matched string (the full match).
+            # match.group(1): This corresponds to the first captured group.
+            # bytes_list = [int(x) for x in numbers.group(1).split()]
+            # ========================================================
 
-        numbers = re.search(r':\s*((?:\d+\s+)+)', result)
-        if not numbers:
-            print("No values found in memory")
-            return
+            hex_string = ' '.join(f'0x{format(byte, "02X"):<6}' for byte in bytes_list)
+            dec_string = ' '.join(f'{byte:<8}' for byte in bytes_list)
+            bin_string = ' '.join(f'{bin(byte)[2:].zfill(8)}' for byte in bytes_list)
+            print(f"Big-endian Hex string: {hex_string}")
+            print(f'Big-endian Dec string: {dec_string}')
+            print(f'Big-endian Bin string: {bin_string}')
 
-        # match.group(0): This corresponds to the entire matched string (the full match).
-        # match.group(1): This corresponds to the first captured group.
-        bytes_list = [int(x) for x in numbers.group(1).split()]
-
-        # Calculate values in both endianness
-        le_val = sum(byte << (8 * i) for i, byte in enumerate(bytes_list))
-        be_val = sum(byte << (8 * (size - 1 - i)) for i, byte in enumerate(bytes_list))
-
-        # Convert back to bytes in big-endian order for verification
-        bytes_be = be_val.to_bytes(size, byteorder='big')
-        hex_string = ' '.join(f'0x{format(byte, "02X")}' for byte in bytes_be)
-        dec_string = ' '.join(f'{byte:<4}' for byte in bytes_be)
-
-        print(f"Big-endian Hex string: {hex_string}")
-        print(f'Big-endian Dec string: {dec_string}')
-        print(f"Big-endian Decimal:    {be_val}")
-        print(f"Little-endian Decimal: {le_val}")
-        gdb.execute(f"x/{size}bt {mem}")
+            be_val = le_val = 0
+            for i, byte in enumerate(bytes_list):
+                be_val = (be_val << 8) | byte
+                le_val |= byte << (8 * i)
+            print(f"Big-endian Decimal:    {be_val}")
+            print(f"Little-endian Decimal: {le_val}")
 
     def _create_parser(self):
         # Note: We can't use argparse directly with GDB's argument string
@@ -378,41 +389,33 @@ PrettyPrintMemory("pmem")
 
 class SetWatch(gdb.Command):
     """Set a watchpoint on the memory location of the given input."""
-    def __init__(self):
-        super(SetWatch, self).__init__("setwatch", gdb.COMMAND_USER)
+    def __init__(self, name):
+        super(SetWatch, self).__init__(name, gdb.COMMAND_USER)
 
-    def invoke(self, args, from_tty):
-        # Parse the input argument
-        if not args:
-            print("Usage: setwatch <variable>")
-            return
+    def invoke(self, arg, from_tty):
+        parser = argparse.ArgumentParser(
+            description="Set a watchpoint on the memory location of the given input",
+        )
+        parser.add_argument(
+            "variable",
+            nargs="?",
+            help="Variable to set a watchpoint on"
+        )
 
+        # +setw tcp_port->port->in_ops
+        # ++watch *((struct wad_port_ops*) 0x5575380b85a0 <g_wad_app_trap_port_ops>)
+        # Error: A syntax error in expression, near `)'.
         try:
-            # Evaluate the input argument to get its address
-            ret = gdb.parse_and_eval(args)
-            code = ret.type.code
-            type = None
-            address = None
-            watch_point = None
-
-            if code != gdb.TYPE_CODE_PTR:
-                address = ret.address
-                type = ret.type
-                watch_point=f'({type} *) {address}'
-            else:
-                address = ret
-                type = ret.type.target()
-                watch_point=f'({type}*) {address}'
-
-            # Set a watchpoint on the memory location
-            gdb.execute(f"watch *({watch_point})")
-
+            args = parser.parse_args(gdb.string_to_argv(arg))
+            gdb.execute(f"watch -l {args.variable}")
+        except SystemExit:
+            return
         except gdb.error as e:
             print(f"Error: {e}")
-            return
 
 # Instantiate the command
-SetWatch()
+SetWatch("setw")
+SetWatch("sw")
 
 class PDataCommand(gdb.Command):
     def __init__(self, name):
@@ -710,8 +713,7 @@ class PrintListCommand(gdb.Command):
         parser.add_argument("fields_to_print", nargs="*", default=None,
                             help="Optional fields from the container to print.")
         try:
-            argv = gdb.string_to_argv(arg)
-            args = parser.parse_args(argv)
+            args = parser.parse_args(gdb.string_to_argv(arg))
         except SystemExit:
             return
 
@@ -741,7 +743,7 @@ class PrintListCommand(gdb.Command):
         self._max_search_nodes = args.max_search
         self._max_print_nodes = args.max_print
 
-	    # Process list_head argument.
+        # Process list_head argument.
         try:
             parsed = gdb.parse_and_eval(args.list_head)
         except gdb.error as e:
