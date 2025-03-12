@@ -352,11 +352,9 @@ class PrettyPrintMemory(gdb.Command):
 
         if parsed_args.address:
             addr = parsed_args.address
+
             ret = gdb.parse_and_eval(addr)
             code = ret.type.code
-            type = None
-            size = 0
-
             if code != gdb.TYPE_CODE_PTR:
                 addr = ret.address
                 type = ret.type
@@ -364,10 +362,13 @@ class PrettyPrintMemory(gdb.Command):
                 addr = ret
                 type = ret.type.target()
 
+            addr = str(addr).split()[0]
             size = type.sizeof
+            print(f"Memory address: {addr}, Type: {type}, Size: {size} bytes")
+
             if parsed_args.size:
                 size = parsed_args.size
-            self.print_memory(addr, type, min(16, size))
+            self.print_memory(addr, type, min(32, size))
         else:
             self.print_help()
 
@@ -418,15 +419,24 @@ class PDataCommand(gdb.Command):
         super(PDataCommand, self).__init__(name, gdb.COMMAND_DATA)
 
     def invoke(self, argument, from_tty):
-        arg = argument.strip()
-        if not arg:
-            print("Usage: pdata <data_to_print>")
+        parser = argparse.ArgumentParser(description='Print data with optional formatting')
+        parser.add_argument('data', nargs='?', help='Data to print')
+        parser.add_argument('--format', '-f', choices=['str', 'hex', 'dec', 'bin'],
+                    default='str', help='Output format (default: str)')
+
+        try:
+            args = parser.parse_args(gdb.string_to_argv(argument))
+        except SystemExit:
+            return
+
+        if not args.data:
+            print("Usage: pdata <data_to_print> [--format {str|hex|dec|bin}]")
             print("Example: pdata req->req_line->data")
-            print("Example: pdata resp->req_line->data")
+            print("Example: pdata resp->req_line->data --format hex")
             return
 
         try:
-            var = gdb.parse_and_eval(arg)
+            var = gdb.parse_and_eval(args.data)
             # Look up the canonical type for 'struct wad_sstr'
             wad_sstr_type = gdb.lookup_type("struct wad_sstr")
             wad_fts_sstr = gdb.lookup_type("struct fts_sstr")
@@ -447,7 +457,7 @@ class PDataCommand(gdb.Command):
                 var = var.dereference()
 
             if addr == 0:
-                gdb.execute(f"p {arg}")
+                gdb.execute(f"p {args.data}")
                 return
 
             # Strip qualifiers (const, volatile) from the type
@@ -475,13 +485,20 @@ class PDataCommand(gdb.Command):
             buff_start = var['start']
             buff_length = var['len']
 
-
             if buff_addr == 0:
                 gdb.execute(f"p {buff_addr}")
                 return
 
-            # Construct the command string for the substring.
-            cmd = "p/s (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+            # Construct the command string based on the format
+            if args.format == 'hex':
+                cmd = "p/x (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+            elif args.format == 'dec':
+                cmd = "p/d (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+            elif args.format == 'bin':
+                cmd = "p/t (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+            else:  # default to string
+                cmd = "p/s (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+
             gdb.execute(cmd)
         except gdb.error as e:
             print("Error executing command: {}".format(e))

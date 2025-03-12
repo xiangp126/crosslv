@@ -37,12 +37,11 @@ fMaxAttempts=2
 fSwitchToSftp=""
 # Enable X11 Forwarding
 fX11Forwarding=""
-# Live Capture
-fLiveCapture=""
 fLCPort="7777"
+fLCReady=""
 fSSHpassInstalled=""
 fWiresharkInstalled=""
-fLCReady=""
+fUseWireshark=""
 fTlsKeyFileName=${SSLKEYLOGFILE##*/}
 fTlsKeyLogFile="$HOME/${fTlsKeyFileName}"
 # Jump Server
@@ -105,7 +104,7 @@ Basic Options:
     -P, --port               SSH Port to connect to (default: $fTargetPort)
     -d, --debug              Enable debug mode (-vvv)
     -c, --command            Execute commands remotely without opening an interactive login session
-    -C, --live-capture       Live capture packets from the remote device
+    -C, --wireshark       Live capture packets from the remote device
     --tls-keylog-file        Set the path to the TLS key log file (default: $fTlsKeyLogFile)
     --get-system-status      Get the system status of the target device
 
@@ -173,7 +172,7 @@ _EOF
 fInputCmd="$SCRIPT_NAME $*"
 
 SHORTOPTS="t:l:u:p:P:dc:CJ:L:R:v:TSm:Xh"
-LONGOPTS="help,target:,username:,password:,port:,debug,command:,live-capture,jump:,jump-password:,\
+LONGOPTS="help,target:,username:,password:,port:,debug,command:,wireshark,jump:,jump-password:,\
 local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status,tls-keylog-file:"
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
@@ -213,8 +212,8 @@ while true; do
             fi
             shift 2
             ;;
-        -C|--live-capture)
-            fLiveCapture=true
+        -C|--wireshark)
+            fUseWireshark=true
             shift
             ;;
         --tls-keylog-file)
@@ -494,7 +493,7 @@ checkSanity() {
         fVdom=""
         fSSHCmd=""
         fNoLoginShell=""
-        fLiveCapture=""
+        fUseWireshark=""
     fi
 
     if [ -n "$fSwitchToSftp" ] && [ -n "$fSwitchToSShfs" ]; then
@@ -508,7 +507,7 @@ checkSanity() {
         fVdom=""
         fSSHCmd=""
         fNoLoginShell=""
-        fLiveCapture=""
+        fUseWireshark=""
         fNeedJumpServer=""
         fForwardMode=""
     fi
@@ -518,7 +517,7 @@ checkSanity() {
         fVdom=""
         fSSHCmd=""
         fNoLoginShell=""
-        fLiveCapture=""
+        fUseWireshark=""
         fForwardMode=""
         checkSSHpass
     fi
@@ -532,7 +531,7 @@ checkSanity() {
         [ -n "$fSSHpassInstalled" ] && [ -n "$fWiresharkInstalled" ] && fLCReady=true
     else
         # Disable the live capture if the command does not contain "tcpdump" even if -C is set
-        fLiveCapture=""
+        fUseWireshark=""
     fi
 }
 
@@ -574,7 +573,7 @@ makeSpawnCmd() {
                     param="-o \"ProxyCommand=sshpass -p $fJumpPwd ssh -W %h:%p $fJumpUser@$fJumpServer\""
                 fi
 
-                if [ -n "$fLiveCapture" ]; then
+                if [ -n "$fUseWireshark" ]; then
                     fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\" | wireshark -k -i - -o \"tls.keylog_file:${fTlsKeyLogFile}\""
                 else
                     fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\""
@@ -584,7 +583,7 @@ makeSpawnCmd() {
 
             # Live Capture without sshpass
             # Spawn a remote nc session to listen on the target.
-            if [ -n "$fLiveCapture" ]; then
+            if [ -n "$fUseWireshark" ]; then
                 cmd="$cmd | nc -l -p $fLCPort"
             fi
 
@@ -702,7 +701,7 @@ dumpPreTips() {
         fi
     fi
 
-    [ -n "$fLiveCapture" ] && echo -e "[C] nc Listens remotely on Port: ${COLOR}$fLCPort${RESET}" >&2
+    [ -n "$fUseWireshark" ] && echo -e "[C] nc Listens remotely on Port: ${COLOR}$fLCPort${RESET}" >&2
 
     COLOR=$NORMAL
     echo -e "${BOLD}Input Command:${RESET}" >&2
@@ -826,7 +825,7 @@ if [ -n "$fSwitchToSShfs" ]; then
     fi
 fi
 
-if [ -n "$fLiveCapture" ]; then
+if [ -n "$fUseWireshark" ]; then
     COLOR=$MAGENTA
     # Execute the ssh command directly without using expect
     eval "$fSpawnCmd"
@@ -865,7 +864,7 @@ expect -c "
             puts stderr \"$USER_NOTATION \${COLOR}Error: \$err_msg\${RESET}\"
         }
         set remote_cmd {killall nc; killall tcpdump}
-        if {\"$fLiveCapture\" != \"\"} {
+        if {\"$fUseWireshark\" != \"\"} {
             puts stderr \"$USER_NOTATION \${COLOR}Sending commands to clear all nc session on the remote.\n\${RESET}\"
             if {\"$fNeedJumpServer\" != \"\"} {
                 system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -J $fJumpOptions -W $fJumpPwd -c '\$remote_cmd'
@@ -892,7 +891,7 @@ expect -c "
         set timeout -1
         trap {
             set COLOR \$LIGHTYELLOW
-            if {\"$fLiveCapture\" != \"\"} {
+            if {\"$fUseWireshark\" != \"\"} {
                 puts stderr \"\n$USER_NOTATION \${COLOR}CTRL+C captured.\${RESET}\"
                 clear_unfinished_jobs
             } else {

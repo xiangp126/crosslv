@@ -9,7 +9,7 @@ _jssh_complete() {
 
     # List of all long options
     long_opts="--target --username --password --port --debug --help \
-               --command --live-capture --jump --jump-password \
+               --command --wireshark --jump --jump-password \
                --local-forward --reverse-forward --vdom --sftp --telnet \
                --x11 --mount --get-system-status --tls-keylog-file"
 
@@ -69,7 +69,8 @@ _jssh_complete() {
         # Command options with complex commands
         -c|--command)
             local commands=(
-                "tcpdump -i any -s 0 -U -n -w - \'not port 22 and not arp\'"
+                # Capture all traffic except SSH, ARP, X11, and STP
+                "tcpdump -i any -s 0 -U -n -w - \'not port 22 and not arp and not port 6010 and not stp\'"
             )
             # The IFS variable is used to control how strings are split into fields. By default, it is set to whitespace.
             local IFS=$'\n'
