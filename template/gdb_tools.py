@@ -432,22 +432,21 @@ class SetWatch(gdb.Command):
     """Set a watchpoint on the memory location of the given input."""
     def __init__(self, name):
         super(SetWatch, self).__init__(name, gdb.COMMAND_USER)
-
-    def invoke(self, arg, from_tty):
-        parser = argparse.ArgumentParser(
+        self.parser = argparse.ArgumentParser(
             description="Set a watchpoint on the memory location of the given input",
         )
-        parser.add_argument(
+        self.parser.add_argument(
             "variable",
             nargs="?",
             help="Variable to set a watchpoint on"
         )
 
+    def invoke(self, arg, from_tty):
         # +setw tcp_port->port->in_ops
         # ++watch *((struct wad_port_ops*) 0x5575380b85a0 <g_wad_app_trap_port_ops>)
         # Error: A syntax error in expression, near `)'.
         try:
-            args = parser.parse_args(gdb.string_to_argv(arg))
+            args = self.parser.parse_args(gdb.string_to_argv(arg))
             gdb.execute(f"watch -l {args.variable}")
         except SystemExit:
             return
@@ -461,15 +460,28 @@ SetWatch("sw")
 class PDataCommand(gdb.Command):
     def __init__(self, name):
         super(PDataCommand, self).__init__(name, gdb.COMMAND_DATA)
+        # Look up the canonical type for 'struct wad_sstr'
+        self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
+        self.wad_fts_sstr = gdb.lookup_type("struct fts_sstr")
+        self.wad_buff_region_type = gdb.lookup_type("struct wad_buff_region")
+        self.wad_str_type = gdb.lookup_type("struct wad_str")
+        self.wad_line_type = gdb.lookup_type("struct wad_line")
+        self.wad_http_hdr_type = gdb.lookup_type("struct wad_http_hdr")
+        self.wad_http_hdr_line_type = gdb.lookup_type("struct wad_http_hdr_line")
+        self.wad_http_start_line_type = gdb.lookup_type("struct wad_http_start_line")
+        self.unsigned_char_type = gdb.lookup_type("unsigned char")
+        self.parser = self._create_parser()
 
-    def invoke(self, argument, from_tty):
+    def _create_parser(self):
         parser = argparse.ArgumentParser(description='Print data with optional formatting')
         parser.add_argument('data', nargs='?', help='Data to print')
         parser.add_argument('--format', '-f', choices=['str', 'hex', 'dec', 'bin'],
                     default='str', help='Output format (default: str)')
+        return parser
 
+    def invoke(self, argument, from_tty):
         try:
-            args = parser.parse_args(gdb.string_to_argv(argument))
+            args = self.parser.parse_args(gdb.string_to_argv(argument))
         except SystemExit:
             print("Error parsing arguments")
             return
@@ -482,15 +494,6 @@ class PDataCommand(gdb.Command):
 
         try:
             var = gdb.parse_and_eval(args.data)
-            # Look up the canonical type for 'struct wad_sstr'
-            wad_sstr_type = gdb.lookup_type("struct wad_sstr")
-            wad_fts_sstr = gdb.lookup_type("struct fts_sstr")
-            wad_buff_region_type = gdb.lookup_type("struct wad_buff_region")
-            wad_str_type = gdb.lookup_type("struct wad_str")
-            wad_line_type = gdb.lookup_type("struct wad_line")
-            wad_http_hdr_type = gdb.lookup_type("struct wad_http_hdr")
-            wad_http_hdr_line_type = gdb.lookup_type("struct wad_http_hdr_line")
-            wad_http_start_line_type = gdb.lookup_type("struct wad_http_start_line")
 
             type = var.type
             addr = var.address
@@ -502,28 +505,35 @@ class PDataCommand(gdb.Command):
                 var = var.dereference()
 
             if addr == 0:
-                gdb.execute(f"p {args.data}")
+                print("Warning: The address is null")
                 return
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
 
-            # Define type-specific behaviors
-            if unqualified_type == wad_str_type:
+            # Handle simple types
+            if unqualified_type == self.wad_str_type:
                 gdb.execute(f"p *(({type} *){addr})")
+            elif unqualified_type == self.unsigned_char_type:
+                # (unsigned char *) 0x7f80fce8d408 "172.16.67.182"
+                # Remove any strings within the double quotes in the address
+                addr = re.sub(r'".*"', '', str(addr))
+                gdb.execute(f"p/s (({type} *){addr})")
                 return True
 
             # Handle types with 'data' member
-            if unqualified_type in [wad_buff_region_type, wad_line_type, wad_http_hdr_type,
-                                   wad_http_hdr_line_type, wad_http_start_line_type]:
+            if unqualified_type in [self.wad_buff_region_type, self.wad_line_type, self.wad_http_hdr_type,
+                                   self.wad_http_hdr_line_type, self.wad_http_start_line_type]:
                 var = gdb.parse_and_eval(f"(({type} *){addr})->data")
                 addr = var.address
-            elif unqualified_type not in [wad_sstr_type, wad_fts_sstr]:
+            elif unqualified_type not in [self.wad_sstr_type, self.wad_fts_sstr]:
                 print(f"Error: Unexpected type: {unqualified_type}")
                 return False
 
             print(var)
-            if unqualified_type == wad_fts_sstr:
+
+            # For wad_fts_ssrt, the buffer is stored in the 'data' field, not the 'buff' field as in wad_sstr
+            if unqualified_type == self.wad_fts_sstr:
                 buff_addr = var['data']
             else:
                 buff_addr = var['buff']
@@ -531,18 +541,18 @@ class PDataCommand(gdb.Command):
             buff_length = var['len']
 
             if buff_addr == 0:
-                gdb.execute(f"p {buff_addr}")
+                print("Warning: The buffer address is null")
                 return
 
             # Construct the command string based on the format
             if args.format == 'hex':
-                cmd = "p/x (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+                cmd = "p/x (({0} *){1})->buff->data[{2}]@{3}".format(self.wad_sstr_type, addr, buff_start, buff_length)
             elif args.format == 'dec':
-                cmd = "p/d (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+                cmd = "p/d (({0} *){1})->buff->data[{2}]@{3}".format(self.wad_sstr_type, addr, buff_start, buff_length)
             elif args.format == 'bin':
-                cmd = "p/t (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+                cmd = "p/t (({0} *){1})->buff->data[{2}]@{3}".format(self.wad_sstr_type, addr, buff_start, buff_length)
             else:  # default to string
-                cmd = "p/s (({0} *){1})->buff->data[{2}]@{3}".format(wad_sstr_type, addr, buff_start, buff_length)
+                cmd = "p/s (({0} *){1})->buff->data[{2}]@{3}".format(self.wad_sstr_type, addr, buff_start, buff_length)
 
             gdb.execute(cmd)
         except gdb.error as e:
@@ -571,11 +581,69 @@ class PrintListCommand(gdb.Command):
         self._max_search_nodes = 1000
         # Maximum nodes to print.
         self._max_print_nodes = 80
+        # Look up the canonical type we are interested in.
         self.list_head_type = gdb.lookup_type("struct list_head")
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
         self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
         # Initialize the PData command.
         self.pdata = PDataCommand("pdata")
+        # Create the parser.
+        self.parser = self._create_parser()
+
+    def _create_parser(self):
+        """Create and configure the argument parser for the command."""
+        parser = argparse.ArgumentParser(
+            prog="plist",
+            description="Traverse and print a linked list in GDB.\n\n"
+                        "Modes:\n"
+                        "  1. Raw mode: Simply print raw list element addresses.\n"
+                        "  2. Container mode: Compute container from the list node and print details.\n\n"
+                        "Examples:\n"
+                        "  Raw mode:\n"
+                        "    plist resp->headers\n"
+                        "  Container mode:\n"
+                        "    plist req->headers wad_http_hdr link\n"
+                        "    plist req->headers wad_http_hdr link val\n"
+                        "    pl cr fts_pkt link\n"
+                        "    plist buff --buff-region\n"
+                        "    plist buff --buff-region-data\n"
+                        "    plist buff --buff-region --fields data\n"
+                        "    plist buff --buff-region --fields ref_count data\n"
+                        "    plist req->headers --http-header\n"
+                        "    plist &msg->headers --http-header --fields hdr_attr data",
+            formatter_class=argparse.RawTextHelpFormatter  # Preserves newlines in help text
+        )
+        # Positional Arguments
+        # If dest is specified, the attribute will use the name provided in dest instead of the default derived name.
+        parser.add_argument("--no-reverse", action="store_false", dest="reverse",
+                default=True, help="Disable reverse traversal. Only for container mode.")
+        parser.add_argument("--max-search", type=int, default=self._max_search_nodes,
+                help="Max nodes to search before stopping (default: 1000).")
+        parser.add_argument("--max-print", type=int, default=self._max_print_nodes,
+                help="Max nodes to print before stopping (default: 50).")
+        parser.add_argument("--buff-region", "--br", action="store_true",
+                help="Set container type to 'struct wad_buff_region' and member name to 'link'.")
+        parser.add_argument("--buff-region-data", "--brd", action="store_true",
+                help="Set container type to 'struct wad_buff_region', member name to 'link', and fields to 'data'.")
+        parser.add_argument("--http-header", "--hh", action="store_true",
+                help="Set container type to 'struct wad_http_hdr' and member name to 'link'.")
+        parser.add_argument("--http-header-data", "--hhd", action="store_true",
+                help="Set container type to 'struct wad_http_hdr' member name to 'link', and fields to 'data'.")
+        parser.add_argument("--dynamic-proc", "--dp", action="store_true",
+                help="Set container type to 'struct wad_http_dyn_proc' and member name to 'link'.")
+        parser.add_argument("--fts-pkt", "--fp", action="store_true",
+                help="Set container type to 'struct fts_pkt_queue' and member name to 'link'.")
+        parser.add_argument("--fields", nargs="*", default=[],
+                help="List of fields from the container to print.")
+        # Keyword Arguments
+        parser.add_argument("list_head", help="The head pointer for the list.")
+        parser.add_argument("container_type", nargs="?", default=None,
+                    help="The container type.")
+        parser.add_argument("member_name", nargs="?", default=None,
+                    help="The member name of the list node in the container.")
+        parser.add_argument("fields_to_print", nargs="*", default=None,
+                    help="Optional fields from the container to print.")
+        return parser
 
     def get_offset_of(self, container_type, member_name):
         # Compute the offset of the member in the container type.
@@ -625,7 +693,7 @@ class PrintListCommand(gdb.Command):
 
                 print(f"\n=== Node {idx}/{total_nodes} ===")
                 print(f"{'List Elem:':<10} {node}, member in container: {member_name}")
-                print(f"{'Container:':<10} {real_node_ptr}, (({container_type} *) {real_node_ptr})")
+                print(f"{'Container:':<10} {real_node_ptr}, (({container_type} *) {real_node_ptr}) =")
 
                 if fields_to_print:
                     for field in fields_to_print:
@@ -704,59 +772,8 @@ class PrintListCommand(gdb.Command):
         print(f"=== Summary: {total_nodes} nodes found ===")
 
     def invoke(self, arg, from_tty):
-        parser = argparse.ArgumentParser(
-        prog="plist",
-        description="Traverse and print a linked list in GDB.\n\n"
-                    "Modes:\n"
-                    "  1. Raw mode: Simply print raw list element addresses.\n"
-                    "  2. Container mode: Compute container from the list node and print details.\n\n"
-                    "Examples:\n"
-                    "  Raw mode:\n"
-                    "    plist resp->headers\n"
-                    "  Container mode:\n"
-                    "    plist req->headers wad_http_hdr link\n"
-                    "    plist req->headers wad_http_hdr link val\n"
-                    "    pl cr fts_pkt link\n"
-                    "    plist buff --buff-region\n"
-                    "    plist buff --buff-region-data\n"
-                    "    plist buff --buff-region --fields data\n"
-                    "    plist buff --buff-region --fields ref_count data\n"
-                    "    plist req->headers --http-header\n"
-                    "    plist &msg->headers --http-header --fields hdr_attr data",
-        formatter_class=argparse.RawTextHelpFormatter  # Preserves newlines in help text
-        )
-        # Optional arguments for the list traversal.
-        # If dest is specified, the attribute will use the name provided in dest instead of the default derived name.
-        parser.add_argument("--no-reverse", action="store_false", dest="reverse",
-                            default=True, help="Disable reverse traversal. Only for container mode.")
-        parser.add_argument("--max-search", type=int, default=self._max_search_nodes,
-                            help="Max nodes to search before stopping (default: 1000).")
-        parser.add_argument("--max-print", type=int, default=self._max_print_nodes,
-                            help="Max nodes to print before stopping (default: 50).")
-        parser.add_argument("--buff-region", action="store_true",
-                        help="Set container type to 'struct wad_buff_region' and member name to 'link'.")
-        parser.add_argument("--buff-region-data", action="store_true",
-                        help="Set container type to 'struct wad_buff_region', member name to 'link', and fields to 'data'.")
-        parser.add_argument("--http-header", action="store_true",
-                        help="Set container type to 'struct wad_http_hdr' and member name to 'link'.")
-        parser.add_argument("--http-header-data", action="store_true",
-                        help="Set container type to 'struct wad_http_hdr' member name to 'link', and fields to 'data'.")
-        parser.add_argument("--dynamic-proc", action="store_true",
-                        help="Set container type to 'struct wad_http_dyn_proc' and member name to 'link'.")
-        parser.add_argument("--fts-pkt", action="store_true",
-                        help="Set container type to 'struct fts_pkt_queue' and member name to 'link'.")
-        parser.add_argument("--fields", nargs="*", default=[],
-                        help="List of fields from the container to print.")
-        # Positional arguments for the list traversal.
-        parser.add_argument("list_head", help="The head pointer for the list.")
-        parser.add_argument("container_type", nargs="?", default=None,
-                            help="The container type.")
-        parser.add_argument("member_name", nargs="?", default=None,
-                            help="The member name of the list node in the container.")
-        parser.add_argument("fields_to_print", nargs="*", default=None,
-                            help="Optional fields from the container to print.")
         try:
-            args = parser.parse_args(gdb.string_to_argv(arg))
+            args = self.parser.parse_args(gdb.string_to_argv(arg))
         except SystemExit:
             return
 
@@ -842,7 +859,7 @@ class PrintListCommand(gdb.Command):
                 print(f"Error: {str(e)}")
                 raise
         else:
-            parser.print_help()
+            self.parser.print_help()
 
 PrintListCommand("plist")
 PrintListCommand("pl")
