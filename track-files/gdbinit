@@ -1,4 +1,31 @@
 # Put this file as ~/.gdbinit and it is sourced by GDB when it starts up
+
+# Here's a summary of the predefined hooks available in GDB:
+#
+# hook-stop: Executes whenever program execution stops for any reason (breakpoints, watchpoints, stepping, signals, etc.)
+# hook-run: Executes when you start program execution with the run command
+# hook-continue: Executes when you continue execution with the continue command
+# hook-step: Executes when you use the step command
+# hook-next: Executes when you use the next command
+# hook-finish: Executes when you use the finish command
+# hook-until: Executes when you use the until command
+# hook-stepi: Executes when you use the stepi command
+# hook-nexti: Executes when you use the nexti command
+# hook-quit: Executes when you quit GDB
+#
+# Each hook can be defined using the define command followed by the hook name, your commands, and then end:
+#
+# (gdb) define hook-stop
+# > your-commands-here
+# > end
+#
+# Example to use hook-stop to execute a command whenever the program stops:
+# define hook-stop
+# Type commands for definition of "hook-stop".
+# End with a line saying just "end".
+# pl cstrm->input --buff-region-data   <== My self-defined command
+# end
+
 # TUI settings
 set style tui-border foreground none
 set tui active-border-mode normal
