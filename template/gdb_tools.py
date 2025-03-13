@@ -177,17 +177,17 @@ class PrettyPrintMemory(gdb.Command):
     def print_session_ctx(self, address, type):
         mem = f"({type} *) {address}"
         addresses = [
-            f"&({mem})->src_addr.sa4.sin_addr",
-            f"&({mem})->dst_addr.sa4.sin_addr",
             f"&({mem})->orig_src_addr.sa4.sin_addr",
             f"&({mem})->orig_dst_addr.sa4.sin_addr",
+            f"&({mem})->src_addr.sa4.sin_addr",
+            f"&({mem})->dst_addr.sa4.sin_addr",
         ]
 
         ports = [
-            f"&({mem})->src_addr.sa4.sin_port",
-            f"&({mem})->dst_addr.sa4.sin_port",
             f"&({mem})->orig_src_addr.sa4.sin_port",
             f"&({mem})->orig_dst_addr.sa4.sin_port",
+            f"&({mem})->src_addr.sa4.sin_port",
+            f"&({mem})->dst_addr.sa4.sin_port",
         ]
 
         for (address, port) in zip(addresses, ports):

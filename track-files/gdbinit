@@ -25,6 +25,16 @@
 # End with a line saying just "end".
 # pl cstrm->input --buff-region-data   <== My self-defined command
 # end
+# (gdb) show user hook-stop
+# User command "hook-stop":
+#   pl cstrm->input --buff-region-data
+#
+# To delete the hook-stop, you use the define command again, but make the hook-stop empty:
+# (gdb) define hook-stop
+# Type commands for definition of "hook-stop".
+# End with a line saying just "end".
+# >end
+# (gdb)
 
 # TUI settings
 set style tui-border foreground none
@@ -69,7 +79,7 @@ target_path = os.path.expanduser(gdb.parse_and_eval("$_gdb_target_script").strin
 tools_path = os.path.expanduser(gdb.parse_and_eval("$_gdb_tools_script").string())
 
 if not os.path.exists(target_path):
-    gdb.write(f"Error: Target script {target_path} not found\n")
+    gdb.write(f"+++Error: Target script {target_path} not found\n")
 else:
     gdb.execute(f"source {target_path}")
 
@@ -79,7 +89,7 @@ if int(gdb.parse_and_eval("$_gdb_tools_sourced")) == 0:
     else:
         gdb.execute(f"source {tools_path}")
         gdb.execute("set $_gdb_tools_sourced = 1")
-        gdb.write("GDB tools loaded successfully\n")
+        gdb.write("+++GDB tools loaded successfully\n")
 else:
     pass
     end
@@ -114,6 +124,16 @@ end
 document reload
     Reload the binary and reset source directory.
     Usage: reload
+end
+
+define undefine-hook-stop
+    define hook-stop
+    end
+end
+document undefine-hook-stop
+    Empties the hook-stop hook by redefining it with an empty body.
+    Usage: undefine-hook-stop
+    Example: undefine-hook-stop
 end
 
 # Initialize shared library paths
