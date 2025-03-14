@@ -162,8 +162,6 @@ searchAndOpen() {
     # daemon/wad/wad_app_eng.c:3071:          goto session_make_failed;
     # or
     # Z15 Bug 0996624 FTP fails active in TP mode/debug2_passive.c:398:CLNT lftp/4.9.2
-    # Replace the space with '\ ' for the file path
-    fzfSelected="${fzfSelected// /\\ }"
     pattern='([^:]+):([0-9]+):'
     if [[ $fzfSelected =~ $pattern ]]; then
         filepath="${BASH_REMATCH[1]}"
@@ -172,6 +170,9 @@ searchAndOpen() {
         echo -e "${COLOR}Error: The result is in unexpected format${RESET}"
         exit 1
     fi
+
+    # Add a backslash before the space in the filepath
+    filepath="${filepath// /\\ }"
 
     if [ -n "$fDebug" ]; then
         echo -e "fzf select: ${COLOR}$fzfSelected${RESET}"

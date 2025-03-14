@@ -435,7 +435,7 @@ expect -c "
             exit 1
         }
     } elseif {\$worker_cnt == 1} {
-        puts stderr \"\n$USER_NOTATION Info: Found exact match \[\$MAGENTA\${pid}, \${index}\${RESET}\] for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
+        puts stderr \"\n$USER_NOTATION Found exact match \[\$MAGENTA\${pid}, \${index}\${RESET}\] for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
     } else {
         puts stderr \"\n$USER_NOTATION \${COLOR}Could not find WAD process of type $fWorkerType.\${RESET}\"
         exit 1
