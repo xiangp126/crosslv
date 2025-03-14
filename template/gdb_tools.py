@@ -171,7 +171,7 @@ class PrettyPrintMemory(gdb.Command):
         super(PrettyPrintMemory, self).__init__(name, gdb.COMMAND_USER)
         self.parser = self._create_parser()
         self.max_print_size_for_decimal = 8
-        self.max_print_size_for_all = 360
+        self.max_print_size_for_all = 120
         self.struct_size = 0
 
     def print_session_ctx(self, address, type):
@@ -514,6 +514,7 @@ class PDataCommand(gdb.Command):
             # Handle simple types
             if unqualified_type == self.wad_str_type:
                 gdb.execute(f"p *(({type} *){addr})")
+                return True
             elif unqualified_type == self.unsigned_char_type:
                 # (unsigned char *) 0x7f80fce8d408 "172.16.67.182"
                 # Remove any strings within the double quotes in the address
@@ -524,6 +525,7 @@ class PDataCommand(gdb.Command):
             # Handle types with 'data' member
             if unqualified_type in [self.wad_buff_region_type, self.wad_line_type, self.wad_http_hdr_type,
                                    self.wad_http_hdr_line_type, self.wad_http_start_line_type]:
+                # Replace the addr with the address of the 'data' member
                 var = gdb.parse_and_eval(f"(({type} *){addr})->data")
                 addr = var.address
             elif unqualified_type not in [self.wad_sstr_type, self.wad_fts_sstr]:

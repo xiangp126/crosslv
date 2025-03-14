@@ -256,7 +256,8 @@
                 "scope": "support.class",
                 "settings": {
                     // "foreground": "#4EC9B0",
-                    "foreground": "#36bea3",
+                    // "foreground": "#36bea3",
+                    "foreground": "#40b09a",
                 },
             },
             {
@@ -278,15 +279,16 @@
                 "scope": "support.variable.property",
                 "settings": {
                     // "foreground": "#9CDCFE",
-                    "foreground": "#89bddc",
+                    // "foreground": "#89bddc",
+                    "foreground": "#82bada",
                 },
             },
             {
                 "scope": "keyword.operator",
                 "settings": {
                     // "foreground": "#d4d4d4",
-                    // "foreground": "#c16060",
-                    "foreground": "#c8c1c1",
+                    // "foreground": "#c8c1c1",
+                    "foreground": "#bfb6b6",
                 },
             },
             {
