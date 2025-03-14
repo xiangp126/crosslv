@@ -517,8 +517,7 @@ class PDataCommand(gdb.Command):
                 return True
             elif unqualified_type == self.unsigned_char_type:
                 # (unsigned char *) 0x7f80fce8d408 "172.16.67.182"
-                # Remove any strings within the double quotes in the address
-                addr = re.sub(r'".*"', '', str(addr))
+                addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
                 gdb.execute(f"p/s (({type} *){addr})")
                 return True
 
@@ -773,12 +772,7 @@ class PrintListCommand(gdb.Command):
 
         print(f"=== Summary: {total_nodes} nodes found ===")
 
-    def invoke(self, arg, from_tty):
-        try:
-            args = self.parser.parse_args(gdb.string_to_argv(arg))
-        except SystemExit:
-            return
-
+    def _process_command_args(self, args):
         if args.buff_region:
             args.container_type = "struct wad_buff_region"
             args.member_name = "link"
@@ -805,63 +799,78 @@ class PrintListCommand(gdb.Command):
         self._max_search_nodes = args.max_search
         self._max_print_nodes = args.max_print
 
-        # Process list_head argument.
+        return args
+
+    def invoke(self, arg, from_tty):
         try:
+            args = self.parser.parse_args(gdb.string_to_argv(arg))
+            args = self._process_command_args(args)
+
             parsed = gdb.parse_and_eval(args.list_head)
+            type = parsed.type
+            addr = parsed.address
+            if type.code == gdb.TYPE_CODE_PTR:
+                type = parsed.type.target()
+                addr = parsed
+                parsed = parsed.dereference()
+
+            # Remove any text in double quotes (string literals) or angle brackets (function names)
+            # This is needed because addresses in GDB output may contain these elements
+            # EXp: (struct list_head *) 0x55b9de5da327 <wad_http_session_get_from_resp+11>
+            # Exp: (struct list_head *) 0x55b9de5da327 "CONNECT 172.16.67.182:921 HTTP/1.1"
+            if re.search(r'(?:<[^>]+>|"[^"]+")', str(addr)):
+                print(f"Error: The list head contains unexpected characters: {addr}")
+                return
+                addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
+                # Re-parse the address
+                addr = gdb.parse_and_eval(f"({type} *) {addr}")
+
+            # Strip qualifiers (const, volatile) from the type
+            unqualified_type = type.unqualified()
+            if unqualified_type == self.wad_buff_type:
+                list_head = parsed['regions'].address
+            elif unqualified_type == self.fts_pkt_queue_type:
+                list_head = parsed['pkts'].address
+            elif unqualified_type == self.list_head_type:
+                list_head = addr
+            else:
+                print(f"Error: Unexpected type: {unqualified_type}")
+                return
+
+            print(f"Head: {list_head}, Input: (({type} *) {addr})")
+            if args.container_type is None:
+                try:
+                    self.traverse_raw_list(list_head)
+                except Exception as e:
+                    print(f"Error: {str(e)}")
+                    raise
+            elif args.container_type is not None and args.member_name is not None:
+                try:
+                    container_type = args.container_type
+                    member_name = args.member_name
+                    fields_to_print = args.fields_to_print
+
+                    try:
+                        gdb.lookup_type(container_type)
+                    except gdb.error:
+                        container_type = "struct " + container_type
+                        gdb.lookup_type(container_type)
+
+                    self.traverse_list(args.reverse, list_head, container_type, member_name, fields_to_print)
+                except Exception as e:
+                    print(f"Error: {str(e)}")
+                    raise
+            else:
+                self.parser.print_help()
+
+        except SystemExit:
+            return
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            raise
         except gdb.error as e:
             print(f"Error: {e}")
             return
-
-        type = parsed.type
-        addr = parsed.address
-
-        if type.code == gdb.TYPE_CODE_PTR:
-            # Get the type of the object that the pointer points to
-            type = parsed.type.target()
-            addr = parsed
-            parsed = parsed.dereference()
-
-        # Strip qualifiers (const, volatile) from the type
-        unqualified_type = type.unqualified()
-        if unqualified_type == self.wad_buff_type:
-            list_head = parsed['regions'].address
-        elif unqualified_type == self.fts_pkt_queue_type:
-            list_head = parsed['pkts'].address
-        elif unqualified_type == self.list_head_type:
-            list_head = addr
-        else:
-            print(f"Error: Unexpected type: {unqualified_type}")
-            return
-
-        print(f"Head: {list_head}, Input: (({type} *) {addr})")
-
-        if args.container_type is None:
-            try:
-                self.traverse_raw_list(list_head)
-            except Exception as e:
-                print(f"Error: {str(e)}")
-                raise
-        elif args.container_type is not None and args.member_name is not None:
-            try:
-                container_type = args.container_type
-                member_name = args.member_name
-                fields_to_print = args.fields_to_print
-
-                try:
-                    gdb.lookup_type(container_type)
-                except gdb.error:
-                    container_type = "struct " + container_type
-                    gdb.lookup_type(container_type)
-
-                if list_head.type.code != gdb.TYPE_CODE_PTR:
-                    list_head = list_head.address
-
-                self.traverse_list(args.reverse, list_head, container_type, member_name, fields_to_print)
-            except Exception as e:
-                print(f"Error: {str(e)}")
-                raise
-        else:
-            self.parser.print_help()
 
 PrintListCommand("plist")
 PrintListCommand("pl")
