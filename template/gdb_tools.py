@@ -670,7 +670,7 @@ class PrintListCommand(gdb.Command):
             current = head['next']
             next_field = 'next'
 
-        while current != head:
+        while current and current != head:
             node_ptrs.append(current)
             current = current[next_field]
             if len(node_ptrs) >= self._max_search_nodes:
@@ -681,8 +681,9 @@ class PrintListCommand(gdb.Command):
         print(f"=== Total nodes found: {total_nodes} ===")
 
         idx = 1
-        nodes_to_print = node_ptrs[:self._max_print_nodes]
+        nodes_to_print = node_ptrs[0:self._max_print_nodes:1]
         if reverse:
+            # nodes_to_print = node_ptrs[-self._max_print_nodes:total_nodes:1]
             nodes_to_print = node_ptrs[-self._max_print_nodes:]
             idx = len(nodes_to_print)
 
@@ -750,15 +751,13 @@ class PrintListCommand(gdb.Command):
         node_ptrs = []
         current = head['next']
 
-        while current != head:
+        while current and current != head:
             node_ptrs.append(current)
             current = current['next']
             if len(node_ptrs) >= self._max_search_nodes:
                 print(f"Warning: More than {self._max_search_nodes} nodes found. Breaking to avoid infinite loop.")
                 break
 
-        # Add the head node to the list.
-        # node_ptrs.append(head_addr)
         total_nodes = len(node_ptrs)
         print(f"=== Total nodes found: {total_nodes} ===")
         print("Raw List Nodes (addresses):")
@@ -819,11 +818,12 @@ class PrintListCommand(gdb.Command):
             # EXp: (struct list_head *) 0x55b9de5da327 <wad_http_session_get_from_resp+11>
             # Exp: (struct list_head *) 0x55b9de5da327 "CONNECT 172.16.67.182:921 HTTP/1.1"
             if re.search(r'(?:<[^>]+>|"[^"]+")', str(addr)):
-                print(f"Error: The list head contains unexpected characters: {addr}")
+                print(f"Error: The list head contains unexpected characters: {addr}", end="")
+                print(f"Error: It may be a wild pointer at the moment. Please wait for it to be initialized.")
                 return
-                addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
-                # Re-parse the address
-                addr = gdb.parse_and_eval(f"({type} *) {addr}")
+                # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
+                # # Re-parse the address
+                # addr = gdb.parse_and_eval(f"({type} *) {addr}")
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
