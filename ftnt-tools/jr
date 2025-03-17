@@ -149,7 +149,7 @@ searchAndOpen() {
     else
         rgResult=$(eval "$rgQuery")
         if [ -z "$rgResult" ]; then
-            echo -e "No result found for query: ${COLOR}$fQuery${RESET}"
+            echo -e "No result found for query: ${COLOR}$fQuery${RESET}" >&2
             exit 1
         fi
         [ -n "$fOnlyRg" ] && echo "$rgResult" && exit 0

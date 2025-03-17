@@ -614,7 +614,8 @@ class PrintListCommand(gdb.Command):
                         "    plist &msg->headers --http-header --fields hdr_attr data",
             formatter_class=argparse.RawTextHelpFormatter  # Preserves newlines in help text
         )
-        # Positional Arguments
+
+        # Keyword Arguments
         # If dest is specified, the attribute will use the name provided in dest instead of the default derived name.
         parser.add_argument("--no-reverse", action="store_false", dest="reverse",
                 default=True, help="Disable reverse traversal. Only for container mode.")
@@ -622,21 +623,29 @@ class PrintListCommand(gdb.Command):
                 help="Max nodes to search before stopping (default: 1000).")
         parser.add_argument("--max-print", type=int, default=self._max_print_nodes,
                 help="Max nodes to print before stopping (default: 50).")
+        # --buff-region
         parser.add_argument("--buff-region", "--br", action="store_true",
                 help="Set container type to 'struct wad_buff_region' and member name to 'link'.")
         parser.add_argument("--buff-region-data", "--brd", action="store_true",
                 help="Set container type to 'struct wad_buff_region', member name to 'link', and fields to 'data'.")
+        # --http-header
         parser.add_argument("--http-header", "--hh", action="store_true",
                 help="Set container type to 'struct wad_http_hdr' and member name to 'link'.")
         parser.add_argument("--http-header-data", "--hhd", action="store_true",
                 help="Set container type to 'struct wad_http_hdr' member name to 'link', and fields to 'data'.")
+        # --dynamic-proc
         parser.add_argument("--dynamic-proc", "--dp", action="store_true",
                 help="Set container type to 'struct wad_http_dyn_proc' and member name to 'link'.")
+        # --fts-pkt
         parser.add_argument("--fts-pkt", "--fp", action="store_true",
                 help="Set container type to 'struct fts_pkt_queue' and member name to 'link'.")
+        # --ftp-cmd
+        parser.add_argument("--ftp-cmd", "--fc", action="store_true",
+                help="Set container type to 'struct ftp_cmd' and member name to 'list'.")
         parser.add_argument("--fields", nargs="*", default=[],
                 help="List of fields from the container to print.")
-        # Keyword Arguments
+
+        # Positional Arguments
         parser.add_argument("list_head", help="The head pointer for the list.")
         parser.add_argument("container_type", nargs="?", default=None,
                     help="The container type.")
@@ -645,6 +654,42 @@ class PrintListCommand(gdb.Command):
         parser.add_argument("fields_to_print", nargs="*", default=None,
                     help="Optional fields from the container to print.")
         return parser
+
+    def _process_command_args(self, args):
+        # --buff-resion --fields data
+        if args.buff_region:
+            args.container_type = "struct wad_buff_region"
+            args.member_name = "link"
+        if args.buff_region_data:
+            args.container_type = "struct wad_buff_region"
+            args.member_name = "link"
+            args.fields_to_print = ["data"]
+        # --http-header --fields data
+        if args.http_header:
+            args.container_type = "struct wad_http_hdr"
+            args.member_name = "link"
+        if args.http_header_data:
+            args.container_type = "struct wad_http_hdr"
+            args.member_name = "link"
+            args.fields_to_print = ["data"]
+        # --dynamic-proc
+        if args.dynamic_proc:
+            args.container_type = "struct wad_http_dyn_proc"
+            args.member_name = "link"
+        # --fts-pkt
+        if args.fts_pkt:
+            args.container_type = "struct fts_pkt"
+            args.member_name = "link"
+        # --ftp-cmd
+        if args.ftp_cmd:
+            args.container_type = "struct wad_ftp_cmd"
+            args.member_name = "list"
+        if args.fields:
+            args.fields_to_print = args.fields
+
+        self._max_search_nodes = args.max_search
+        self._max_print_nodes = args.max_print
+        return args
 
     def get_offset_of(self, container_type, member_name):
         # Compute the offset of the member in the container type.
@@ -770,35 +815,6 @@ class PrintListCommand(gdb.Command):
             print("     " + " => ".join(addresses))
 
         print(f"=== Summary: {total_nodes} nodes found ===")
-
-    def _process_command_args(self, args):
-        if args.buff_region:
-            args.container_type = "struct wad_buff_region"
-            args.member_name = "link"
-        if args.buff_region_data:
-            args.container_type = "struct wad_buff_region"
-            args.member_name = "link"
-            args.fields_to_print = ["data"]
-        if args.http_header:
-            args.container_type = "struct wad_http_hdr"
-            args.member_name = "link"
-        if args.http_header_data:
-            args.container_type = "struct wad_http_hdr"
-            args.member_name = "link"
-            args.fields_to_print = ["data"]
-        if args.dynamic_proc:
-            args.container_type = "struct wad_http_dyn_proc"
-            args.member_name = "link"
-        if args.fts_pkt:
-            args.container_type = "struct fts_pkt"
-            args.member_name = "link"
-        if args.fields:
-            args.fields_to_print = args.fields
-
-        self._max_search_nodes = args.max_search
-        self._max_print_nodes = args.max_print
-
-        return args
 
     def invoke(self, arg, from_tty):
         try:
