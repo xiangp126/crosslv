@@ -165,10 +165,10 @@ class PrintErrno(gdb.Command):
 PrintErrno("perrno")
 PrintErrno("pe")
 
-class PrettyPrintMemory(gdb.Command):
+class PrintMemory(gdb.Command):
     """Print memory at the specified address using various formats."""
     def __init__(self, name):
-        super(PrettyPrintMemory, self).__init__(name, gdb.COMMAND_USER)
+        super(PrintMemory, self).__init__(name, gdb.COMMAND_USER)
         self.parser = self._create_parser()
         self.max_print_size_for_decimal = 8
         self.max_print_size_for_all = 120
@@ -425,8 +425,8 @@ class PrettyPrintMemory(gdb.Command):
             self.print_help()
 
 # Instantiate the command
-PrettyPrintMemory("pm")
-PrettyPrintMemory("pmem")
+PrintMemory("pm")
+PrintMemory("pmem")
 
 class SetWatch(gdb.Command):
     """Set a watchpoint on the memory location of the given input."""
@@ -457,9 +457,10 @@ class SetWatch(gdb.Command):
 SetWatch("setw")
 SetWatch("sw")
 
-class PDataCommand(gdb.Command):
+# Print Data in WAD
+class PrintData(gdb.Command):
     def __init__(self, name):
-        super(PDataCommand, self).__init__(name, gdb.COMMAND_DATA)
+        super(PrintData, self).__init__(name, gdb.COMMAND_DATA)
         # Look up the canonical type for 'struct wad_sstr'
         self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
         self.wad_fts_sstr = gdb.lookup_type("struct fts_sstr")
@@ -560,10 +561,11 @@ class PDataCommand(gdb.Command):
             print("Error executing command: {}".format(e))
 
 # Register the command with GDB.
-PDataCommand("pdata")
-PDataCommand("pd")
+PrintData("pdata")
+PrintData("pd")
 
-class PrintListCommand(gdb.Command):
+# Print Kernel Double Linked List
+class PrintList(gdb.Command):
     """Traverse and print a linked list in GDB.
 
     Modes:
@@ -577,7 +579,7 @@ class PrintListCommand(gdb.Command):
     """
 
     def __init__(self, name):
-        super(PrintListCommand, self).__init__(name, gdb.COMMAND_USER)
+        super(PrintList, self).__init__(name, gdb.COMMAND_USER)
         # Maximum nodes to search/traverse to avoid infinite loops.
         self._max_search_nodes = 1000
         # Maximum nodes to print.
@@ -587,7 +589,7 @@ class PrintListCommand(gdb.Command):
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
         self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
         # Initialize the PData command.
-        self.pdata = PDataCommand("pdata")
+        self.pdata = PrintData("pdata")
         # Create the parser.
         self.parser = self._create_parser()
 
@@ -888,5 +890,5 @@ class PrintListCommand(gdb.Command):
             print(f"Error: {e}")
             return
 
-PrintListCommand("plist")
-PrintListCommand("pl")
+PrintList("plist")
+PrintList("pl")
