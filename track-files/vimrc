@@ -91,15 +91,16 @@ call plug#end()
 " <CR>    Carriage Return, enter
 " <Space> Space
 " <k0> - <k9> small keyboard 0 - 9
-cmap w!! w !sudo tee %
 set pastetoggle=<F12>
+cmap w!! w !sudo tee %
 nmap <F10> :set invnumber<CR>
+nmap <F9>  :if &syntax == 'on' \| set syntax=off \| else \| set syntax=on \| endif<CR>
 nmap <leader>k :mark<Space>
-nnoremap <C-G> :%s/\s\+$//g<CR> " Removing trailing white spaces
-nnoremap <C-M> :%s/\r//g<CR>
 nmap <leader>R :source ~/.vimrc<CR>
 nmap <silent> <leader>` :qall!<CR>
 nmap <silent> <leader>q :call CloseBufferOrQuit()<CR>
+nnoremap <C-G> :%s/\s\+$//g<CR> " Removing trailing white spaces
+nnoremap <C-M> :%s/\r//g<CR>
 function! CloseBufferOrQuit()
     " Check if there's only one buffer open
     if len(filter(range(1, bufnr('$')), 'buflisted(v:val)')) <= 1
