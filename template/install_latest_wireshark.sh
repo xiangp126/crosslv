@@ -13,6 +13,8 @@ if ! sudo -v; then
 fi
 
 # Add the Wireshark PPA repository
+echo "Removing the Wireshark stable PPA repository..."
+sudo add-apt-repository --remove ppa:wireshark-dev/stable -y
 echo "Adding the Wireshark stable PPA repository..."
 sudo add-apt-repository -y ppa:wireshark-dev/stable
 
@@ -47,7 +49,6 @@ if [ -x "$wiresharkBinPath" ] && [ -u "$wiresharkBinPath" ]; then
     echo "The setuid bit is already set for wireshark."
 else
     echo "Setting setuid bit for tcpdump ..."
-    exit
     sudo chmod u+s "$wiresharkBinPath"
 fi
 

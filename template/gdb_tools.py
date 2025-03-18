@@ -587,6 +587,7 @@ class PrintList(gdb.Command):
         # Look up the canonical type we are interested in.
         self.list_head_type = gdb.lookup_type("struct list_head")
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
+        self.wad_input_buff = gdb.lookup_type("struct wad_input_buff")
         self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
         # Initialize the PData command.
         self.pdata = PrintData("pdata")
@@ -845,7 +846,7 @@ class PrintList(gdb.Command):
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
-            if unqualified_type == self.wad_buff_type:
+            if unqualified_type in [self.wad_buff_type, self.wad_input_buff]:
                 list_head = parsed['regions'].address
             elif unqualified_type == self.fts_pkt_queue_type:
                 list_head = parsed['pkts'].address

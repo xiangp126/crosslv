@@ -65,7 +65,7 @@ fRFRemoteLisAddr="127.0.0.1"
 fRFRemoteLisPort="1080"
 # SSHFS Variables
 fSwitchToSShfs=""
-fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o cache=yes"
+fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o auto_cache -o uid=$(id -u) -o gid=$(id -g)"
 fFSOptions=""
 fFSMountPoint=""
 fFSRemoteDir=""
@@ -462,7 +462,7 @@ $(df -h "$fFSMountPoint")
 To unmount it, use
 $(printf "$LIGHTGREEN%s$RESET" "umount $fFSMountPoint")
 or (specifically used for unmounting FUSE file systems)
-$(printf "$LIGHTGREEN%s$RESET" "susermount -u $fFSMountPoint")
+$(printf "$LIGHTGREEN%s$RESET" "fusermount -u $fFSMountPoint")
 EOF
             exit 1
 

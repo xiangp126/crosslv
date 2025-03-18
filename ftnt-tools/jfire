@@ -35,7 +35,13 @@ Proxy-Connection: Keep-Alive\r\n\
 #     print(repr(line + "\r\n"))
 
 # Send the HTTP CONNECT request
-sock.sendall(http_request.encode())
+sock.settimeout(5)  # 5 seconds timeout
+try:
+	sock.sendall(http_request.encode())
+except socket.timeout:
+	print("Request timed out")
+	sock.close()
+	exit(1)
 
 # Receive the response from the server
 response = sock.recv(4096)
