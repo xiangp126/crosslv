@@ -174,6 +174,37 @@ class PrintMemory(gdb.Command):
         self.max_print_size_for_all = 120
         self.struct_size = 0
 
+    def invoke(self, argument, from_tty):
+        argument = re.sub(r';', '', argument)
+        parsed_args = self.parse_args(argument)
+        if not parsed_args:
+            return
+
+        if parsed_args.help:
+            self.print_help()
+            return
+
+        if parsed_args.address:
+            addr = parsed_args.address
+
+            ret = gdb.parse_and_eval(addr)
+            code = ret.type.code
+            if code != gdb.TYPE_CODE_PTR:
+                addr = ret.address
+                type = ret.type
+            else:
+                addr = ret
+                type = ret.type.target()
+
+            addr = str(addr).split()[0]
+            size = self.struct_size = type.sizeof
+            # print(f"Memory address: {addr}, Type: {type}, Size: {size} bytes")
+            if parsed_args.size:
+                size = parsed_args.size
+            self.print_memory(addr, type, min(self.max_print_size_for_all, size))
+        else:
+            self.print_help()
+
     def print_session_ctx(self, address, type):
         mem = f"({type} *) {address}"
         addresses = [
@@ -394,36 +425,6 @@ class PrintMemory(gdb.Command):
             self.print_help()
             return None
 
-    def invoke(self, args, from_tty):
-        parsed_args = self.parse_args(args)
-        if not parsed_args:
-            return
-
-        if parsed_args.help:
-            self.print_help()
-            return
-
-        if parsed_args.address:
-            addr = parsed_args.address
-
-            ret = gdb.parse_and_eval(addr)
-            code = ret.type.code
-            if code != gdb.TYPE_CODE_PTR:
-                addr = ret.address
-                type = ret.type
-            else:
-                addr = ret
-                type = ret.type.target()
-
-            addr = str(addr).split()[0]
-            size = self.struct_size = type.sizeof
-            # print(f"Memory address: {addr}, Type: {type}, Size: {size} bytes")
-            if parsed_args.size:
-                size = parsed_args.size
-            self.print_memory(addr, type, min(self.max_print_size_for_all, size))
-        else:
-            self.print_help()
-
 # Instantiate the command
 PrintMemory("pm")
 PrintMemory("pmem")
@@ -482,20 +483,13 @@ class PrintData(gdb.Command):
         # Create the parser
         self.parser = self._create_parser()
 
-    def _create_parser(self):
-        parser = argparse.ArgumentParser(description='Print data with optional formatting')
-        parser.add_argument('data', nargs='?', help='Data to print')
-        parser.add_argument('start', nargs='?', help='Starting index to print from')
-        parser.add_argument('len', nargs='?', default='1', help='Number of elements to print')
-        parser.add_argument('--format', '-f',
-                            choices=['str', 'hex', 'dec', 'bin', 's', 'x', 'd', 'b', 'h'],
-                            default='str', help='Output format (default: str). Shortcuts: s=str, x/h=hex, d=dec, b=bin')
-        return parser
-
     def invoke(self, argument, from_tty):
         try:
+            # Remove any semicolons from the argument string
+            argument = re.sub(r';', '', argument)
             args = self.parser.parse_args(gdb.string_to_argv(argument))
         except SystemExit:
+            print("Error: Invalid arguments")
             return
 
         if not args.data:
@@ -513,11 +507,21 @@ class PrintData(gdb.Command):
             type = var.type
             addr = var.address
 
+            # Debug Purpose
+            # print(f"var: {var}, type: {type}, addr: {addr}")
+
             if type.code == gdb.TYPE_CODE_PTR:
                 # Get the type of the object that the pointer points to
                 type = var.type.target()
                 addr = var
                 var = var.dereference()
+
+            # Remove any text in double quotes (string literals) or angle brackets (function names)
+            # This is needed because addresses in GDB output may contain these elements
+            # EXp: (struct list_head *) 0x55b9de5da327 <wad_http_session_get_from_resp+11>
+            # Exp: (struct list_head *) 0x55b9de5da327 "CONNECT 172.16.67.182:921 HTTP/1.1"
+            if re.search(r'(?:<[^>]+>|"[^"]+")', str(addr)):
+                addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
 
             if addr == 0:
                 print("Warning: The address is null")
@@ -525,9 +529,7 @@ class PrintData(gdb.Command):
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
-            imme_return = False
-
-            fmt = self.formats.get(args.format, "s")  # Default to string format if not recognized
+            fmt = self.formats.get(args.format, "s")
 
             # Handle types with 'data' member
             if unqualified_type in [self.wad_buff_region_type, self.wad_line_type, self.wad_http_hdr_type,
@@ -537,23 +539,20 @@ class PrintData(gdb.Command):
                 addr = var.address
             elif unqualified_type == self.unsigned_char_type:
                 # (unsigned char *) 0x7f80fce8d408 "172.16.67.182"
-                addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
+                # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
                 gdb.execute(f"p/s (({type} *){addr})")
-                imme_return = True
+                return
             elif unqualified_type in [self.fts_fstr, self.wad_str_type] and args.start is not None:
                 start = gdb.parse_and_eval(args.start)
                 len = gdb.parse_and_eval(args.len)
                 cmd = "p/{0} (({1} *){2})->data[{3}]@{4}".format(fmt, type, addr, start, len)
                 gdb.execute(cmd)
-                imme_return = True
+                return
             elif unqualified_type in [self.wad_sstr_type, self.wad_fts_sstr]:
                 pass
             else:
-                # print(f"Error: Unexpected type: {unqualified_type}! Just print it as is.")
+                # For other types, print the value as is
                 gdb.execute(f"p *(({type} *){addr})")
-                imme_return = True
-
-            if imme_return:
                 return
 
             print(var)
@@ -576,6 +575,16 @@ class PrintData(gdb.Command):
             gdb.execute(cmd)
         except gdb.error as e:
             print("Error executing command: {}".format(e))
+
+    def _create_parser(self):
+        parser = argparse.ArgumentParser(description='Print data with optional formatting')
+        parser.add_argument('data', nargs='?', help='Data to print')
+        parser.add_argument('start', nargs='?', help='Starting index to print from')
+        parser.add_argument('len', nargs='?', default='1', help='Number of elements to print')
+        parser.add_argument('--format', '-f',
+                            choices=['str', 'hex', 'dec', 'bin', 's', 'x', 'd', 'b', 'h'],
+                            default='str', help='Output format (default: str). Shortcuts: s=str, x/h=hex, d=dec, b=bin')
+        return parser
 
 # Register the command with GDB.
 PrintData("pdata")
@@ -610,6 +619,79 @@ class PrintList(gdb.Command):
         self.pdata = PrintData("pdata")
         # Create the parser.
         self.parser = self._create_parser()
+
+    def invoke(self, argument, from_tty):
+        try:
+            argument = re.sub(r';', '', argument)
+            args = self.parser.parse_args(gdb.string_to_argv(argument))
+            args = self._process_command_args(args)
+
+            parsed = gdb.parse_and_eval(args.list_head)
+            type = parsed.type
+            addr = parsed.address
+            if type.code == gdb.TYPE_CODE_PTR:
+                type = parsed.type.target()
+                addr = parsed
+                parsed = parsed.dereference()
+
+            # Remove any text in double quotes (string literals) or angle brackets (function names)
+            # This is needed because addresses in GDB output may contain these elements
+            # EXp: (struct list_head *) 0x55b9de5da327 <wad_http_session_get_from_resp+11>
+            # Exp: (struct list_head *) 0x55b9de5da327 "CONNECT 172.16.67.182:921 HTTP/1.1"
+            if re.search(r'(?:<[^>]+>|"[^"]+")', str(addr)):
+                print(f"Error: The list head contains unexpected characters: {addr}", end="")
+                print(f"Error: It may be a wild pointer at the moment. Please wait for it to be initialized.")
+                return
+                # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
+                # # Re-parse the address
+                # addr = gdb.parse_and_eval(f"({type} *) {addr}")
+
+            # Strip qualifiers (const, volatile) from the type
+            unqualified_type = type.unqualified()
+            if unqualified_type in [self.wad_buff_type, self.wad_input_buff]:
+                list_head = parsed['regions'].address
+            elif unqualified_type == self.fts_pkt_queue_type:
+                list_head = parsed['pkts'].address
+            elif unqualified_type == self.list_head_type:
+                list_head = addr
+            else:
+                print(f"Error: Unexpected type: {unqualified_type}")
+                return
+
+            print(f"Head: {list_head}, Input: (({type} *) {addr})")
+            if args.container_type is None:
+                try:
+                    self.traverse_raw_list(list_head)
+                except Exception as e:
+                    print(f"Error: {str(e)}")
+                    raise
+            elif args.container_type is not None and args.member_name is not None:
+                try:
+                    container_type = args.container_type
+                    member_name = args.member_name
+                    fields_to_print = args.fields_to_print
+
+                    try:
+                        gdb.lookup_type(container_type)
+                    except gdb.error:
+                        container_type = "struct " + container_type
+                        gdb.lookup_type(container_type)
+
+                    self.traverse_list(args.reverse, list_head, container_type, member_name, fields_to_print)
+                except Exception as e:
+                    print(f"Error: {str(e)}")
+                    raise
+            else:
+                self.parser.print_help()
+
+        except SystemExit:
+            return
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            raise
+        except gdb.error as e:
+            print(f"Error: {e}")
+            return
 
     def _create_parser(self):
         """Create and configure the argument parser for the command."""
@@ -835,78 +917,6 @@ class PrintList(gdb.Command):
             print("     " + " => ".join(addresses))
 
         print(f"=== Summary: {total_nodes} nodes found ===")
-
-    def invoke(self, arg, from_tty):
-        try:
-            args = self.parser.parse_args(gdb.string_to_argv(arg))
-            args = self._process_command_args(args)
-
-            parsed = gdb.parse_and_eval(args.list_head)
-            type = parsed.type
-            addr = parsed.address
-            if type.code == gdb.TYPE_CODE_PTR:
-                type = parsed.type.target()
-                addr = parsed
-                parsed = parsed.dereference()
-
-            # Remove any text in double quotes (string literals) or angle brackets (function names)
-            # This is needed because addresses in GDB output may contain these elements
-            # EXp: (struct list_head *) 0x55b9de5da327 <wad_http_session_get_from_resp+11>
-            # Exp: (struct list_head *) 0x55b9de5da327 "CONNECT 172.16.67.182:921 HTTP/1.1"
-            if re.search(r'(?:<[^>]+>|"[^"]+")', str(addr)):
-                print(f"Error: The list head contains unexpected characters: {addr}", end="")
-                print(f"Error: It may be a wild pointer at the moment. Please wait for it to be initialized.")
-                return
-                # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
-                # # Re-parse the address
-                # addr = gdb.parse_and_eval(f"({type} *) {addr}")
-
-            # Strip qualifiers (const, volatile) from the type
-            unqualified_type = type.unqualified()
-            if unqualified_type in [self.wad_buff_type, self.wad_input_buff]:
-                list_head = parsed['regions'].address
-            elif unqualified_type == self.fts_pkt_queue_type:
-                list_head = parsed['pkts'].address
-            elif unqualified_type == self.list_head_type:
-                list_head = addr
-            else:
-                print(f"Error: Unexpected type: {unqualified_type}")
-                return
-
-            print(f"Head: {list_head}, Input: (({type} *) {addr})")
-            if args.container_type is None:
-                try:
-                    self.traverse_raw_list(list_head)
-                except Exception as e:
-                    print(f"Error: {str(e)}")
-                    raise
-            elif args.container_type is not None and args.member_name is not None:
-                try:
-                    container_type = args.container_type
-                    member_name = args.member_name
-                    fields_to_print = args.fields_to_print
-
-                    try:
-                        gdb.lookup_type(container_type)
-                    except gdb.error:
-                        container_type = "struct " + container_type
-                        gdb.lookup_type(container_type)
-
-                    self.traverse_list(args.reverse, list_head, container_type, member_name, fields_to_print)
-                except Exception as e:
-                    print(f"Error: {str(e)}")
-                    raise
-            else:
-                self.parser.print_help()
-
-        except SystemExit:
-            return
-        except Exception as e:
-            print(f"Error: {str(e)}")
-            raise
-        except gdb.error as e:
-            print(f"Error: {e}")
-            return
 
 PrintList("plist")
 PrintList("pl")
