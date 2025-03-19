@@ -465,22 +465,31 @@ class PrintData(gdb.Command):
         self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
         self.wad_fts_sstr = gdb.lookup_type("struct fts_sstr")
         self.wad_buff_region_type = gdb.lookup_type("struct wad_buff_region")
-        self.wad_str_type = gdb.lookup_type("struct wad_str")
         self.wad_line_type = gdb.lookup_type("struct wad_line")
         self.wad_http_hdr_type = gdb.lookup_type("struct wad_http_hdr")
         self.wad_http_hdr_line_type = gdb.lookup_type("struct wad_http_hdr_line")
         self.wad_http_start_line_type = gdb.lookup_type("struct wad_http_start_line")
         self.unsigned_char_type = gdb.lookup_type("unsigned char")
+        self.wad_str_type = gdb.lookup_type("struct wad_str")
         self.fts_fstr = gdb.lookup_type("struct fts_fstr")
+        # Define the formats
+        self.formats = {
+            "str": "s", "s": "s",
+            "hex": "x", "x": "x", "h": "x",
+            "dec": "d", "d": "d",
+            "bin": "t", "b": "t"
+        }
+        # Create the parser
         self.parser = self._create_parser()
 
     def _create_parser(self):
         parser = argparse.ArgumentParser(description='Print data with optional formatting')
         parser.add_argument('data', nargs='?', help='Data to print')
         parser.add_argument('start', nargs='?', help='Starting index to print from')
-        parser.add_argument('len', nargs='?', help='Number of elements to print')
-        parser.add_argument('--format', '-f', choices=['str', 'hex', 'dec', 'bin'],
-                            default='str', help='Output format (default: str)')
+        parser.add_argument('len', nargs='?', default='1', help='Number of elements to print')
+        parser.add_argument('--format', '-f',
+                            choices=['str', 'hex', 'dec', 'bin', 's', 'x', 'd', 'b', 'h'],
+                            default='str', help='Output format (default: str). Shortcuts: s=str, x/h=hex, d=dec, b=bin')
         return parser
 
     def invoke(self, argument, from_tty):
@@ -516,6 +525,9 @@ class PrintData(gdb.Command):
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
+            imme_return = False
+
+            fmt = self.formats.get(args.format, "s")  # Default to string format if not recognized
 
             # Handle types with 'data' member
             if unqualified_type in [self.wad_buff_region_type, self.wad_line_type, self.wad_http_hdr_type,
@@ -527,16 +539,22 @@ class PrintData(gdb.Command):
                 # (unsigned char *) 0x7f80fce8d408 "172.16.67.182"
                 addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
                 gdb.execute(f"p/s (({type} *){addr})")
-                return True
-            elif unqualified_type == self.fts_fstr and args.start is not None:
-                gdb.execute(f"p (({type} *){addr})->data[{args.start}]@{args.len}")
-                return True
+                imme_return = True
+            elif unqualified_type in [self.fts_fstr, self.wad_str_type] and args.start is not None:
+                start = gdb.parse_and_eval(args.start)
+                len = gdb.parse_and_eval(args.len)
+                cmd = "p/{0} (({1} *){2})->data[{3}]@{4}".format(fmt, type, addr, start, len)
+                gdb.execute(cmd)
+                imme_return = True
             elif unqualified_type in [self.wad_sstr_type, self.wad_fts_sstr]:
                 pass
             else:
                 # print(f"Error: Unexpected type: {unqualified_type}! Just print it as is.")
                 gdb.execute(f"p *(({type} *){addr})")
-                return True
+                imme_return = True
+
+            if imme_return:
+                return
 
             print(var)
 
@@ -553,14 +571,7 @@ class PrintData(gdb.Command):
                 return
 
             # Construct the command string based on the format
-            if args.format == 'hex':
-                cmd = "p/x (({0} *){1})->buff->data[{2}]@{3}".format(self.wad_sstr_type, addr, buff_start, buff_length)
-            elif args.format == 'dec':
-                cmd = "p/d (({0} *){1})->buff->data[{2}]@{3}".format(self.wad_sstr_type, addr, buff_start, buff_length)
-            elif args.format == 'bin':
-                cmd = "p/t (({0} *){1})->buff->data[{2}]@{3}".format(self.wad_sstr_type, addr, buff_start, buff_length)
-            else:  # default to string
-                cmd = "p/s (({0} *){1})->buff->data[{2}]@{3}".format(self.wad_sstr_type, addr, buff_start, buff_length)
+            cmd = "p/{0} (({1} *){2})->buff->data[{3}]@{4}".format(fmt, self.wad_sstr_type, addr, buff_start, buff_length)
 
             gdb.execute(cmd)
         except gdb.error as e:
