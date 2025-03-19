@@ -471,31 +471,36 @@ class PrintData(gdb.Command):
         self.wad_http_hdr_line_type = gdb.lookup_type("struct wad_http_hdr_line")
         self.wad_http_start_line_type = gdb.lookup_type("struct wad_http_start_line")
         self.unsigned_char_type = gdb.lookup_type("unsigned char")
+        self.fts_fstr = gdb.lookup_type("struct fts_fstr")
         self.parser = self._create_parser()
 
     def _create_parser(self):
         parser = argparse.ArgumentParser(description='Print data with optional formatting')
         parser.add_argument('data', nargs='?', help='Data to print')
+        parser.add_argument('start', nargs='?', help='Starting index to print from')
+        parser.add_argument('len', nargs='?', help='Number of elements to print')
         parser.add_argument('--format', '-f', choices=['str', 'hex', 'dec', 'bin'],
-                    default='str', help='Output format (default: str)')
+                            default='str', help='Output format (default: str)')
         return parser
 
     def invoke(self, argument, from_tty):
         try:
             args = self.parser.parse_args(gdb.string_to_argv(argument))
         except SystemExit:
-            print("Error parsing arguments")
             return
 
         if not args.data:
-            print("Usage: pdata <data_to_print> [--format {str|hex|dec|bin}]")
-            print("Example: pdata req->req_line->data")
-            print("Example: pdata resp->req_line->data --format hex")
+            print("Error: No data argument provided")
+            print("\nUsage: pdata <data_to_print> [start] [len] [--format {str|hex|dec|bin}]")
+            print("Examples:")
+            print("  pdata req->req_line->data               # Print data as string")
+            print("  pdata resp->req_line->data --format hex # Print data in hexadecimal")
+            print("  pdata buffer 0 100                      # Print 100 bytes starting at index 0")
+            print("  pdata packet_data 10 50 --format bin    # Print 50 bytes from index 10 in binary")
             return
 
         try:
             var = gdb.parse_and_eval(args.data)
-
             type = var.type
             addr = var.address
 
@@ -512,25 +517,26 @@ class PrintData(gdb.Command):
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
 
-            # Handle simple types
-            if unqualified_type == self.wad_str_type:
-                gdb.execute(f"p *(({type} *){addr})")
-                return True
-            elif unqualified_type == self.unsigned_char_type:
-                # (unsigned char *) 0x7f80fce8d408 "172.16.67.182"
-                addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
-                gdb.execute(f"p/s (({type} *){addr})")
-                return True
-
             # Handle types with 'data' member
             if unqualified_type in [self.wad_buff_region_type, self.wad_line_type, self.wad_http_hdr_type,
                                    self.wad_http_hdr_line_type, self.wad_http_start_line_type]:
                 # Replace the addr with the address of the 'data' member
                 var = gdb.parse_and_eval(f"(({type} *){addr})->data")
                 addr = var.address
-            elif unqualified_type not in [self.wad_sstr_type, self.wad_fts_sstr]:
-                print(f"Error: Unexpected type: {unqualified_type}")
-                return False
+            elif unqualified_type == self.unsigned_char_type:
+                # (unsigned char *) 0x7f80fce8d408 "172.16.67.182"
+                addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
+                gdb.execute(f"p/s (({type} *){addr})")
+                return True
+            elif unqualified_type == self.fts_fstr and args.start is not None:
+                gdb.execute(f"p (({type} *){addr})->data[{args.start}]@{args.len}")
+                return True
+            elif unqualified_type in [self.wad_sstr_type, self.wad_fts_sstr]:
+                pass
+            else:
+                # print(f"Error: Unexpected type: {unqualified_type}! Just print it as is.")
+                gdb.execute(f"p *(({type} *){addr})")
+                return True
 
             print(var)
 

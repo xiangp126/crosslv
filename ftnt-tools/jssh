@@ -65,11 +65,11 @@ fRFRemoteLisAddr="127.0.0.1"
 fRFRemoteLisPort="1080"
 # SSHFS Variables
 fSwitchToSShfs=""
-fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o auto_cache -o uid=$(id -u) -o gid=$(id -g)"
 fFSOptions=""
 fFSMountPoint=""
 fFSRemoteDir=""
 fFSDemoMountPoint="$HOME/mmt"
+fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o auto_cache -o uid=$(id -u) -o gid=$(id -g)"
 # Colors
 RED='\033[31m'
 LIGHTRED='\033[91m'
