@@ -476,9 +476,9 @@ class PrintData(gdb.Command):
         # Define the formats
         self.formats = {
             "str": "s", "s": "s",
-            "hex": "x", "x": "x", "h": "x",
+            "hex": "x", "h": "x", "x": "x",
             "dec": "d", "d": "d",
-            "bin": "t", "b": "t"
+            "bin": "t", "b": "t", "t": "t",
         }
         # Create the parser
         self.parser = self._create_parser()
@@ -582,8 +582,8 @@ class PrintData(gdb.Command):
         parser.add_argument('start', nargs='?', help='Starting index to print from')
         parser.add_argument('len', nargs='?', default='1', help='Number of elements to print')
         parser.add_argument('--format', '-f',
-                            choices=['str', 'hex', 'dec', 'bin', 's', 'x', 'd', 'b', 'h'],
-                            default='str', help='Output format (default: str). Shortcuts: s=str, x/h=hex, d=dec, b=bin')
+                            choices=['str', 'hex', 'dec', 'bin', 's', 'x', 'd', 'b', 'h', 't'],
+                            default='str', help='Output format (default: str). Shortcuts: s=str, x/h=hex, d=dec, b/t=bin')
         return parser
 
 # Register the command with GDB.
@@ -614,6 +614,7 @@ class PrintList(gdb.Command):
         self.list_head_type = gdb.lookup_type("struct list_head")
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
         self.wad_input_buff = gdb.lookup_type("struct wad_input_buff")
+        self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
         self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
         # Initialize the PData command.
         self.pdata = PrintData("pdata")
@@ -633,18 +634,6 @@ class PrintList(gdb.Command):
                 type = parsed.type.target()
                 addr = parsed
                 parsed = parsed.dereference()
-
-            # Remove any text in double quotes (string literals) or angle brackets (function names)
-            # This is needed because addresses in GDB output may contain these elements
-            # EXp: (struct list_head *) 0x55b9de5da327 <wad_http_session_get_from_resp+11>
-            # Exp: (struct list_head *) 0x55b9de5da327 "CONNECT 172.16.67.182:921 HTTP/1.1"
-            if re.search(r'(?:<[^>]+>|"[^"]+")', str(addr)):
-                print(f"Error: The list head contains unexpected characters: {addr}", end="")
-                print(f"Error: It may be a wild pointer at the moment. Please wait for it to be initialized.")
-                return
-                # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
-                # # Re-parse the address
-                # addr = gdb.parse_and_eval(f"({type} *) {addr}")
 
             # Strip qualifiers (const, volatile) from the type
             unqualified_type = type.unqualified()
@@ -721,10 +710,8 @@ class PrintList(gdb.Command):
         # If dest is specified, the attribute will use the name provided in dest instead of the default derived name.
         parser.add_argument("--no-reverse", action="store_false", dest="reverse",
                 default=True, help="Disable reverse traversal. Only for container mode.")
-        parser.add_argument("--max-search", type=int, default=self._max_search_nodes,
-                help="Max nodes to search before stopping (default: 1000).")
-        parser.add_argument("--max-print", type=int, default=self._max_print_nodes,
-                help="Max nodes to print before stopping (default: 50).")
+        parser.add_argument("--max-search", type=int, help="Max nodes to search.")
+        parser.add_argument("--max-print", type=int, help="Max nodes to print.")
         # --buff-region
         parser.add_argument("--buff-region", "--br", action="store_true",
                 help="Set container type to 'struct wad_buff_region' and member name to 'link'.")
@@ -788,9 +775,11 @@ class PrintList(gdb.Command):
             args.member_name = "list"
         if args.fields:
             args.fields_to_print = args.fields
-
-        self._max_search_nodes = args.max_search
-        self._max_print_nodes = args.max_print
+        # --max-search, --max-print
+        if args.max_search:
+            self._max_search_nodes = args.max_search
+        if args.max_print:
+            self._max_print_nodes = args.max_print
         return args
 
     def get_offset_of(self, container_type, member_name):
@@ -804,10 +793,27 @@ class PrintList(gdb.Command):
             gdb.lookup_type(container_type).pointer()
         )
 
+    def addr_sanity_check(self, addr):
+        # Remove any text in double quotes (string literals) or angle brackets (function names)
+        # This is needed because addresses in GDB output may contain these elements
+        # EXp: (struct list_head *) 0x55b9de5da327 <wad_http_session_get_from_resp+11>
+        # Exp: (struct list_head *) 0x55b9de5da327 "CONNECT 172.16.67.182:921 HTTP/1.1"
+        if re.search(r'(?:<[^>]+>|"[^"]+")', str(addr)):
+            print(f"Warning: The list head contains unexpected characters: {addr}")
+            return False
+            # Originally, the address is in the form of: 0x55e2688d2140 <wad_ssl_enc_task_list+32>
+            # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip() # addr: 0x55e2688d2140
+            # addr = gdb.Value(addr) # addr: "0x55e2688d2140"
+            # addr = gdb.parse_and_eval(f"({type} *) {addr}")
+            # return
+
     def traverse_list(self, reverse, head, container_type, member_name, fields_to_print=None):
+        if not self.addr_sanity_check(head):
+            print("Warning: Calling raw list traversal instead")
+            return self.traverse_raw_list(head)
+
         # Container mode traversal.
         node_ptrs = []
-        wad_sstr_type = gdb.lookup_type("struct wad_sstr")
 
         # By default, reverse is enabled (using 'prev'); if --no-reverse is provided, use 'next'.
         if reverse:
@@ -859,7 +865,7 @@ class PrintList(gdb.Command):
                             field_type = field_val.type
 
                         # for wad_sstr_type, call pdata to print the data
-                        if field_type == wad_sstr_type:
+                        if field_type == self.wad_sstr_type:
                             # Pass the field expression as a quoted string to prevent parsing issues
                             self.pdata.invoke(f"\"((({container_type} *) {real_node_ptr})->{field})\"", False)
                             if real_node_ptr == f"{self.wad_buff_type} *":

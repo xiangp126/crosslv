@@ -42,7 +42,7 @@ done
 
 usage() {
     cat <<_EOF_
-Usage: $(basename "$0") [OPTIONS]
+Usage: $(basename "$0") [OPTIONS] <gateway>
 
 Options:
     -h, --help           Show this help message
