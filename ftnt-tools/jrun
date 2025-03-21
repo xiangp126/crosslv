@@ -84,8 +84,8 @@ declare -a fPacketTraceCommands=(
 # Define IPS debug commands
 declare -a fIPSDebugCommands=(
     "diagnose debug reset"
-    "diag wad debug ips-filter all"
     "dia ips debug enable all"
+    "diag wad debug ips-filter all"
     "diagnose wad debug enable all"
     "diagnose debug enable"
 )

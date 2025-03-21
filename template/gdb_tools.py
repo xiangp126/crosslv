@@ -527,8 +527,7 @@ class PrintData(gdb.Command):
                 print("Warning: The address is null")
                 return
 
-            # Strip qualifiers (const, volatile) from the type
-            unqualified_type = type.unqualified()
+            unqualified_type = type.unqualified() # strip qualifiers (const, volatile) from the type
             fmt = self.formats.get(args.format, "s")
 
             # Handle types with 'data' member
@@ -614,6 +613,7 @@ class PrintList(gdb.Command):
         self.list_head_type = gdb.lookup_type("struct list_head")
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
         self.wad_input_buff = gdb.lookup_type("struct wad_input_buff")
+        self.wad_http_body_type = gdb.lookup_type("struct wad_http_body")
         self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
         self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
         # Initialize the PData command.
@@ -635,9 +635,11 @@ class PrintList(gdb.Command):
                 addr = parsed
                 parsed = parsed.dereference()
 
-            # Strip qualifiers (const, volatile) from the type
-            unqualified_type = type.unqualified()
-            if unqualified_type in [self.wad_buff_type, self.wad_input_buff]:
+            unqualified_type = type.unqualified() # strip qualifiers (const, volatile) from the type
+
+            if unqualified_type == self.wad_http_body_type:
+                list_head = parsed['buff']['regions'].address
+            elif unqualified_type in [self.wad_buff_type, self.wad_input_buff]:
                 list_head = parsed['regions'].address
             elif unqualified_type == self.fts_pkt_queue_type:
                 list_head = parsed['pkts'].address
@@ -801,11 +803,7 @@ class PrintList(gdb.Command):
         if re.search(r'(?:<[^>]+>|"[^"]+")', str(addr)):
             print(f"Warning: The list head contains unexpected characters: {addr}")
             return False
-            # Originally, the address is in the form of: 0x55e2688d2140 <wad_ssl_enc_task_list+32>
-            # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip() # addr: 0x55e2688d2140
-            # addr = gdb.Value(addr) # addr: "0x55e2688d2140"
-            # addr = gdb.parse_and_eval(f"({type} *) {addr}")
-            # return
+        return True
 
     def traverse_list(self, reverse, head, container_type, member_name, fields_to_print=None):
         if not self.addr_sanity_check(head):
@@ -848,7 +846,7 @@ class PrintList(gdb.Command):
 
                 print(f"\n=== Node {idx}/{total_nodes} ===")
                 print(f"{'List Elem:':<10} {node}, member in container: {member_name}")
-                print(f"{'Container:':<10} {real_node_ptr}, (({container_type} *) {real_node_ptr}) =")
+                print(f"{'Container:':<10} {real_node_ptr}, (({container_type} *) {real_node_ptr})")
 
                 if fields_to_print:
                     for field in fields_to_print:
@@ -896,7 +894,7 @@ class PrintList(gdb.Command):
         summary_message = "=== Summary: {0} nodes found, {1} nodes printed ".format(total_nodes, min(total_nodes, self._max_print_nodes))
         if reverse:
             summary_message += "(in reverse order) ==="
-        summary_message += "===\n"
+        summary_message += "==="
         print(summary_message)
 
     def traverse_raw_list(self, head):
