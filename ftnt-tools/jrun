@@ -51,9 +51,9 @@ _EOF
 
 # Define FortiGate debug commands as global array
 declare -a fWadDebugCommands=(
-    "diagnose debug reset"
-    "diagnose wad debug enable all"
-    "diagnose debug enable"
+    "diag debug reset"
+    "diag wad debug enable all"
+    "diag debug enable"
 )
 
 # Define output configuration commands
@@ -65,9 +65,9 @@ declare -a fOutputCommands=(
 
 # Define kernel debug commands
 declare -a fKernelDebugCommands=(
-    "diagnose debug reset"
-    "diagnose debug enable"
-    "diagnose debug application kmiglogd -1"
+    "diag debug reset"
+    "diag debug enable"
+    "diag debug application kmiglogd -1"
 )
 
 # Define packet trace commands
@@ -83,27 +83,28 @@ declare -a fPacketTraceCommands=(
 
 # Define IPS debug commands
 declare -a fIPSDebugCommands=(
-    "diagnose debug reset"
-    "dia ips debug enable all"
+    "diag debug reset"
     "diag wad debug ips-filter all"
-    "diagnose wad debug enable all"
-    "diagnose debug enable"
+    # "diag wad debug ips-db filter all"
+    "diag ips debug enable all"
+    "diag wad debug enable all"
+    "diag debug enable"
 )
 
 # Define scanunit debug commands
 declare -a fScanUnitDebugCommands=(
-    "diagnose debug reset"
-    "diagnose sys scanunit debug all"
-    "diagnose wad debug enable all"
-    "diagnose debug enable"
+    "diag debug reset"
+    "diag sys scanunit debug all"
+    "diag wad debug enable all"
+    "diag debug enable"
 )
 
 # Define DNS debug commands
 declare -a fDNSDebugCommands=(
-    "diagnose debug reset"
-    "diagnose debug application dnsproxy -1"
-    "diagnose wad debug enable all"
-    "diagnose debug enable"
+    "diag debug reset"
+    "diag debug application dnsproxy -1"
+    "diag wad debug enable all"
+    "diag debug enable"
 )
 
 usage() {
