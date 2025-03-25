@@ -170,23 +170,22 @@ class PrintMemory(gdb.Command):
     def __init__(self, name):
         super(PrintMemory, self).__init__(name, gdb.COMMAND_USER)
         self.parser = self._create_parser()
-        self.max_print_size_for_decimal = 8
-        self.max_print_size_for_all = 120
-        self.struct_size = 0
+        self.max_size_to_calc_decimal = 8
+        self.max_print_size = 120
+        self.ojb_size = 0
 
     def invoke(self, argument, from_tty):
-        argument = re.sub(r';', '', argument)
+        argument = re.sub(r';', '', argument) # Remove the trailing semicolon
         parsed_args = self.parse_args(argument)
+
         if not parsed_args:
             return
-
         if parsed_args.help:
             self.print_help()
             return
 
         if parsed_args.address:
             addr = parsed_args.address
-
             ret = gdb.parse_and_eval(addr)
             code = ret.type.code
             if code != gdb.TYPE_CODE_PTR:
@@ -197,13 +196,70 @@ class PrintMemory(gdb.Command):
                 type = ret.type.target()
 
             addr = str(addr).split()[0]
-            size = self.struct_size = type.sizeof
-            # print(f"Memory address: {addr}, Type: {type}, Size: {size} bytes")
+            size = self.ojb_size = type.sizeof
             if parsed_args.size:
                 size = parsed_args.size
-            self.print_memory(addr, type, min(self.max_print_size_for_all, size))
+            self.print_memory(addr, type, min(self.max_print_size, size))
         else:
             self.print_help()
+
+    def _create_parser(self):
+        parser = argparse.ArgumentParser(
+            prog="pm",
+            description="Print memory at the specified address using various formats",
+            add_help=False  # Disable built-in help to handle it ourselves
+        )
+        parser.add_argument(
+            "address",
+            nargs="?",
+            help="Memory address to print (e.g., 0x7f01609f1e90)",
+        )
+        parser.add_argument(
+            "-s", "--size",
+            type=int,
+            default=0,
+            help="Size of memory bytes to print"
+        )
+        parser.add_argument(
+            "-h", "--help",
+            action="store_true",
+            help="Show this help message"
+        )
+        return parser
+
+    def print_help(self):
+        """Print command help."""
+        self.parser.print_help()
+        print("\nExamples:")
+        print("  pm 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
+        print("  pm 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
+
+    def parse_args(self, args):
+        current_args = []
+        current_arg = []
+        in_quotes = False
+
+        for char in args:
+            if char == '"':
+                in_quotes = not in_quotes
+            elif char.isspace() and not in_quotes:
+                if current_arg:
+                    current_args.append(''.join(current_arg))
+                    current_arg = []
+            else:
+                current_arg.append(char)
+
+        if current_arg:
+            current_args.append(''.join(current_arg))
+
+        try:
+            return self.parser.parse_args(current_args)
+        except SystemExit:
+            return None
+        except Exception as e:
+            print(f"Error parsing arguments: {e}")
+            self.print_help()
+            return None
 
     def print_session_ctx(self, address, type):
         mem = f"({type} *) {address}"
@@ -265,9 +321,9 @@ class PrintMemory(gdb.Command):
         self.print_memory_bytes(_port, 2)
 
     def print_memory_bytes(self, mem, size):
-        print(f"++x/{size}bu {mem}, {self.struct_size} bytes in struct")
+        print(f"++x/{size}bu {mem}, Object Size: {self.ojb_size} bytes")
         result = gdb.execute(f"x/{size}bu {mem}", to_string=True)
-        if size > self.max_print_size_for_decimal:
+        if size > self.max_size_to_calc_decimal:
             # ++x/32bu (struct wad_port_ops *) 0x55cb770625a0
             # 0x55cb770625a0 <g_wad_app_trap_port_ops>:       155     221     76      115     203     85      0       0
             # 0x55cb770625a8 <g_wad_app_trap_port_ops+8>:     59      222     76      115     203     85      0       0
@@ -357,73 +413,6 @@ class PrintMemory(gdb.Command):
                 le_val |= byte << (8 * i)
             print(f"Big-endian Decimal:    {be_val}")
             print(f"Little-endian Decimal: {le_val}")
-
-    def _create_parser(self):
-        # Note: We can't use argparse directly with GDB's argument string
-        # so we'll create a custom parser
-        parser = argparse.ArgumentParser(
-            prog="pm",
-            description="Print memory at the specified address using various formats",
-            add_help=False  # Disable built-in help to handle it ourselves
-        )
-        parser.add_argument(
-            "address",
-            nargs="?",
-            help="Memory address to print (e.g., 0x7f01609f1e90)",
-        )
-        parser.add_argument(
-            "-s", "--size",
-            type=int,
-            choices=[1, 2, 4, 8, 16, 32],
-            default=0,
-            help="Size of memory bytes to print (1, 2, 4, 8, 16, 32 bytes), default: 0"
-        )
-        parser.add_argument(
-            "-h", "--help",
-            action="store_true",
-            help="Show this help message"
-        )
-        return parser
-
-    def print_help(self):
-        """Print command help."""
-        self.parser.print_help()
-        print("\nExamples:")
-        print("  pm 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
-        print("  pm 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
-
-    def parse_args(self, args):
-        current_args = []
-        current_arg = []
-        in_quotes = False
-
-        # Args Input: &fs->new_ip.sa4.sin_port -l 2
-        # print(f"Args Input: {args}")
-
-        for char in args:
-            if char == '"':
-                in_quotes = not in_quotes
-            elif char.isspace() and not in_quotes:
-                if current_arg:
-                    current_args.append(''.join(current_arg))
-                    current_arg = []
-            else:
-                current_arg.append(char)
-
-        if current_arg:
-            current_args.append(''.join(current_arg))
-
-        # Args Parsed: ['&fs->new_ip.sa4.sin_port', '-l', '2']
-        # print(f"Args Parsed: {current_args}")
-
-        try:
-            return self.parser.parse_args(current_args)
-        except SystemExit:
-            return None
-        except Exception as e:
-            print(f"Error parsing arguments: {e}")
-            self.print_help()
-            return None
 
 # Instantiate the command
 PrintMemory("pm")
@@ -613,9 +602,11 @@ class PrintList(gdb.Command):
         self.list_head_type = gdb.lookup_type("struct list_head")
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
         self.wad_input_buff = gdb.lookup_type("struct wad_input_buff")
+        self.wad_ips_buff = gdb.lookup_type("struct wad_ips_buff")
         self.wad_http_body_type = gdb.lookup_type("struct wad_http_body")
         self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
         self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
+        self.wad_http_msg_hdrs = gdb.lookup_type("struct wad_http_msg_hdrs")
         # Initialize the PData command.
         self.pdata = PrintData("pdata")
         # Create the parser.
@@ -639,10 +630,14 @@ class PrintList(gdb.Command):
 
             if unqualified_type == self.wad_http_body_type:
                 list_head = parsed['buff']['regions'].address
+            if unqualified_type == self.wad_ips_buff:
+                list_head = parsed['data']['regions'].address
             elif unqualified_type in [self.wad_buff_type, self.wad_input_buff]:
                 list_head = parsed['regions'].address
             elif unqualified_type == self.fts_pkt_queue_type:
                 list_head = parsed['pkts'].address
+            elif unqualified_type == self.wad_http_msg_hdrs:
+                list_head = parsed['headers'].address
             elif unqualified_type == self.list_head_type:
                 list_head = addr
             else:
