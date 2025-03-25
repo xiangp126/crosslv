@@ -183,11 +183,10 @@ class PrintMemory(gdb.Command):
             argument = re.sub(r';', '', argument) # Remove the trailing semicolon
             parsed_args = self.parse_args(argument)
         except SystemExit:
-            print("Error: Invalid arguments")
             return
 
         try:
-            if not parsed_args.address:
+            if not parsed_args.address or parsed_args.help:
                 print("Error: No address provided")
                 self.parser.print_help()
                 return
@@ -255,14 +254,7 @@ class PrintMemory(gdb.Command):
         if current_arg:
             current_args.append(''.join(current_arg))
 
-        try:
-            return self.parser.parse_args(current_args)
-        except SystemExit:
-            return None
-        except Exception as e:
-            print(f"Error parsing arguments: {e}")
-            self.print_help()
-            return None
+        return self.parser.parse_args(current_args)
 
     def print_session_ctx(self, address, type):
         mem = f"({type} *) {address}"
@@ -497,7 +489,6 @@ class PrintData(gdb.Command):
             argument = re.sub(r';', '', argument)
             args = self.parser.parse_args(gdb.string_to_argv(argument))
         except SystemExit:
-            print("Error: Invalid arguments")
             return
 
         if not args.data:
