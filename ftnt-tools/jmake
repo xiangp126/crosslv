@@ -20,6 +20,7 @@ fPrintBuildFlags= # Print build flags
 fGitClean=
 fDisableOptimization=
 fInputCmd=
+fBuildTimeFormatted=
 # Sync Options
 fSyncTarget=
 fSyncFile=$fBuildTarget
@@ -544,17 +545,17 @@ runBuildCommands() {
     local hours=$((buildTime / 3600))
     local minutes=$((buildTime % 3600 / 60))
     local seconds=$((buildTime % 60))
-    local buildTimeFormatted="${seconds}s."
+    fBuildTimeFormatted="${seconds}s."
 
     if [[ $minutes -gt 0 ]]; then
-        buildTimeFormatted="${minutes}m${buildTimeFormatted}"
+        fBuildTimeFormatted="${minutes}m${fBuildTimeFormatted}"
     fi
 
     if [[ $hours -gt 0 ]]; then
-        buildTimeFormatted="${hours}h${buildTimeFormatted}"
+        fBuildTimeFormatted="${hours}h${fBuildTimeFormatted}"
     fi
 
-    echo "$USER_NOTATION Congratulations! You have built projects successfully at $(getCurrentTime) for $buildTimeFormatted"
+    echo "$USER_NOTATION Congratulations! You have built projects successfully at $(getCurrentTime) for $fBuildTimeFormatted"
 }
 
 jsonRemoveWritePrivilege() {
@@ -745,7 +746,12 @@ runSyncCommands() {
                 echo "$USER_NOTATION $loginTool run failed. Please check the server status manually."
                 exit 1
             else
-                echo -e "$USER_NOTATION Target ${MAGENTA}$fSyncTarget${RESET} started to reboot at $(getCurrentTime)"
+                echo -ne "$USER_NOTATION Target ${MAGENTA}$fSyncTarget${RESET} started to reboot at $(getCurrentTime)"
+                if [ -n "$fBuildTimeFormatted" ]; then
+                    echo -e ", build time: $fBuildTimeFormatted"
+                else
+                    echo
+                fi
                 exit 0
             fi
             ;;

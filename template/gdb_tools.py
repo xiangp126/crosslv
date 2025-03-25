@@ -173,18 +173,25 @@ class PrintMemory(gdb.Command):
         self.max_size_to_calc_decimal = 8
         self.max_print_size = 120
         self.ojb_size = 0
+        # Get the canonical types
+        self.wad_addr_type = gdb.lookup_type("wad_addr")
+        self.ip_addr_t_type = gdb.lookup_type("ip_addr_t")
+        self.wad_session_context_type = gdb.lookup_type("struct wad_session_context")
 
     def invoke(self, argument, from_tty):
-        argument = re.sub(r';', '', argument) # Remove the trailing semicolon
-        parsed_args = self.parse_args(argument)
-
-        if not parsed_args:
-            return
-        if parsed_args.help:
-            self.print_help()
+        try:
+            argument = re.sub(r';', '', argument) # Remove the trailing semicolon
+            parsed_args = self.parse_args(argument)
+        except SystemExit:
+            print("Error: Invalid arguments")
             return
 
-        if parsed_args.address:
+        try:
+            if not parsed_args.address:
+                print("Error: No address provided")
+                self.parser.print_help()
+                return
+
             addr = parsed_args.address
             ret = gdb.parse_and_eval(addr)
             code = ret.type.code
@@ -195,19 +202,21 @@ class PrintMemory(gdb.Command):
                 addr = ret
                 type = ret.type.target()
 
+            unqualified_type = type.unqualified() # strip qualifiers (const, volatile) from the type
             addr = str(addr).split()[0]
-            size = self.ojb_size = type.sizeof
+            print_size = self.ojb_size = unqualified_type.sizeof
+
             if parsed_args.size:
-                size = parsed_args.size
-            self.print_memory(addr, type, min(self.max_print_size, size))
-        else:
-            self.print_help()
+                print_size = parsed_args.size
+            self.print_memory(addr, unqualified_type, print_size, parsed_args.count)
+        except gdb.error as e:
+            print(f"Error: {e}")
 
     def _create_parser(self):
         parser = argparse.ArgumentParser(
             prog="pm",
             description="Print memory at the specified address using various formats",
-            add_help=False  # Disable built-in help to handle it ourselves
+            add_help=True
         )
         parser.add_argument(
             "address",
@@ -218,21 +227,15 @@ class PrintMemory(gdb.Command):
             "-s", "--size",
             type=int,
             default=0,
-            help="Size of memory bytes to print"
+            help="Size of memory bytes to print (default: Object size)"
         )
         parser.add_argument(
-            "-h", "--help",
-            action="store_true",
-            help="Show this help message"
+            "-c", "--count",
+            type=int,
+            default=1,
+            help="Number of consecutive objects to print"
         )
         return parser
-
-    def print_help(self):
-        """Print command help."""
-        self.parser.print_help()
-        print("\nExamples:")
-        print("  pm 0x7f01609f1e90            # Print N bytes at address, N is derived automatically")
-        print("  pm 0x7f01609f1e90 -s 2       # Print 2 bytes at address")
 
     def parse_args(self, args):
         current_args = []
@@ -301,24 +304,40 @@ class PrintMemory(gdb.Command):
                 print(f"Error: {e}")
                 break
 
-    def print_memory(self, address, type, size):
+    """ Print the memory at the given address with the specified type and size."""
+    def print_memory(self, address, type, size, count):
+        size = min(size, self.max_print_size)
         try:
-            if "ip_addr_t" in str(type) or 'wad_addr' in str(type):
+            if type in [self.wad_addr_type, self.ip_addr_t_type]:
                 self.print_ip_address(address, type)
-            elif "wad_session_context" in str(type):
+            elif type == self.wad_session_context_type:
                 self.print_session_ctx(address, type)
             else:
                 mem = f"({type} *) {address}"
-                self.print_memory_bytes(mem, size)
+                base_addr = int(str(address).split()[0], 16)
+                byte_offset = self.ojb_size
+                if self.ojb_size != size:
+                    print(f"Warning: Object Size and Print Size mismatch. Obj size: {self.ojb_size}, Print size: {size}")
+                    print(f"Warning: Use the Print Size to override the Object Size")
+                    byte_offset = size
+
+                if count > 1:
+                    for i in range(count - 1, -1, -1):
+                        curr_addr = hex(base_addr + byte_offset * i)
+                        print(f"=== Object {i + 1}/{count} at {curr_addr} ===")
+                        mem = f"({type} *) {curr_addr}"
+                        self.print_memory_bytes(mem, size)
+                else:
+                    self.print_memory_bytes(mem, size)
         except gdb.error as e:
             print(f"Error accessing memory at {address}: {e}")
 
     def print_ip_address(self, address, type):
-        _addr = f"&(({type} *) {address})->sa4.sin_addr"
-        self.print_memory_bytes(_addr, 4)
+        addr = f"&(({type} *) {address})->sa4.sin_addr"
+        self.print_memory_bytes(addr, 4)
 
-        _port = f"&(({type} *) {address})->sa4.sin_port"
-        self.print_memory_bytes(_port, 2)
+        port = f"&(({type} *) {address})->sa4.sin_port"
+        self.print_memory_bytes(port, 2)
 
     def print_memory_bytes(self, mem, size):
         print(f"++x/{size}bu {mem}, Object Size: {self.ojb_size} bytes")
@@ -331,9 +350,9 @@ class PrintMemory(gdb.Command):
             # 0x55cb770625b8 <g_wad_app_trap_port_ops+24>:    0       223     76      115     203     85      0       0
             output = {}
             line_formatted = {
-                'dec': ["Big-endian Dec string:"],
-                'hex': ["Big-endian Hex string:"],
-                'bin': ["Big-endian Bin string:"],
+                'dec': ["Big-endian Dec:"],
+                'hex': ["Big-endian Hex:"],
+                'bin': ["Big-endian Bin:"],
             }
 
             lines = result.strip().split('\n')
@@ -495,6 +514,9 @@ class PrintData(gdb.Command):
             var = gdb.parse_and_eval(args.data)
             type = var.type
             addr = var.address
+            if 'void' in str(type):
+                gdb.execute(f"p {args.data}") # Print it as is
+                return
 
             # Debug Purpose
             # print(f"var: {var}, type: {type}, addr: {addr}")
