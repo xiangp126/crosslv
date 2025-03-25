@@ -463,16 +463,16 @@ class PrintData(gdb.Command):
     def __init__(self, name):
         super(PrintData, self).__init__(name, gdb.COMMAND_DATA)
         # Look up the canonical type for 'struct wad_sstr'
+        self.fts_fstr = gdb.lookup_type("struct fts_fstr")
         self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
-        self.wad_fts_sstr = gdb.lookup_type("struct fts_sstr")
-        self.wad_buff_region_type = gdb.lookup_type("struct wad_buff_region")
+        self.wad_fts_sstr  = gdb.lookup_type("struct fts_sstr")
         self.wad_line_type = gdb.lookup_type("struct wad_line")
-        self.wad_http_hdr_type = gdb.lookup_type("struct wad_http_hdr")
+        self.wad_str_type  = gdb.lookup_type("struct wad_str")
+        self.wad_http_hdr_type  = gdb.lookup_type("struct wad_http_hdr")
+        self.unsigned_char_type = gdb.lookup_type("unsigned char")
+        self.wad_buff_region_type   = gdb.lookup_type("struct wad_buff_region")
         self.wad_http_hdr_line_type = gdb.lookup_type("struct wad_http_hdr_line")
         self.wad_http_start_line_type = gdb.lookup_type("struct wad_http_start_line")
-        self.unsigned_char_type = gdb.lookup_type("unsigned char")
-        self.wad_str_type = gdb.lookup_type("struct wad_str")
-        self.fts_fstr = gdb.lookup_type("struct fts_fstr")
         # Define the formats
         self.formats = {
             "str": "s", "s": "s",
@@ -576,6 +576,7 @@ class PrintData(gdb.Command):
             gdb.execute(cmd)
         except gdb.error as e:
             print("Error executing command: {}".format(e))
+            return -1
 
     def _create_parser(self):
         parser = argparse.ArgumentParser(description='Print data with optional formatting')
@@ -612,14 +613,14 @@ class PrintList(gdb.Command):
         # Maximum nodes to print.
         self._max_print_nodes = 80
         # Look up the canonical type we are interested in.
-        self.list_head_type = gdb.lookup_type("struct list_head")
+        self.wad_ips_buff  = gdb.lookup_type("struct wad_ips_buff")
         self.wad_buff_type = gdb.lookup_type("struct wad_buff")
-        self.wad_input_buff = gdb.lookup_type("struct wad_input_buff")
-        self.wad_ips_buff = gdb.lookup_type("struct wad_ips_buff")
-        self.wad_http_body_type = gdb.lookup_type("struct wad_http_body")
         self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
+        self.list_head_type = gdb.lookup_type("struct list_head")
+        self.wad_input_buff = gdb.lookup_type("struct wad_input_buff")
+        self.wad_http_msg_hdrs  = gdb.lookup_type("struct wad_http_msg_hdrs")
+        self.wad_http_body_type = gdb.lookup_type("struct wad_http_body")
         self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
-        self.wad_http_msg_hdrs = gdb.lookup_type("struct wad_http_msg_hdrs")
         # Initialize the PData command.
         self.pdata = PrintData("pdata")
         # Create the parser.
@@ -873,7 +874,9 @@ class PrintList(gdb.Command):
                         # for wad_sstr_type, call pdata to print the data
                         if field_type == self.wad_sstr_type:
                             # Pass the field expression as a quoted string to prevent parsing issues
-                            self.pdata.invoke(f"\"((({container_type} *) {real_node_ptr})->{field})\"", False)
+                            ret = self.pdata.invoke(f"\"((({container_type} *) {real_node_ptr})->{field})\"", False)
+                            if ret == -1:
+                                return
                             if real_node_ptr == f"{self.wad_buff_type} *":
                                 gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->name")
                                 gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->id")
