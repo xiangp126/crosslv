@@ -141,9 +141,6 @@ if [[ -d /usr/local/etc/bash_completion.d ]]; then
     done
 fi
 
-# For fzf-tab-completion vim plugin
-bind -x '"/\t": fzf_bash_completion'
-
 # Source additional bash completions
 extraCompletionDir="$HOME/.bash_completion.d"
 if [[ -d "$extraCompletionDir" ]]; then
@@ -192,7 +189,10 @@ fi
 export LINES=100
 export FZF_TMUX_HEIGHT=50%
 export FZF_DEFAULT_OPTS="--layout=reverse --inline-info --color=fg+:247 --multi"
-# Use * as the trigger sequence instead of the default **. Followed by a TAB
+# Use \ as the trigger sequence instead of the default **. Followed by a TAB
 export FZF_COMPLETION_TRIGGER='\'
 # Options to fzf command
 export FZF_COMPLETION_OPTS='+c -x'
+
+# For fzf-tab-completion vim plugin
+bind -x '"/\t": fzf_bash_completion'
