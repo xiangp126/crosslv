@@ -169,7 +169,7 @@ class PrintMemory(gdb.Command):
     """Print memory at the specified address using various formats."""
     def __init__(self, name):
         super(PrintMemory, self).__init__(name, gdb.COMMAND_USER)
-        self.parser = self._create_parser()
+        self.parser = self.create_parser()
         self.max_size_to_calc_decimal = 8
         self.max_print_size = 120
         self.ojb_size = 0
@@ -181,37 +181,65 @@ class PrintMemory(gdb.Command):
     def invoke(self, argument, from_tty):
         try:
             argument = re.sub(r';', '', argument) # Remove the trailing semicolon
-            parsed_args = self.parse_args(argument)
+            args = self.parser.parse_args(gdb.string_to_argv(argument))
+            args = self.process_command_args(args)
         except SystemExit:
+            return
+        except gdb.error as e:
+            print(f"Error: {e}")
             return
 
         try:
-            if not parsed_args.address or parsed_args.help:
-                print("Error: No address provided")
-                self.parser.print_help()
-                return
-
-            addr = parsed_args.address
-            ret = gdb.parse_and_eval(addr)
-            code = ret.type.code
-            if code != gdb.TYPE_CODE_PTR:
-                addr = ret.address
-                type = ret.type
-            else:
-                addr = ret
-                type = ret.type.target()
+            parsed = gdb.parse_and_eval(args.address)
+            type = parsed.type
+            addr = parsed.address
+            if type.code == gdb.TYPE_CODE_PTR:
+                type = parsed.type.target()
+                addr = parsed
+                # parsed = parsed.dereference()
 
             unqualified_type = type.unqualified() # strip qualifiers (const, volatile) from the type
             addr = str(addr).split()[0]
             print_size = self.ojb_size = unqualified_type.sizeof
+            if args.size:
+                print_size = args.size
 
-            if parsed_args.size:
-                print_size = parsed_args.size
-            self.print_memory(addr, unqualified_type, print_size, parsed_args.count)
+            # print(f"unqualified_type: {unqualified_type}")
+            # print(f"session context:  {self.wad_session_context_type}")
+
+            # if unqualified_type in [self.wad_addr_type, self.ip_addr_t_type]:
+            #     self.print_ip_address(addr, unqualified_type)
+            # elif unqualified_type == self.wad_session_context_type:
+            #     self.print_session_ctx(addr, unqualified_type)
+            # else:
+            #     self.print_memory(addr, unqualified_type, print_size, parsed_args.count)
+
+            if str(unqualified_type) in [str(self.wad_addr_type), str(self.ip_addr_t_type)]:
+                self.print_ip_address(addr, unqualified_type)
+            elif str(unqualified_type) == str(self.wad_session_context_type):
+                self.print_session_ctx(addr, unqualified_type)
+            else:
+                self.print_memory(addr, unqualified_type, print_size, args.count)
+
         except gdb.error as e:
             print(f"Error: {e}")
 
-    def _create_parser(self):
+    def process_command_args(self, args):
+        if not args.address:
+            print("Error: No address provided")
+            self.parser.print_help()
+            raise SystemExit
+        if args.count:
+            args.count = gdb.parse_and_eval(args.count)
+        else:
+            args.count = 1
+        if args.size:
+            args.size = gdb.parse_and_eval(args.size)
+        else:
+            args.size = 0
+        return args
+
+    def create_parser(self):
         parser = argparse.ArgumentParser(
             prog="pm",
             description="Print memory at the specified address using various formats",
@@ -224,37 +252,18 @@ class PrintMemory(gdb.Command):
         )
         parser.add_argument(
             "-s", "--size",
-            type=int,
-            default=0,
+            nargs="?",
+            # default=0,
             help="Size of memory bytes to print (default: Object size)"
         )
         parser.add_argument(
             "-c", "--count",
-            type=int,
-            default=1,
+            # type=int,
+            nargs="?",
+            # default=1,
             help="Number of consecutive objects to print"
         )
         return parser
-
-    def parse_args(self, args):
-        current_args = []
-        current_arg = []
-        in_quotes = False
-
-        for char in args:
-            if char == '"':
-                in_quotes = not in_quotes
-            elif char.isspace() and not in_quotes:
-                if current_arg:
-                    current_args.append(''.join(current_arg))
-                    current_arg = []
-            else:
-                current_arg.append(char)
-
-        if current_arg:
-            current_args.append(''.join(current_arg))
-
-        return self.parser.parse_args(current_args)
 
     def print_session_ctx(self, address, type):
         mem = f"({type} *) {address}"
@@ -296,42 +305,36 @@ class PrintMemory(gdb.Command):
                 print(f"Error: {e}")
                 break
 
-    """ Print the memory at the given address with the specified type and size."""
     def print_memory(self, address, type, size, count):
         size = min(size, self.max_print_size)
         try:
-            if type in [self.wad_addr_type, self.ip_addr_t_type]:
-                self.print_ip_address(address, type)
-            elif type == self.wad_session_context_type:
-                self.print_session_ctx(address, type)
-            else:
-                mem = f"({type} *) {address}"
-                base_addr = int(str(address).split()[0], 16)
-                byte_offset = self.ojb_size
-                if self.ojb_size != size:
-                    print(f"Warning: Object Size and Print Size mismatch. Obj size: {self.ojb_size}, Print size: {size}")
-                    print(f"Warning: Use the Print Size to override the Object Size")
-                    byte_offset = size
+            mem = f"({type} *) {address}"
+            base_addr = int(str(address).split()[0], 16)
+            byte_offset = self.ojb_size
+            if self.ojb_size != size:
+                print(f"Warning: Object Size and Print Size mismatch. Obj size: {self.ojb_size}, Print size: {size}")
+                byte_offset = size
 
-                if count > 1:
-                    for i in range(count - 1, -1, -1):
-                        curr_addr = hex(base_addr + byte_offset * i)
-                        print(f"=== Object {i + 1}/{count} at {curr_addr} ===")
-                        mem = f"({type} *) {curr_addr}"
-                        self.print_memory_bytes(mem, size)
-                else:
-                    self.print_memory_bytes(mem, size)
+            if count > 1:
+                for i in range(count - 1, -1, -1):
+                    curr_addr = hex(base_addr + byte_offset * i)
+                    print(f"=== Object {i + 1}/{count} at {curr_addr} ===")
+                    mem = f"({type} *) {curr_addr}"
+                    self.print_raw_memory(mem, size)
+            else:
+                self.print_raw_memory(mem, size)
+
         except gdb.error as e:
             print(f"Error accessing memory at {address}: {e}")
 
     def print_ip_address(self, address, type):
         addr = f"&(({type} *) {address})->sa4.sin_addr"
-        self.print_memory_bytes(addr, 4)
+        self.print_raw_memory(addr, 4)
 
         port = f"&(({type} *) {address})->sa4.sin_port"
-        self.print_memory_bytes(port, 2)
+        self.print_raw_memory(port, 2)
 
-    def print_memory_bytes(self, mem, size):
+    def print_raw_memory(self, mem, size):
         print(f"++x/{size}bu {mem}, Object Size: {self.ojb_size} bytes")
         result = gdb.execute(f"x/{size}bu {mem}", to_string=True)
         if size > self.max_size_to_calc_decimal:
@@ -492,13 +495,8 @@ class PrintData(gdb.Command):
             return
 
         if not args.data:
-            print("Error: No data argument provided")
-            print("\nUsage: pdata <data_to_print> [start] [len] [--format {str|hex|dec|bin}]")
-            print("Examples:")
-            print("  pdata req->req_line->data               # Print data as string")
-            print("  pdata resp->req_line->data --format hex # Print data in hexadecimal")
-            print("  pdata buffer 0 100                      # Print 100 bytes starting at index 0")
-            print("  pdata packet_data 10 50 --format bin    # Print 50 bytes from index 10 in binary")
+            print("Error: No data provided")
+            self.parser.print_help()
             return
 
         try:
@@ -630,8 +628,14 @@ class PrintList(gdb.Command):
         try:
             argument = re.sub(r';', '', argument)
             args = self.parser.parse_args(gdb.string_to_argv(argument))
-            args = self._process_command_args(args)
+            args = self.process_command_args(args)
+        except SystemExit:
+            return
+        except gdb.error as e:
+            print(f"Error: {e}")
+            return
 
+        try:
             parsed = gdb.parse_and_eval(args.list_head)
             type = parsed.type
             addr = parsed.address
@@ -684,11 +688,6 @@ class PrintList(gdb.Command):
             else:
                 self.parser.print_help()
 
-        except SystemExit:
-            return
-        except Exception as e:
-            print(f"Error: {str(e)}")
-            raise
         except gdb.error as e:
             print(f"Error: {e}")
             return
@@ -746,7 +745,7 @@ class PrintList(gdb.Command):
                 help="List of fields from the container to print.")
 
         # Positional Arguments
-        parser.add_argument("list_head", help="The head pointer for the list.")
+        parser.add_argument("list_head", nargs="?", help="The head pointer for the list.")
         parser.add_argument("container_type", nargs="?", default=None,
                     help="The container type.")
         parser.add_argument("member_name", nargs="?", default=None,
@@ -755,7 +754,11 @@ class PrintList(gdb.Command):
                     help="Optional fields from the container to print.")
         return parser
 
-    def _process_command_args(self, args):
+    def process_command_args(self, args):
+        if not args.list_head:
+            print("Error: No list head provided")
+            self.parser.print_help()
+            raise SystemExit
         # --buff-resion --fields data
         if args.buff_region:
             args.container_type = "struct wad_buff_region"
@@ -876,6 +879,7 @@ class PrintList(gdb.Command):
                             # Pass the field expression as a quoted string to prevent parsing issues
                             ret = self.pdata.invoke(f"\"((({container_type} *) {real_node_ptr})->{field})\"", False)
                             if ret == -1:
+                                print("Error: Did you provide the correct Container Type?")
                                 return
                             if real_node_ptr == f"{self.wad_buff_type} *":
                                 gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->name")
