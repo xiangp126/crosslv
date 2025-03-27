@@ -272,10 +272,6 @@
 	"command": "workbench.action.toggleMaximizedPanel"
 },
 {
-	"key": "ctrl+shift+r",
-	"command": "fzf-quick-open.runFzfSearchProjectRoot"
-},
-{
 	"key": "ctrl+shift+f11",
 	"command": "workbench.action.toggleFullScreen",
 	"when": "!isIOS"
@@ -658,5 +654,23 @@
 {
 	"key": "ctrl+shift+\\",
 	"command": "github.copilot.chat.explain"
+},
+{
+	"key": "ctrl+shift+a",
+	"command": "workbench.view.search"
+},
+{
+	"key": "ctrl+shift+j",
+	"command": "command-runner.run",
+	"args": {
+		"command": "jr",
+		// "terminal": {
+		// 	"name": "Command Runner Terminal",
+		// 	"cwd": "/data/fos",
+		// 	"shellArgs": [],
+		// 	"autoClear": true,
+		// 	"autoFocus": true
+		// }
+	}
 }
 ]

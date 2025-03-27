@@ -586,6 +586,9 @@ class SuperTraverse(gdb.Command):
         self.max_search_nodes = 1000
         # Maximum nodes to print.
         self.max_print_nodes = 100
+        # Performance optimization
+        self.cached_offset = 0
+        self.container_type = None
         # The names of the left and right fields in the tree structure.
         self.left_field = 'left'
         self.right_field = 'right'
@@ -666,22 +669,38 @@ class SuperTraverse(gdb.Command):
                     member_name = args.member_name
                     fields_to_print = args.fields_to_print
 
-                    try:
-                        gdb.lookup_type(container_type)
-                    except gdb.error:
-                        container_type = "struct " + container_type
-                        gdb.lookup_type(container_type)
-
+                    self.container_type, container_type = self.lookup_type_with_variants(container_type)
+                    self.cached_offset = -1 # Reset the cached offset
                     traverse_func(args.reverse, head, container_type, member_name, fields_to_print)
+                except SystemExit:
+                    return
                 except Exception as e:
                     print(f"Error: {str(e)}")
-                    raise
+                    return
             else:
                 self.parser.print_help()
 
         except gdb.error as e:
             print(f"Error: {e}")
             return
+
+    def lookup_type_with_variants(self, type_name):
+        variants = [
+            type_name,                 # Try as-is first
+            "struct " + type_name,     # Try with struct prefix
+            "union " + type_name,      # For unions
+        ]
+
+        for variant in variants:
+            try:
+                print(f"Trying to lookup type: {variant}")
+                type_obj = gdb.lookup_type(variant)
+                return type_obj, variant
+            except gdb.error:
+                continue
+
+        print(f"Error: Could not find type '{type_name}' with any common prefixes")
+        raise SystemExit
 
     def traverse_list_info(self, list_head, type, addr):
         print(f"Head: {list_head}, Input: (({type} *) {addr})")
@@ -746,8 +765,11 @@ class SuperTraverse(gdb.Command):
         parser.add_argument("--fields", nargs="*", default=[],
                 help="List of fields from the container to print.")
         # --avl-node
-        parser.add_argument("--avl-node", "-an", action="store_true",
+        parser.add_argument("--avl-node", "--an", action="store_true",
                 help="Set container type to 'struct fg_avl_node' and member name to 'node'.")
+        # --ips-candidata
+        parser.add_argument("--ips-candidate", "--ic", action="store_true",
+                help="Set container type to 'struct wad_ips_candidate' and member name to 'node'.")
 
         # Positional Arguments
         parser.add_argument("head", nargs="?", help="The head pointer for the list or tree.")
@@ -764,6 +786,11 @@ class SuperTraverse(gdb.Command):
             print("Error: No list head provided")
             self.parser.print_help()
             raise SystemExit
+        # --max-search, --max-print
+        if args.max_search:
+            self.max_search_nodes = args.max_search
+        if args.max_print:
+            self.max_print_nodes = args.max_print
         # --buff-resion --fields data
         if args.buff_region:
             args.container_type = "struct wad_buff_region"
@@ -795,26 +822,26 @@ class SuperTraverse(gdb.Command):
         # --fields
         if args.fields:
             args.fields_to_print = args.fields
+        # --avl-node
         if args.avl_node:
             args.container_type = "struct fg_avl_node"
             args.member_name = "node"
-        # --max-search, --max-print
-        if args.max_search:
-            self.max_search_nodes = args.max_search
-        if args.max_print:
-            self.max_print_nodes = args.max_print
+        # --ips-candidate
+        if args.ips_candidate:
+            args.container_type = "struct wad_ips_candidate"
+            args.member_name = "node"
         return args
 
-    def get_offset_of(self, container_type, member_name):
-        # Compute the offset of the member in the container type.
-        return int(gdb.parse_and_eval(f"(unsigned long)&(({container_type} *)0)->{member_name}"))
+    def offsetof(self, type, member):
+        return int(gdb.parse_and_eval(f"(unsigned long)&(({type} *)0)->{member}"))
 
-    def container_of(self, list_ptr, container_type, member_name):
-        # Given a pointer to a list element, compute the pointer to the container structure.
-        offset = self.get_offset_of(container_type, member_name)
-        return (list_ptr.cast(gdb.lookup_type("unsigned long")) - offset).cast(
-            gdb.lookup_type(container_type).pointer()
-        )
+    def list_entry(self, ptr, type, member):
+        if self.cached_offset >= 0:
+            offset = self.cached_offset
+        else:
+            offset = self.cached_offset = self.offsetof(type, member)
+        # return (ptr.cast(gdb.lookup_type("unsigned long")) - offset).cast(self.container_type.pointer())
+        return gdb.Value(int(ptr) - offset).cast(self.container_type.pointer())
 
     def addr_sanity_check(self, addr):
         if not addr:
@@ -856,7 +883,7 @@ class SuperTraverse(gdb.Command):
         for node in nodes_to_print:
             try:
                 # Compute the container from the list element.
-                container_ptr = self.container_of(node, container_type, member_name)
+                container_ptr = self.list_entry(node, container_type, member_name)
                 container = container_ptr.dereference()
 
                 print(f"\n=== Node {idx}/{total_nodes} ===")
@@ -971,7 +998,7 @@ class SuperTraverse(gdb.Command):
 
                 # Try to get the container for this node
                 try:
-                    container_ptr = self.container_of(current, container_type, member_name)
+                    container_ptr = self.list_entry(current, container_type, member_name)
                     node_containers[current] = container_ptr
                 except Exception as e:
                     print(f"Error: Failed to get container for node {current}: {e}")
