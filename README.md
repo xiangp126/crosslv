@@ -1,7 +1,6 @@
 ### Introduction
 - I wrote some tools to help me work more efficiently. These tools are mainly used for building, debugging, searching and connecting to devices.
-
-- The tools are written in bash and expect tcl and are easy to use. The tools are mainly used in the Fortinet environment, but they can also be used in other environments.
+- The tools are versatile, though they are primarily written for use in the Fortinet environment. However, they can be easily modified to support other devices.
 
 ### Key Tools
 
@@ -11,9 +10,10 @@
 - [jr](#jr)
 - [jroute](#jroute)
 - [gdb_tools](#gdb_tools)
+- [bash_completion](#completion)
 
 <a id="gdb_tools"></a>
-#### [gdb_tools](./gdb_tools)
+#### [gdb_tools](template/gdb_tools.py)
 A set of Python tools for visualizing data structures in memory while debugging with GDB.
 
 ```c
@@ -181,6 +181,7 @@ Example:
     jdebug fgt1 -w algo -d 9229 -l "admin" -p "123"
     jdebug -h
 ```
+
 <a id="jr"></a>
 #### [jr](./ftnt-tools/jr)
 `jr` is a powerful search tool for searching code in large projects. It is a wrapper that takes advantage of the open-source tools `rg`, `fzf`, and the `code` command provided by VSCode.
@@ -211,6 +212,10 @@ Options:
     -d, --dry-run        Show what would be done without making changes
     -t, --gateway NAME   Specify the gateway to use (Only available gateways are allowed)
 ```
+
+<a id="completion"></a>
+#### [completion](./completion-files)
+All the bash completion scripts for the above tools are under this directory. You can source them in your `.bashrc` or `.bash_profile` to enable auto-completion for the tools.
 
 ### License
 The [MIT](./LICENSE.txt) License (MIT)
