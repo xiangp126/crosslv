@@ -173,10 +173,9 @@ class PrintMemory(gdb.Command):
         self.max_size_to_calc_decimal = 8
         self.max_print_size = 120
         self.ojb_size = 0
-        # Get the canonical types
-        self.wad_addr_type = gdb.lookup_type("wad_addr")
-        self.ip_addr_t_type = gdb.lookup_type("ip_addr_t")
-        self.wad_session_context_type = gdb.lookup_type("struct wad_session_context")
+        self.wad_addr_type = "wad_addr"
+        self.ip_addr_t_type = "ip_addr_t"
+        self.wad_session_context_type = "struct wad_session_context"
 
     def invoke(self, argument, from_tty):
         try:
@@ -204,19 +203,10 @@ class PrintMemory(gdb.Command):
             if args.size:
                 print_size = args.size
 
-            # print(f"unqualified_type: {unqualified_type}")
-            # print(f"session context:  {self.wad_session_context_type}")
-
-            # if unqualified_type in [self.wad_addr_type, self.ip_addr_t_type]:
-            #     self.print_ip_address(addr, unqualified_type)
-            # elif unqualified_type == self.wad_session_context_type:
-            #     self.print_session_ctx(addr, unqualified_type)
-            # else:
-            #     self.print_memory(addr, unqualified_type, print_size, parsed_args.count)
-
-            if str(unqualified_type) in [str(self.wad_addr_type), str(self.ip_addr_t_type)]:
+            unqualified_type = str(unqualified_type)
+            if unqualified_type in [self.wad_addr_type, self.ip_addr_t_type]:
                 self.print_ip_address(addr, unqualified_type)
-            elif str(unqualified_type) == str(self.wad_session_context_type):
+            elif unqualified_type == self.wad_session_context_type:
                 self.print_session_ctx(addr, unqualified_type)
             else:
                 self.print_memory(addr, unqualified_type, print_size, args.count)
@@ -465,17 +455,17 @@ SetWatch("sw")
 class PrintData(gdb.Command):
     def __init__(self, name):
         super(PrintData, self).__init__(name, gdb.COMMAND_DATA)
-        # Look up the canonical type for 'struct wad_sstr'
-        self.fts_fstr = gdb.lookup_type("struct fts_fstr")
-        self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
-        self.wad_fts_sstr  = gdb.lookup_type("struct fts_sstr")
-        self.wad_line_type = gdb.lookup_type("struct wad_line")
-        self.wad_str_type  = gdb.lookup_type("struct wad_str")
-        self.wad_http_hdr_type  = gdb.lookup_type("struct wad_http_hdr")
-        self.unsigned_char_type = gdb.lookup_type("unsigned char")
-        self.wad_buff_region_type   = gdb.lookup_type("struct wad_buff_region")
-        self.wad_http_hdr_line_type = gdb.lookup_type("struct wad_http_hdr_line")
-        self.wad_http_start_line_type = gdb.lookup_type("struct wad_http_start_line")
+        # No need to lookup the canonical type of the structures using gdb.lookup_type()
+        self.fts_fstr_type = "struct fts_fstr"
+        self.wad_sstr_type = "struct wad_sstr"
+        self.wad_fts_sstr_type  = "struct fts_sstr"
+        self.wad_line_type = "struct wad_line"
+        self.wad_str_type  = "struct wad_str"
+        self.wad_http_hdr_type  = "struct wad_http_hdr"
+        self.unsigned_char_type = "unsigned char"
+        self.wad_buff_region_type   = "struct wad_buff_region"
+        self.wad_http_hdr_line_type = "struct wad_http_hdr_line"
+        self.wad_http_start_line_type = "struct wad_http_start_line"
         # Define the formats
         self.formats = {
             "str": "s", "s": "s",
@@ -527,7 +517,7 @@ class PrintData(gdb.Command):
                 print("Warning: The address is null")
                 return
 
-            unqualified_type = type.unqualified() # strip qualifiers (const, volatile) from the type
+            unqualified_type = str(type.unqualified()) # strip qualifiers (const, volatile) from the type
             fmt = self.formats.get(args.format, "s")
 
             # Handle types with 'data' member
@@ -541,13 +531,13 @@ class PrintData(gdb.Command):
                 # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
                 gdb.execute(f"p/s (({type} *){addr})")
                 return
-            elif unqualified_type in [self.fts_fstr, self.wad_str_type] and args.start is not None:
+            elif unqualified_type in [self.fts_fstr_type, self.wad_str_type] and args.start is not None:
                 start = gdb.parse_and_eval(args.start)
                 len = gdb.parse_and_eval(args.len)
                 cmd = "p/{0} (({1} *){2})->data[{3}]@{4}".format(fmt, type, addr, start, len)
                 gdb.execute(cmd)
                 return
-            elif unqualified_type in [self.wad_sstr_type, self.wad_fts_sstr]:
+            elif unqualified_type in [self.wad_sstr_type, self.wad_fts_sstr_type]:
                 pass
             else:
                 # For other types, print the value as is
@@ -557,7 +547,7 @@ class PrintData(gdb.Command):
             print(var)
 
             # For wad_fts_ssrt, the buffer is stored in the 'data' field, not the 'buff' field as in wad_sstr
-            if unqualified_type == self.wad_fts_sstr:
+            if unqualified_type == self.wad_fts_sstr_type:
                 buff_addr = var['data']
             else:
                 buff_addr = var['buff']
@@ -586,43 +576,33 @@ class PrintData(gdb.Command):
                             default='str', help='Output format (default: str). Shortcuts: s=str, x/h=hex, d=dec, b/t=bin')
         return parser
 
-# Register the command with GDB.
-PrintData("pdata")
+# Instantiate the command
 PrintData("pd")
 
-# Print Kernel Double Linked List
-class PrintList(gdb.Command):
-    """Traverse and print a linked list in GDB.
-
-    Modes:
-      1. Raw mode (one argument): plist <list_head>
-         - Simply prints the raw list element addresses in groups of 5 per line.
-      2. Container mode (three or four arguments):
-             plist <list_head> <container_type> <member_name> [fields_to_print]
-         - Computes the container from the list node and prints additional details.
-         - If [fields_to_print] is provided, only the fields specified will be printed.
-         - Otherwise, the entire container is printed.
-    """
-
+class SuperTraverse(gdb.Command):
     def __init__(self, name):
-        super(PrintList, self).__init__(name, gdb.COMMAND_USER)
+        super(SuperTraverse, self).__init__(name, gdb.COMMAND_USER)
         # Maximum nodes to search/traverse to avoid infinite loops.
-        self._max_search_nodes = 1000
+        self.max_search_nodes = 1000
         # Maximum nodes to print.
-        self._max_print_nodes = 80
-        # Look up the canonical type we are interested in.
-        self.wad_ips_buff  = gdb.lookup_type("struct wad_ips_buff")
-        self.wad_buff_type = gdb.lookup_type("struct wad_buff")
-        self.wad_sstr_type = gdb.lookup_type("struct wad_sstr")
-        self.list_head_type = gdb.lookup_type("struct list_head")
-        self.wad_input_buff = gdb.lookup_type("struct wad_input_buff")
-        self.wad_http_msg_hdrs  = gdb.lookup_type("struct wad_http_msg_hdrs")
-        self.wad_http_body_type = gdb.lookup_type("struct wad_http_body")
-        self.fts_pkt_queue_type = gdb.lookup_type("struct fts_pkt_queue")
-        # Initialize the PData command.
+        self.max_print_nodes = 100
+        # The names of the left and right fields in the tree structure.
+        self.left_field = 'left'
+        self.right_field = 'right'
+        # No need to to get the canonical type of the structures using gdb.lookup_type()
+        self.list_head_type = "struct list_head"
+        self.wad_buff_type = "struct wad_buff"
+        self.wad_sstr_type = "struct wad_sstr"
+        self.wad_http_msg_hdrs_type = "struct wad_http_msg_hdrs"
+        self.wad_http_proc_msg_type = "struct wad_http_proc_msg"
+        self.wad_ips_buff_type = "struct wad_ips_buff"
+        self.fg_avl_tree_type  = "struct fg_avl_tree"
+        self.wad_input_buff_type = "struct wad_input_buff"
+        self.fts_pkt_queue_type  = "struct fts_pkt_queue"
+        self.wad_http_body_type  = "struct wad_http_body"
+        self.parser = self.create_parser()
+        # Use a PrintData object to print data
         self.pdata = PrintData("pdata")
-        # Create the parser.
-        self.parser = self._create_parser()
 
     def invoke(self, argument, from_tty):
         try:
@@ -636,7 +616,7 @@ class PrintList(gdb.Command):
             return
 
         try:
-            parsed = gdb.parse_and_eval(args.list_head)
+            parsed = gdb.parse_and_eval(args.head)
             type = parsed.type
             addr = parsed.address
             if type.code == gdb.TYPE_CODE_PTR:
@@ -644,28 +624,39 @@ class PrintList(gdb.Command):
                 addr = parsed
                 parsed = parsed.dereference()
 
-            unqualified_type = type.unqualified() # strip qualifiers (const, volatile) from the type
+            unqualified_type = str(type.unqualified()) # strip qualifiers (const, volatile) from the type
+
+            # Function Pointers
+            traverse_raw_func = self.traverse_raw_list
+            traverse_func = self.traverse_list
+            traverse_info_func = self.traverse_list_info
 
             if unqualified_type == self.wad_http_body_type:
-                list_head = parsed['buff']['regions'].address
-            if unqualified_type == self.wad_ips_buff:
-                list_head = parsed['data']['regions'].address
-            elif unqualified_type in [self.wad_buff_type, self.wad_input_buff]:
-                list_head = parsed['regions'].address
+                head = parsed['buff']['regions'].address
+            if unqualified_type == self.wad_ips_buff_type:
+                head = parsed['data']['regions'].address
+            elif unqualified_type in [self.wad_buff_type, self.wad_input_buff_type]:
+                head = parsed['regions'].address
             elif unqualified_type == self.fts_pkt_queue_type:
-                list_head = parsed['pkts'].address
-            elif unqualified_type == self.wad_http_msg_hdrs:
-                list_head = parsed['headers'].address
+                head = parsed['pkts'].address
+            elif unqualified_type in [self.wad_http_msg_hdrs_type, self.wad_http_proc_msg_type]:
+                head = parsed['headers'].address
             elif unqualified_type == self.list_head_type:
-                list_head = addr
+                head = addr
+            elif unqualified_type == self.fg_avl_tree_type:
+                head = parsed['root']
+                traverse_raw_func = self.traverse_raw_tree
+                traverse_func = self.traverse_tree
+                traverse_info_func = self.traverse_tree_info
             else:
                 print(f"Error: Unexpected type: {unqualified_type}")
                 return
 
-            print(f"Head: {list_head}, Input: (({type} *) {addr})")
+            traverse_info_func(head, type, addr)
+
             if args.container_type is None:
                 try:
-                    self.traverse_raw_list(list_head)
+                    traverse_raw_func(head)
                 except Exception as e:
                     print(f"Error: {str(e)}")
                     raise
@@ -681,7 +672,7 @@ class PrintList(gdb.Command):
                         container_type = "struct " + container_type
                         gdb.lookup_type(container_type)
 
-                    self.traverse_list(args.reverse, list_head, container_type, member_name, fields_to_print)
+                    traverse_func(args.reverse, head, container_type, member_name, fields_to_print)
                 except Exception as e:
                     print(f"Error: {str(e)}")
                     raise
@@ -692,27 +683,37 @@ class PrintList(gdb.Command):
             print(f"Error: {e}")
             return
 
-    def _create_parser(self):
-        """Create and configure the argument parser for the command."""
+    def traverse_list_info(self, list_head, type, addr):
+        print(f"Head: {list_head}, Input: (({type} *) {addr})")
+
+    def traverse_tree_info(self, root, type, addr):
+        print(f"Tree Root: {root}, Input: (({type} *) {addr})")
+
+    def create_parser(self):
         parser = argparse.ArgumentParser(
-            prog="plist",
-            description="Traverse and print a linked list in GDB.\n\n"
-                        "Modes:\n"
-                        "  1. Raw mode: Simply print raw list element addresses.\n"
-                        "  2. Container mode: Compute container from the list node and print details.\n\n"
-                        "Examples:\n"
-                        "  Raw mode:\n"
-                        "    plist resp->headers\n"
-                        "  Container mode:\n"
-                        "    plist req->headers wad_http_hdr link\n"
-                        "    plist req->headers wad_http_hdr link val\n"
-                        "    pl cr fts_pkt link\n"
-                        "    plist buff --buff-region\n"
-                        "    plist buff --buff-region-data\n"
-                        "    plist buff --buff-region --fields data\n"
-                        "    plist buff --buff-region --fields ref_count data\n"
-                        "    plist req->headers --http-header\n"
-                        "    plist &msg->headers --http-header --fields hdr_attr data",
+            prog="super-traverse",
+            description="Traverse and print linked lists and tree structures in GDB.\n\n"
+                "Modes:\n"
+                "  1. List Raw mode: pl <list_head>\n"
+                "  2. List Container mode: pl <list_head> <container_type> <member_name> [fields]\n"
+                "  3. Tree Raw mode: pt <tree_root>\n"
+                "  4. Tree Container mode: pt <tree_root> <container_type> <member_name> [fields]\n\n"
+                "Examples:\n"
+                "  List Raw mode:\n"
+                "    pl resp->headers\n"
+                "  List Container mode:\n"
+                "    pl req->headers wad_http_hdr link\n"
+                "    pl req->headers wad_http_hdr link val\n"
+                "    pl buff --buff-region\n"
+                "    pl buff --buff-region-data\n"
+                "    pl buff --buff-region --fields data\n"
+                "    pl buff --buff-region --fields ref_count data\n"
+                "    pl req->headers --http-header\n"
+                "    pl &msg->headers --http-header --fields hdr_attr data\n"
+                "  Tree Raw mode:\n"
+                "    pt tree->root\n"
+                "  Tree Container mode:\n"
+                "    pl tree fg_avl_node node [fields]",
             formatter_class=argparse.RawTextHelpFormatter  # Preserves newlines in help text
         )
 
@@ -741,11 +742,15 @@ class PrintList(gdb.Command):
         # --ftp-cmd
         parser.add_argument("--ftp-cmd", "--fc", action="store_true",
                 help="Set container type to 'struct ftp_cmd' and member name to 'list'.")
+        # --fields
         parser.add_argument("--fields", nargs="*", default=[],
                 help="List of fields from the container to print.")
+        # --avl-node
+        parser.add_argument("--avl-node", "-an", action="store_true",
+                help="Set container type to 'struct fg_avl_node' and member name to 'node'.")
 
         # Positional Arguments
-        parser.add_argument("list_head", nargs="?", help="The head pointer for the list.")
+        parser.add_argument("head", nargs="?", help="The head pointer for the list or tree.")
         parser.add_argument("container_type", nargs="?", default=None,
                     help="The container type.")
         parser.add_argument("member_name", nargs="?", default=None,
@@ -755,7 +760,7 @@ class PrintList(gdb.Command):
         return parser
 
     def process_command_args(self, args):
-        if not args.list_head:
+        if not args.head:
             print("Error: No list head provided")
             self.parser.print_help()
             raise SystemExit
@@ -781,19 +786,23 @@ class PrintList(gdb.Command):
             args.member_name = "link"
         # --fts-pkt
         if args.fts_pkt:
-            args.container_type = "struct fts_pkt"
+            args.container_type = "struct wad_fts_pkt"
             args.member_name = "link"
         # --ftp-cmd
         if args.ftp_cmd:
             args.container_type = "struct wad_ftp_cmd"
             args.member_name = "list"
+        # --fields
         if args.fields:
             args.fields_to_print = args.fields
+        if args.avl_node:
+            args.container_type = "struct fg_avl_node"
+            args.member_name = "node"
         # --max-search, --max-print
         if args.max_search:
-            self._max_search_nodes = args.max_search
+            self.max_search_nodes = args.max_search
         if args.max_print:
-            self._max_print_nodes = args.max_print
+            self.max_print_nodes = args.max_print
         return args
 
     def get_offset_of(self, container_type, member_name):
@@ -808,6 +817,9 @@ class PrintList(gdb.Command):
         )
 
     def addr_sanity_check(self, addr):
+        if not addr:
+            print("Error: The address is null")
+            return False
         # Remove any text in double quotes (string literals) or angle brackets (function names)
         # This is needed because addresses in GDB output may contain these elements
         # EXp: (struct list_head *) 0x55b9de5da327 <wad_http_session_get_from_resp+11>
@@ -822,75 +834,66 @@ class PrintList(gdb.Command):
             print("Warning: Calling raw list traversal instead")
             return self.traverse_raw_list(head)
 
-        # Container mode traversal.
-        node_ptrs = []
-
-        # By default, reverse is enabled (using 'prev'); if --no-reverse is provided, use 'next'.
-        if reverse:
-            current = head['prev']
-            next_field = 'prev'
-        else:
-            current = head['next']
-            next_field = 'next'
+        nodes = []
+        current = head['next']
 
         while current and current != head:
-            node_ptrs.append(current)
-            current = current[next_field]
-            if len(node_ptrs) >= self._max_search_nodes:
-                print(f"Warning: More than {self._max_search_nodes} nodes found. Only count {self._max_search_nodes}.")
+            nodes.append(current)
+            current = current['next']
+            if len(nodes) >= self.max_search_nodes:
+                print(f"Warning: More than {self.max_search_nodes} nodes found. Only count {self.max_search_nodes}.")
                 break
 
-        total_nodes = len(node_ptrs)
+        total_nodes = len(nodes)
         print(f"=== Total nodes found: {total_nodes} ===")
 
         idx = 1
-        nodes_to_print = node_ptrs[0:self._max_print_nodes:1]
+        nodes_to_print = nodes[0:self.max_print_nodes:1]
         if reverse:
-            # nodes_to_print = node_ptrs[-self._max_print_nodes:total_nodes:1]
-            nodes_to_print = node_ptrs[-self._max_print_nodes:]
+            nodes_to_print = nodes_to_print[::-1]
             idx = len(nodes_to_print)
 
         for node in nodes_to_print:
             try:
                 # Compute the container from the list element.
-                real_node_ptr = self.container_of(node, container_type, member_name)
-                real_node = real_node_ptr.dereference()
+                container_ptr = self.container_of(node, container_type, member_name)
+                container = container_ptr.dereference()
 
                 print(f"\n=== Node {idx}/{total_nodes} ===")
                 print(f"{'List Elem:':<10} {node}, member in container: {member_name}")
-                print(f"{'Container:':<10} {real_node_ptr}, (({container_type} *) {real_node_ptr})")
+                print(f"{'Container:':<10} {container_ptr}, (({container_type} *) {container_ptr})")
 
                 if fields_to_print:
                     for field in fields_to_print:
                         # field_val = real_node[fields_to_print]
                         # field_type = field_val.type
-                        formatted_field=f"((({container_type} *) {real_node_ptr})->{field})"
+                        formatted_field=f"((({container_type} *) {container_ptr})->{field})"
                         field_val = gdb.parse_and_eval(formatted_field)
                         field_type = field_val.type
                         print(f"{'Field:':<{6}} {field}, Type: {field_type}")
-                        print(f"((({container_type} *) {real_node_ptr})->{field})")
+                        print(f"((({container_type} *) {container_ptr})->{field})")
 
                         if field_type.code == gdb.TYPE_CODE_PTR:
                             field_val = field_val.dereference()
                             field_type = field_val.type
 
                         # for wad_sstr_type, call pdata to print the data
-                        if field_type == self.wad_sstr_type:
+                        if str(field_type) == self.wad_sstr_type:
                             # Pass the field expression as a quoted string to prevent parsing issues
-                            ret = self.pdata.invoke(f"\"((({container_type} *) {real_node_ptr})->{field})\"", False)
+                            ret = self.pdata.invoke(f"\"((({container_type} *) {container_ptr})->{field})\"", False)
                             if ret == -1:
                                 print("Error: Did you provide the correct Container Type?")
                                 return
-                            if real_node_ptr == f"{self.wad_buff_type} *":
-                                gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->name")
-                                gdb.execute(f"p (({container_type} *) {real_node_ptr})->hdr_attr->id")
+                            if container_ptr == f"{self.wad_buff_type} *":
+                                gdb.execute(f"p (({container_type} *) {container_ptr})->hdr_attr->name")
+                                gdb.execute(f"p (({container_type} *) {container_ptr})->hdr_attr->id")
                         else:
                             print(field_val)
                 else:
-                    print(real_node)
+                    print(container)
 
                 # Print the embedded list pointers for verification.
-                list_entry = real_node[member_name]
+                list_entry = container[member_name]
                 print("\nCurrent pointers:")
                 print(f"  next: {list_entry['next']} (head: {head})")
                 print(f"  prev: {list_entry['prev']}")
@@ -906,7 +909,7 @@ class PrintList(gdb.Command):
             else:
                 idx += 1
         # Print a summary message.
-        summary_message = "=== Summary: {0} nodes found, {1} nodes printed ".format(total_nodes, min(total_nodes, self._max_print_nodes))
+        summary_message = "=== Summary: {0} nodes found, {1} nodes printed ".format(total_nodes, min(total_nodes, self.max_print_nodes))
         if reverse:
             summary_message += "(in reverse order) ==="
         summary_message += "==="
@@ -920,8 +923,8 @@ class PrintList(gdb.Command):
         while current and current != head:
             node_ptrs.append(current)
             current = current['next']
-            if len(node_ptrs) >= self._max_search_nodes:
-                print(f"Warning: More than {self._max_search_nodes} nodes found. Breaking to avoid infinite loop.")
+            if len(node_ptrs) >= self.max_search_nodes:
+                print(f"Warning: More than {self.max_search_nodes} nodes found. Breaking to avoid infinite loop.")
                 break
 
         total_nodes = len(node_ptrs)
@@ -937,5 +940,162 @@ class PrintList(gdb.Command):
 
         print(f"=== Summary: {total_nodes} nodes found ===")
 
-PrintList("plist")
-PrintList("pl")
+    def traverse_tree(self, reverse, head, container_type, member_name, fields_to_print=None):
+        root = head
+        if not self.addr_sanity_check(root):
+            print("Warning: Calling raw tree traversal instead")
+            return self.traverse_raw_tree(root)
+
+        stack = []  # Use for iterative in-order traversal
+        nodes = []  # Store nodes in in-order traversal sequence
+        node_containers = {}  # Map tree nodes to container pointers
+        current = root
+        total_nodes = 0
+        left_field = self.left_field
+        right_field = self.right_field
+
+        # Perform iterative in-order traversal (left, node, right)
+        while stack or current:
+            if total_nodes > self.max_search_nodes:
+                break
+
+            while current:
+                stack.append(current)
+                # Move to the left child
+                current = current[left_field]
+
+            if stack:
+                current = stack.pop()
+                nodes.append(current)
+                total_nodes += 1
+
+                # Try to get the container for this node
+                try:
+                    container_ptr = self.container_of(current, container_type, member_name)
+                    node_containers[current] = container_ptr
+                except Exception as e:
+                    print(f"Error: Failed to get container for node {current}: {e}")
+                    raise SystemExit
+
+                # Move to the right child
+                current = current[right_field]
+
+        print(f"=== Total nodes found: {total_nodes} ===")
+
+        idx = 1
+        nodes_to_print = nodes[0:self.max_print_nodes:1]
+        if reverse:
+            nodes_to_print = nodes_to_print[::-1]
+            idx = len(nodes_to_print)
+
+        for node in nodes_to_print:
+            # Get container pointer
+            container_ptr = node_containers.get(node)
+            try:
+                container = container_ptr.dereference()
+
+                print(f"\n=== Node {idx}/{total_nodes} ===")
+                print(f"{'Tree Node:':<10} {node}, member in container: {member_name}")
+                print(f"{'Container:':<10} {container_ptr}, (({container_type} *) {container_ptr})")
+
+                # Print selected fields
+                if fields_to_print:
+                    for field in fields_to_print:
+                        formatted_field = f"((({container_type} *) {container_ptr})->{field})"
+                        field_val = gdb.parse_and_eval(formatted_field)
+                        field_type = field_val.type
+
+                        print(f"{'Field:':<6} {field}, Type: {field_type}")
+                        print(f"{formatted_field}")
+                        print(field_val)
+                else:
+                    # Print the whole container
+                    print(container)
+
+                print("\nNode connections:")
+                left_child = node[left_field]
+                print(f"  left:  {left_child}")
+
+                right_child = node[right_field]
+                print(f"  right: {right_child}")
+
+            except Exception as e:
+                print(f"Error processing node {node}: {e}")
+                raise SystemExit
+
+            if reverse:
+                idx -= 1
+            else:
+                idx += 1
+
+        # Print a summary message.
+        summary_message = "=== Summary: {0} nodes found, {1} nodes printed ".format(total_nodes, min(total_nodes, self.max_print_nodes))
+        if reverse:
+            summary_message += "(in reverse order) ==="
+        summary_message += "==="
+        print(summary_message)
+
+    def traverse_raw_tree(self, root):
+        if not root:
+            print("Error: Root node is null")
+            return
+
+        left_field = self.left_field
+        right_field = self.right_field
+
+        queue = [root]
+        nodes_info = {}
+        total_nodes = 0
+
+        while queue and total_nodes < self.max_search_nodes:
+            if total_nodes > self.max_search_nodes:
+                print(f"Warning: Reached limit of {self.max_search_nodes} nodes. Some nodes may not be shown.")
+                break
+
+            total_nodes += 1
+            node = queue.pop(0)
+            nodes_info[node] = {
+                'left': None,
+                'right': None
+            }
+
+            try:
+                left_child = node[left_field]
+                if left_child:
+                    queue.append(left_child)
+                    nodes_info[node]['left'] = left_child
+
+                right_child = node[right_field]
+                if right_child:
+                    queue.append(right_child)
+                    nodes_info[node]['right'] = right_child
+            except gdb.error as e:
+                print(f"Error: Unable to access left/right field for node {node}: {e}")
+                raise SystemExit
+
+        print(f"=== Total nodes found: {total_nodes} ===")
+
+        print(f"Tree Visualization (right nodes 'above', left nodes 'below')")
+        # is_last: If this is the last child of its parent
+        print_stack = [(root, '', True, True)] # (node, prefix, is_last, is_root)
+
+        while print_stack:
+            node, prefix, is_last, is_root = print_stack.pop()
+
+            branch = ('└── ' if is_last else '├── ') if not is_root else ''
+            print(f"{prefix}{branch}{node}")
+
+            child_prefix = prefix + ('    ' if is_last else '│   ')
+
+            left = nodes_info[node]['left'] if node in nodes_info else None
+            right = nodes_info[node]['right'] if node in nodes_info else None
+
+            if left:
+                print_stack.append((left, child_prefix, True, False))
+            if right:
+                print_stack.append((right, child_prefix, left is None, False))
+
+        print(f"=== Summary: {total_nodes} nodes found ===")
+
+SuperTraverse("pl")
+SuperTraverse("pt")
