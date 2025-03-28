@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # set -x
 
+# Global Variables
+fEditor="code"
+fDebug=
+fRgOnly=
+fCheckDepends=
+fzfSelected=
+fQuery=
+fKernelIncluded=  # Include the linux kernel source code in the search
 # Constants
 SCRIPTNAME=$(basename $0)
 SEPARATOR_LEFT="<---------------------------------------------------"
 SEPARATOR_RIGHT="--------------------------------------------------->"
 USER_NOTATION="@@@@"
-# Variables
-fEditor="code"
-fDebug=
-fOnlyRg=
-fzfSelected=
-fQuery=
-fKernelIncluded=  # Include the linux kernel source code in the search
 # Colors
 MAGENTA='\033[35m'
 NORMAL='\033[0m'
@@ -25,11 +26,21 @@ usage() {
     cat << _EOF
 Usage: $SCRIPTNAME [OPTIONS] [SEARCH_TERM]
 
+This script requires the following dependencies:
+- rg (ripgrep)
+- fzf (fuzzy finder)
+- bat (cat replacement)
+- xsel (clipboard manager)
+- code/vim
+
+Run this script with the --check-depends option to check if these dependencies are installed.
+
 Options:
     -h, --help               Print this help message
     -r, --rg-only            Only use rg to search, not use fzf
     -k, --kernel             Include the linux kernel source code in the search
     -v, --vim                Open the file with vim (default is $fEditor)
+    -c, --check-depends      Check if dependencies are installed
     -d, --debug              Print debug information
 
 Example: $SCRIPTNAME wad_tcp_bind
@@ -39,129 +50,173 @@ _EOF
     exit 1
 }
 
-# Define short and long options
-SHORTOPTS="hvdrk"
-LONGOPTS="help,vim,debug,kernel,rg-only"
+parseOptions() {
+    # Define short and long options
+    SHORTOPTS="hvdrkc"
+    LONGOPTS="help,vim,debug,kernel,rg-only,check-depends"
 
-# Use getopt to parse command-line options
-if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
-    echo -e "$USER_NOTATION ${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
-    exit 1
-fi
+    # Use getopt to parse command-line options
+    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
+        echo -e "$USER_NOTATION ${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
+        exit 1
+    fi
 
-# Reset positional parameters to the parsed values
-eval set -- "$PARSED"
+    # Reset positional parameters to the parsed values
+    eval set -- "$PARSED"
 
-# Parse options
-while true; do
-    case "$1" in
-        -h|--help)
-            usage
-            ;;
-        -v|--vim)
-            fEditor="vim"
-            shift
-            ;;
-        -d|--debug)
-            fDebug=true
-            shift
-            ;;
-        -k|--kernel)
-            fKernelIncluded=true
-            shift
-            ;;
-        -r|--rg-only)
-            fOnlyRg=true
-            shift
-            ;;
-        --)
-            shift
-            break
-            ;;
-        *)
-            echo -e "$USER_NOTATION ${COLOR}Invalid option: $1${RESET}"
-            exit 1
-            ;;
-    esac
-done
+    # Parse options
+    while true; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            -v|--vim)
+                fEditor="vim"
+                shift
+                ;;
+            -d|--debug)
+                fDebug=true
+                shift
+                ;;
+            -k|--kernel)
+                fKernelIncluded=true
+                shift
+                ;;
+            -c|--check-depends)
+                fCheckDepends=true
+                shift
+                ;;
+            -r|--rg-only)
+                fRgOnly=true
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "$USER_NOTATION ${COLOR}Invalid option: $1${RESET}"
+                exit 1
+                ;;
+        esac
+    done
 
-fQuery="$*"
+    fQuery="$*"
+}
 
-# Only need to run for the first time
-checkDependencies() {
-    local dependencies=("rg" "fzf" "bat" "$fEditor")
+# In X11, there are three primary selections (clipboard buffers):
+#
+# 1. PRIMARY
+#    - Default selection in X11
+#    - Used for middle-click paste (Shift+Insert in terminals)
+#    - Example: Highlighting text automatically copies it to PRIMARY
+#
+# 2. CLIPBOARD
+#    - Behaves like the traditional clipboard (Ctrl+C / Ctrl+V)
+#    - Used by most GUI applications (e.g., Firefox, LibreOffice)
+#
+# 3. SECONDARY
+#    - Rarely used, mainly for legacy applications
+GetClipboardContent() {
+    if [ -z "$fQuery" ] && [ -n "$DISPLAY" ]; then
+        # Get clipboard content, remove newlines, and clear the clipboard
+        fQuery=$(xsel -o -p 2> /dev/null | tr -d '\n')
+        if [ -n "$fQuery" ]; then
+            xsel -c -p 2> /dev/null
+            if [[ $? -ne 0 ]]; then
+                echo -e "${COLOR}Error: Failed to clear PRIMARY clipboard content${RESET}"
+                exit 1
+            fi
+        fi
+    fi
+}
+
+checkDepends() {
+    local missing_deps=()
+    local dependencies=("rg" "fzf" "bat" "xsel" "$fEditor")
 
     for dep in "${dependencies[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
-            echo -e "$USER_NOTATION Error: ${COLOR}$dep${RESET} is not installed."
-            exit 1
+            missing_deps+=("$dep")
         fi
     done
-}
 
-parserAndPolish() {
-    [[ -z "$fQuery" ]] && return
-    local param
-    param=$(echo "$fQuery" | sed -E 's/^[[:space:]]*|[[:space:]]*$//g; s/^[&!]//; s/;$//; s/^<|>$//g; s/:[0-9]+$//; s/^func=//')
-    fQuery="$param"
-}
-
-searchAndOpen() {
-    # --glob='*.{c,h,cpp,js,ts,py,html,css,sh,php}'
-    local kernelSearch="--glob='!linux-*/*'"
-    local rgParams="--smart-case \
-                    --color=ansi \
-                    --colors 'match:fg:204,51,153' --colors 'match:style:bold' \
-                    --line-number \
-                    --no-heading \
-                    --glob='!fpx-sync/*' \
-                    --glob='!linux-3.2.16/*' \
-                   "
-    local fzfParams="--ansi \
-                     --color 'hl:-1:underline,hl+:-1:underline:reverse' \
-                     --delimiter ':' \
-                     --preview 'bat --color=always {1} --theme=\"TwoDark\" --highlight-line {2}' \
-                     --preview-window 'top,60%,border-bottom,+{2}+3/3,~3' \
-                     --cycle \
-                    "
-    if [ -z "$fKernelIncluded" ]; then
-        rgParams="$rgParams $kernelSearch"
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        echo -e "Error: The following dependencies are not installed: ${COLOR}${missing_deps[*]}${RESET}"
+        exit 1
     fi
+}
 
-    # Squash multiple whitespaces
-    rgParams=$(echo "$rgParams" | tr -s ' ')
-    fzfParams=$(echo "$fzfParams" | tr -s ' ')
+polishQuery() {
+    fQuery="${fQuery#"${fQuery%%[![:space:]]*}"}"   # Left trim
+    fQuery="${fQuery%"${fQuery##*[![:space:]]}"}"   # Right trim
+    [ -z "$fQuery" ] && return
 
-    # Make the query command
-    rgQuery="rg $rgParams \"$fQuery\""
-    # Remove the backslashes from the fzf query. Only fzf needs to remove the backslashes
-    fzfQuery="fzf $fzfParams --query \"${fQuery//\\/}\""
+    fQuery="${fQuery:0:50}"
+    # Remove potentially problematic prefixes/suffixes more efficiently
+    fQuery="${fQuery#[&!]}"
+    fQuery="${fQuery%;}"
+    fQuery="${fQuery#<}"
+    fQuery="${fQuery#>}"
+    fQuery="${fQuery%:[0-9]*}"
+    fQuery="${fQuery#func=}"
+
+    # [[ -z "$fQuery" ]] && return
+    # local param
+    # param=$(echo "$fQuery" | sed -E 's/^[[:space:]]*|[[:space:]]*$//g; s/^[&!]//; s/;$//; s/^<|>$//g; s/:[0-9]+$//; s/^func=//')
+    # fQuery="$param"
+}
+
+fuzzySearch() {
+    # --glob='*.{c,h,cpp,js,ts,py,html,css,sh,php}'
+    local rgParams=(
+        '--smart-case'
+        '--color=ansi'
+        '--colors' 'match:fg:204,51,153'
+        '--colors' 'match:style:bold'
+        '--line-number'
+        '--no-heading'
+        '--glob' '!fpx-sync/*'
+        '--glob' '!linux-3.2.16/*'
+    )
+
+    local fzfParams=(
+        '--ansi'
+        '--color' 'hl:-1:underline,hl+:-1:underline:reverse'
+        '--delimiter' ':'
+        '--preview' 'bat --color=always {1} --theme=TwoDark --highlight-line {2}'
+        '--preview-window' 'top,60%,border-bottom,+{2}+3/3,~3'
+        '--cycle'
+        '--exit-0'
+    )
+
+    [ -z "$fKernelIncluded" ] && rgParams+=("--glob" '!linux-*/*')
+    rgParams+=("${fQuery:-.}")
+    [ -n "$fQuery" ] && fzfParams+=("--query" "${fQuery}")
 
     # Debugging
     if [ -n "$fDebug" ]; then
         echo $SEPARATOR_RIGHT
-        echo -e "rgQuery: ${COLOR}$rgQuery${RESET}"
-        echo -e "fzfQuery: ${COLOR}$fzfQuery${RESET}"
+        # ${array[*]} => Expands to a single string where all elements are joined together
+        echo -e "rgQuery: ${COLOR}${rgParams[*]}${RESET}"
+        echo -e "fzfQuery: ${COLOR}${fzfParams[*]}${RESET}"
+
     fi
 
-    if [ -z "$fQuery" ]; then
-        fzfSelected=$(eval "$rgQuery" | eval "$fzfQuery")
-    else
-        rgResult=$(eval "$rgQuery")
-        if [ -z "$rgResult" ]; then
-            echo -e "No result found for query: ${COLOR}$fQuery${RESET}" >&2
-            exit 1
-        fi
-        [ -n "$fOnlyRg" ] && echo "$rgResult" && exit 0
-        fzfSelected=$(echo "$rgResult" | eval "$fzfQuery")
-    fi
+    # Unified search and selection
+    # ${array[@]} => Expands to a list of individual elements
+    fzfSelected=$(rg "${rgParams[@]}" | fzf "${fzfParams[@]}")
 
-    [ -z "$fzfSelected" ] && exit 0
+    if [ -z "$fzfSelected" ]; then
+        echo -e "No result found or selected for query: ${COLOR}$fQuery${RESET}" >&2
+        exit 0
+    fi
 
     # Sample output of fzfResult:
     # daemon/wad/wad_app_eng.c:3071:          goto session_make_failed;
     # or
     # Z15 Bug 0996624 FTP fails active in TP mode/debug2_passive.c:398:CLNT lftp/4.9.2
+    local filepath linenumber
     pattern='([^:]+):([0-9]+):'
     if [[ $fzfSelected =~ $pattern ]]; then
         filepath="${BASH_REMATCH[1]}"
@@ -171,7 +226,7 @@ searchAndOpen() {
         exit 1
     fi
 
-    # Add a backslash before the space in the filepath
+    # Escape spaces in filepath
     filepath="${filepath// /\\ }"
 
     if [ -n "$fDebug" ]; then
@@ -181,19 +236,109 @@ searchAndOpen() {
         echo $SEPARATOR_LEFT
     fi
 
-    if [ "$fEditor" == "vim" ]; then
-        eval $fEditor +"${linenumber}" "$filepath"
-        exit 0
+    if [[ "$fEditor" == "vim" ]]; then
+        vim +"$linenumber" "$filepath"
     else
-        eval $fEditor "$filepath":"$linenumber"
+        "$fEditor" "$filepath":"$linenumber"
     fi
 }
 
-# checkDependencies
-parserAndPolish
-searchAndOpen
+# fuzzySearch() {
+#     # --glob='*.{c,h,cpp,js,ts,py,html,css,sh,php}'
+#     local kernelSearch="--glob='!linux-*/*'"
+#     local rgParams="--smart-case \
+#                     --color=ansi \
+#                     --colors 'match:fg:204,51,153' --colors 'match:style:bold' \
+#                     --line-number \
+#                     --no-heading \
+#                     --glob='!fpx-sync/*' \
+#                     --glob='!linux-3.2.16/*' \
+#                    "
+#     local fzfParams="--ansi \
+#                      --color 'hl:-1:underline,hl+:-1:underline:reverse' \
+#                      --delimiter ':' \
+#                      --preview 'bat --color=always {1} --theme=\"TwoDark\" --highlight-line {2}' \
+#                      --preview-window 'top,60%,border-bottom,+{2}+3/3,~3' \
+#                      --cycle \
+#                     "
+#     if [ -z "$fKernelIncluded" ]; then
+#         rgParams="$rgParams $kernelSearch"
+#     fi
 
-if [ -n "$fzfSelected" ];
-then
-    echo -e "Line opened: ${COLOR}${fzfSelected:0:80}${RESET}"
-fi
+#     # Squash multiple whitespaces
+#     rgParams=$(echo "$rgParams" | tr -s ' ')
+#     fzfParams=$(echo "$fzfParams" | tr -s ' ')
+
+#     # Make the query command
+#     rgQuery="rg $rgParams \"$fQuery\""
+#     # Remove the backslashes from the fzf query. Only fzf needs to remove the backslashes
+#     fzfQuery="fzf $fzfParams --query \"${fQuery//\\/}\""
+
+#     # Debugging
+#     if [ -n "$fDebug" ]; then
+#         echo $SEPARATOR_RIGHT
+#         echo -e "rgQuery: ${COLOR}$rgQuery${RESET}"
+#         echo -e "fzfQuery: ${COLOR}$fzfQuery${RESET}"
+#     fi
+
+#     if [ -z "$fQuery" ]; then
+#         fzfSelected=$(eval "$rgQuery" | eval "$fzfQuery")
+#     else
+#         rgResult=$(eval "$rgQuery")
+#         if [ -z "$rgResult" ]; then
+#             echo -e "No result found for query: ${COLOR}$fQuery${RESET}" >&2
+#             exit 1
+#         fi
+#         [ -n "$fOnlyRg" ] && echo "$rgResult" && exit 0
+#         fzfSelected=$(echo "$rgResult" | eval "$fzfQuery")
+#     fi
+
+#     [ -z "$fzfSelected" ] && exit 0
+
+#     # Sample output of fzfResult:
+#     # daemon/wad/wad_app_eng.c:3071:          goto session_make_failed;
+#     # or
+#     # Z15 Bug 0996624 FTP fails active in TP mode/debug2_passive.c:398:CLNT lftp/4.9.2
+#     local filepath lineNumber
+#     pattern='([^:]+):([0-9]+):'
+#     if [[ $fzfSelected =~ $pattern ]]; then
+#         filepath="${BASH_REMATCH[1]}"
+#         linenumber="${BASH_REMATCH[2]}"
+#     else
+#         echo -e "${COLOR}Error: The result is in unexpected format${RESET}"
+#         exit 1
+#     fi
+
+#     # Escape spaces in filepath
+#     filepath="${filepath// /\\ }"
+
+#     if [ -n "$fDebug" ]; then
+#         echo -e "fzf select: ${COLOR}$fzfSelected${RESET}"
+#         echo -e "filepath:   ${COLOR}$filepath${RESET}"
+#         echo -e "linenumber: ${COLOR}$linenumber${RESET}"
+#         echo $SEPARATOR_LEFT
+#     fi
+
+#     if [[ "$fEditor" == "vim" ]]; then
+#         vim +"$lineNumber" "$filepath"
+#     else
+#         "$fEditor" "$filepath:$lineNumber"
+#     fi
+# }
+
+main() {
+    parseOptions "$@"
+    [ -n "$fCheckDepends" ] && checkDepends
+    GetClipboardContent
+    polishQuery
+    fuzzySearch
+
+    # Final output
+    if [ -n "$fzfSelected" ];
+    then
+        # echo -e "Query: ${COLOR}${fQuery}${RESET}"
+        echo -e "Line opened: ${COLOR}${fzfSelected:0:80}${RESET}"
+    fi
+}
+
+main "$@"

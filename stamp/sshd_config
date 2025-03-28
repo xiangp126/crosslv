@@ -89,8 +89,8 @@ UsePAM yes
 #AllowTcpForwarding yes
 #GatewayPorts no
 X11Forwarding yes
-#X11DisplayOffset 10
-#X11UseLocalhost yes
+X11DisplayOffset 10
+X11UseLocalhost no # Turning this off may solve some tough X11 issues
 #PermitTTY yes
 PrintMotd no
 #PrintLastLog yes
@@ -98,7 +98,7 @@ TCPKeepAlive yes
 #PermitUserEnvironment no
 #Compression delayed
 ClientAliveInterval 60
-ClientAliveCountMax 0
+ClientAliveCountMax 3
 #UseDNS no
 #PidFile /var/run/sshd.pid
 #MaxStartups 10:30:100
@@ -125,8 +125,6 @@ Subsystem       sftp    /usr/lib/openssh/sftp-server
 MaxAuthTries 4
 PermitRootLogin no
 MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
-ClientAliveInterval 300
-ClientAliveCountMax 3
 LoginGraceTime 60
 Banner /etc/issue.net
 MaxStartups 10:30:60

@@ -1,19 +1,21 @@
-# Under Users/Username/.ssh/config
+# Under C:\Users\login_user\.ssh
 # Read more about SSH config files: https://linux.die.net/man/5/ssh_config
 Host remotedev
-    HostName 172.18.67.180
+    HostName 172.16.67.180
     User login_user
     Port 22
     IdentityFile C:\Users\login_user\.ssh\id_rsa
     ServerAliveInterval 60
     ServerAliveCountMax 3
-Host client1
-    # Ensure the jump proxy knows client1
-    HostName client1
-    User login_user2
+    ForwardX11 yes
+    ForwardX11Trusted yes
+Host client3
+    HostName client3
+    User corsair
     Port 22
-    IdentityFile C:\Users\login_user2\.ssh\id_rsa
+    IdentityFile C:\Users\login_user\.ssh\id_rsa
     ProxyJump remotedev
     ServerAliveInterval 60
     ServerAliveCountMax 3
-
+    ForwardX11 yes
+    ForwardX11Trusted yes

@@ -98,6 +98,8 @@ updatePrerequisitesForDebian() {
         gdb
         bat
         curl
+        xclip
+        xsel
         libcurl4
         libcurl4-openssl-dev
         dos2unix

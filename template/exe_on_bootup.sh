@@ -21,13 +21,12 @@ if lsof -i :$vncPort | grep --quiet LISTEN
 then
     set +x
     echo "Port $vncPort is already in use. Stop setting up VNC server"
-    # vncserver -kill :9
+    tigervncserver -kill :9
     set -x
-else
-    cd "$HOME"/.vnc || exit
-    # vncserver :9
-    vncserver :9 -geometry $vnc_resolution
 fi
+echo "Setting up VNC server on port $vncPort"
+cd "$HOME"/.vnc || exit
+tigervncserver :9 -geometry $vnc_resolution
 
 echo "Starting all vms"
 start_all_vms
