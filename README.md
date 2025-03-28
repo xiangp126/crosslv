@@ -134,7 +134,7 @@ Basic Options:
     -d, --debug              Enable debug mode (-vvv)
     -c, --command            Execute commands remotely without opening an interactive login session
     -C, --wireshark       Live capture packets from the remote device
-    --tls-keylog-file        Set the path to the TLS key log file (default: /home/xiangp/.ssl-keys.log)
+    --tls-keylog-file        Set the path to the TLS key log file (default: $HOME/.ssl-keys.log)
     --get-system-status      Get the system status of the target device
 
 Forward Options:
@@ -189,15 +189,27 @@ Example:
 $ jr --help
 Usage: jr [OPTIONS] [SEARCH_TERM]
 
+This script requires the following dependencies:
+- rg (ripgrep)
+- fzf (fuzzy finder)
+- bat (cat replacement)
+- xsel (clipboard manager)
+- code/vim
+
+Run this script with the --check-depends option to check if these dependencies are installed.
+
 Options:
     -h, --help               Print this help message
     -r, --rg-only            Only use rg to search, not use fzf
     -k, --kernel             Include the linux kernel source code in the search
     -v, --vim                Open the file with vim (default is code)
+    -c, --check-depends      Check if dependencies are installed
+    -n, --no-clipboard       Do not use clipboard content as the search term
     -d, --debug              Print debug information
 
 Example: jr wad_tcp_bind
          jr --kernel
+
 ```
 
 <a id="jroute"></a>

@@ -42,6 +42,7 @@ Options:
     -k, --kernel             Include the linux kernel source code in the search
     -v, --vim                Open the file with vim (default is $fEditor)
     -c, --check-depends      Check if dependencies are installed
+    -n, --no-clipboard       Do not use clipboard content as the search term
     -d, --debug              Print debug information
 
 Example: $SCRIPTNAME wad_tcp_bind
@@ -53,7 +54,7 @@ _EOF
 
 parseOptions() {
     # Define short and long options
-    SHORTOPTS="hvdrkc"
+    SHORTOPTS="hvdrkcn"
     LONGOPTS="help,vim,debug,kernel,rg-only,check-depends, no-clipboard"
 
     # Use getopt to parse command-line options
@@ -87,7 +88,7 @@ parseOptions() {
                 fCheckDepends=true
                 shift
                 ;;
-            --no-clipboard)
+            -n|--no-clipboard)
                 fNoClipboard=true
                 shift
                 ;;
@@ -107,6 +108,22 @@ parseOptions() {
     done
 
     fQuery="$*"
+}
+
+checkDepends() {
+    local missing_deps=()
+    local dependencies=("rg" "fzf" "bat" "xsel" "$fEditor")
+
+    for dep in "${dependencies[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            missing_deps+=("$dep")
+        fi
+    done
+
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        echo -e "Error: The following dependencies are not installed: ${COLOR}${missing_deps[*]}${RESET}"
+        exit 1
+    fi
 }
 
 # In X11, there are three primary selections (clipboard buffers):
@@ -136,22 +153,6 @@ GetClipboardContent() {
     fi
 }
 
-checkDepends() {
-    local missing_deps=()
-    local dependencies=("rg" "fzf" "bat" "xsel" "$fEditor")
-
-    for dep in "${dependencies[@]}"; do
-        if ! command -v "$dep" &>/dev/null; then
-            missing_deps+=("$dep")
-        fi
-    done
-
-    if [[ ${#missing_deps[@]} -gt 0 ]]; then
-        echo -e "Error: The following dependencies are not installed: ${COLOR}${missing_deps[*]}${RESET}"
-        exit 1
-    fi
-}
-
 polishQuery() {
     # Round 1
     fQuery="${fQuery%%$'\n'*}"                    # Remove everything after the first newline
@@ -159,14 +160,16 @@ polishQuery() {
     fQuery="${fQuery%"${fQuery##*[![:space:]]}"}" # Right trim
     [ -z "$fQuery" ] && return
     # Round 2
-    fQuery="${fQuery:0:50}"
-    fQuery="${fQuery//[&!;<>\\]/}"
-    fQuery="${fQuery%:[0-9]*}"
-    fQuery="${fQuery#func=}"
+    fQuery="${fQuery:0:50}"       # Truncate to max 50 characters
+    fQuery="${fQuery//[&!;<\\]/}" # Remove special characters
+    fQuery="${fQuery%>}"          # Remove trailing '>' if present
+    fQuery="${fQuery%:[0-9]*}"    # Remove trailing colon and numbers
+    fQuery="${fQuery#func=}"      # Remove leading 'func=' if present
 }
 
 fuzzySearch() {
     # '--glob' '*.{c,h,cpp,js,ts,py,html,css,sh,php}'
+    # rg: -F, --fixed-strings Treat the pattern as a literal string
     local rgParams=(
         '--smart-case'
         '--color=ansi'
@@ -176,6 +179,7 @@ fuzzySearch() {
         '--no-heading'
         '--glob' '!fpx-sync/*'
         '--glob' '!linux-3.2.16/*'
+        '--fixed-strings'
     )
     local fzfParams=(
         '--ansi'
@@ -187,9 +191,9 @@ fuzzySearch() {
         '--exit-0'
     )
 
-    [ -z "$fKernelIncluded" ] && rgParams+=("--glob" '!linux-*/*')
+    [ -z "$fKernelIncluded" ] && rgParams+=('--glob' '!linux-*/*')
     rgParams+=("${fQuery:-.}")
-    [ -n "$fQuery" ] && fzfParams+=("--query" "${fQuery}")
+    [ -n "$fQuery" ] && fzfParams+=('--query' "${fQuery}")
 
     # Debugging
     if [ -n "$fDebug" ]; then

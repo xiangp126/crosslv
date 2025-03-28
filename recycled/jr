@@ -158,6 +158,9 @@ polishQuery() {
     fQuery="${fQuery//[&!;<>\\]/}"
     fQuery="${fQuery%:[0-9]*}"
     fQuery="${fQuery#func=}"
+
+    # Old code
+    # param=$(echo "$fQuery" | sed -E 's/^[[:space:]]*|[[:space:]]*$//g; s/^[&!]//; s/;$//; s/^<|>$//g; s/:[0-9]+$//; s/^func=//')
 }
 
 fuzzySearch() {
