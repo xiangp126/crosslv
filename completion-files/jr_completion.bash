@@ -8,7 +8,8 @@ _jr_completion() {
 
     # Define options
     opts="-h -v -d -k -r -c -n"
-    long_opts="--help --vim --debug --kernel --rg-only --check-depends --no-clipboard"
+    long_opts="--help --vim --debug --kernel --rg-only --check-depends \
+               --no-clipboard --regular-match"
 
     case "${prev}" in
 	*)

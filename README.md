@@ -205,6 +205,7 @@ Options:
     -v, --vim                Open the file with vim (default is code)
     -c, --check-depends      Check if dependencies are installed
     -n, --no-clipboard       Do not use clipboard content as the search term
+    --regular-match          Use regular expressions for matching (default is fixed strings)
     -d, --debug              Print debug information
 
 Example: jr wad_tcp_bind
