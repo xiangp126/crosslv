@@ -521,6 +521,6 @@
     "command-runner.terminal.autoClear": true,
     "command-runner.terminal.autoFocus": true,
     "command-runner.commands": {
-        "jr": "cd ${workspaceFolder}; jr ${selectedText}",
+        "jr": "cd ${workspaceFolder}; jr \"${selectedText}\"",
     },
 }
