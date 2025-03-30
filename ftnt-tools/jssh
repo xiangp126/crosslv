@@ -104,7 +104,7 @@ Basic Options:
     -P, --port               SSH Port to connect to (default: $fTargetPort)
     -d, --debug              Enable debug mode (-vvv)
     -c, --command            Execute commands remotely without opening an interactive login session
-    -C, --wireshark       Live capture packets from the remote device
+    -C, --wireshark          Live capture packets from the remote device
     --tls-keylog-file        Set the path to the TLS key log file (default: $fTlsKeyLogFile)
     --get-system-status      Get the system status of the target device
 

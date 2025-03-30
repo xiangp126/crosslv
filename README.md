@@ -9,6 +9,7 @@
 - [jdebug](#jdebug)
 - [jr](#jr)
 - [jroute](#jroute)
+- [jtail](#jtail)
 - [gdb_tools](#gdb_tools)
 - [bash_completion](#completion)
 
@@ -133,7 +134,7 @@ Basic Options:
     -P, --port               SSH Port to connect to (default: 22)
     -d, --debug              Enable debug mode (-vvv)
     -c, --command            Execute commands remotely without opening an interactive login session
-    -C, --wireshark       Live capture packets from the remote device
+    -C, --wireshark          Live capture packets from the remote device
     --tls-keylog-file        Set the path to the TLS key log file (default: $HOME/.ssl-keys.log)
     --get-system-status      Get the system status of the target device
 
@@ -224,6 +225,29 @@ Options:
     -h, --help           Show this help message
     -d, --dry-run        Show what would be done without making changes
     -t, --gateway NAME   Specify the gateway to use (Only available gateways are allowed)
+```
+
+<a id="jtail"></a>
+#### [jtail](./ftnt-tools/jtail)
+```bash
+$ jtail -h
+Usage: jtail [OPTIONS] [LOG_FILE]
+
+This script displays and tails log file with syntax highlighting.
+By default, it uses $HOME/.gdblog as the log file.
+
+This script requires the following dependencies:
+- bat (for syntax highlighting)
+
+Options:
+    -h, --help               Print this help message
+    -f, --file FILE          Specify the log file to read from
+    -l, --language LANG      Set syntax language (default: c)
+    -d, --debug              Enable debug mode with verbose output
+
+Example: jtail
+         jtail --language cpp
+         jtail --log /var/log/messages
 ```
 
 <a id="completion"></a>
