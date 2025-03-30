@@ -9,6 +9,7 @@
 | [jmake](#jmake) | Building tool for large C projects |
 | [jssh](#jssh) | SSH/SFTP/Telnet tool for connecting to devices |
 | [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
+| [jrun](#jrun) | Sending commands to a tmux pane running a FortiGate CLI session |
 | [jr](#jr) | Powerful search tool for searching code in large projects |
 | [jt](#jt) | Log file viewer with syntax highlighting |
 | [jroute](#jroute) | Simple script to switch the default route between available gateways |
@@ -121,6 +122,48 @@ Example:
     jdebug fgt1 -p "123" -N1
     jdebug fgt1 -w algo -d 9229 -l "admin" -p "123"
     jdebug -h
+```
+
+<a id="jrun"></a>
+#### [jrun](./ftnt-tools/jrun)
+```bash
+$ jrun -h
+Usage: jrun session[:window[.pane]] [OPTIONS]
+
+This script sends commands to a tmux pane running a FortiGate CLI session.
+It allows you to specify a tmux session, window, and pane ID, as well as an optional command file.
+You can also send predefined debug commands automatically with simple flags.
+The script parses command files and handles various FortiGate debugging scenarios efficiently.
+
+Options:
+    -h, --help               Print this help message
+    -s, --session            Set session ID (default: )
+    -w, --window             Set window ID (default: 1)
+    -p, --pane               Set pane ID (default: 1)
+    -f, --file               Specify command file (default: )
+    -d, --debug              Enable debug mode with verbose output
+    -W, --wad-debug          Send WAD debug commands automatically
+    -o, --output-directly    Configure console to output directly (no pagination)
+    -k, --kernel-debug       Send kernel debug commands automatically
+    -t, --packet-trace       Send packet trace commands automatically
+    --packet-trace-addr      Set IP address for packet trace (default: )
+    -i, --ips-debug          Send IPS debug commands automatically
+    -S, --scanunit-debug     Send scanunit debug commands automatically
+    -D, --dns-debug          Send DNS debug commands automatically
+
+Examples:
+    jrun --session=log --window=2 --pane=2 --file=/home/xiangp/commands.txt
+    jrun log --wad-debug      # Uses default window 1 and pane 1
+    jrun log:2 --wad-debug    # Uses default pane 1
+    jrun log:2.3 --wad-debug  # Specifies all parts
+    jrun log -t --packet-trace-addr=192.168.1.100
+
+Tips:
+    1. Type 'C-x, q' to view the pane number within the tmux window.
+    2. Type 'C-x, s' to view the session name in tmux.
+    3. Use // to comment out a line in the command file.
+    4. Use ! to omit the rest of the commands in the command file.
+
 ```
 
 <a id="jr"></a>

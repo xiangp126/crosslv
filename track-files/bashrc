@@ -195,4 +195,4 @@ export FZF_COMPLETION_TRIGGER='\'
 export FZF_COMPLETION_OPTS='+c -x'
 
 # For fzf-tab-completion vim plugin
-bind -x '"/\t": fzf_bash_completion'
+bind -x '"*\t": fzf_bash_completion'

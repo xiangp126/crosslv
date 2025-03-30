@@ -6,13 +6,13 @@ SCRIPT_NAME=$(basename "$0")
 USER_NOTATION="@@@@"
 SEPARATOR_LT="=================================="
 SEPARATOR_RT="=================================="
-
 # Variables
 fSessionId=
 fWinId=1
 fPaneId=1
 fTmuxTarget=
 fSendNewLine=
+fDebug=
 fCmdFile=
 fTmuxPrefix="C-x"
 fCleanedCmd=
@@ -26,7 +26,6 @@ fIPSDebug=
 fScanUnitDebug=
 fDNSDebug=
 fAutoCmdMode=
-
 # Colors
 RED='\033[31m'
 MAGENTA='\033[35m'
@@ -49,67 +48,14 @@ cat << _EOF
 _EOF
 }
 
-# Define FortiGate debug commands as global array
-declare -a fWadDebugCommands=(
-    "diag debug reset"
-    "diag wad debug enable all"
-    "diag debug enable"
-)
-
-# Define output configuration commands
-declare -a fOutputCommands=(
-    "config system console"
-    "set output standard"
-    "end"
-)
-
-# Define kernel debug commands
-declare -a fKernelDebugCommands=(
-    "diag debug reset"
-    "diag debug enable"
-    "diag debug application kmiglogd -1"
-)
-
-# Define packet trace commands
-declare -a fPacketTraceCommands=(
-    "diag debug reset"
-    "diag debug flow filter clear"
-    "diag debug enable"
-    "diag debug flow filter addr $fPacketTraceAddr"
-    "diag debug flow show function-name enable"
-    "diag debug flow show iprope enable"
-    "diag debug flow trace start 100"
-)
-
-# Define IPS debug commands
-declare -a fIPSDebugCommands=(
-    "diag debug reset"
-    "diag wad debug ips-filter all"
-    # "diag wad debug ips-db filter all"
-    "diag ips debug enable all"
-    "diag wad debug enable all"
-    "diag debug enable"
-)
-
-# Define scanunit debug commands
-declare -a fScanUnitDebugCommands=(
-    "diag debug reset"
-    "diag sys scanunit debug all"
-    "diag wad debug enable all"
-    "diag debug enable"
-)
-
-# Define DNS debug commands
-declare -a fDNSDebugCommands=(
-    "diag debug reset"
-    "diag debug application dnsproxy -1"
-    "diag wad debug enable all"
-    "diag debug enable"
-)
-
 usage() {
     cat << _EOF
 Usage: $SCRIPT_NAME session[:window[.pane]] [OPTIONS]
+
+This script sends commands to a tmux pane running a FortiGate CLI session.
+It allows you to specify a tmux session, window, and pane ID, as well as an optional command file.
+You can also send predefined debug commands automatically with simple flags.
+The script parses command files and handles various FortiGate debugging scenarios efficiently.
 
 Options:
     -h, --help               Print this help message
@@ -117,6 +63,7 @@ Options:
     -w, --window             Set window ID (default: $fWinId)
     -p, --pane               Set pane ID (default: $fPaneId)
     -f, --file               Specify command file (default: $fCmdFile)
+    -d, --debug              Enable debug mode with verbose output
     -W, --wad-debug          Send WAD debug commands automatically
     -o, --output-directly    Configure console to output directly (no pagination)
     -k, --kernel-debug       Send kernel debug commands automatically
@@ -134,8 +81,8 @@ Examples:
     $SCRIPT_NAME log -t --packet-trace-addr=192.168.1.100
 
 Tips:
-    1. Type $fTmuxPrefix, then q to view the pane number within the tmux window.
-    2. Type $fTmuxPrefix, then s to view the session name in tmux.
+    1. Type '$fTmuxPrefix, q' to view the pane number within the tmux window.
+    2. Type '$fTmuxPrefix, s' to view the session name in tmux.
     3. Use // to comment out a line in the command file.
     4. Use ! to omit the rest of the commands in the command file.
 
@@ -143,130 +90,148 @@ _EOF
     exit 0
 }
 
-SHORTOPTS="hs:w:p:f:WoktiSD"
-LONGOPTS="help,session:,window:,pane:,file:,wad-debug,output-directly,kernel-debug,packet-trace,ips-debug,scanunit-debug,dns-debug,packet-trace-addr:"
-if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
-    echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
-    exit 1
-fi
+# @return 0 if the IP address is valid, 1 otherwise
+isValidIP() {
+    local ip="$1"
+    local stat=1
+    if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        IFS='.' read -r i1 i2 i3 i4 <<< "$ip"
+        if (( i1 <= 255 && i2 <= 255 && i3 <= 255 && i4 <= 255 )); then
+            stat=0
+        fi
+    fi
+    return $stat
+}
 
-eval set -- "$PARSED"
-unset PARSED
+parseOptions() {
+    SHORTOPTS="hs:w:p:f:dWOKTISD"
+    LONGOPTS="help,session:,window:,pane:,file:,debug,wad-debug,output-directly,kernel-debug,ips-debug,scanunit-debug,dns-debug,packet-trace:"
+    if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
+        echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
+        echo -e "${MAGENTA}The argument --packet-trace requires an IP address.${RESET}" >&2
+        exit 1
+    fi
 
-while true; do
-    case "$1" in
-        -h|--help)
-            usage
-            ;;
-        -s|--session)
-            fSessionId="$2"
-            shift 2
-            ;;
-        -w|--window)
-            fWinId="$2"
-            shift 2
-            ;;
-        -p|--pane)
-            fPaneId="$2"
-            shift 2
-            ;;
-        -f|--file)
-            fCmdFile="$2"
-            shift 2
-            ;;
-        -W|--wad-debug)
-            fWadDebug="true"
-            shift
-            ;;
-        -o|--output-directly)
-            fOutputDirectly="true"
-            shift
-            ;;
-        -k|--kernel-debug)
-            fKernelDebug="true"
-            shift
-            ;;
-        -t|--packet-trace)
-            fPacketTrace="true"
-            shift
-            ;;
-        -i|--ips-debug)
-            fIPSDebug="true"
-            shift
-            ;;
-        -S|--scanunit-debug)
-            fScanUnitDebug="true"
-            shift
-            ;;
-        -D|--dns-debug)
-            fDNSDebug="true"
-            shift
-            ;;
-        --packet-trace-addr)
-            fPacketTraceAddr="$2"
-            shift 2
-            ;;
-        --)
-            shift
-            break
-            ;;
-        *)
-            echo -e "$USER_NOTATION ${MAGENTA}Invalid option: $1${RESET}"
+    eval set -- "$PARSED"
+    unset PARSED
+
+    while true; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            -s|--session)
+                fSessionId="$2"
+                shift 2
+                ;;
+            -w|--window)
+                fWinId="$2"
+                shift 2
+                ;;
+            -p|--pane)
+                fPaneId="$2"
+                shift 2
+                ;;
+            -f|--file)
+                fCmdFile="$2"
+                shift 2
+                ;;
+            -d|--debug)
+                fDebug="true"
+                shift
+                ;;
+            -W|--wad-debug)
+                fWadDebug="true"
+                shift
+                ;;
+            -O|--output-directly)
+                fOutputDirectly="true"
+                shift
+                ;;
+            -K|--kernel-debug)
+                fKernelDebug="true"
+                shift
+                ;;
+            -T|--packet-trace)
+                fPacketTrace="true"
+                fPacketTraceAddr="$2"
+                # In bash, 0 represents true while non-zero represents false
+                if ! isValidIP "$fPacketTraceAddr"; then
+                    echo -e "$USER_NOTATION ${MAGENTA}Invalid IP address for packet trace: $fPacketTraceAddr${RESET}" >&2
+                    exit 1
+                fi
+                shift 2
+                ;;
+            -I|--ips-debug)
+                fIPSDebug="true"
+                shift
+                ;;
+            -S|--scanunit-debug)
+                fScanUnitDebug="true"
+                shift
+                ;;
+            -D|--dns-debug)
+                fDNSDebug="true"
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "$USER_NOTATION ${MAGENTA}Invalid option: $1${RESET}"
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ "$#" == 0 ]; then
+        usage
+    elif [ "$#" == 1 ]; then
+        local target="$1"
+        if [[ "$target" =~ ^([^:]+)(:([0-9]+)(\.([0-9]+))?)?$ ]]; then
+            fSessionId="${BASH_REMATCH[1]}"
+            fWinId="${BASH_REMATCH[3]:-$fWinId}"
+            fPaneId="${BASH_REMATCH[5]:-$fPaneId}"
+        else
+            echo -e "$USER_NOTATION ${MAGENTA}Invalid tmux target format. Use: session[:window[.pane]]${RESET}" >&2
             exit 1
-            ;;
-    esac
-done
-
-if [ "$#" == 0 ]; then
-    usage
-elif [ "$#" == 1 ]; then
-    target="$1"
-    if [[ "$target" =~ ^([^:]+)(:([0-9]+)(\.([0-9]+))?)?$ ]]; then
-        fSessionId="${BASH_REMATCH[1]}"
-        fWinId="${BASH_REMATCH[3]:-$fWinId}"
-        fPaneId="${BASH_REMATCH[5]:-$fPaneId}"
+        fi
     else
-        echo -e "$USER_NOTATION ${MAGENTA}Invalid tmux target format. Use: session[:window[.pane]]${RESET}" >&2
+        echo -e "$USER_NOTATION ${MAGENTA}Too many arguments.${RESET}"
         exit 1
     fi
-else
-    echo -e "$USER_NOTATION ${MAGENTA}Too many arguments.${RESET}"
-    exit 1
-fi
 
-[ -z "$fSessionId" ] && echo -e "$USER_NOTATION ${MAGENTA}Session ID is required.${RESET}" && exit 1
-fTmuxTarget="$fSessionId:$fWinId.$fPaneId"
+    [ -z "$fSessionId" ] && echo -e "$USER_NOTATION ${MAGENTA}Session ID is required.${RESET}" && exit 1
+    fTmuxTarget="$fSessionId:$fWinId.$fPaneId"
+}
 
-logo
-echo $SEPARATOR_LT
-echo -e "[s] Set Session ID to: ${COLOR}$fSessionId${RESET}"
-echo -e "[w] Set Window ID to: ${COLOR}$fWinId${RESET}"
-echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
-echo -e "[\] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
-COLOR=$GREY
-[ -n "$fWadDebug" ]      && fAutoCmdMode="true" && echo -e "[W] ${COLOR}Sending WAD debug commands${RESET}"
-[ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[o] ${COLOR}Configuring console for direct output${RESET}"
-[ -n "$fKernelDebug" ]   && fAutoCmdMode="true" && echo -e "[k] ${COLOR}Sending kernel debug commands${RESET}"
-[ -n "$fIPSDebug" ]      && fAutoCmdMode="true" && echo -e "[i] ${COLOR}Sending IPS debug commands${RESET}"
-[ -n "$fScanUnitDebug" ] && fAutoCmdMode="true" && echo -e "[S] ${COLOR}Sending scanunit debug commands${RESET}"
-[ -n "$fDNSDebug" ]      && fAutoCmdMode="true" && echo -e "[D] ${COLOR}Sending DNS debug commands${RESET}"
-COLOR=$MAGENTA
-if [[ -n "$fPacketTrace" ]]; then
-    if [[ -z "$fPacketTraceAddr" ]]; then
-        echo -e "$USER_NOTATION ${MAGENTA}Packet trace address is required.${RESET}"
-        exit 1
+displayInfo() {
+    logo
+    echo $SEPARATOR_LT
+    echo -e "[s] Set Session ID to: ${COLOR}$fSessionId${RESET}"
+    echo -e "[w] Set Window ID to: ${COLOR}$fWinId${RESET}"
+    echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
+    echo -e "[\] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
+    COLOR=$GREY
+    [ -n "$fWadDebug" ]      && fAutoCmdMode="true" && echo -e "[W] ${COLOR}Sending WAD debug commands${RESET}"
+    [ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[o] ${COLOR}Configuring console for direct output${RESET}"
+    [ -n "$fKernelDebug" ]   && fAutoCmdMode="true" && echo -e "[k] ${COLOR}Sending kernel debug commands${RESET}"
+    [ -n "$fIPSDebug" ]      && fAutoCmdMode="true" && echo -e "[i] ${COLOR}Sending IPS debug commands${RESET}"
+    [ -n "$fScanUnitDebug" ] && fAutoCmdMode="true" && echo -e "[S] ${COLOR}Sending scanunit debug commands${RESET}"
+    [ -n "$fDNSDebug" ]      && fAutoCmdMode="true" && echo -e "[D] ${COLOR}Sending DNS debug commands${RESET}"
+    [ -n "$fPacketTrace" ]   && fAutoCmdMode="true" && echo -e "[T] ${COLOR}Sending packet trace commands for IP: ${MAGENTA}$fPacketTraceAddr${RESET}"
+    COLOR=$MAGENTA
+
+    if [[ -z "$fAutoCmdMode" ]]; then
+        if [[ ! -f "$fCmdFile" ]]; then
+            echo -e "Error: ${MAGENTA}Command file not found.${RESET}"
+            exit 1
+        fi
+        echo -e "[f] Set command file to: ${COLOR}$fCmdFile${RESET}"
     fi
-    fAutoCmdMode="true"
-    echo -e "[t] Sending packet trace commands for IP: ${COLOR}$fPacketTraceAddr${RESET}"
-fi
-if [[ -z "$fAutoCmdMode" ]]; then
-    if [[ ! -f "$fCmdFile" ]]; then
-        echo -e "$USER_NOTATION ${MAGENTA}Command file not found.${RESET}"
-        exit 1
-    fi
-    echo -e "[f] Set command file to: ${COLOR}$fCmdFile${RESET}"
-fi
-echo $SEPARATOR_RT
+    echo $SEPARATOR_RT
+}
 
 sendDebugCmds() {
     local -n commands=$1
@@ -279,45 +244,112 @@ sendDebugCmds() {
             echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $cmd${RESET}"
             exit 1
         fi
-        sleep 0.5
+        sleep 0.1  # This sleeps for 100 milliseconds
     done
 }
 
-[ -n "$fWadDebug" ]       && sendDebugCmds fWadDebugCommands      && exit 0
-[ -n "$fOutputDirectly" ] && sendDebugCmds fOutputCommands        && exit 0
-[ -n "$fKernelDebug" ]    && sendDebugCmds fKernelDebugCommands   && exit 0
-[ -n "$fIPSDebug" ]       && sendDebugCmds fIPSDebugCommands      && exit 0
-[ -n "$fScanUnitDebug" ]  && sendDebugCmds fScanUnitDebugCommands && exit 0
-[ -n "$fDNSDebug" ]       && sendDebugCmds fDNSDebugCommands      && exit 0
-[ -n "$fPacketTrace" ]    && sendDebugCmds fPacketTraceCommands   && exit 0
+sendPreDefinedCmds() {
+    # Define WAD debug commands
+    declare -ga fWadDebugCommands=(
+        "diag debug reset"
+        "diag wad debug enable all"
+        "diag debug enable"
+    )
+    # Define output configuration commands
+    declare -ga fOutputCommands=(
+        "config system console"
+        "set output standard"
+        "end"
+    )
+    # Define kernel debug commands
+    declare -ga fKernelDebugCommands=(
+        "diag debug reset"
+        "diag debug enable"
+        "diag debug application kmiglogd -1"
+    )
+    # Define packet trace commands
+    declare -ga fPacketTraceCommands=(
+        "diag debug reset"
+        "diag debug flow filter clear"
+        "diag debug enable"
+        "diag debug flow filter addr $fPacketTraceAddr"
+        "diag debug flow show function-name enable"
+        # "diag debug flow show iprope enable"
+        "diag debug flow trace start 100"
+    )
+    # Define IPS debug commands
+    declare -ga fIPSDebugCommands=(
+        "diag debug reset"
+        "diag wad debug ips-filter all"
+        # "diag wad debug ips-db filter all"
+        "diag ips debug enable all"
+        "diag wad debug enable all"
+        "diag debug enable"
+    )
+    # Define scanunit debug commands
+    declare -ga fScanUnitDebugCommands=(
+        "diag debug reset"
+        "diag sys scanunit debug all"
+        "diag wad debug enable all"
+        "diag debug enable"
+    )
+    # Define DNS debug commands
+    declare -ga fDNSDebugCommands=(
+        "diag debug reset"
+        "diag debug application dnsproxy -1"
+        "diag wad debug enable all"
+        "diag debug enable"
+    )
 
-# Line Processing
-tail -n +1 "$fCmdFile" | while IFS= read -r command || [[ -n "$command" ]]; do
-    # Eliminates comments, deletes everything before : or #, and clears leading spaces
-    fCleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
+    [ -n "$fWadDebug" ]       && sendDebugCmds fWadDebugCommands      && exit 0
+    [ -n "$fOutputDirectly" ] && sendDebugCmds fOutputCommands        && exit 0
+    [ -n "$fKernelDebug" ]    && sendDebugCmds fKernelDebugCommands   && exit 0
+    [ -n "$fIPSDebug" ]       && sendDebugCmds fIPSDebugCommands      && exit 0
+    [ -n "$fScanUnitDebug" ]  && sendDebugCmds fScanUnitDebugCommands && exit 0
+    [ -n "$fDNSDebug" ]       && sendDebugCmds fDNSDebugCommands      && exit 0
+    [ -n "$fPacketTrace" ]    && sendDebugCmds fPacketTraceCommands   && exit 0
+}
 
-    [ -z "$fCleanedCmd" ] && continue
+sendCmdsFromFile() {
+    # Line Processing
+    tail -n +1 "$fCmdFile" | while IFS= read -r command || [[ -n "$command" ]]; do
+        # Eliminates comments, deletes everything before : or #, and clears leading spaces
+        fCleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
 
-    # If the cleaned command starts with an exclamation mark
-    [ "${fCleanedCmd:0:1}" == "!" ] && exit 0
+        [ -z "$fCleanedCmd" ] && continue
 
-    # For dos file, there will be a '\r\n' ending in each command. No need to send extra new line.
-    if [[ "$fCleanedCmd" != *$'\r' ]]; then
-        fSendNewLine="true"
-    fi
+        # If the cleaned command starts with an exclamation mark
+        [ "${fCleanedCmd:0:1}" == "!" ] && exit 0
 
-    echo -e "$USER_NOTATION Sending: ${MAGENTA}$fCleanedCmd${RESET}"
+        # For dos file, there will be a '\r\n' ending in each command. No need to send extra new line.
+        if [[ "$fCleanedCmd" != *$'\r' ]]; then
+            fSendNewLine="true"
+        fi
 
-    if [[ -n "$fSendNewLine" ]]; then
-        # Use -l to send the command as a literal string
-        tmux send-keys -t "$fTmuxTarget" -l "$fCleanedCmd"
-        tmux send-keys -t "$fTmuxTarget" Enter
-    else
-        tmux send-keys -t "$fTmuxTarget" -l "$fCleanedCmd"
-    fi
+        echo -e "$USER_NOTATION Sending: ${MAGENTA}$fCleanedCmd${RESET}"
 
-    if [[ $? -ne 0 ]]; then
-        echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $fCleanedCmd${RESET}"
-        exit 1
-    fi
-done
+        if [[ -n "$fSendNewLine" ]]; then
+            # Use -l to send the command as a literal string
+            tmux send-keys -t "$fTmuxTarget" -l "$fCleanedCmd"
+            tmux send-keys -t "$fTmuxTarget" Enter
+        else
+            tmux send-keys -t "$fTmuxTarget" -l "$fCleanedCmd"
+        fi
+
+        if [[ $? -ne 0 ]]; then
+            echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $fCleanedCmd${RESET}"
+            exit 1
+        fi
+    done
+}
+
+main() {
+    parseOptions "$@"
+    [ -n "$fDebug" ] && set -x
+    displayInfo
+    sendPreDefinedCmds
+    sendCmdsFromFile
+    [ -n "$fDebug" ] && set +x
+}
+
+main "$@"

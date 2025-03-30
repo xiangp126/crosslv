@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Bash completion for jtail
-_jtail() {
+_jt() {
     local cur prev opts long_opts
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
@@ -47,4 +47,4 @@ _jtail() {
 }
 
 # Register the completion function
-complete -F _jtail jtail
+complete -F _jt jt

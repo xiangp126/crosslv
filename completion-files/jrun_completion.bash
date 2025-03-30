@@ -18,10 +18,10 @@ _jrun_completion() {
     #---------------------------------------------------------------
 
     # Define short and long options
-    opts="-h -s -w -p -f -W -o -k -t -i -S -D"
-    longopts="--help --session --window --pane --file --wad-debug --output-directly \
-              --kernel-debug --packet-trace --ips-debug --scanunit-debug --dns-debug \
-              --packet-trace-addr"
+    opts="-h -s -w -p -f -d -W -O -K -T -I -S -D"
+    longopts="--help --session --window --pane --file --debug --wad-debug \
+              --output-directly --kernel-debug --packet-trace --ips-debug \
+              --scanunit-debug --dns-debug --packet-trace"
 
     #---------------------------------------------------------------
     # HELPER FUNCTIONS
@@ -145,7 +145,7 @@ _jrun_completion() {
             ;;
 
         # Packet trace address option
-        --packet-trace-addr)
+        --packet-trace)
             # Suggest some common IP addresses
             local common_ips="192.168.1.1 127.0.0.1 10.0.0.1 172.16.0.1"
             COMPREPLY=( $(compgen -W "${common_ips}" -- ${cur}) )

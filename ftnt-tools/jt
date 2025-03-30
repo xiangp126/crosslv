@@ -92,7 +92,6 @@ parseOptions() {
     if [ -n "$1" ]; then
         fLogFile="$1"
     fi
-    [ -n "$fDebug" ] && set -x
 }
 
 checkLogFile() {
@@ -159,16 +158,16 @@ makeDisplayInfo() {
     [ -n "$fileAtime" ] && echo -e "${COLOR}Last Access: ${RESET}$fileAtime"
     [ -n "$fileCtime" ] && echo -e "${COLOR}Last Change: ${RESET}$fileCtime"
     [ -n "$fileMtime" ] && echo -e "${COLOR}Last Modify: ${RESET}$fileMtime"
-
     echo -e "$SEPARATOR_RIGHT"
-    [ -n "$fDebug" ] && set +x
 }
 
 main() {
     parseOptions "$@"
+    [ -n "$fDebug" ] && set -x # Disable debug mode
     checkLogFile
     makeCmd
     makeDisplayInfo
+    [ -n "$fDebug" ] && set +x # Enable debug mode
     # Execute the command
     eval "$fCmd"
 }
