@@ -4,76 +4,14 @@
 
 ### Key Tools
 
-- [jmake](#jmake)
-- [jssh](#jssh)
-- [jdebug](#jdebug)
-- [jr](#jr)
-- [jroute](#jroute)
-- [jtail](#jtail)
-- [gdb_tools](#gdb_tools)
-- [bash_completion](#completion)
-
-<a id="gdb_tools"></a>
-#### [gdb_tools](template/gdb_tools.py)
-A set of Python tools for visualizing data structures in memory while debugging with GDB.
-
-```c
-+pl tree
-Tree Root: 0x7f320d8b3430, Input: ((struct fg_avl_tree *) 0x7f3204808460)
-=== Total nodes found: 19 ===
-Tree Visualization (right nodes 'above', left nodes 'below')
-0x7f320d8b3430
-    ├── 0x7f320d8b24b8
-    │   ├── 0x7f320d8b1a68
-    │   │   ├── 0x7f320d8b3a60
-    │   │   │   ├── 0x7f320d8b26c8
-    │   │   │   └── 0x7f320d8b4090
-    │   │   └── 0x7f320d8b1960
-    │   │       ├── 0x7f320d8b3d78
-    │   │       └── 0x7f320d8b3c70
-    │   └── 0x7f320d8b42a0
-    │       └── 0x7f320d8b3010
-    └── 0x7f320d8b3640
-        ├── 0x7f320d8b3328
-        │   ├── 0x7f320d8b2bf0
-        │   └── 0x7f320d8b4cf0
-        │       └── 0x7f320d8b3f88
-        └── 0x7f320d8b4be8
-            ├── 0x7f320d8b49d8
-            └── 0x7f320d8b3b68
-=== Summary: 19 nodes found ===
-
-(gdb) pl msg
-+pl msg
-Head: 0x7f3204793d08, Input: ((struct wad_http_proc_msg *) 0x7f3204793cf0)
-=== Total nodes found: 7 ===
-Raw List Nodes (addresses):
-     0x7f3204615e78 => 0x7f3204617e88 => 0x7f3204612bd8 => 0x7f3204615848 => 0x7f3204615338
-     0x7f3204617f18 => 0x7f3204617a98
-=== Summary: 7 nodes found ===
-
-+pl msg --hhd
-Head: 0x7f3204793d08, Input: ((struct wad_http_proc_msg *) 0x7f3204793cf0)
-Trying to lookup type: struct wad_http_hdr
-=== Total nodes found: 7 ===
-=== Node 1/7 ===
-List Elem: 0x7f3204615e78, member in container: link
-Container: 0x7f3204615e38, ((struct wad_http_hdr *) 0x7f3204615e38)
-Field: data, Type: struct wad_sstr
-(((struct wad_http_hdr *) 0x7f3204615e38)->data)
-{
-  buff = 0x7f320dffe710,
-  start = 0,
-  len = 46
-}
-++p/s ((struct wad_sstr *)0x7f3204615e38)->buff->data[0]@46
-$10 = "last-modified: Thu, 18 Jul 2019 15:04:43 GMT\r\n"
-
-Current pointers:
-  next: 0x7f3204617e88 (head: 0x7f3204793d08)
-  prev: 0x7f3204793d08
-=== Summary: 7 nodes found, 7 nodes printed (in reverse order) ======
-```
+- [jmake](#jmake)      - Building tool for large C projects
+- [jssh](#jssh)        - SSH/SFTP/Telnet tool for connecting to devices
+- [jdebug](#jdebug)    - Debugging tool for devices running gdbserver
+- [jr](#jr)            - Powerful search tool for searching code in large projects
+- [jroute](#jroute)    - Simple script to switch the default route between available gateways
+- [jt](#jt)            - Log file viewer with syntax highlighting
+- [gdb_tools](#gdb_tools) - Python tools for visualizing data structures in memory while debugging with GDB
+- [completion](#completion) - Bash completion scripts for the above tools
 
 <a id="jmake"></a>
 #### [jmake](./ftnt-tools/jmake)
@@ -227,11 +165,11 @@ Options:
     -t, --gateway NAME   Specify the gateway to use (Only available gateways are allowed)
 ```
 
-<a id="jtail"></a>
-#### [jtail](./ftnt-tools/jtail)
+<a id="jt"></a>
+#### [jt](./ftnt-tools/jt)
 ```bash
-$ jtail -h
-Usage: jtail [OPTIONS] [LOG_FILE]
+$ jt -h
+Usage: jt [OPTIONS] [LOG_FILE]
 
 This script displays and tails log file with syntax highlighting.
 By default, it uses $HOME/.gdblog as the log file.
@@ -245,9 +183,71 @@ Options:
     -l, --language LANG      Set syntax language (default: c)
     -d, --debug              Enable debug mode with verbose output
 
-Example: jtail
-         jtail --language cpp
-         jtail --log /var/log/messages
+Example: jt
+         jt --language cpp
+         jt --log /var/log/messages
+```
+
+<a id="gdb_tools"></a>
+#### [gdb_tools](template/gdb_tools.py)
+A set of Python tools for visualizing data structures in memory while debugging with GDB.
+
+```c
++pl tree
+Tree Root: 0x7f320d8b3430, Input: ((struct fg_avl_tree *) 0x7f3204808460)
+=== Total nodes found: 19 ===
+Tree Visualization (right nodes 'above', left nodes 'below')
+0x7f320d8b3430
+    ├── 0x7f320d8b24b8
+    │   ├── 0x7f320d8b1a68
+    │   │   ├── 0x7f320d8b3a60
+    │   │   │   ├── 0x7f320d8b26c8
+    │   │   │   └── 0x7f320d8b4090
+    │   │   └── 0x7f320d8b1960
+    │   │       ├── 0x7f320d8b3d78
+    │   │       └── 0x7f320d8b3c70
+    │   └── 0x7f320d8b42a0
+    │       └── 0x7f320d8b3010
+    └── 0x7f320d8b3640
+        ├── 0x7f320d8b3328
+        │   ├── 0x7f320d8b2bf0
+        │   └── 0x7f320d8b4cf0
+        │       └── 0x7f320d8b3f88
+        └── 0x7f320d8b4be8
+            ├── 0x7f320d8b49d8
+            └── 0x7f320d8b3b68
+=== Summary: 19 nodes found ===
+
+(gdb) pl msg
++pl msg
+Head: 0x7f3204793d08, Input: ((struct wad_http_proc_msg *) 0x7f3204793cf0)
+=== Total nodes found: 7 ===
+Raw List Nodes (addresses):
+     0x7f3204615e78 => 0x7f3204617e88 => 0x7f3204612bd8 => 0x7f3204615848 => 0x7f3204615338
+     0x7f3204617f18 => 0x7f3204617a98
+=== Summary: 7 nodes found ===
+
++pl msg --hhd
+Head: 0x7f3204793d08, Input: ((struct wad_http_proc_msg *) 0x7f3204793cf0)
+Trying to lookup type: struct wad_http_hdr
+=== Total nodes found: 7 ===
+=== Node 1/7 ===
+List Elem: 0x7f3204615e78, member in container: link
+Container: 0x7f3204615e38, ((struct wad_http_hdr *) 0x7f3204615e38)
+Field: data, Type: struct wad_sstr
+(((struct wad_http_hdr *) 0x7f3204615e38)->data)
+{
+  buff = 0x7f320dffe710,
+  start = 0,
+  len = 46
+}
+++p/s ((struct wad_sstr *)0x7f3204615e38)->buff->data[0]@46
+$10 = "last-modified: Thu, 18 Jul 2019 15:04:43 GMT\r\n"
+
+Current pointers:
+  next: 0x7f3204617e88 (head: 0x7f3204793d08)
+  prev: 0x7f3204793d08
+=== Summary: 7 nodes found, 7 nodes printed (in reverse order) ======
 ```
 
 <a id="completion"></a>
