@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# set -x
+
+# Global Variables
+fLogFile="$HOME/.gdblog"
+fTheme="TwoDark"
+fBatParams=("--paging=never" "-pp" "--color=always")
+fLanguage="c" # Default language for syntax highlighting
+fExePrefix=
+fDebug=
+fCmd=
+# Constants
+SCRIPTNAME=$(basename $0)
+USER_NOTATION="@@@@"
+SEPARATOR_LEFT="<---------------------------------------------------"
+SEPARATOR_RIGHT="--------------------------------------------------->"
+# Colors
+MAGENTA='\033[35m'
+NORMAL='\033[0m'
+BOLD='\033[1m'
+BLUE='\033[34m'
+RESET='\033[0m'
+COLOR=$MAGENTA
+
+usage() {
+    cat << _EOF
+Usage: $SCRIPTNAME [OPTIONS] [LOG_FILE]
+
+This script displays and tails log file with syntax highlighting.
+By default, it uses $HOME/.gdblog as the log file.
+
+This script requires the following dependencies:
+- bat (for syntax highlighting)
+
+Options:
+    -h, --help               Print this help message
+    -f, --file FILE          Specify the log file to read from
+    -l, --language LANG      Set syntax language (default: $fLanguage)
+    -d, --debug              Enable debug mode with verbose output
+
+Example: $SCRIPTNAME
+         $SCRIPTNAME --language cpp
+         $SCRIPTNAME --log /var/log/messages
+
+_EOF
+    exit 1
+}
+
+parseOptions() {
+    # Define short and long options
+    SHORTOPTS="hl:f:d"
+    LONGOPTS="help,language:,file:,debug"
+
+    # Use getopt to parse command-line options
+    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+        echo -e "$USER_NOTATION ${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
+        exit 1
+    fi
+
+    # Reset positional parameters to the parsed values
+    eval set -- "$PARSED"
+
+    # Parse options
+    while true; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            -l|--language)
+                fLanguage="$2"
+                shift 2
+                ;;
+            -f|--file)
+                fLogFile="$2"
+                shift 2
+                ;;
+            -d|--debug)
+                fDebug=true
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "$USER_NOTATION ${COLOR}Invalid option: $1${RESET}"
+                exit 1
+                ;;
+        esac
+    done
+    # Check if a log file was provided as an argument
+    if [ -n "$1" ]; then
+        fLogFile="$1"
+    fi
+}
+
+checkLogFile() {
+    if [ ! -f "$fLogFile" ]; then
+        echo -e "${COLOR}Error: Log file $fLogFile does not exist.${RESET}"
+        echo -e "${BLUE}Please specify a valid log file using the -l or --log option.${RESET}"
+        exit 1
+    fi
+
+    if [ ! -r "$fLogFile" ]; then
+        fExePrefix="sudo"
+    fi
+}
+
+makeCmd() {
+    fCmd="$fExePrefix tail -f \"$fLogFile\""
+    if command -v bat &> /dev/null; then
+        fCmd="$fCmd | bat ${fBatParams[*]} --theme=\"$fTheme\" -l \"$fLanguage\""
+    fi
+}
+
+executeCmd() {
+    echo -e "$SEPARATOR_LEFT"
+    echo -e "$USER_NOTATION ${COLOR}Log file:${RESET} $fLogFile"
+    echo -e "$USER_NOTATION ${COLOR}Language:${RESET} $fLanguage"
+    echo -e "$USER_NOTATION ${COLOR}Exec Cmd:${RESET} $fCmd"
+    echo -e "$USER_NOTATION ${COLOR}Bat Theme:${RESET} $fTheme"
+    echo -e "$USER_NOTATION ${COLOR}Bat paras:${RESET} ${fBatParams[*]}"
+    [ -n "$fExePrefix" ] && echo -e "$USER_NOTATION ${COLOR}Cmd Prefix:${RESET} $fExePrefix"
+    echo -e "$SEPARATOR_RIGHT"
+    eval "$fCmd"
+}
+
+main() {
+    parseOptions "$@"
+    [ -n "$fDebug" ] && set -x
+    checkLogFile
+    makeCmd
+    executeCmd
+    [ -n "$fDebug" ] && set +x
+}
+
+main "$@"
