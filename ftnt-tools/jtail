@@ -2,18 +2,18 @@
 # set -x
 
 # Global Variables
+fCmd=
+fDebug=
 fLogFile="$HOME/.gdblog"
 fTheme="TwoDark"
+fExePrefix=
 fBatParams=("--paging=never" "-pp" "--color=always")
 fLanguage="c" # Default language for syntax highlighting
-fExePrefix=
-fDebug=
-fCmd=
 # Constants
 SCRIPTNAME=$(basename $0)
-USER_NOTATION="@@@@"
 SEPARATOR_LEFT="<---------------------------------------------------"
 SEPARATOR_RIGHT="--------------------------------------------------->"
+SEPARATOR="----------------------------------------------------"
 # Colors
 MAGENTA='\033[35m'
 NORMAL='\033[0m'
@@ -53,7 +53,7 @@ parseOptions() {
 
     # Use getopt to parse command-line options
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
-        echo -e "$USER_NOTATION ${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
+        echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
         exit 1
     fi
 
@@ -83,7 +83,7 @@ parseOptions() {
                 break
                 ;;
             *)
-                echo -e "$USER_NOTATION ${COLOR}Invalid option: $1${RESET}"
+                echo -e "${COLOR}Invalid option: $1${RESET}"
                 exit 1
                 ;;
         esac
@@ -92,6 +92,7 @@ parseOptions() {
     if [ -n "$1" ]; then
         fLogFile="$1"
     fi
+    [ -n "$fDebug" ] && set -x
 }
 
 checkLogFile() {
@@ -113,25 +114,63 @@ makeCmd() {
     fi
 }
 
-executeCmd() {
+makeDisplayInfo() {
     echo -e "$SEPARATOR_LEFT"
-    echo -e "$USER_NOTATION ${COLOR}Log file:${RESET} $fLogFile"
-    echo -e "$USER_NOTATION ${COLOR}Language:${RESET} $fLanguage"
-    echo -e "$USER_NOTATION ${COLOR}Exec Cmd:${RESET} $fCmd"
-    echo -e "$USER_NOTATION ${COLOR}Bat Theme:${RESET} $fTheme"
-    echo -e "$USER_NOTATION ${COLOR}Bat paras:${RESET} ${fBatParams[*]}"
-    [ -n "$fExePrefix" ] && echo -e "$USER_NOTATION ${COLOR}Cmd Prefix:${RESET} $fExePrefix"
+
+    # Display script information
+    echo -e "${COLOR}Language:   ${RESET}$fLanguage"
+    echo -e "${COLOR}Bat Theme:  ${RESET}$fTheme"
+    echo -e "${COLOR}Bat paras:  ${RESET}${fBatParams[*]}"
+    [ -n "$fExePrefix" ] && echo -e "${COLOR}Cmd Prefix: ${RESET}$fExePrefix"
+    echo -e "${COLOR}Ex Command: ${RESET}${fCmd## }"
+    echo -e "${COLOR}Log file:   ${RESET}$fLogFile"
+    echo -e "$SEPARATOR"
+
+    # Get file stats individually to avoid parsing issues
+    local sizeHuman
+    local sizeUnit
+    fileSize=$(stat -c "%s" "$fLogFile" 2>/dev/null)
+    fileMtime=$(stat -c "%y" "$fLogFile" 2>/dev/null)
+    fileAtime=$(stat -c "%x" "$fLogFile" 2>/dev/null)
+    fileCtime=$(stat -c "%z" "$fLogFile" 2>/dev/null)
+    fileOwner=$(stat -c "%U" "$fLogFile" 2>/dev/null)
+    fileGroup=$(stat -c "%G" "$fLogFile" 2>/dev/null)
+    filePerms=$(stat -c "%A" "$fLogFile" 2>/dev/null)
+
+    if [ -n "$fileSize" ]; then
+        if [ "$fileSize" -ge 1073741824 ]; then
+            sizeHuman=$(echo "scale=2; $fileSize/1073741824" | bc)
+            sizeUnit="GB"
+        elif [ "$fileSize" -ge 1048576 ]; then
+            sizeHuman=$(echo "scale=2; $fileSize/1048576" | bc)
+            sizeUnit="MB"
+        elif [ "$fileSize" -ge 1024 ]; then
+            sizeHuman=$(echo "scale=2; $fileSize/1024" | bc)
+            sizeUnit="KB"
+        else
+            sizeHuman=$fileSize
+            sizeUnit="B"
+        fi
+    fi
+    [ -n "$fileOwner" ] && echo -e "${COLOR}Owner:       ${RESET}$fileOwner"
+    [ -n "$fileGroup" ] && echo -e "${COLOR}Group:       ${RESET}$fileGroup"
+    [ -n "$sizeHuman" ] && echo -e "${COLOR}File size:   ${RESET}${sizeHuman} ${sizeUnit}"
+    [ -n "$filePerms" ] && echo -e "${COLOR}Permissions: ${RESET}$filePerms"
+    [ -n "$fileAtime" ] && echo -e "${COLOR}Last Access: ${RESET}$fileAtime"
+    [ -n "$fileCtime" ] && echo -e "${COLOR}Last Change: ${RESET}$fileCtime"
+    [ -n "$fileMtime" ] && echo -e "${COLOR}Last Modify: ${RESET}$fileMtime"
+
     echo -e "$SEPARATOR_RIGHT"
-    eval "$fCmd"
+    [ -n "$fDebug" ] && set +x
 }
 
 main() {
     parseOptions "$@"
-    [ -n "$fDebug" ] && set -x
     checkLogFile
     makeCmd
-    executeCmd
-    [ -n "$fDebug" ] && set +x
+    makeDisplayInfo
+    # Execute the command
+    eval "$fCmd"
 }
 
 main "$@"
