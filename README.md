@@ -4,16 +4,16 @@
 
 ### Key Tools
 
-| Tool | Description | Path |
-|------|-------------|------|
-| [jmake](#jmake) | Building tool for large C projects | [./ftnt-tools/jmake](./ftnt-tools/jmake) |
-| [jssh](#jssh) | SSH/SFTP/Telnet tool for connecting to devices | [./ftnt-tools/jssh](./ftnt-tools/jssh) |
-| [jdebug](#jdebug) | Debugging tool for devices running gdbserver | [./ftnt-tools/jdebug](./ftnt-tools/jdebug) |
-| [jr](#jr) | Powerful search tool for searching code in large projects | [./ftnt-tools/jr](./ftnt-tools/jr) |
-| [jt](#jt) | Log file viewer with syntax highlighting | [./ftnt-tools/jt](./ftnt-tools/jt) |
-| [jroute](#jroute) | Simple script to switch the default route between available gateways | [./ftnt-tools/jroute](./ftnt-tools/jroute) |
-| [gdb_tools](#gdb_tools) | Python tools for visualizing data structures in memory while debugging with GDB | [template/gdb_tools.py](template/gdb_tools.py) |
-| [completion](#completion) | Bash completion scripts for the above tools | [./completion-files](./completion-files) |
+| Tool | Description |
+|------|-------------|
+| [jmake](#jmake) | Building tool for large C projects |
+| [jssh](#jssh) | SSH/SFTP/Telnet tool for connecting to devices |
+| [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
+| [jr](#jr) | Powerful search tool for searching code in large projects |
+| [jt](#jt) | Log file viewer with syntax highlighting |
+| [jroute](#jroute) | Simple script to switch the default route between available gateways |
+| [gdb_tools](#gdb_tools) | Python tools for visualizing data structures in memory while debugging with GDB |
+| [completion](#completion) | Bash completion scripts for the above tools |
 
 <a id="jmake"></a>
 #### [jmake](./ftnt-tools/jmake)
