@@ -56,7 +56,7 @@ _EOF
 
 parseOptions() {
     # Define short and long options
-    SHORTOPTS="hvdrkcn"
+    SHORTOPTS="hvdkcn"
     LONGOPTS="help,vim,debug,kernel,rg-only,check-depends,no-clipboard,regular-match"
 
     # Use getopt to parse command-line options
@@ -94,11 +94,11 @@ parseOptions() {
                 fNoClipboard=true
                 shift
                 ;;
-            -r|--regular-match)
+            --regular-match)
                 fRegularMatch=true
                 shift
                 ;;
-            -r|--rg-only)
+            --rg-only)
                 fRgOnly=true
                 shift
                 ;;
@@ -166,7 +166,7 @@ polishQuery() {
     fQuery="${fQuery%"${fQuery##*[![:space:]]}"}" # Right trim
     [ -z "$fQuery" ] && return
     # Round 2
-    fQuery="${fQuery:0:50}"       # Truncate to max 50 characters
+    fQuery="${fQuery:0:60}"       # Truncate to max 50 characters
     fQuery="${fQuery//[&!;<\\]/}" # Remove special characters
     fQuery="${fQuery%>}"          # Remove trailing '>' if present
     fQuery="${fQuery%:[0-9]*}"    # Remove trailing colon and numbers
@@ -212,7 +212,6 @@ fuzzySearch() {
     fi
 
     if [ -n "$fRgOnly" ]; then
-        echo $SEPARATOR_LEFT
         rg "${rgParams[@]}"
         exit 0
     fi
@@ -233,7 +232,7 @@ fuzzySearch() {
     local filepath linenumber
     pattern='([^:]+):([0-9]+):'
     if [[ $fzfSelected =~ $pattern ]]; then
-        filepath="${BASH_REMATCH[1]}"
+        filepath=${BASH_REMATCH[1]}
         linenumber="${BASH_REMATCH[2]}"
     else
         echo -e "${COLOR}Error: The result is in unexpected format${RESET}"
@@ -241,7 +240,7 @@ fuzzySearch() {
     fi
 
     # Escape spaces in filepath
-    filepath="${filepath// /\\ }"
+    filepath=${filepath// /\\ }
 
     if [ -n "$fDebug" ]; then
         echo -e "fzf select: ${COLOR}$fzfSelected${RESET}"
@@ -251,9 +250,9 @@ fuzzySearch() {
     fi
 
     if [[ "$fEditor" == "vim" ]]; then
-        vim +"$linenumber" "$filepath"
+        eval vim +"$linenumber" "$filepath"
     else
-        "$fEditor" "$filepath":"$linenumber"
+        eval "$fEditor" "$filepath":"$linenumber"
     fi
 }
 
