@@ -3,24 +3,21 @@
 
 # Constants
 SCRIPT_NAME=$(basename $0)
-USER_NOTATION="@@@@"
-SEPARATOR="==================================================="
+# USER_NOTATION="@@@@"
 # Variables
-workingDir=$(cd $(dirname $0); pwd)
-trackedFilesDir=$workingDir/track-files
-trackedCompSrc=$workingDir/completion-files
-trackedCompDst=$HOME/.bash_completion.d
-ftntTempDir=$workingDir/template
-ftntToolsDir=$workingDir/ftnt-tools
-vimColorsDir=$workingDir/vim-colors
-vimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
+fWKDir=$(cd $(dirname $0); pwd)
+fTKFilesDir=$fWKDir/track-files
+fTKCompSrc=$fWKDir/completion-files
+fTKCompDst=$HOME/.bash_completion.d
+fTKVimColorsDir=$fWKDir/vim-colors
+fTntTempDir=$fWKDir/template
+fTntToolsDir=$fWKDir/ftnt-tools
+fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
-fzfTabCompletionPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
-# ubuntu is the default OS type
-osCategory=debian
-# Flags
-fInsTools=false
-fForceUpdate=false
+fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
+fOSCategory=debian # ubuntu is the default OS type
+fInsTools=
+fForceUpdate=
 # Colors
 CYAN='\033[36m'
 RED='\033[31m'
@@ -40,66 +37,75 @@ usage() {
     cat << _EOF
 Usage: ./$SCRIPT_NAME [uth]
 
+This script is used to set up the coding environment in my predifined way.
+
 Options:
     -t, --tools     Link tools into \$HOME/.usr/bin
     -u, --update    Force an update of prerequisites
     -h, --help      Print this help message
 
-Recommdned:
-    ./$SCRIPT_NAME -t
-
 Examples:
     ./$SCRIPT_NAME
     ./$SCRIPT_NAME -t
-    ./$SCRIPT_NAME -u
     ./$SCRIPT_NAME -h
 
 _EOF
 exit 0
 }
 
-while getopts "uht" opt; do
-    # opt is the option, like 'i' or 'h'
-    case $opt in
-        t)
-            fInsTools=true
-            ;;
-        u)
-            fForceUpdate=true
-            ;;
-        h)
-            usage
-            ;;
-        ?)
-            echo "Invalid option: -$OPTARG" >&2
-            exit 1
-            ;;
-    esac
-done
+parseOptions() {
+    SHORTOPTS="tuh"
+    LONGOPTS="tools,update,help"
 
-# Shift to process non-option arguments. New $1, $2, ..., $@
-shift $((OPTIND - 1))
-if [ $# -gt 0 ]; then
-    echo "Illegal non-option arguments: $@"
-    exit 1
-fi
+    # Use getopt to parse command-line options
+    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+        echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
+        exit 1
+    fi
+
+    # Reset positional parameters to the parsed values
+    eval set -- "$PARSED"
+
+    while true; do
+        case "$1" in
+            -t|--tools)
+                fInsTools=true
+                shift
+                ;;
+            -u|--update)
+                fForceUpdate=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo "Internal error!"
+                exit 1
+                ;;
+        esac
+    done
+}
 
 updatePrerequisitesForDebian() {
     checkSudoPrivilege
     prerequisitesForUbuntu=(
-        ## Basic tools
-        tmux
+        tmux # Basic tools
         rsync
-        fd-find
-        ripgrep
+        fd-find # fd
+        ripgrep # rg
         universal-ctags
         openssl
         libssl-dev
         gdb
         bat
         curl
+        xsel # X11 clipboard
         xclip
-        xsel
         libcurl4
         libcurl4-openssl-dev
         dos2unix
@@ -114,8 +120,13 @@ updatePrerequisitesForDebian() {
         openssh-server
         python3-dev
         ffmpeg
-        ## build essentials
-        build-essential
+        build-essential # build essentials
+        cmake
+        libboost-all-dev
+        ragel
+        sqlite3
+        libsqlite3-dev
+        libpcap-dev
         libvirt-clients
         texinfo
         libisl-dev
@@ -128,28 +139,19 @@ updatePrerequisitesForDebian() {
         autoconf
         gettext
         autopoint
-        ## llvm & clangd
-        bear
+        bear # llvm & clangd
         libear
-        ## TigerVNC
-        gdm3
+        gdm3 # gnome desktop
         ubuntu-desktop
         gnome-keyring
         xfce4
         xfce4-goodies
-        tigervnc-standalone-server
+        tigervnc-standalone-server # TigerVNC
         tigervnc-xorg-extension
         tigervnc-viewer
         remmina # remote desktop client
         # samba
         # smbclient
-        ## hyperscan
-        cmake
-        libboost-all-dev
-        ragel
-        sqlite3
-        libsqlite3-dev
-        libpcap-dev
     )
 
     echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
@@ -159,7 +161,7 @@ updatePrerequisitesForDebian() {
     sudo updatedb
 }
 
-checkOSPlat() {
+checkOSCategory() {
     echo -e "${COLOR}Checking OS platform${RESET}"
     if [[ -f /etc/os-release ]]; then
         local os_name
@@ -167,17 +169,17 @@ checkOSPlat() {
 
         case "$os_name" in
             "ubuntu")
-                osCategory=debian
+                fOSCategory=debian
                 echo "The current OS type is Ubuntu."
                 ;;
             "centos")
-                osCategory=redhat
+                fOSCategory=redhat
                 echo "The current OS type is CentOS."
                 echo "We currently do not support CentOS."
                 exit
                 ;;
             "raspbian")
-                osCategory=debian
+                fOSCategory=debian
                 echo "The current OS type is raspbian."
                 ;;
             *)
@@ -186,12 +188,12 @@ checkOSPlat() {
                 ;;
         esac
     elif [[ $(uname) == "Darwin" ]]; then
-        osCategory=mac
+        fOSCategory=mac
         echo "The current OS type is macOS (Mac)."
     else
         echo "The OS type is not supported or could not be determined."
         echo "We currently do not support this OS type."
-        exit
+        exit 1
     fi
 }
 
@@ -226,23 +228,23 @@ setTimeZone() {
     fi
 }
 
-handleVimPlugins (){
-    echo -e "${COLOR}Install Vim Plugins Manager${RESET}"
+updateVimPlugins (){
+    echo -e "${COLOR}Installing Vim Plugins Manager${RESET}"
 
     if [ ! -f ~/.vimrc ]; then
         echo "No .vimrc found, Abort!"
         exit 1
     fi
 
-    if [ ! -f "$vimPlugsManagerPath" ]; then
+    if [ ! -f "$fVimPlugsManagerPath" ]; then
         # use the --insecure option to avoid certificate check
-        curl --insecure -fLo "$vimPlugsManagerPath" --create-dirs \
+        curl --insecure -fLo "$fVimPlugsManagerPath" --create-dirs \
         https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
     else
         echo -e "${GREY}Vim Plug is already installed${RESET}"
     fi
 
-    echo -e "${COLOR}Update Vim Plugins${RESET}"
+    echo -e "${COLOR}Updating Vim Plugins${RESET}"
     vim +PlugInstall +PlugUpdate +qall
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
@@ -252,7 +254,7 @@ handleVimPlugins (){
     fi
 }
 
-followUpTrackExceptions() {
+followUpTKExceptions() {
     echo -e "${COLOR}Follow up the exceptions${RESET}"
     # Copy back the privileged git config.
     gitconfigCheckFile=$HOME/.gitconfig.fortinet
@@ -269,7 +271,8 @@ followUpTrackExceptions() {
     fi
 }
 
-linkFilesToPath() {
+# ln [OPTION] TARGET LINK_NAME
+linkFiles() {
     local targetDir="$1"      # Source directory
     local linkPath="$2"       # Destination directory
     local needHide="$3"       # Copy to hidden file
@@ -325,7 +328,8 @@ linkFilesToPath() {
     COLOR=$MAGENTA
 }
 
-linkFileToPath() {
+# ln [OPTION] TARGET LINK_NAME
+linkFile() {
     local target="$1"       # The target to link
     local linkPath="$2"     # Destination directory to link to
 
@@ -382,7 +386,7 @@ relinkCommand() {
 }
 
 changeTMOUTToWritable() {
-    echo -e "${COLOR}Change TMOUT to writable${RESET}"
+    echo -e "${COLOR}Changing TMOUT to writable${RESET}"
     # TMOUT is readonly in /etc/profile, change it to writable
     # so that we can unset it in .bashrc
     if ! grep -q "TMOUT" /etc/profile; then
@@ -416,37 +420,36 @@ checkSudoPrivilege() {
     fi
 }
 
-mainInstallProcedure() {
-    if [ "$osCategory" == "debian" ]; then
-        [ "$fForceUpdate" == "true" ] && updatePrerequisitesForDebian
-        linkFilesToPath "$trackedFilesDir" "$HOME" 1 "$HOME/Public/.env.bak"
-        linkFilesToPath "$trackedCompSrc" "$trackedCompDst"
-        linkFilesToPath "$vimColorsDir" "$HOME/.vim/colors"
-        followUpTrackExceptions
+main() {
+    parseOptions "$@"
+    checkOSCategory
+    if [ "$fOSCategory" == "debian" ]; then
+        [ -n "$fForceUpdate" ] && updatePrerequisitesForDebian
 
-        if [ "$fInsTools" == "true" ]; then
-            linkFilesToPath "$ftntToolsDir" "$HOME/.usr/bin"
-            linkFilesToPath "$ftntTempDir" "$HOME/Templates"
+        linkFiles "$fTKFilesDir" "$HOME" 1 "$HOME/Public/.env.bak"
+        linkFiles "$fTKCompSrc" "$fTKCompDst"
+        linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
+        if [ -n "$fInsTools" ]; then
+            linkFiles "$fTntToolsDir" "$HOME/.usr/bin"
+            linkFiles "$fTntTempDir" "$HOME/Templates"
         fi
-
-        handleVimPlugins
-
-        linkFileToPath "$fzfTabCompletionPath" "$trackedCompDst"
-        linkFileToPath "$fzfBinPath" "$HOME/.usr/bin"
+        linkFile "$fzfTabCompPath" "$fTKCompDst"
+        linkFile "$fzfBinPath" "$HOME/.usr/bin"
         relinkCommand "batcat" "bat"
         relinkCommand "fdfind" "fd"
         relinkCommand "bash" "sh" "/bin/"
 
+        followUpTKExceptions
+        updateVimPlugins
         setTimeZone
         changeTMOUTToWritable
-    elif [ "$osCategory" == "mac" ]; then
-        # [ "$fForceUpdate" == "true" ] && installPrequesitesForMac
-        linkFilesToPath "$trackedFilesDir" "$HOME" true "$HOME/Public/.env.bak"
-        linkFilesToPath "$trackedCompSrc" "$trackedCompDst"
-        linkFilesToPath "$vimColorsDir" "$HOME/.vim/colors"
-        handleVimPlugins
+    elif [ "$fOSCategory" == "mac" ]; then
+        # [ -n "$fForceUpdate" ] && installPrequesitesForMac
+        linkFiles "$fTKFilesDir" "$HOME" true "$HOME/Public/.env.bak"
+        linkFiles "$fTKCompSrc" "$fTKCompDst"
+        linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
+        updateVimPlugins
     fi
 }
 
-checkOSPlat
-mainInstallProcedure
+main "$@"

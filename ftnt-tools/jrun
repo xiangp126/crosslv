@@ -214,9 +214,9 @@ displayInfo() {
     echo -e "[\] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
     COLOR=$GREY
     [ -n "$fWadDebug" ]      && fAutoCmdMode="true" && echo -e "[W] ${COLOR}Sending WAD debug commands${RESET}"
-    [ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[o] ${COLOR}Configuring console for direct output${RESET}"
-    [ -n "$fKernelDebug" ]   && fAutoCmdMode="true" && echo -e "[k] ${COLOR}Sending kernel debug commands${RESET}"
-    [ -n "$fIPSDebug" ]      && fAutoCmdMode="true" && echo -e "[i] ${COLOR}Sending IPS debug commands${RESET}"
+    [ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[O] ${COLOR}Configuring console for direct output${RESET}"
+    [ -n "$fKernelDebug" ]   && fAutoCmdMode="true" && echo -e "[K] ${COLOR}Sending kernel debug commands${RESET}"
+    [ -n "$fIPSDebug" ]      && fAutoCmdMode="true" && echo -e "[I] ${COLOR}Sending IPS debug commands${RESET}"
     [ -n "$fScanUnitDebug" ] && fAutoCmdMode="true" && echo -e "[S] ${COLOR}Sending scanunit debug commands${RESET}"
     [ -n "$fDNSDebug" ]      && fAutoCmdMode="true" && echo -e "[D] ${COLOR}Sending DNS debug commands${RESET}"
     [ -n "$fPacketTrace" ]   && fAutoCmdMode="true" && echo -e "[T] ${COLOR}Sending packet trace commands for IP: ${MAGENTA}$fPacketTraceAddr${RESET}"
