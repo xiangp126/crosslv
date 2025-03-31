@@ -7,14 +7,14 @@
 | Tool | Description |
 |------|-------------|
 | [jmake](#jmake) | Building tool for large C projects |
-| [jssh](#jssh) | SSH/SFTP/Telnet tool for connecting to devices |
+| [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or Telnet |
 | [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
-| [jrun](#jrun) | Sending commands to a tmux pane running a FortiGate CLI session |
+| [jrun](#jrun) | Command Runner by sending commands to a tmux pane running an SSH session |
 | [jr](#jr) | Powerful search tool for searching code in large projects |
 | [jt](#jt) | Log file viewer with syntax highlighting |
 | [jroute](#jroute) | Simple script to switch the default route between available gateways |
 | [gdb_tools](#gdb_tools) | Python tools for visualizing data structures in memory while debugging with GDB |
-| [completion](#completion) | Bash completion scripts for the above tools |
+| [completion](#completion) | Bash completion scripts for all the above tools |
 
 <a id="jmake"></a>
 #### [jmake](./ftnt-tools/jmake)
