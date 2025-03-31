@@ -543,7 +543,7 @@ runBuildCommands() {
     local hours=$((buildTime / 3600))
     local minutes=$((buildTime % 3600 / 60))
     local seconds=$((buildTime % 60))
-    fBuildTimeFormatted="${seconds}s."
+    fBuildTimeFormatted="${seconds}s"
 
     if [[ $minutes -gt 0 ]]; then
         fBuildTimeFormatted="${minutes}m${fBuildTimeFormatted}"
@@ -746,7 +746,7 @@ runSyncCommands() {
             else
                 echo -ne "$USER_NOTATION Target ${MAGENTA}$fSyncTarget${RESET} started to reboot at $(getCurrentTime)"
                 if [ -n "$fBuildTimeFormatted" ]; then
-                    echo -e ", build time: $fBuildTimeFormatted"
+                    echo -e " (build time: $fBuildTimeFormatted)"
                 else
                     echo
                 fi

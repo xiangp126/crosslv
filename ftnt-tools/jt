@@ -7,7 +7,7 @@ fDebug=
 fLogFile="$HOME/.gdblog"
 fTheme="TwoDark"
 fExePrefix=
-fBatParams=("--paging=never" "-pp" "--color=always")
+fBatParams=("--style=plain" "--paging=never" "--color=always")
 fLanguage="c" # Default language for syntax highlighting
 # Constants
 SCRIPTNAME=$(basename $0)
@@ -107,10 +107,16 @@ checkLogFile() {
 }
 
 makeCmd() {
-    fCmd="$fExePrefix tail -f \"$fLogFile\""
-    if command -v bat &> /dev/null; then
-        fCmd="$fCmd | bat ${fBatParams[*]} --theme=\"$fTheme\" -l \"$fLanguage\""
+    local buffer_cmd
+    if command -v unbuffer &> /dev/null; then
+        buffer_cmd="unbuffer"
+    else
+        buffer_cmd="stdbuf -o0"
     fi
+
+    fCmd="$fExePrefix $buffer_cmd tail -f \"$fLogFile\""
+    # Add syntax highlighting if bat is available
+    command -v bat &> /dev/null && fCmd+=" | bat ${fBatParams[*]} --theme=\"$fTheme\" -l \"$fLanguage\""
 }
 
 makeDisplayInfo() {
