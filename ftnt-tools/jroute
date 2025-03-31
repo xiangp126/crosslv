@@ -1,17 +1,16 @@
 #!/bin/bash
 # set -x
 
-# Constants
-GETCOLORS="$HOME/Templates/getcolors.sh"
-USER_NOTATION="@@@@"
-BANNER1="---------------------------------"
-BANNER2="----------------------NOW----------------------"
 # Variables
 fUsername=$(whoami)
 fHostname=$(hostname)
 fDryRun=""
 fNewGateway=""
 fNewGatewayIP=""
+# Constants
+USER_NOTATION="@@@@"
+BANNER1="---------------------------------"
+BANNER2="----------------------NOW----------------------"
 # Colors
 MAGENTA='\033[35m'
 NORMAL='\033[0m'
@@ -52,7 +51,7 @@ Options:
 _EOF_
 }
 
-info() {
+printAvailGateways() {
     local gatewayName
     local currGatewayIP
     echo $BANNER1
@@ -72,64 +71,81 @@ info() {
 
 help() {
     usage
-    info
+    printAvailGateways
 }
 
-[[ $# -eq 0 ]] && info
+parseOptions() {
+    [[ $# -eq 0 ]] && printAvailGateways
 
-SHORTOPTS="hdt:"
-LONGOPTS="help,dry-run,gateway:"
+    SHORTOPTS="hdt:"
+    LONGOPTS="help,dry-run,gateway:"
 
-if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$0" -- "$@"); then
-    echo -e "$USER_NOTATION ${MAGENTA}Error: Failed to parse options${RESET}"
-    exit 1
-fi
+    if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$0" -- "$@"); then
+        echo -e "$USER_NOTATION ${MAGENTA}Error: Failed to parse options${RESET}"
+        exit 1
+    fi
 
-eval set -- "$PARSED"
+    eval set -- "$PARSED"
 
-while true; do
-    case "$1" in
-        -h|--help)
-            help
-            ;;
-        -d|--dry-run)
-            fDryRun=true
-            shift
-            ;;
-        -t|--gateway)
-            fNewGateway="$2"
-            shift 2
-            ;;
-        --)
-            shift
-            break
-            ;;
-        *)
-            echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid option $1${RESET}" >&2
-            exit 1
-            ;;
-    esac
-done
+    while true; do
+        case "$1" in
+            -h|--help)
+                help
+                ;;
+            -d|--dry-run)
+                fDryRun=true
+                shift
+                ;;
+            -t|--gateway)
+                fNewGateway="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid option $1${RESET}" >&2
+                exit 1
+                ;;
+        esac
+    done
 
-[ -n "$1" ] && fNewGateway="$1"
-if [ $# -gt 1 ]; then
-    echo -e "$USER_NOTATION ${MAGENTA}Error: Too many arguments${RESET}" >&2
-    exit 1
-fi
+    [ -n "$1" ] && fNewGateway="$1"
+    if [ $# -gt 1 ]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Error: Too many arguments${RESET}" >&2
+        exit 1
+    fi
+}
 
-validate_environment() {
+sanityCheck() {
     if [[ "$fUsername" != "corsair" || ! "$fHostname" =~ ^client[0-9]+$ || "$OSTYPE" != "linux-gnu" ]]; then
-        echo "$USER_NOTATION Environment validation failed:"
         echo "$USER_NOTATION USERNAME: $fUsername"
         echo "$USER_NOTATION HOSTNAME: $fHostname"
         echo "$USER_NOTATION OSTYPE: $OSTYPE"
         echo -e "$USER_NOTATION ${COLOR}Stopped! This script is only for client VMs with username 'corsair' on Linux.${RESET}" >&2
-        return 1
+        exit 1
     fi
-    return 0
+
+    # Check for gateway argument
+    if [[ -z $fNewGateway ]]; then
+        echo "$USER_NOTATION Error: Gateway name required (use -g option)"
+        usage
+    fi
+    # Get new gateway IP
+    fNewGatewayIP=${gatewayIPs[$fNewGateway]}
+    if [[ -z $fNewGatewayIP ]]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid gateway name '$fNewGateway'${RESET}"
+        exit 1
+    fi
+    # Check if the new gateway IP is reachable
+    if ! ping -c 1 -W 1 "$fNewGatewayIP" &>/dev/null; then
+        echo -e "$USER_NOTATION ${MAGENTA}Error: Gateway $fNewGatewayIP is not reachable${RESET}"
+        exit 1
+    fi
 }
 
-change_gateway() {
+changeGateway() {
     COLOR=$MAGENTA
     local curr=
     local cmd=
@@ -160,26 +176,10 @@ change_gateway() {
     return 0
 }
 
-# Validate environment
-validate_environment || exit 1
+main() {
+    parseOptions "$@"
+    sanityCheck
+    changeGateway "$fNewGatewayIP"
+}
 
-# Check for gateway argument
-if [[ -z $fNewGateway ]]; then
-    echo "$USER_NOTATION Error: Gateway name required (use -g option)"
-    usage
-fi
-
-# Get new gateway IP
-fNewGatewayIP=${gatewayIPs[$fNewGateway]}
-if [[ -z $fNewGatewayIP ]]; then
-    echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid gateway name '$fNewGateway'${RESET}"
-    exit 1
-fi
-
-if ! ping -c 1 -W 1 "$fNewGatewayIP" &>/dev/null; then
-    echo -e "$USER_NOTATION ${MAGENTA}Error: Gateway $fNewGatewayIP is not reachable${RESET}"
-    exit 1
-fi
-
-# Change gateway
-change_gateway "$fNewGatewayIP"
+main "$@"

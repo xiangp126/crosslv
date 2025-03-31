@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x
+# set -x
 
 # Constants
 SCRIPT_NAME=$(basename "$0")
@@ -472,7 +472,7 @@ EOF
     fi
 }
 
-checkSanity() {
+sanityCheck() {
     if [ -z "$fTarget" ] && [ -z "$fForwardMode" ]; then
         COLOR=$MAGENTA
         echo -e "$USER_NOTATION ${COLOR}Target is not set.${RESET}"
@@ -1088,7 +1088,7 @@ performLogin() {
 main() {
     parseOptions "$@"
     parseVars
-    checkSanity
+    sanityCheck
     makeSpawnCmd
     if [ "$fMode" != "$TELNET_MODE" ]; then
         dumpTips
