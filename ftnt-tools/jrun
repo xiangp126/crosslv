@@ -65,11 +65,10 @@ Options:
     -f, --file               Specify command file (default: $fCmdFile)
     -d, --debug              Enable debug mode with verbose output
     -W, --wad-debug          Send WAD debug commands automatically
-    -o, --output-directly    Configure console to output directly (no pagination)
-    -k, --kernel-debug       Send kernel debug commands automatically
-    -t, --packet-trace       Send packet trace commands automatically
-    --packet-trace-addr      Set IP address for packet trace (default: $fPacketTraceAddr)
-    -i, --ips-debug          Send IPS debug commands automatically
+    -O, --output-directly    Configure console to output directly (no pagination)
+    -K, --kernel-debug       Send kernel debug commands automatically
+    -T, --packet-trace       Send packet trace commands automatically
+    -I, --ips-debug          Send IPS debug commands automatically
     -S, --scanunit-debug     Send scanunit debug commands automatically
     -D, --dns-debug          Send DNS debug commands automatically
 
