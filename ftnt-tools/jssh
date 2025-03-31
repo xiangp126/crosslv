@@ -1,5 +1,5 @@
 #!/bin/bash
-# set -x
+set -x
 
 # Constants
 SCRIPT_NAME=$(basename "$0")
@@ -168,129 +168,131 @@ _EOF
     exit 0
 }
 
-[[ $# -eq 0 ]] && help
-fInputCmd="$SCRIPT_NAME $*"
+parseOptions() {
+    [[ $# -eq 0 ]] && help
+    fInputCmd="$SCRIPT_NAME $*"
 
-SHORTOPTS="t:l:u:p:P:dc:CJ:L:R:v:TSm:Xh"
-LONGOPTS="help,target:,username:,password:,port:,debug,command:,wireshark,jump:,jump-password:,\
-local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status,tls-keylog-file:"
-# Use getopt to parse command-line options
-if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
-    echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
-    exit 1
-fi
+    SHORTOPTS="t:l:u:p:P:dc:CJ:L:R:v:TSm:Xh"
+    LONGOPTS="help,target:,username:,password:,port:,debug,command:,wireshark,jump:,jump-password:,\
+    local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status,tls-keylog-file:"
+    # Use getopt to parse command-line options
+    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+        echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
+        exit 1
+    fi
 
-# Reset positional parameters to the parsed values
-eval set -- "$PARSED"
+    # Reset positional parameters to the parsed values
+    eval set -- "$PARSED"
 
-while true; do
-    case "$1" in
-        -h|--help)
-            __help
-            usage
-            ;;
-        -t|--target)
-            fTarget="$2"
-            shift 2
-            ;;
-        -l|-u|--username)
-            fTargetUser="$2"
-            shift 2
-            ;;
-        -p|--password)
-            fTargetPwd="$2"
-            shift 2
-            ;;
-        -P|--port)
-            fTargetPort="$2"
-            shift 2
-            ;;
-        -c|--command)
-            fSSHCmd="$2"
-            if [ -n "$fSSHCmd" ]; then
+    while true; do
+        case "$1" in
+            -h|--help)
+                __help
+                usage
+                ;;
+            -t|--target)
+                fTarget="$2"
+                shift 2
+                ;;
+            -l|-u|--username)
+                fTargetUser="$2"
+                shift 2
+                ;;
+            -p|--password)
+                fTargetPwd="$2"
+                shift 2
+                ;;
+            -P|--port)
+                fTargetPort="$2"
+                shift 2
+                ;;
+            -c|--command)
+                fSSHCmd="$2"
+                if [ -n "$fSSHCmd" ]; then
+                    fNoLoginShell=true
+                fi
+                shift 2
+                ;;
+            -C|--wireshark)
+                fUseWireshark=true
+                shift
+                ;;
+            --tls-keylog-file)
+                fTlsKeyLogFile="$2"
+                shift 2
+                ;;
+            -L|--local-forward)
+                fForwardMode=$LOCAL_FORWARD
+                fLocalForward=true
+                fForwardOptions+=("$2")
+                shift 2
+                ;;
+            -R|--reverse-forward)
+                fForwardMode=$REVERSE_FORWARD
+                fReverseForward=true
+                fForwardOptions+=("$2")
+                shift 2
+                ;;
+            -J|--jump)
+                fNeedJumpServer=true
+                fJumpOptions="$2"
+                shift 2
+                ;;
+            --jump-password)
+                fJumpPwd="$2"
+                shift 2
+                ;;
+            -v|--vdom)
+                fVdom="$2"
+                shift 2
+                ;;
+            -d|--debug)
+                fDebug=true
+                shift
+                ;;
+            -X|--x11)
+                fX11Forwarding=true
+                shift
+                ;;
+            --get-system-status)
+                fSSHCmd="get system status"
                 fNoLoginShell=true
-            fi
-            shift 2
-            ;;
-        -C|--wireshark)
-            fUseWireshark=true
-            shift
-            ;;
-        --tls-keylog-file)
-            fTlsKeyLogFile="$2"
-            shift 2
-            ;;
-        -L|--local-forward)
-            fForwardMode=$LOCAL_FORWARD
-            fLocalForward=true
-            fForwardOptions+=("$2")
-            shift 2
-            ;;
-        -R|--reverse-forward)
-            fForwardMode=$REVERSE_FORWARD
-            fReverseForward=true
-            fForwardOptions+=("$2")
-            shift 2
-            ;;
-        -J|--jump)
-            fNeedJumpServer=true
-            fJumpOptions="$2"
-            shift 2
-            ;;
-        --jump-password)
-            fJumpPwd="$2"
-            shift 2
-            ;;
-        -v|--vdom)
-            fVdom="$2"
-            shift 2
-            ;;
-        -d|--debug)
-            fDebug=true
-            shift
-            ;;
-        -X|--x11)
-            fX11Forwarding=true
-            shift
-            ;;
-        --get-system-status)
-            fSSHCmd="get system status"
-            fNoLoginShell=true
-            shift
-            ;;
-        -m|--mount)
-            fMode=$SSHFS_MODE
-            fSwitchToSShfs=true
-            fFSOptions="$2"
-            shift 2
-            ;;
-        -S|--sftp)
-            fMode=$SFTP_MODE
-            fSwitchToSftp=true
-            shift
-            ;;
-        -T|--telnet)
-            fMode=$TELNET_MODE
-            shift
-            ;;
-        --)
-            shift
-            break
-            ;;
-        *)
-            COLOR=$MAGENTA
-            echo -e "${COLOR}Error: Invalid option: $1${RESET}" >&2
-            exit 1
-            ;;
-    esac
-done
+                shift
+                ;;
+            -m|--mount)
+                fMode=$SSHFS_MODE
+                fSwitchToSShfs=true
+                fFSOptions="$2"
+                shift 2
+                ;;
+            -S|--sftp)
+                fMode=$SFTP_MODE
+                fSwitchToSftp=true
+                shift
+                ;;
+            -T|--telnet)
+                fMode=$TELNET_MODE
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                COLOR=$MAGENTA
+                echo -e "${COLOR}Error: Invalid option: $1${RESET}" >&2
+                exit 1
+                ;;
+        esac
+    done
 
-[ -n "$1" ] && fTarget="$1"
+    [ -n "$1" ] && fTarget="$1"
 
-if [ $# -gt 1 ]; then
-    echo -e "${MAGENTA}Too many arguments.${RESET}" >&2
-    help
-fi
+    if [ $# -gt 1 ]; then
+        echo -e "${MAGENTA}Too many arguments.${RESET}" >&2
+        help
+    fi
+}
 
 checkSSHpass() {
     if command -v sshpass &>/dev/null; then
@@ -325,7 +327,7 @@ setCredentials() {
     fi
 }
 
-parseOptions() {
+parseVars() {
     COLOR=$MAGENTA
     # !! Parse fJumpOptions in the format of user@jumpserver[:port]
     if [ "$fNeedJumpServer" = true ]; then
@@ -647,10 +649,6 @@ makeSpawnCmd() {
     fSpawnCmd=$(echo "$fSpawnCmd" | tr -s ' ')
 }
 
-parseOptions
-checkSanity
-makeSpawnCmd
-
 dumpPreTips() {
     echo "$SEPARATOR_LEFT" >&2
     local param=""
@@ -796,145 +794,215 @@ dumpPostTips() {
     echo -e " ...${RESET}" >&2
 }
 
-if [ "$fMode" != "$TELNET_MODE" ]; then
+dumpTips() {
     dumpPreTips
     dumpLCTips "$BLUE"
-    dumpSSHFSTips "$LIGHTGREEN"
+    dumpSSHFSTips "$LIGHTYELLOW"
     dumpForwardTips "$PURPLE"
     dumpPostTips
-fi
+}
 
-# Use bash to hahdle sshfs commands directly
-if [ -n "$fSwitchToSShfs" ]; then
-    COLOR=$MAGENTA
-    if [ -n "$fNeedJumpServer" ] && [ -z "$fSSHpassInstalled" ]; then
-        echo -e "$USER_NOTATION Warning: sshpass is not installed. Switching to manual password input mode."
-        echo -e "$USER_NOTATION Passwd for ${COLOR}$fJumpUser@$fJumpServer${RESET} is ${COLOR}$fJumpPwd${RESET}"
-        echo -e "$USER_NOTATION Passwd for ${COLOR}$fTargetUser@$fTarget${RESET} is ${COLOR}$fTargetPwd${RESET}"
+handleSpecialCases() {
+    # Use bash to hahdle sshfs commands directly
+    if [ -n "$fSwitchToSShfs" ]; then
+        COLOR=$MAGENTA
+        if [ -n "$fNeedJumpServer" ] && [ -z "$fSSHpassInstalled" ]; then
+            echo -e "$USER_NOTATION Warning: sshpass is not installed. Switching to manual password input mode."
+            echo -e "$USER_NOTATION Passwd for ${COLOR}$fJumpUser@$fJumpServer${RESET} is ${COLOR}$fJumpPwd${RESET}"
+            echo -e "$USER_NOTATION Passwd for ${COLOR}$fTargetUser@$fTarget${RESET} is ${COLOR}$fTargetPwd${RESET}"
+        fi
+        # Execute the sshfs command directly without using expect
+        eval "$fSpawnCmd"
+        if [ $? -ne 0 ]; then
+            echo -e "$USER_NOTATION ${COLOR}Failed to mount $fFSRemoteDir to $fFSMountPoint${RESET}"
+            exit 1
+        else
+            findmnt "$fFSMountPoint"
+            df -h "$fFSMountPoint"
+            echo -e "$USER_NOTATION ${COLOR}Successfully mounted $fTargetUser@$fTarget:$fFSRemoteDir${RESET} to ${COLOR}$fFSMountPoint${RESET}"
+            exit 0
+        fi
     fi
-    # Execute the sshfs command directly without using expect
-    eval "$fSpawnCmd"
-    if [ $? -ne 0 ]; then
-        echo -e "$USER_NOTATION ${COLOR}Failed to mount $fFSRemoteDir to $fFSMountPoint${RESET}"
-        exit 1
-    else
-        findmnt "$fFSMountPoint"
-        df -h "$fFSMountPoint"
-        echo -e "$USER_NOTATION ${COLOR}Successfully mounted $fTargetUser@$fTarget:$fFSRemoteDir${RESET} to ${COLOR}$fFSMountPoint${RESET}"
-        exit 0
+
+    # $fUseWireshark is well handled in the checkSanity function
+    if [ -n "$fUseWireshark" ]; then
+        COLOR=$MAGENTA
+        # Execute the ssh command directly without using expect
+        eval "$fSpawnCmd"
+        if [ $? -ne 0 ]; then
+            echo -e "$USER_NOTATION ${COLOR}Failed to capture packets from $fTarget.${RESET}"
+            exit 1
+        else
+            echo -e "$USER_NOTATION ${COLOR}Successfully captured packets from $fTarget.${RESET}"
+            exit 0
+        fi
     fi
-fi
+}
 
-if [ -n "$fUseWireshark" ]; then
-    COLOR=$MAGENTA
-    # Execute the ssh command directly without using expect
-    eval "$fSpawnCmd"
-    if [ $? -ne 0 ]; then
-        echo -e "$USER_NOTATION ${COLOR}Failed to capture packets from $fTarget.${RESET}"
-        exit 1
-    else
-        echo -e "$USER_NOTATION ${COLOR}Successfully captured packets from $fTarget.${RESET}"
-        exit 0
-    fi
-fi
+performLogin() {
+    # expect -d -c "
+    expect -c "
+        # Define ANSI color codes with capitalized names
+        # Full list can be found here: http://en.wikipedia.org/wiki/ANSI_escape_code
+        # https://stackoverflow.com/questions/12879483/color-texts-at-expect-shell
+        set RESET       \"\033\[0m\"
+        set BOLD        \"\033\[1m\"
+        set RED         \"\033\[31m\"
+        set GREEN       \"\033\[32m\"
+        set LIGHTGREEN  \"\033\[92m\"
+        set YELLOW      \"\033\[33m\"
+        set LIGHTYELLOW \"\033\[93m\"
+        set BLUE        \"\033\[34m\"
+        set MAGENTA     \"\033\[35m\"
+        set CYAN        \"\033\[36m\"
+        set GREY        \"\033\[90m\"
 
-# expect -d -c "
-expect -c "
-    # Define ANSI color codes with capitalized names
-    # Full list can be found here: http://en.wikipedia.org/wiki/ANSI_escape_code
-    # https://stackoverflow.com/questions/12879483/color-texts-at-expect-shell
-    set RESET       \"\033\[0m\"
-    set BOLD        \"\033\[1m\"
-    set RED         \"\033\[31m\"
-    set GREEN       \"\033\[32m\"
-    set LIGHTGREEN  \"\033\[92m\"
-    set YELLOW      \"\033\[33m\"
-    set LIGHTYELLOW \"\033\[93m\"
-    set BLUE        \"\033\[34m\"
-    set MAGENTA     \"\033\[35m\"
-    set CYAN        \"\033\[36m\"
-    set GREY        \"\033\[90m\"
-
-    # Clear all nc sessions on the remote. Proc has optional argument with a default value
-    proc clear_unfinished_jobs {{err_msg \"\"}} {
-        global LIGHTYELLOW MAGENTA RESET
-        # Var defined here is in local scope
-        set COLOR \$LIGHTYELLOW
-        if {\$err_msg != \"\"} {
-            puts stderr \"$USER_NOTATION \${COLOR}Error: \$err_msg\${RESET}\"
+        # Clear all nc sessions on the remote. Proc has optional argument with a default value
+        proc clear_unfinished_jobs {{err_msg \"\"}} {
+            global LIGHTYELLOW MAGENTA RESET
+            # Var defined here is in local scope
+            set COLOR \$LIGHTYELLOW
+            if {\$err_msg != \"\"} {
+                puts stderr \"$USER_NOTATION \${COLOR}Error: \$err_msg\${RESET}\"
+            }
+            set remote_cmd {killall nc; killall tcpdump}
+            if {\"$fUseWireshark\" != \"\"} {
+                puts stderr \"$USER_NOTATION \${COLOR}Sending commands to clear all nc session on the remote.\n\${RESET}\"
+                if {\"$fNeedJumpServer\" != \"\"} {
+                    system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -J $fJumpOptions -W $fJumpPwd -c '\$remote_cmd'
+                } else {
+                    system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -c '\$remote_cmd'
+                }
+            }
         }
-        set remote_cmd {killall nc; killall tcpdump}
-        if {\"$fUseWireshark\" != \"\"} {
-            puts stderr \"$USER_NOTATION \${COLOR}Sending commands to clear all nc session on the remote.\n\${RESET}\"
+
+        proc tcpdump_set_setuid  {} {
+            global LIGHTYELLOW MAGENTA RESET
+            set COLOR \$LIGHTYELLOW
+            set remote_cmd {sudo chmod u+s \`which tcpdump\` && ls -l \`which tcpdump\`}
+
+            puts stderr \"$USER_NOTATION \${COLOR}Set the setuid bit for tcpdump on $fTarget\n\${RESET}\"
             if {\"$fNeedJumpServer\" != \"\"} {
                 system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -J $fJumpOptions -W $fJumpPwd -c '\$remote_cmd'
             } else {
                 system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -c '\$remote_cmd'
             }
         }
-    }
 
-    proc tcpdump_set_setuid  {} {
-        global LIGHTYELLOW MAGENTA RESET
-        set COLOR \$LIGHTYELLOW
-        set remote_cmd {sudo chmod u+s \`which tcpdump\` && ls -l \`which tcpdump\`}
-
-        puts stderr \"$USER_NOTATION \${COLOR}Set the setuid bit for tcpdump on $fTarget\n\${RESET}\"
-        if {\"$fNeedJumpServer\" != \"\"} {
-            system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -J $fJumpOptions -W $fJumpPwd -c '\$remote_cmd'
+        if {\"$fNoLoginShell\" != \"\" || \"$fForwardMode\" != \"\"} {
+            set timeout -1
+            trap {
+                set COLOR \$LIGHTYELLOW
+                if {\"$fUseWireshark\" != \"\"} {
+                    puts stderr \"\n$USER_NOTATION \${COLOR}CTRL+C captured.\${RESET}\"
+                    clear_unfinished_jobs
+                } else {
+                    puts stderr \"\n$USER_NOTATION \${COLOR}CTRL+C captured; Sending SIGINT to remote as well.\${RESET}\"
+                    send \"\x03\"
+                }
+                set COLOR \$MAGENTA
+            } SIGINT
         } else {
-            system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -c '\$remote_cmd'
+            set timeout 5
         }
-    }
 
-    if {\"$fNoLoginShell\" != \"\" || \"$fForwardMode\" != \"\"} {
-        set timeout -1
-        trap {
-            set COLOR \$LIGHTYELLOW
-            if {\"$fUseWireshark\" != \"\"} {
-                puts stderr \"\n$USER_NOTATION \${COLOR}CTRL+C captured.\${RESET}\"
-                clear_unfinished_jobs
-            } else {
-                puts stderr \"\n$USER_NOTATION \${COLOR}CTRL+C captured; Sending SIGINT to remote as well.\${RESET}\"
-                send \"\x03\"
+        set i 1
+        set COLOR \$MAGENTA
+        while {\$i <= $fMaxAttempts} {
+            # ssh -o StrictHostKeyChecking=no $fTarget
+            if {\$i > 1} {
+                puts stderr \"$USER_NOTATION \${COLOR}Login attempt \$i/$fMaxAttempts\${RESET}\"
             }
-            set COLOR \$MAGENTA
-        } SIGINT
-    } else {
-        set timeout 5
-    }
 
-    set i 1
-    set COLOR \$MAGENTA
-    while {\$i <= $fMaxAttempts} {
-        # ssh -o StrictHostKeyChecking=no $fTarget
-        if {\$i > 1} {
-            puts stderr \"$USER_NOTATION \${COLOR}Login attempt \$i/$fMaxAttempts\${RESET}\"
-        }
+            # Enable debugging for expect
+            # exp_internal 1
+            spawn -noecho $fSpawnCmd
 
-        # Enable debugging for expect
-        # exp_internal 1
-        spawn -noecho $fSpawnCmd
+            set session_id [exp_pid]
+            puts stderr \"\${GREY}Spawned Session ID: \$session_id\${RESET}\"
 
-        set session_id [exp_pid]
-        puts stderr \"\${GREY}Spawned Session ID: \$session_id\${RESET}\"
+            set ssh_pwd_prompt_cnt 0
+            set jmp_pwd_prompt_cnt 0
 
-        set ssh_pwd_prompt_cnt 0
-        set jmp_pwd_prompt_cnt 0
+            # Only for telnet. If do not need telnet, remove this block
+            if {\"$fMode\" == \"$TELNET_MODE\"} {
+                expect {
+                    {login: } {
+                        send \"$fTargetUser\r\"
+                        exp_continue
+                    }
+                    -re {[pP]assword: } {
+                        send \"$fTargetPwd\r\"
+                        exp_continue
+                    }
+                    timeout {
+                        puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Timed out waiting for a response.\${RESET}\"
+                        incr i
+                        continue
+                    }
+                    eof {
+                        puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Reached EOF and Ended.\${RESET}\"
+                        exit 0
+                    }
+                }
+            }
 
-        # Only for telnet. If do not need telnet, remove this block
-        if {\"$fMode\" == \"$TELNET_MODE\"} {
+            # Main expect block
             expect {
-                {login: } {
-                    send \"$fTargetUser\r\"
+                {yes/no} {
+                    send \"yes\r\"
                     exp_continue
                 }
-                -re {[pP]assword: } {
+                -re {$fTargetUser@$fTarget's (password|Password):} {
+                    incr ssh_pwd_prompt_cnt
+                    if {\$ssh_pwd_prompt_cnt > 1} {
+                        puts stderr \"\n$USER_NOTATION \${COLOR}Login credentials for SSH Target: $fTarget are wrong.\${RESET}\"
+                        exit 1
+                    }
+
                     send \"$fTargetPwd\r\"
                     exp_continue
                 }
+                -re {$fJumpUser@$fJumpServer's (password|Password):} {
+                    incr jmp_pwd_prompt_cnt
+                    if {\$jmp_pwd_prompt_cnt > 1} {
+                        puts stderr \"\n$USER_NOTATION \${COLOR}Login credentials for Jump Server: $fJumpServer are wrong.\${RESET}\"
+                        exit 1
+                    }
+                    send \"$fJumpPwd\r\"
+                    exp_continue
+                }
+                -re {$fGroupPattern} {
+                    break
+                }
+                -re {host key for (.+?) has changed} {
+                    # Get the matched variable from the first capturing group
+                    set host \$expect_out(1,string)
+                    set COLOR \$LIGHTYELLOW
+                    puts stderr \"$USER_NOTATION \${COLOR}Host key verification failed. Updating known_hosts ...\${RESET}\"
+                    puts stderr \"$USER_NOTATION \${COLOR}ssh-keygen -R \$host\${RESET}\"
+                    system \"ssh-keygen -R \$host\"
+                    puts stderr \"$USER_NOTATION \${COLOR}Host key removed from known_hosts file.\${RESET}\n\"
+                    set COLOR \$MAGENTA
+                    incr i
+                    continue
+                }
+                -re {tcpdump: syntax error|You don't have permission to capture on that device} {
+                    set error_msg \$expect_out(0,string)
+                    clear_unfinished_jobs \$error_msg
+
+                    if {[string match "*permission*" \$error_msg]} {
+                        tcpdump_set_setuid
+                    }
+                    exp_continue
+                }
+                {No route to host} {
+                    puts stderr \"$USER_NOTATION \${COLOR}No route to host\${RESET}\"
+                    exit 1
+                }
                 timeout {
                     puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Timed out waiting for a response.\${RESET}\"
+                    # close \$ssh_session_id
                     incr i
                     continue
                 }
@@ -945,139 +1013,88 @@ expect -c "
             }
         }
 
-        # Main expect block
-        expect {
-            {yes/no} {
-                send \"yes\r\"
-                exp_continue
-            }
-            -re {$fTargetUser@$fTarget's (password|Password):} {
-                incr ssh_pwd_prompt_cnt
-                if {\$ssh_pwd_prompt_cnt > 1} {
-                    puts stderr \"\n$USER_NOTATION \${COLOR}Login credentials for SSH Target: $fTarget are wrong.\${RESET}\"
-                    exit 1
-                }
+        if {\$i > $fMaxAttempts} {
+            puts stderr \"$USER_NOTATION \${COLOR}Failed to connect to $fTarget\${RESET}\"
+            exit 1
+        }
 
-                send \"$fTargetPwd\r\"
-                exp_continue
-            }
-            -re {$fJumpUser@$fJumpServer's (password|Password):} {
-                incr jmp_pwd_prompt_cnt
-                if {\$jmp_pwd_prompt_cnt > 1} {
-                    puts stderr \"\n$USER_NOTATION \${COLOR}Login credentials for Jump Server: $fJumpServer are wrong.\${RESET}\"
-                    exit 1
-                }
-                send \"$fJumpPwd\r\"
-                exp_continue
-            }
-            -re {$fGroupPattern} {
-                break
-            }
-            -re {host key for (.+?) has changed} {
-                # Get the matched variable from the first capturing group
-                set host \$expect_out(1,string)
+        if {\"$fNoLoginShell\" != \"\"} {
+            expect eof {
                 set COLOR \$LIGHTYELLOW
-                puts stderr \"$USER_NOTATION \${COLOR}Host key verification failed. Updating known_hosts ...\${RESET}\"
-                puts stderr \"$USER_NOTATION \${COLOR}ssh-keygen -R \$host\${RESET}\"
-                system \"ssh-keygen -R \$host\"
-                puts stderr \"$USER_NOTATION \${COLOR}Host key removed from known_hosts file.\${RESET}\n\"
-                set COLOR \$MAGENTA
-                incr i
-                continue
-            }
-            -re {tcpdump: syntax error|You don't have permission to capture on that device} {
-                set error_msg \$expect_out(0,string)
-                clear_unfinished_jobs \$error_msg
+                set output \$expect_out(buffer)
+                # puts stderr \"\${COLOR}\$output\${RESET}\"
+                set pattern {build[0-9]+}  ;# Regex pattern to match 'build' followed by digits
 
-                if {[string match "*permission*" \$error_msg]} {
-                    tcpdump_set_setuid
+                set lines [split \$output \"\n\"]
+
+                foreach line \$lines {
+                    if {[regexp \$pattern \$line]} {
+                        puts -nonewline stderr \"\${COLOR}\$line\${RESET}\"
+                    }
                 }
-                exp_continue
-            }
-            {No route to host} {
-                puts stderr \"$USER_NOTATION \${COLOR}No route to host\${RESET}\"
-                exit 1
-            }
-            timeout {
-                puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Timed out waiting for a response.\${RESET}\"
-                # close \$ssh_session_id
-                incr i
-                continue
-            }
-            eof {
-                puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Reached EOF and Ended.\${RESET}\"
+
+                puts stderr \"\"
                 exit 0
             }
         }
-    }
 
-    if {\$i > $fMaxAttempts} {
-        puts stderr \"$USER_NOTATION \${COLOR}Failed to connect to $fTarget\${RESET}\"
-        exit 1
-    }
-
-    if {\"$fNoLoginShell\" != \"\"} {
-        expect eof {
-            set COLOR \$LIGHTYELLOW
-            set output \$expect_out(buffer)
-            # puts stderr \"\${COLOR}\$output\${RESET}\"
-            set pattern {build[0-9]+}  ;# Regex pattern to match 'build' followed by digits
-
-            set lines [split \$output \"\n\"]
-
-            foreach line \$lines {
-                if {[regexp \$pattern \$line]} {
-                    puts -nonewline stderr \"\${COLOR}\$line\${RESET}\"
+        # Check if VDOM is supported. VDOM is only supported on FGT/FPX
+        if {\"$fVdom\" != \"\"} {
+            set timeout 3
+            send \"\r\"
+            expect {
+                -re {$fDollarPattern} {
+                    puts -nonewline stderr \"$USER_NOTATION \${MAGENTA}VDOM is not supported on this device\${RESET}\"
+                    send \"\r\"
                 }
-            }
-
-            puts stderr \"\"
-            exit 0
-        }
-    }
-
-    # Check if VDOM is supported. VDOM is only supported on FGT/FPX
-    if {\"$fVdom\" != \"\"} {
-        set timeout 3
-        send \"\r\"
-        expect {
-            -re {$fDollarPattern} {
-                puts -nonewline stderr \"$USER_NOTATION \${MAGENTA}VDOM is not supported on this device\${RESET}\"
-                send \"\r\"
-            }
-            # Only for FGT/FPX
-            -re {$fPoundPattern} {
-                send \"config vdom\r\"
-                expect {
-                    -re {Command fail.|not found,} {
-                        set COLOR \$BLUE
-                        puts stderr \"\n\${COLOR}Error: VDOM is not supported on this device.\${RESET}\"
-                        exit 1
-                    }
-                    -re {$fGroupPattern} {
-                        send \"edit $fVdom\r\"
+                # Only for FGT/FPX
+                -re {$fPoundPattern} {
+                    send \"config vdom\r\"
+                    expect {
+                        -re {Command fail.|not found,} {
+                            set COLOR \$BLUE
+                            puts stderr \"\n\${COLOR}Error: VDOM is not supported on this device.\${RESET}\"
+                            exit 1
+                        }
+                        -re {$fGroupPattern} {
+                            send \"edit $fVdom\r\"
+                        }
                     }
                 }
             }
+            expect -re {$fGroupPattern}
         }
-        expect -re {$fGroupPattern}
-    }
 
-    proc handle_eof {} {
-        global MAGENTA COLOR RESET
-        set COLOR \$MAGENTA
-        puts stderr \"$USER_NOTATION \${COLOR}Bye-bye.\${RESET}\"
-        exit 1
-    }
+        proc handle_eof {} {
+            global MAGENTA COLOR RESET
+            set COLOR \$MAGENTA
+            puts stderr \"$USER_NOTATION \${COLOR}Bye-bye.\${RESET}\"
+            exit 1
+        }
 
-    if {\"$fSwitchToSftp\" != \"\"} {
-        # \x04 is code for Ctrl-D. Only for SFTP
-        interact {
-            \x04 {
-                handle_eof
+        if {\"$fSwitchToSftp\" != \"\"} {
+            # \x04 is code for Ctrl-D. Only for SFTP
+            interact {
+                \x04 {
+                    handle_eof
+                }
             }
+        } else {
+            interact
         }
-    } else {
-        interact
-    }
-"
+    "
+}
+
+main() {
+    parseOptions "$@"
+    parseVars
+    checkSanity
+    makeSpawnCmd
+    if [ "$fMode" != "$TELNET_MODE" ]; then
+        dumpTips
+    fi
+    handleSpecialCases
+    performLogin
+}
+
+main "$@"

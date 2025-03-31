@@ -211,7 +211,7 @@ displayInfo() {
     echo -e "[s] Set Session ID to: ${COLOR}$fSessionId${RESET}"
     echo -e "[w] Set Window ID to: ${COLOR}$fWinId${RESET}"
     echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
-    echo -e "[\] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
+    echo -e "[/] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
     COLOR=$GREY
     [ -n "$fWadDebug" ]      && fAutoCmdMode="true" && echo -e "[W] ${COLOR}Sending WAD debug commands${RESET}"
     [ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[O] ${COLOR}Configuring console for direct output${RESET}"

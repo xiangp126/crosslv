@@ -283,12 +283,10 @@ searchBuildModel() {
     esac
 }
 
-preParseOptions() {
-    # Set fRunConfigure to true if fNeedBuild is true
+parseOptions() {
+    # Set fRunConfigure to true if $fNeedBuild is true
     [ -n "$fNeedBuild" ] && fRunConfigure=true
-
     [ -n "$fGitClean" ] || [ -n "$fRunConfigure" ] || [ -n "$fNeedBuild" ] || [ -n "$fUseBear" ] || [ -n "$fRMCompileCommandsJson" ] && fPrintBuildFlags=true
-
     [ -z "$fPrintBuildFlags" ] && return
 
     fWorkingDir=$(realpath "$fWorkingDir")
@@ -558,7 +556,7 @@ runBuildCommands() {
     echo "$USER_NOTATION Congratulations! You have built projects successfully at $(getCurrentTime) for $fBuildTimeFormatted"
 }
 
-jsonRemoveWritePrivilege() {
+rmWriteFromJson() {
     [ -z $fNeedBuild ] && return
 
     COLOR=$MAGENTA
@@ -834,11 +832,15 @@ runSyncCommands() {
     esac
 }
 
-preParseOptions
-showLogo
-printBuildFlags
-cleanTheRepo
-runConfigure
-runBuildCommands
-jsonRemoveWritePrivilege
-runSyncCommands
+main () {
+    parseOptions "$@"
+    showLogo
+    printBuildFlags
+    cleanTheRepo
+    runConfigure
+    runBuildCommands
+    rmWriteFromJson
+    runSyncCommands
+}
+
+main "$@"
