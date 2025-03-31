@@ -746,7 +746,7 @@ runSyncCommands() {
             else
                 echo -ne "$USER_NOTATION Target ${MAGENTA}$fSyncTarget${RESET} started to reboot at $(getCurrentTime)"
                 if [ -n "$fBuildTimeFormatted" ]; then
-                    echo -e " (build time: $fBuildTimeFormatted)"
+                    echo -e " (BT: ${LIGHTYELLOW}$fBuildTimeFormatted${RESET})"
                 else
                     echo
                 fi

@@ -1,4 +1,5 @@
 #!/bin/bash
+# set -x
 
 scriptName=$(basename $0)
 if [[ "$#" -lt 1 ]]; then
@@ -7,38 +8,43 @@ if [[ "$#" -lt 1 ]]; then
     exit 1
 fi
 
-# set the destination directory
-destination_dir=/data/bugzilla/CC
-diff_name="u.diff"
+srcDir=$(realpath "$1")
+dstDir=/data/bugzilla/CC
+diffName="u.diff"
+
+if [ ! -d $dstDir ]; then
+    echo "Error: $dstDir does not exist or is not a directory"
+    exit 1
+fi
+
+cd "$dstDir" || exit
+echo "Removing .tar.gz files..."
+rm -f *.tar.gz 2> /dev/null
 
 # get the source directory from the argument
-source_dir=$1
-if [ ! -d "$source_dir" ]; then
-    echo "Error: $source_dir does not exist or is not a directory"
+if [ ! -d "$srcDir" ]; then
+    echo "Error: $srcDir does not exist or is not a directory"
     exit 1
 fi
-cd "$source_dir" || exit
+
+cd "$srcDir" || exit
+pwd
 if [ ! -d .git ]; then
-    echo "Error: $source_dir is not a git repository"
+    echo "Error: $srcDir is not a git repository"
     exit 1
 fi
 
-if [ ! -d $destination_dir ]; then
-    echo "Error: $destination_dir does not exist or is not a directory"
+git diff HEAD~1 HEAD > "$dstDir/$diffName"
+cp fgtcoveragebuild.tar.xz "$dstDir/"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to copy fgtcoveragebuild.tar.xz to $dstDir"
     exit 1
 fi
-
-git diff HEAD~1 HEAD > "$destination_dir/$diff_name"
-cp fgtcoveragebuild.tar.xz "$destination_dir/"
+cp image.out "$dstDir/"
 if [ $? -ne 0 ]; then
-    echo "Error: Failed to copy fgtcoveragebuild.tar.xz to $destination_dir"
-    exit 1
-fi
-cp image.out "$destination_dir/"
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to copy image.out to $destination_dir"
+    echo "Error: Failed to copy image.out to $dstDir"
     exit 1
 fi
 
 cd - &> /dev/null || exit
-bat -p "$destination_dir/$diff_name"
+bat -p "$dstDir/$diffName"

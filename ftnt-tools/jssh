@@ -649,7 +649,7 @@ makeSpawnCmd() {
     fSpawnCmd=$(echo "$fSpawnCmd" | tr -s ' ')
 }
 
-dumpPreTips() {
+displayInfo() {
     echo "$SEPARATOR_LEFT" >&2
     local param=""
     local COLOR=$LIGHTRED
@@ -778,7 +778,7 @@ dumpSSHFSTips() {
     fi
 }
 
-dumpPostTips() {
+displayInfo2() {
     local COLOR=""
     echo "$SEPARATOR_RIGHT" >&2
     if [ -n "$fForwardMode" ]; then
@@ -795,11 +795,12 @@ dumpPostTips() {
 }
 
 dumpTips() {
-    dumpPreTips
+    [[ "$fMode" == "$TELNET_MODE" ]] && return
+    displayInfo
     dumpLCTips "$BLUE"
     dumpSSHFSTips "$LIGHTYELLOW"
     dumpForwardTips "$PURPLE"
-    dumpPostTips
+    displayInfo2
 }
 
 handleSpecialCases() {
@@ -1090,9 +1091,7 @@ main() {
     parseVars
     sanityCheck
     makeSpawnCmd
-    if [ "$fMode" != "$TELNET_MODE" ]; then
-        dumpTips
-    fi
+    dumpTips
     handleSpecialCases
     performLogin
 }
