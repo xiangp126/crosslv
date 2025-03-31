@@ -5,7 +5,7 @@
 ### Key Tools
 
 | Tool | Description |
-|------|-------------|
+|:------:|-------------|
 | [jmake](#jmake) | Building tool for large C projects |
 | [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or Telnet |
 | [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
