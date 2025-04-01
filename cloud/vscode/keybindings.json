@@ -664,13 +664,17 @@
 	"command": "command-runner.run",
 	"args": {
 		"command": "jr",
-		// "terminal": {
-		// 	"name": "Command Runner Terminal",
-		// 	"cwd": "/data/fos",
-		// 	"shellArgs": [],
-		// 	"autoClear": true,
-		// 	"autoFocus": true
-		// }
+	}
+},
+{
+	"key": "ctrl+shift+n",
+	"command": "-workbench.action.newWindow"
+},
+{
+	"key": "ctrl+shift+n",
+	"command": "command-runner.run",
+	"args": {
+		"command": "jn",
 	}
 }
 ]

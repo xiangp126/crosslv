@@ -13,6 +13,7 @@
     ls-files = lf
     lf = ls-files
     ad = add
+    adu = add -u
     df = diff
     lgg = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)'
     cm = commit -v

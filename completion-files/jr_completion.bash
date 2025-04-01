@@ -33,4 +33,4 @@ _jr_completion() {
 }
 
 # Register the completion function for the jr command
-complete -F _jr_completion jr
+complete -F _jr_completion jr jn

@@ -27,13 +27,21 @@
     "remote.SSH.remotePlatform": {
         "remotedev": "linux",
     },
-    "remote.SSH.maxReconnectionAttempts": null,
+    "remote.SSH.maxReconnectionAttempts": 3,
+    "remote.SSH.connectTimeout": 20,
     "telemetry.telemetryLevel": "off",
     "editor.accessibilitySupport": "off",
     "editor.indentSize": "tabSize",
     "files.watcherExclude": {
         "**/.venv/**": true,
         "**/.vscode-server": true
+    },
+    "files.exclude": {
+        "**/.vscode-server": true
+    },
+    "search.exclude": {
+        "**/recycled": true,
+        "~/.usr/bin": true
     },
     "terminal.integrated.enableMultiLinePasteWarning": "never",
     "terminal.integrated.fontSize": 17,
@@ -452,7 +460,6 @@
     "extensions.autoUpdate": false,
     "gitlens.views.fileHistory.avatars": false,
     "gitlens.graph.avatars": false,
-    "diffEditor.maxComputationTime": 0,
     "gitlens.hovers.avatars": false,
     "gitlens.views.repositories.avatars": false,
     "gitlens.views.lineHistory.avatars": false,
@@ -467,25 +474,23 @@
     "gitlens.blame.avatars": false,
     "gitlens.defaultGravatarsStyle": "mp",
     "gitlens.gitCommands.avatars": false,
-    "diffEditor.ignoreTrimWhitespace": false,
     "window.confirmBeforeClose": "always",
     "window.zoomLevel": 0,
     "remote.autoForwardPorts": false,
     "markdown-preview-enhanced.previewTheme": "night.css",
     "markdown-preview-enhanced.revealjsTheme": "none.css",
     "markdown-preview-enhanced.codeBlockTheme": "auto.css",
-    "files.autoGuessEncoding": true,
     "C_Cpp.intelliSenseEngine": "disabled",
+    "files.autoGuessEncoding": true,
     "settingsSync.keybindingsPerPlatform": false,
-    "files.exclude": {
-        "**/.vscode-server": true
-    },
+    "diffEditor.ignoreTrimWhitespace": false,
+    "diffEditor.maxComputationTime": 0,
     "diffEditor.renderSideBySide": true,
-    "github.copilot.chat.runCommand.enabled": false,
     "github.copilot.chat.fixTestFailure.enabled": false,
     "github.copilot.chat.useProjectTemplates": false,
     "github.copilot.editor.enableCodeActions": false,
     "github.copilot.renameSuggestions.triggerAutomatically": false,
+    "github.copilot.chat.runCommand.enabled": false,
     "github.copilot.chat.experimental.startDebugging.enabled": false,
     "github.copilot.chat.experimental.setupTests.enabled": false,
     "settingsSync.ignoredExtensions": [
@@ -522,5 +527,6 @@
     "command-runner.terminal.autoFocus": true,
     "command-runner.commands": {
         "jr": "cd ${workspaceFolder}; jr \"${selectedText}\"",
+        "jn": "cd ${workspaceFolder}; jn \"${selectedText}\"",
     },
 }

@@ -15,7 +15,7 @@
         "--clang-tidy-checks=cppcoreguidelines-*,performance-*,bugprone-*,portability-*,modernize-*,google-*",
         "--pch-storage=disk",
     ],
-    "clangd.path": "/home/xiangp/.vscode-server/data/User/globalStorage/llvm-vs-code-extensions.vscode-clangd/install/19.1.2/clangd_19.1.2/bin/clangd",
+    "clangd.path": "clangd",
     "clangd.checkUpdates": true,
     "editor.tabSize": 8,
     "editor.insertSpaces": false,
@@ -43,7 +43,7 @@
         "**/devops": true,
         "**/Downloads": true,
         "**/fortipkg": true,
-        "**/MP": true
+        "**/mmt": true
     },
     "files.watcherExclude": {
         "**/.vscode-server": true
