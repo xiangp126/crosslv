@@ -3,15 +3,14 @@
 
 # Set the header for the Expect script
 SCRIPT_NAME=$(basename $0)
-GET_COLORS="$HOME/Templates/getcolors.sh"
 fForticlientDir="$HOME/Downloads/"
 fForticlientPkg="forticlient_7.2.0.0644_amd64.deb"
 # fForticlientPkg="forticlient_7.2.6.0872_amd64.deb"
 fVpnCmdPath="/opt/forticlient/vpn"
-
-if [ -f "$GET_COLORS" ]; then
-    source "$GET_COLORS"
-fi
+# Colors
+MAGENTA='\033[0;35m'
+RESET='\033[0m'
+COLOR="${MAGENTA}"
 
 usage() {
 cat <<EOF

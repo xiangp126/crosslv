@@ -1,15 +1,12 @@
 *.swp
 *.swo
 *.diff
-tags
 core
 core-*
 core.*
-inc/
 log/
 recycled/
 downloads/
 __pycache__/
 .DS_Store
-.nfs*
 .ycm_extra_conf.py

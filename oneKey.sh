@@ -91,6 +91,42 @@ parseOptions() {
     done
 }
 
+checkOSCategory() {
+    echo -e "${COLOR}Checking OS platform${RESET}"
+    if [[ -f /etc/os-release ]]; then
+        local os_name
+        os_name=$(awk -F= '/^ID=/{print $2}' /etc/os-release)
+
+        case "$os_name" in
+            "ubuntu")
+                fOSCategory=debian
+                echo "The current OS type is Ubuntu."
+                ;;
+            "centos")
+                fOSCategory=redhat
+                echo "The current OS type is CentOS."
+                echo "We currently do not support CentOS."
+                exit
+                ;;
+            "raspbian")
+                fOSCategory=debian
+                echo "The current OS type is raspbian."
+                ;;
+            *)
+                echo "We currently do not support this OS type."
+                exit
+                ;;
+        esac
+    elif [[ $(uname) == "Darwin" ]]; then
+        fOSCategory=mac
+        echo "The current OS type is macOS (Mac)."
+    else
+        echo "The OS type is not supported or could not be determined."
+        echo "We currently do not support this OS type."
+        exit 1
+    fi
+}
+
 updatePrerequisitesForDebian() {
     checkSudoPrivilege
     prerequisitesForUbuntu=(
@@ -159,42 +195,6 @@ updatePrerequisitesForDebian() {
     sudo apt-get update
     sudo apt-get install -y "${prerequisitesForUbuntu[@]}"
     sudo updatedb
-}
-
-checkOSCategory() {
-    echo -e "${COLOR}Checking OS platform${RESET}"
-    if [[ -f /etc/os-release ]]; then
-        local os_name
-        os_name=$(awk -F= '/^ID=/{print $2}' /etc/os-release)
-
-        case "$os_name" in
-            "ubuntu")
-                fOSCategory=debian
-                echo "The current OS type is Ubuntu."
-                ;;
-            "centos")
-                fOSCategory=redhat
-                echo "The current OS type is CentOS."
-                echo "We currently do not support CentOS."
-                exit
-                ;;
-            "raspbian")
-                fOSCategory=debian
-                echo "The current OS type is raspbian."
-                ;;
-            *)
-                echo "We currently do not support this OS type."
-                exit
-                ;;
-        esac
-    elif [[ $(uname) == "Darwin" ]]; then
-        fOSCategory=mac
-        echo "The current OS type is macOS (Mac)."
-    else
-        echo "The OS type is not supported or could not be determined."
-        echo "We currently do not support this OS type."
-        exit 1
-    fi
 }
 
 updatePrequesitesForMac() {
