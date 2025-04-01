@@ -56,7 +56,7 @@ Plug 'jiangmiao/auto-pairs'
 Plug 'Yggdroot/indentLine'
 Plug 'altercation/vim-colors-solarized'
 "------ FUZZY FINDER -----
-Plug 'junegunn/fzf', { 'do': './install --bin' }
+Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
 Plug 'junegunn/fzf.vim'
 "------ BEAUTIFY LINE -----
 Plug 'vim-airline/vim-airline'

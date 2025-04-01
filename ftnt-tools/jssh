@@ -35,8 +35,7 @@ fServerAliveCountMax=3
 fMaxAttempts=2
 # SFTP Variables
 fSwitchToSftp=
-# Enable X11 Forwarding
-fX11Forwarding=
+fX11Forwarding= # Enable X11 Forwarding
 fLCPort="7777"
 fLCReady=
 fSSHpassInstalled=
@@ -52,7 +51,6 @@ fJumpUser=
 fJumpPwd="password"
 fJumpPort=22
 # Forward Options
-# -L [local_listen_addr:]local_listen_port:target_addr:target_port
 fForwardMode=
 fForwardOptions=
 fForwardTarget=
@@ -64,7 +62,7 @@ fLFLocalLisPort="8881"
 fRFRemoteLisAddr="127.0.0.1"
 fRFRemoteLisPort="1080"
 # SSHFS Variables
-fSwitchToSShfs=
+fmountWithSSHfs=
 fFSOptions=
 fFSMountPoint=
 fFSRemoteDir=
@@ -261,7 +259,7 @@ parseOptions() {
                 ;;
             -m|--mount)
                 fMode=$SSHFS_MODE
-                fSwitchToSShfs=true
+                fmountWithSSHfs=true
                 fFSOptions="$2"
                 shift 2
                 ;;
@@ -422,7 +420,7 @@ parseVars() {
     # done
 
     # !! Parse fFSOptions in the format of [remote_dir:]mountpoint
-    if [ -n "$fSwitchToSShfs" ]; then
+    if [ -n "$fmountWithSSHfs" ]; then
         if [[ $fFSOptions == *":"* ]]; then
             IFS=':' read -r fFSRemoteDir fFSMountPoint <<< "$fFSOptions"
         else
@@ -498,7 +496,7 @@ sanityCheck() {
         fUseWireshark=""
     fi
 
-    if [ -n "$fSwitchToSftp" ] && [ -n "$fSwitchToSShfs" ]; then
+    if [ -n "$fSwitchToSftp" ] && [ -n "$fmountWithSSHfs" ]; then
         COLOR=$MAGENTA
         echo -e "$USER_NOTATION ${COLOR}SFTP and SSHFS mode are mutually exclusive.${RESET}"
         exit 1
@@ -515,7 +513,7 @@ sanityCheck() {
     fi
 
     # sshfs mode
-    if [ -n "$fSwitchToSShfs" ]; then
+    if [ -n "$fmountWithSSHfs" ]; then
         fVdom=""
         fSSHCmd=""
         fNoLoginShell=""
@@ -590,7 +588,7 @@ makeSpawnCmd() {
 
             fSpawnCmd="ssh -p $fTargetPort -l $fTargetUser $fTarget"
             if [ -n "$fX11Forwarding" ]; then
-                fSpawnCmd="$fSpawnCmd -X"
+                fSpawnCmd="$fSpawnCmd -Y"
             fi
 
             if [ -n "$fDebug" ]; then
@@ -753,7 +751,7 @@ dumpLCTips() {
 
 dumpSSHFSTips() {
     local COLOR=$1
-    if [ -z "$fSwitchToSShfs" ]; then
+    if [ -z "$fmountWithSSHfs" ]; then
         local __remote_dir="/home/$fTargetUser"
         local __mount_point="$fFSDemoMountPoint"
         local __addr=$fTarget
@@ -802,7 +800,7 @@ dumpTips() {
 
 handleSpecialCases() {
     # Use bash to hahdle sshfs commands directly
-    if [ -n "$fSwitchToSShfs" ]; then
+    if [ -n "$fmountWithSSHfs" ]; then
         COLOR=$MAGENTA
         if [ -n "$fNeedJumpServer" ] && [ -z "$fSSHpassInstalled" ]; then
             echo -e "$USER_NOTATION Warning: sshpass is not installed. Switching to manual password input mode."

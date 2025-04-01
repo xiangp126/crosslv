@@ -287,6 +287,7 @@ linkFiles() {
 
     # Iterate over files in the source directory
     for file in "$targetDir"/*; do
+        # shellcheck disable=SC2155
         local filename=$(basename "$file")
         local src="$targetDir/$filename"
         local dst="$linkPath/${linknamePrefix}$filename"
@@ -333,6 +334,7 @@ linkFile() {
     local target="$1"       # The target to link
     local linkPath="$2"     # Destination directory to link to
 
+    # shellcheck disable=SC2155
     local filename=$(basename "$target")
     local dst="$linkPath/$filename"
     local src="$target"
@@ -420,34 +422,40 @@ checkSudoPrivilege() {
     fi
 }
 
-main() {
-    parseOptions "$@"
-    checkOSCategory
-    if [ "$fOSCategory" == "debian" ]; then
-        [ -n "$fForceUpdate" ] && updatePrerequisitesForDebian
-
-        linkFiles "$fTKFilesDir" "$HOME" 1 "$HOME/Public/.env.bak"
-        linkFiles "$fTKCompSrc" "$fTKCompDst"
-        linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
+performLinkingFiles() {
+    linkFiles "$fTKFilesDir" "$HOME" 1 "$HOME/Public/.env.bak"
+    linkFiles "$fTKCompSrc" "$fTKCompDst"
+    linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
+    if [[ "$fOSCategory" != "mac" ]]; then
         if [ -n "$fInsTools" ]; then
             linkFiles "$fTntToolsDir" "$HOME/.usr/bin"
             linkFiles "$fTntTempDir" "$HOME/Templates"
         fi
         linkFile "$fzfTabCompPath" "$fTKCompDst"
         linkFile "$fzfBinPath" "$HOME/.usr/bin"
-        relinkCommand "batcat" "bat"
-        relinkCommand "fdfind" "fd"
-        relinkCommand "bash" "sh" "/bin/"
+    fi
+}
 
-        followUpTKExceptions
+performRelinkingCmds() {
+    relinkCommand "batcat" "bat"
+    relinkCommand "fdfind" "fd"
+    relinkCommand "bash" "sh" "/bin/"
+}
+
+main() {
+    parseOptions "$@"
+    checkOSCategory
+    if [ "$fOSCategory" == "debian" ]; then
+        [ -n "$fForceUpdate" ] && updatePrerequisitesForDebian
+        performLinkingFiles
         updateVimPlugins
+        performRelinkingCmds
+        followUpTKExceptions
         setTimeZone
         changeTMOUTToWritable
     elif [ "$fOSCategory" == "mac" ]; then
         # [ -n "$fForceUpdate" ] && installPrequesitesForMac
-        linkFiles "$fTKFilesDir" "$HOME" true "$HOME/Public/.env.bak"
-        linkFiles "$fTKCompSrc" "$fTKCompDst"
-        linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
+        performLinkingFiles
         updateVimPlugins
     fi
 }
