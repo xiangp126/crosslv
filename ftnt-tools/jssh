@@ -1,7 +1,7 @@
 #!/bin/bash
 # set -x
 
-# Constants
+# CONSTANTS
 SCRIPT_NAME=$(basename "$0")
 USER_NOTATION="@@@@"
 SEPARATOR_LEFT="-------------------------------------------->"
@@ -12,51 +12,51 @@ SSHFS_MODE="SSHFS"
 TELNET_MODE="TELNET"
 LOCAL_FORWARD="LOCAL_FORWARD"
 REVERSE_FORWARD="REVERSE_FORWARD"
+# SHARED VARIABLES
 fMode=$SSH_MODE
-# Shared Variables
 # Match "$ ", "# " or "sftp> " at the end of the line
 fGroupPattern='(\$|#|sftp>)\s*$' # For Literal Interpretation, use single quotes
 fDollarPattern='\$\s*$'
 fPoundPattern='#\s*$'
 # fSftpPattern='sftp>\s*$'
 # SSH Variables
-fInputCmd=""
-fTarget=""
+fInputCmd=
+fTarget=
 fTargetUser="admin"
 fTargetPwd="password"
 fTargetPort=22
-fVdom=""
-fDebug=""
-fSSHCmd="" # The command to execute remotely without opening an interactive login session
-fNoLoginShell=""
-fSpawnCmd=""
+fVdom=
+fDebug=
+fSSHCmd= # The command to execute remotely without opening an interactive login session
+fNoLoginShell=
+fSpawnCmd=
 fServerAliveInterval=30
 fServerAliveCountMax=3
 fMaxAttempts=2
 # SFTP Variables
-fSwitchToSftp=""
+fSwitchToSftp=
 # Enable X11 Forwarding
-fX11Forwarding=""
+fX11Forwarding=
 fLCPort="7777"
-fLCReady=""
-fSSHpassInstalled=""
-fWiresharkInstalled=""
-fUseWireshark=""
+fLCReady=
+fSSHpassInstalled=
+fWiresharkInstalled=
+fUseWireshark=
 fTlsKeyFileName=${SSLKEYLOGFILE##*/}
 fTlsKeyLogFile="$HOME/${fTlsKeyFileName}"
 # Jump Server
-fNeedJumpServer=""
-fJumpOptions=""
-fJumpServer=""
-fJumpUser=""
+fNeedJumpServer=
+fJumpOptions=
+fJumpServer=
+fJumpUser=
 fJumpPwd="password"
 fJumpPort=22
 # Forward Options
 # -L [local_listen_addr:]local_listen_port:target_addr:target_port
-fForwardMode=""
-fForwardOptions=""
-fForwardTarget=""
-fForwardTargetPort=""
+fForwardMode=
+fForwardOptions=
+fForwardTarget=
+fForwardTargetPort=
 # Local Forward
 fLFLocalLisAddr="127.0.0.1"
 fLFLocalLisPort="8881"
@@ -64,13 +64,13 @@ fLFLocalLisPort="8881"
 fRFRemoteLisAddr="127.0.0.1"
 fRFRemoteLisPort="1080"
 # SSHFS Variables
-fSwitchToSShfs=""
-fFSOptions=""
-fFSMountPoint=""
-fFSRemoteDir=""
+fSwitchToSShfs=
+fFSOptions=
+fFSMountPoint=
+fFSRemoteDir=
 fFSDemoMountPoint="$HOME/mmt"
 fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o auto_cache -o uid=$(id -u) -o gid=$(id -g)"
-# Colors
+# COLORS
 RED='\033[31m'
 LIGHTRED='\033[91m'
 MAGENTA='\033[35m'
@@ -538,8 +538,8 @@ sanityCheck() {
 }
 
 makeSpawnCmd() {
-    local cmd=""
-    local param=""
+    local cmd=
+    local param=
     local keepAlive="-o ServerAliveInterval=$fServerAliveInterval -o ServerAliveCountMax=$fServerAliveCountMax"
 
     # Local Port Forwarding
@@ -564,19 +564,18 @@ makeSpawnCmd() {
 
     case "$fMode" in
         "$SSH_MODE")
+            param=
             cmd="$fSSHCmd"
 
             # Live Capture with sshpass
             # Launch a local Wireshark session to capture the packets live.
             if [ -n "$fLCReady" ]; then
-                param=""
-
                 if [ -n "$fNeedJumpServer" ]; then
                     param="-o \"ProxyCommand=sshpass -p $fJumpPwd ssh -W %h:%p $fJumpUser@$fJumpServer\""
                 fi
 
                 if [ -n "$fUseWireshark" ]; then
-                    fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\" | wireshark -k -i - -o \"tls.keylog_file:${fTlsKeyLogFile}\""
+                    fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\" | wireshark -o \"tls.keylog_file:${fTlsKeyLogFile}\" -k -i -"
                 else
                     fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\""
                 fi
@@ -611,7 +610,7 @@ makeSpawnCmd() {
             ;;
 
         "$SFTP_MODE")
-            param=""
+            param=
             if [ -n "$fNeedJumpServer" ]; then
                 param="-o \"ProxyJump=$fJumpUser@$fJumpServer\""
             fi
@@ -748,8 +747,6 @@ dumpLCTips() {
     if [ -n "$fForwardMode" ]; then
         echo -e "${COLOR}nc ${fLFLocalLisAddr[1]} $fLCPort | wireshark -k -${RESET}" >&2
     else
-        echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -k -i -${RESET}" >&2
-        echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:/home/$fTargetUser/$fTlsKeyFileName\" -k -i -${RESET}" >&2
         echo -e "${COLOR}nc $fTarget $fLCPort | wireshark -o \"tls.keylog_file:$fFSDemoMountPoint/$fTlsKeyFileName\" -k -i -${RESET}" >&2
     fi
 }
@@ -812,31 +809,31 @@ handleSpecialCases() {
             echo -e "$USER_NOTATION Passwd for ${COLOR}$fJumpUser@$fJumpServer${RESET} is ${COLOR}$fJumpPwd${RESET}"
             echo -e "$USER_NOTATION Passwd for ${COLOR}$fTargetUser@$fTarget${RESET} is ${COLOR}$fTargetPwd${RESET}"
         fi
-        # Execute the sshfs command directly without using expect
+
         eval "$fSpawnCmd"
         if [ $? -ne 0 ]; then
             echo -e "$USER_NOTATION ${COLOR}Failed to mount $fFSRemoteDir to $fFSMountPoint${RESET}"
             exit 1
-        else
-            findmnt "$fFSMountPoint"
-            df -h "$fFSMountPoint"
-            echo -e "$USER_NOTATION ${COLOR}Successfully mounted $fTargetUser@$fTarget:$fFSRemoteDir${RESET} to ${COLOR}$fFSMountPoint${RESET}"
-            exit 0
         fi
+
+        findmnt "$fFSMountPoint"
+        df -h "$fFSMountPoint"
+        echo -e "$USER_NOTATION ${COLOR}Successfully mounted $fTargetUser@$fTarget:$fFSRemoteDir${RESET} to ${COLOR}$fFSMountPoint${RESET}"
+        exit 0
     fi
 
     # $fUseWireshark is well handled in the checkSanity function
     if [ -n "$fUseWireshark" ]; then
         COLOR=$MAGENTA
-        # Execute the ssh command directly without using expect
+
         eval "$fSpawnCmd"
         if [ $? -ne 0 ]; then
             echo -e "$USER_NOTATION ${COLOR}Failed to capture packets from $fTarget.${RESET}"
             exit 1
-        else
-            echo -e "$USER_NOTATION ${COLOR}Successfully captured packets from $fTarget.${RESET}"
-            exit 0
         fi
+
+        echo -e "$USER_NOTATION ${COLOR}Successfully captured packets from $fTarget.${RESET}"
+        exit 0
     fi
 }
 
