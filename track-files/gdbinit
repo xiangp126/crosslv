@@ -51,7 +51,7 @@ fs cmd
 winheight cmd +6
 
 # Configure logging
-set logging file ~/.gdb.log
+set logging file ~/.gdblog
 set logging enabled on
 set trace-commands on
 

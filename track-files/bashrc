@@ -45,7 +45,7 @@ else
     # Linux
     alias ls='ls --color=auto'
     alias dir='dir --color=auto'
-    alias vdir='vdir --color=auto'
+    # alias vdir='vdir --color=auto'
     # alias netstat='netstat -tuanp'
 fi
 alias ll='ls -lF'
@@ -54,10 +54,10 @@ alias rm='rm -i'
 alias mv='mv -i'
 alias cp='cp -i'
 alias grep='grep -i --color=auto'
-alias fgrep='fgrep --color=auto'
-alias egrep='egrep --color=auto'
+# alias fgrep='fgrep --color=auto'
+# alias egrep='egrep --color=auto'
 alias gdb='gdb -q'
-alias bat="bat --pager 'less -iRF'"
+# alias bat="bat --pager 'less -iRF'"
 # alias valgrind='valgrind --tool=memcheck --leak-check=full --show-reachable=yes'
 alias rg='rg --smart-case --color=ansi'
 alias 7zP='7z a -mhe=on -p'
@@ -72,6 +72,7 @@ alias rawdump='tcpdump -s 0 -U -n -w -'
 alias rsync='rsync -azPv'
 # pathOfLibear=$(locate libear.so | grep -m 1 libear.so)
 alias bear='bear -l /usr/lib/x86_64-linux-gnu/bear/libear.so'
+alias jn='jr --no-clipboard'
 # alias to change directory
 function __cd () {
     if [ -d "$1" ]; then
@@ -136,16 +137,15 @@ fi
 # find bash completion for third-party tools | only for Mac
 if [[ -d /usr/local/etc/bash_completion.d ]]; then
     for file in /usr/local/etc/bash_completion.d/*; do
-        # Only source symlinks
-        [[ -L $file ]] && source "$file"
+        # shellcheck disable=SC1090
+        [[ -L $file ]] && . "$file"
     done
 fi
 
-# Source additional bash completions
 extraCompletionDir="$HOME/.bash_completion.d"
 if [[ -d "$extraCompletionDir" ]]; then
     for file in "$extraCompletionDir"/*; do
-        # Only source existing files
+        # shellcheck disable=SC1090
         [[ -f $file ]] && source "$file"
     done
 fi

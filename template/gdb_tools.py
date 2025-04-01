@@ -981,7 +981,7 @@ class SuperTraverse(gdb.Command):
         left_field = self.left_field
         right_field = self.right_field
 
-        # Perform iterative in-order traversal (left, node, right)
+        # Perform an iterative in-order traversal using a classical algorithm.
         while stack or current:
             if total_nodes > self.max_search_nodes:
                 break
@@ -994,8 +994,8 @@ class SuperTraverse(gdb.Command):
             if stack:
                 current = stack.pop()
                 nodes.append(current)
-                total_nodes += 1
 
+                total_nodes += 1
                 # Try to get the container for this node
                 try:
                     container_ptr = self.list_entry(current, container_type, member_name)

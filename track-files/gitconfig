@@ -24,6 +24,7 @@
     cmm = commit -v -m
     dfc = diff --cached
     dfs = diff --stat
+    showmsg = show -s --format=%B
 [push]
     followTags = true
     default = current
