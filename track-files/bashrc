@@ -166,12 +166,12 @@ if command -v fd &> /dev/null; then
                         "
     FZF_DEFAULT_COMMAND=${FZF_DEFAULT_COMMAND//+([[:space:]])/ }
     FZF_ALT_C_COMMAND="fd . \
-                        --type d \
-                        --hidden \
-                        --follow \
-                        --no-ignore \
-                        --exclude '.vscode-server' \
-                        --exclude '.git' \
+                       --type d \
+                       --hidden \
+                       --follow \
+                       --no-ignore \
+                       --exclude '.vscode-server' \
+                       --exclude '.git' \
                        "
     FZF_ALT_C_COMMAND=${FZF_ALT_C_COMMAND//+([[:space:]])/ }
     export FZF_DEFAULT_COMMAND
