@@ -13,8 +13,7 @@ fRegularMatch=
 fKernelIncluded=  # Include the linux kernel source code in the search
 # Constants
 SCRIPTNAME=$(basename $0)
-SEPARATOR_LEFT="<---------------------------------------------------"
-SEPARATOR_RIGHT="--------------------------------------------------->"
+SEPARATOR="----------------------------------------------------"
 USER_NOTATION="@@@@"
 # Colors
 MAGENTA='\033[35m'
@@ -175,53 +174,50 @@ polishQuery() {
 
 fuzzySearch() {
     # '--glob' '*.{c,h,cpp,js,ts,py,html,css,sh,php}'
-    # rg: -F, --fixed-strings Treat the pattern as a literal string
+    # rg: --fixed-strings Treat the pattern as a literal string
     local rgParams=(
-        '--smart-case'
-        '--color=ansi'
-        '--colors' 'match:fg:204,51,153'
-        '--colors' 'match:style:bold'
-        '--line-number'
-        '--no-heading'
-        '--glob' '!fpx-sync/*'
-        '--glob' '!linux-3.2.16/*'
+        "--smart-case"
+        "--color=ansi"
+        "--colors" "match:fg:204,51,153"
+        "--colors" "match:style:bold"
+        "--line-number"
+        "--no-heading"
+        "--glob" "!fpx-sync/*"
+        "--glob" "!linux-3.2.16/*"
+        "--glob" "!.git/*"
     )
     local fzfParams=(
-        '--ansi'
-        '--color' 'hl:-1:underline,hl+:-1:underline:reverse'
-        '--delimiter' ':'
-        '--preview' 'bat --color=always {1} --theme=TwoDark --highlight-line {2}'
-        '--preview-window' 'top,60%,border-bottom,+{2}+3/3,~3'
-        '--cycle'
-        '--exit-0'
+        "--layout=reverse"
+        "--inline-info"
+        "--color=fg+:247"
+        "--multi"
+        "--style" "default"
+        "--ansi"
+        "--color" "hl:-1:underline,hl+:-1:underline:reverse"
+        "--delimiter" ":"
+        "--preview" "bat --color=always {1} --theme=TwoDark --highlight-line {2}"
+        "--preview-window" "top,60%,border-bottom,+{2}+3/3,~3"
+        "--cycle"
+        "--exit-0"
     )
 
-    [ -z "$fKernelIncluded" ] && rgParams+=('--glob' '!linux-*/*')
-    [ -z "$fRegularMatch" ]   && rgParams+=('--fixed-strings')
+    [ -z "$fKernelIncluded" ] && rgParams+=("--glob" "!linux-*/*")
+    [ -z "$fRegularMatch" ]   && rgParams+=("--fixed-strings")
     rgParams+=("${fQuery:-.}")
-    [ -n "$fQuery" ] && fzfParams+=('--query' "${fQuery}")
+    [ -n "$fQuery" ] && fzfParams+=("--query" "${fQuery}")
 
-    # Debugging
-    if [ -n "$fDebug" ]; then
-        echo $SEPARATOR_RIGHT
-        # ${array[*]} => Expands to a single string where all elements are joined together
-        # ${array[@]} => Expands to a list of individual elements
-        # TODO: Print the array with either echo or printf will remove all the original single quotes.
-        echo -e "rgQuery: ${COLOR}${rgParams[*]}${RESET}"
-        echo -e "fzfQuery: ${COLOR}${fzfParams[*]}${RESET}"
-    fi
-
+    [ -n "$fDebug" ] && set -x
     if [ -n "$fRgOnly" ]; then
         rg "${rgParams[@]}"
         exit 0
     fi
 
     # Unified search and selection
-    fzfSelected=$(rg "${rgParams[@]}" | fzf "${fzfParams[@]}")
+    fzfSelected=$(rg "${rgParams[@]}" | FZF_DEFAULT_OPTS="" fzf "${fzfParams[@]}")
+    [ -n "$fDebug" ] && set +x
 
     if [ -z "$fzfSelected" ]; then
         [ -n "$fQuery" ] && echo -e "No result found or selected for query: ${COLOR}$fQuery${RESET}" >&2
-        [ -n "$fDebug" ] && echo $SEPARATOR_LEFT
         exit 0
     fi
 
@@ -243,10 +239,9 @@ fuzzySearch() {
     filepath=${filepath// /\\ }
 
     if [ -n "$fDebug" ]; then
-        echo -e "fzf select: ${COLOR}$fzfSelected${RESET}"
         echo -e "filepath:   ${COLOR}$filepath${RESET}"
         echo -e "linenumber: ${COLOR}$linenumber${RESET}"
-        echo $SEPARATOR_LEFT
+        echo $SEPARATOR
     fi
 
     if [[ "$fEditor" == "vim" ]]; then
@@ -263,7 +258,6 @@ main() {
     [ -z "$fRegularMatch" ] && polishQuery
     fuzzySearch
 
-    # Final output
     if [ -n "$fzfSelected" ];
     then
         # echo -e "Query: ${COLOR}${fQuery}${RESET}"
