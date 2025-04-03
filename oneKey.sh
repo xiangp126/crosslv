@@ -7,17 +7,19 @@ SCRIPT_NAME=$(basename $0)
 # USER_NOTATION="@@@@"
 # Variables
 fWKDir=$(cd $(dirname $0); pwd)
+# Tracked
 fTKFilesDir=$fWKDir/track-files
-fTKCompSrc=$fWKDir/completion-files
-fTKCompDst=$HOME/.bash_completion.d
+fTKCompDir=$fWKDir/completion-files
 fTKVimColorsDir=$fWKDir/assets/vim-colors
 fTKBatThemeDir=$fWKDir/assets/bat-themes
-fTemplateDir=$fWKDir/template
-fToolsDir=$fWKDir/ftnt-tools
+fTKFontDir=$fWKDir/assets/fonts
+fTKFontConfigDir=$fWKDir/assets/fontconfig
+fTKtemplateDir=$fWKDir/template
+fTKToolsDir=$fWKDir/ftnt-tools
+# Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
 fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
-fBatThemeDir=$HOME/.config/bat/themes
 fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
 fInstallTools=
@@ -282,8 +284,8 @@ followUpTKExceptions() {
 #   e.g., linkFile ~/myfile.txt /data/backup
 #
 # Arguments:
-#   $1 - Source file path
-#   $2 - Destination directory path
+#   $1 - Source file
+#   $2 - Destination directory path to link to
 #   $3 - Prefix for destination filename. Exp: . for hidden files
 #
 # Returns:
@@ -398,14 +400,61 @@ relinkCommand() {
 buildBatTheme() {
     # https://github.com/sharkdp/bat/tree/master/assets/themes
     echo -e "${LIGHTYELLOW}Building bat theme${RESET}"
-    local theme="TwoDark.tmTheme"
-    local target=$fTKBatThemeDir/$theme
-    [ ! -d "$fBatThemeDir" ] && mkdir -p "$fBatThemeDir"
-    linkFile "$target" "$fBatThemeDir"
-    if [ $? -eq 1 ]; then
-        return
-    fi
+    local batThemeDir=$HOME/.config/bat/themes
+    local needBuild=
+    [ ! -d "$batThemeDir" ] && mkdir -p "$batThemeDir"
+
+    for theme in "$fTKBatThemeDir"/*; do
+        linkFile "$theme" "$batThemeDir"
+        if [ $? -eq 1 ]; then
+            continue
+        fi
+        needBuild=true
+    done
+
+    [ -z "$needBuild" ] && return
     bat cache --build
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Success!${RESET}"
+    else
+        echo -e "${RED}Failed!${RESET}"
+        exit 1
+    fi
+}
+
+buildExtraFonts() {
+    echo -e "${LIGHTYELLOW}Building extra fonts${RESET}"
+    local needBuild=
+    local fontConfigDir="$HOME/.config/fontconfig/conf.d"
+    local fontDir=$HOME/.local/share/fonts
+    [ ! -d "$fontDir" ] && mkdir -p "$fontDir"
+    [ ! -d "$fontConfigDir" ] && mkdir -p "$fontConfigDir"
+
+    for fontConfig in "$fTKFontConfigDir"/*; do
+        linkFile "$fontConfig" "$fontConfigDir"
+        if [ $? -eq 1 ]; then
+            continue
+        fi
+    done
+
+    for font in "$fTKFontDir"/*; do
+        local fontFile=$(basename "$font")
+        local fontExists=$(fc-list | grep -i "$fontFile")
+        if [ -n "$fontExists" ]; then
+            echo -e "${GREY}Font $fontFile already exists in system, skip${RESET}"
+            continue
+        fi
+
+        linkFile "$font" "$fontDir"
+        if [ $? -eq 1 ]; then
+            continue
+        fi
+        needBuild=true
+    done
+
+    echo -e "${COLOR}Building font cache...${RESET}"
+    [ -z "$needBuild" ] && return
+    sudo fc-cache -fv
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
     else
@@ -416,8 +465,7 @@ buildBatTheme() {
 
 changeTMOUTToWritable() {
     echo -e "${COLOR}Changing TMOUT to writable${RESET}"
-    # TMOUT is readonly in /etc/profile, change it to writable
-    # so that we can unset it in .bashrc
+    # TMOUT is readonly in /etc/profile, change it to writable so that we can unset it in .bashrc
     if ! grep -q "TMOUT" /etc/profile; then
         echo "TMOUT is not found in /etc/profile, skip"
         return
@@ -451,14 +499,14 @@ checkSudoPrivilege() {
 
 performLinkingFiles() {
     linkFiles "$fTKFilesDir" "$HOME" "."
-    linkFiles "$fTKCompSrc" "$fTKCompDst"
+    linkFiles "$fTKCompDir" "$HOME/.bash_completion.d"
     linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
     if [[ "$fOSCategory" != "mac" ]]; then
         if [ -n "$fInstallTools" ]; then
-            linkFiles "$fToolsDir" "$HOME/.usr/bin"
-            linkFiles "$fTemplateDir" "$HOME/Templates"
+            linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
+            linkFiles "$fTKtemplateDir" "$HOME/Templates"
         fi
-        linkFile "$fzfTabCompPath" "$fTKCompDst"
+        linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d"
         linkFile "$fzfBinPath" "$HOME/.usr/bin"
     fi
 }
@@ -478,6 +526,7 @@ main() {
         updateVimPlugins
         performRelinkingCmds
         buildBatTheme
+        buildExtraFonts
         followUpTKExceptions
         setTimeZone
         changeTMOUTToWritable
@@ -486,6 +535,7 @@ main() {
         performLinkingFiles
         updateVimPlugins
         buildBatTheme
+        buildExtraFonts
     fi
 }
 
