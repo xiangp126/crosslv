@@ -404,15 +404,6 @@
 	"when": "gitlens:key:alt+left"
 },
 {
-	"key": "ctrl+shift+f",
-	"command": "-workbench.view.search",
-	"when": "workbench.view.search.active && neverMatch =~ /doesNotMatch/"
-},
-{
-	"key": "ctrl+alt+f",
-	"command": "workbench.view.search"
-},
-{
 	"key": "alt+c",
 	"command": "-toggleSearchEditorCaseSensitive",
 	"when": "inSearchEditor && searchInputBoxFocus"
@@ -656,10 +647,6 @@
 	"command": "github.copilot.chat.explain"
 },
 {
-	"key": "ctrl+shift+a",
-	"command": "workbench.view.search"
-},
-{
 	"key": "ctrl+shift+j",
 	"command": "command-runner.run",
 	"args": {
@@ -676,5 +663,33 @@
 	"args": {
 		"command": "jn",
 	}
+},
+{
+	"key": "ctrl+shift+a",
+	"command": "workbench.view.extension.gitlensInspect"
+},
+{
+	"key": "ctrl+alt+p",
+	"command": "copyFilePath",
+	"when": "!editorFocus"
+},
+{
+	"key": "shift+alt+c",
+	"command": "-copyFilePath",
+	"when": "!editorFocus"
+},
+{
+	"key": "ctrl+alt+p",
+	"command": "copyFilePath",
+	"when": "editorFocus"
+},
+{
+	"key": "shift+alt+c",
+	"command": "-copyFilePath",
+	"when": "editorFocus"
+},
+{
+	"key": "ctrl+b q",
+	"command": "workbench.action.closeUnmodifiedEditors"
 }
 ]

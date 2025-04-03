@@ -523,10 +523,10 @@
     // refer to https://marketplace.visualstudio.com/items?itemName=edonet.vscode-command-runner
     // ${workspaceFolder}: activated workspace folder path
     "command-runner.terminal.name": "Command Runner Terminal",
-    "command-runner.terminal.autoClear": true,
+    "command-runner.terminal.autoClear": false,
     "command-runner.terminal.autoFocus": true,
     "command-runner.commands": {
-        "jr": "cd ${workspaceFolder}; jr \"${selectedText}\"",
-        "jn": "cd ${workspaceFolder}; jn \"${selectedText}\"",
+        "jr": "cd ${workspaceFolder}; jr '${selectedText}'",
+        "jn": "cd ${workspaceFolder}; jn '${selectedText}'",
     },
 }

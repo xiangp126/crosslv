@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2155
 # set -x
 
 # Constants
@@ -9,15 +10,17 @@ fWKDir=$(cd $(dirname $0); pwd)
 fTKFilesDir=$fWKDir/track-files
 fTKCompSrc=$fWKDir/completion-files
 fTKCompDst=$HOME/.bash_completion.d
-fTKVimColorsDir=$fWKDir/vim-colors
-fTntTempDir=$fWKDir/template
-fTntToolsDir=$fWKDir/ftnt-tools
+fTKVimColorsDir=$fWKDir/assets/vim-colors
+fTKBatThemeDir=$fWKDir/assets/bat-themes
+fTemplateDir=$fWKDir/template
+fToolsDir=$fWKDir/ftnt-tools
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
 fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
 fBatThemeDir=$HOME/.config/bat/themes
-fOSCategory=debian # ubuntu is the default OS type
-fInsTools=
+fBackupDir="$HOME/Public/env.bak"
+fOSCategory=debian # ubuntu/debian is the default OS type
+fInstallTools=
 fForceUpdate=
 # Colors
 CYAN='\033[36m'
@@ -70,7 +73,7 @@ parseOptions() {
     while true; do
         case "$1" in
             -t|--tools)
-                fInsTools=true
+                fInstallTools=true
                 shift
                 ;;
             -u|--update)
@@ -272,50 +275,66 @@ followUpTKExceptions() {
     fi
 }
 
+# linkFile: Creates a symbolic link for a file to a specified destination (dir).
+#
+# Usage:
+#   linkFile /path/to/file /path/to/destination/dir
+#   e.g., linkFile ~/myfile.txt /data/backup
+#
+# Arguments:
+#   $1 - Source file path
+#   $2 - Destination directory path
+#   $3 - Prefix for destination filename. Exp: . for hidden files
+#
+# Returns:
+#   0 if successful, 1 if already linked, 2 if source file does not exist
+# ln [OPTION] TARGET LINK_NAME
+linkFile() {
+    local target="$1"           # The target to link
+    local linkPath="$2"         # Destination directory to link to
+    local linknamePrefix="$3"   # Prefix for destination filename. Exp: . for hidden files
+
+    [ ! -d "$linkPath" ] && echo "Destination directory $linkPath does not exist, abort!" && exit 1
+    local filename=$(basename "$target")
+    local linkedFileName="${linknamePrefix}${filename}"
+    local src="$target"
+    local dst="$linkPath/${linkedFileName}"
+
+    echo -e "${COLOR}Creating symlink${RESET}: $linkedFileName -> $src"
+
+    [ ! -f "$target" ] && echo "Source file $target does not exist, abort!" && exit 1
+    if [ -f "$dst" ] && [ ! -L "$dst" ]; then
+        [ ! -d "$fBackupDir" ] && mkdir -p "$fBackupDir"
+        echo -e "${BLUE}Warning: $dst is not a link, backing it up to $fBackupDir${RESET}"
+        mv "$dst" "$fBackupDir/${filename}.bak"
+    fi
+
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$src" ]; then
+        echo -e "${GREY}${filename} is already well linked.${RESET}"
+        return 1
+    fi
+
+    ln -sf "$target" "$dst"
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Success!${RESET}"
+    else
+        echo -e "${RED}Failed!${RESET}"
+        exit 2
+    fi
+}
+
 # ln [OPTION] TARGET LINK_NAME
 linkFiles() {
-    local targetDir="$1"      # Source directory
-    local linkPath="$2"       # Destination directory
-    local needHide="$3"       # Copy to hidden file
-    local backupDir="$4"      # Optional backup directory
-    local linknamePrefix=""   # Prefix for destination filename
+    local targetDir="$1"        # Source directory
+    local linkPath="$2"         # Destination directory
+    local linknamePrefix="$3"   # Prefix for destination filename. Exp: . for hidden files
 
-    echo -e "${COLOR}Creating symlink: ${linkPath}/* -> $(basename "$targetDir")/*${RESET}"
+    echo -e "${LIGHTYELLOW}Creating symlink: ${linkPath}/* -> $(basename "$targetDir")/*${RESET}"
     [ ! -d "$targetDir" ] && echo "Source directory $targetDir does not exist, abort!" && exit 1
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
-    [ -n "$backupDir" ] && [ ! -d "$backupDir" ] && mkdir -p "$backupDir"
-    [ -n "$needHide" ] && linknamePrefix="."
 
-    # Iterate over files in the source directory
     for file in "$targetDir"/*; do
-        # shellcheck disable=SC2155
-        local filename=$(basename "$file")
-        local src="$targetDir/$filename"
-        local dst="$linkPath/${linknamePrefix}$filename"
-
-        # echo -e "Linking ${COLOR}$filename${RESET} => $dst"
-        echo -e "${GREY}$dst -> $filename${RESET}"
-
-        # If target exists in the destination as a regular file (not a symlink), back it up first
-        if [ -n "$backupDir" ] && [ -f "$dst" ] && [ ! -L "$dst" ]; then
-            echo "$dst is not a link, backing it up to $backupDir"
-            mv "$dst" "$backupDir/$filename.bak"
-        fi
-
-        # If the symlink already exists and points to the correct location, skip it
-        if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$src" ]; then
-            echo -e "${GREY}$dst is already linked.${RESET}"
-            continue
-        fi
-
-        # Create or update the symbolic link
-        ln -sf "$src" "$dst"
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}Success!${RESET}"
-        else
-            echo -e "${RED}Failed!${RESET}"
-            exit 1
-        fi
+        linkFile "$file" "$linkPath" "$linknamePrefix"
     done
 
     if [ "$linkPath" == "$HOME" ]; then
@@ -330,34 +349,22 @@ linkFiles() {
     COLOR=$MAGENTA
 }
 
+# relinkCommand: Creates a symbolic link for a system command with a new name in new path.
+#
+# Usage:
+#   relinkCommand <sysCmd> <linkName> [linkPath]
+#   e.g., relinkCommand batcat bat
+#
+#   ~/.usr/bin/bat -> /bin/batcat
+#
+# Arguments:
+#   $1 - System command to link
+#   $2 - Link name (new name)
+#   $3 - Optional destination directory path (new path, default: $HOME/.usr/bin)
+#
+# Returns:
+#   0 if successful, 1 if already linked, 2 if system command does not exist
 # ln [OPTION] TARGET LINK_NAME
-linkFile() {
-    local target="$1"       # The target to link
-    local linkPath="$2"     # Destination directory to link to
-
-    # shellcheck disable=SC2155
-    local filename=$(basename "$target")
-    local dst="$linkPath/$filename"
-    local src="$target"
-
-    echo -e "${COLOR}Creating symlink: $filename -> $src${RESET}"
-    [ ! -f "$target" ] && echo "Source file $target does not exist, abort!" && exit 1
-    [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
-
-    if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$src" ]; then
-        echo -e "${GREY}${filename} is already linked to ${src}${RESET}"
-        return 1
-    fi
-
-    ln -sf "$target" "$dst"
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Success!${RESET}"
-    else
-        echo -e "${RED}Failed!${RESET}"
-        exit 1
-    fi
-}
-
 relinkCommand() {
     local sysCmd=$1
     local linkName=$2
@@ -369,13 +376,13 @@ relinkCommand() {
     sysCmdPath=$(command -v "$sysCmd")
     if [ -z "$sysCmdPath" ]; then
         echo "${sysCmd} is not installed"
-        return
+        return 2
     fi
 
     echo -e "${COLOR}Creating symlink: ${linkName} -> syscmd: ${sysCmdPath}${RESET}"
     if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$sysCmdPath" ]; then
         echo -e "${GREY}${linkName} is already linked to ${sysCmdPath}${RESET}"
-        return
+        return 1
     fi
 
     # Create the symlink
@@ -384,14 +391,16 @@ relinkCommand() {
         echo -e "${GREEN}Success!${RESET}"
     else
         echo -e "${RED}Failed!${RESET}"
-        exit 1
+        exit 2
     fi
 }
 
 buildBatTheme() {
-    echo -e "${COLOR}Building bat theme${RESET}"
+    # https://github.com/sharkdp/bat/tree/master/assets/themes
+    echo -e "${LIGHTYELLOW}Building bat theme${RESET}"
     local theme="TwoDark.tmTheme"
-    local target=$fTKCompSrc/"$theme"
+    local target=$fTKBatThemeDir/$theme
+    [ ! -d "$fBatThemeDir" ] && mkdir -p "$fBatThemeDir"
     linkFile "$target" "$fBatThemeDir"
     if [ $? -eq 1 ]; then
         return
@@ -441,13 +450,13 @@ checkSudoPrivilege() {
 }
 
 performLinkingFiles() {
-    linkFiles "$fTKFilesDir" "$HOME" 1 "$HOME/Public/.env.bak"
+    linkFiles "$fTKFilesDir" "$HOME" "."
     linkFiles "$fTKCompSrc" "$fTKCompDst"
     linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
     if [[ "$fOSCategory" != "mac" ]]; then
-        if [ -n "$fInsTools" ]; then
-            linkFiles "$fTntToolsDir" "$HOME/.usr/bin"
-            linkFiles "$fTntTempDir" "$HOME/Templates"
+        if [ -n "$fInstallTools" ]; then
+            linkFiles "$fToolsDir" "$HOME/.usr/bin"
+            linkFiles "$fTemplateDir" "$HOME/Templates"
         fi
         linkFile "$fzfTabCompPath" "$fTKCompDst"
         linkFile "$fzfBinPath" "$HOME/.usr/bin"
