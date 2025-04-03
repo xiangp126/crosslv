@@ -9,7 +9,7 @@ SCRIPT_NAME=$(basename $0)
 fWKDir=$(cd $(dirname $0); pwd)
 # Tracked
 fTKFilesDir=$fWKDir/track-files
-fTKCompDir=$fWKDir/completion-files
+fTKCompDir=$fWKDir/completion
 fTKVimColorsDir=$fWKDir/assets/vim-colors
 fTKBatThemeDir=$fWKDir/assets/bat-themes
 fTKFontDir=$fWKDir/assets/fonts
@@ -441,7 +441,7 @@ buildExtraFonts() {
         local fontFile=$(basename "$font")
         local fontExists=$(fc-list | grep -i "$fontFile")
         if [ -n "$fontExists" ]; then
-            echo -e "${GREY}Font $fontFile already exists in system, skip${RESET}"
+            echo -e "${GREY}Font $fontFile already exists in system.${RESET}"
             continue
         fi
 
@@ -452,8 +452,8 @@ buildExtraFonts() {
         needBuild=true
     done
 
-    echo -e "${COLOR}Building font cache...${RESET}"
     [ -z "$needBuild" ] && return
+    echo -e "${COLOR}Building font cache...${RESET}"
     sudo fc-cache -fv
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
@@ -467,7 +467,7 @@ changeTMOUTToWritable() {
     echo -e "${COLOR}Changing TMOUT to writable${RESET}"
     # TMOUT is readonly in /etc/profile, change it to writable so that we can unset it in .bashrc
     if ! grep -q "TMOUT" /etc/profile; then
-        echo "TMOUT is not found in /etc/profile, skip"
+        echo "TMOUT is not found in /etc/profile."
         return
     fi
 
