@@ -43,7 +43,7 @@ Example: $SCRIPTNAME
          $SCRIPTNAME --log /var/log/messages
 
 _EOF
-    exit 1
+    exit 0
 }
 
 parseOptions() {

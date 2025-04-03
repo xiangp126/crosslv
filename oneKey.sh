@@ -15,6 +15,7 @@ fTntToolsDir=$fWKDir/ftnt-tools
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
 fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
+fBatThemeDir=$HOME/.config/bat/themes
 fOSCategory=debian # ubuntu is the default OS type
 fInsTools=
 fForceUpdate=
@@ -293,7 +294,7 @@ linkFiles() {
         local dst="$linkPath/${linknamePrefix}$filename"
 
         # echo -e "Linking ${COLOR}$filename${RESET} => $dst"
-        echo -e "${LIGHTYELLOW}$dst -> $filename${RESET}"
+        echo -e "${GREY}$dst -> $filename${RESET}"
 
         # If target exists in the destination as a regular file (not a symlink), back it up first
         if [ -n "$backupDir" ] && [ -f "$dst" ] && [ ! -L "$dst" ]; then
@@ -345,7 +346,7 @@ linkFile() {
 
     if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$src" ]; then
         echo -e "${GREY}${filename} is already linked to ${src}${RESET}"
-        return
+        return 1
     fi
 
     ln -sf "$target" "$dst"
@@ -379,6 +380,23 @@ relinkCommand() {
 
     # Create the symlink
     ln -sf "$sysCmdPath" "$dst"
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Success!${RESET}"
+    else
+        echo -e "${RED}Failed!${RESET}"
+        exit 1
+    fi
+}
+
+buildBatTheme() {
+    echo -e "${COLOR}Building bat theme${RESET}"
+    local theme="TwoDark.tmTheme"
+    local target=$fTKCompSrc/"$theme"
+    linkFile "$target" "$fBatThemeDir"
+    if [ $? -eq 1 ]; then
+        return
+    fi
+    bat cache --build
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
     else
@@ -450,6 +468,7 @@ main() {
         performLinkingFiles
         updateVimPlugins
         performRelinkingCmds
+        buildBatTheme
         followUpTKExceptions
         setTimeZone
         changeTMOUTToWritable
@@ -457,6 +476,7 @@ main() {
         # [ -n "$fForceUpdate" ] && installPrequesitesForMac
         performLinkingFiles
         updateVimPlugins
+        buildBatTheme
     fi
 }
 

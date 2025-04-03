@@ -38,14 +38,12 @@ stty -ixon
 export LS_COLORS=$LS_COLORS:'ex=0;0:ln=36:di=34'
 
 if [[ $(uname -s) == 'Darwin' ]]; then
-    # Compatible with Mac
-    alias ls='ls -G'
+    alias ls='ls -G' # Compatible with Mac
     # alias netstat='netstat -an -p tcp'
 else
     # Linux
     alias ls='ls --color=auto'
     alias dir='dir --color=auto'
-    # alias vdir='vdir --color=auto'
     # alias netstat='netstat -tuanp'
 fi
 alias ll='ls -lF'
@@ -54,24 +52,16 @@ alias rm='rm -i'
 alias mv='mv -i'
 alias cp='cp -i'
 alias grep='grep -i --color=auto'
-# alias fgrep='fgrep --color=auto'
-# alias egrep='egrep --color=auto'
 alias gdb='gdb -q'
-# alias bat="bat --pager 'less -iRF'"
 # alias valgrind='valgrind --tool=memcheck --leak-check=full --show-reachable=yes'
 alias rg='rg --smart-case --color=ansi'
-alias 7zP='7z a -mhe=on -p'
-alias 7zA='7z a'
-alias 7zX='7z x'
+# alias 7zP='7z a -mhe=on -p'
+# alias 7zA='7z a'
+# alias 7zX='7z x'
 alias tmux='tmux -u'
 alias yt-dlp='yt-dlp --verbose'
 alias youtube-dl='yt-dlp --external-downloader aria2c --external-downloader-args "-x 16 -s 16" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --write-auto-subs --sub-langs zh-Hans'
-# Dump the raw packet data
-alias pktdump='tcpdump -s 0 -U -n'
-alias rawdump='tcpdump -s 0 -U -n -w -'
 alias rsync='rsync -azPv'
-# pathOfLibear=$(locate libear.so | grep -m 1 libear.so)
-alias bear='bear -l /usr/lib/x86_64-linux-gnu/bear/libear.so'
 alias jn='jr --no-clipboard'
 # alias to change directory
 function __cd () {
@@ -193,7 +183,7 @@ FZF_DEFAULT_OPTS="--layout=reverse \
                   --color=fg+:247 \
                   --multi \
                   --style default \
-                  --tmux center,95%,80% \
+                  --tmux center,90%,80% \
                   "
 FZF_DEFAULT_OPTS=${FZF_DEFAULT_OPTS//+([[:space:]])/ }
 export FZF_DEFAULT_OPTS
