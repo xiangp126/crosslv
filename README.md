@@ -295,7 +295,7 @@ Current pointers:
 ```
 
 <a id="completion"></a>
-#### [completion](./completion-files)
+#### [completion](./completion)
 All the bash completion scripts for the above tools are under this directory. You can source them in your `.bashrc` or `.bash_profile` to enable auto-completion for the tools.
 
 ### License
