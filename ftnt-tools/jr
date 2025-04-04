@@ -7,13 +7,13 @@ fDebug=
 fRgOnly=
 fEditor="code"
 fCheckDepends=
-fNoClipboard=
 fzfSelected=
 fRegularMatch=
+fNoClipboard=
+fQueryFromClipboard=
 fKernelIncluded=  # Include the linux kernel source code in the search
 # Constants
 SCRIPTNAME=$(basename $0)
-SEPARATOR="----------------------------------------------------"
 USER_NOTATION="@@@@"
 # Colors
 MAGENTA='\033[35m'
@@ -148,12 +148,16 @@ GetClipboardContent() {
     if [ -z "$fQuery" ] && [ -n "$DISPLAY" ]; then
         # Get clipboard content, remove newlines, and clear the clipboard
         fQuery=$(xsel -o -p 2> /dev/null)
-        if [ -n "$fQuery" ]; then
-            xsel -c -p 2> /dev/null
-            if [[ $? -ne 0 ]]; then
-                echo -e "${COLOR}Error: Failed to clear PRIMARY clipboard content${RESET}"
-                exit 1
-            fi
+        [ -n "$fQuery" ] && fQueryFromClipboard=true
+    fi
+}
+
+ClearClipboard() {
+    if [ -n "$fQueryFromClipboard" ]; then
+        xsel -c -p 2> /dev/null
+        if [[ $? -ne 0 ]]; then
+            echo -e "${COLOR}Error: Failed to clear PRIMARY clipboard content${RESET}"
+            exit 1
         fi
     fi
 }
@@ -206,7 +210,6 @@ fuzzySearch() {
     rgParams+=("${fQuery:-.}")
     [ -n "$fQuery" ] && fzfParams+=("--query" "${fQuery}")
 
-    [ -n "$fDebug" ] && set -x
     if [ -n "$fRgOnly" ]; then
         rg "${rgParams[@]}"
         exit 0
@@ -214,7 +217,6 @@ fuzzySearch() {
 
     # Unified search and selection
     fzfSelected=$(rg "${rgParams[@]}" | FZF_DEFAULT_OPTS="" fzf "${fzfParams[@]}")
-    [ -n "$fDebug" ] && set +x
 
     if [ -z "$fzfSelected" ]; then
         [ -n "$fQuery" ] && echo -e "No result found or selected for query: ${COLOR}$fQuery${RESET}" >&2
@@ -234,35 +236,25 @@ fuzzySearch() {
         echo -e "${COLOR}Error: The result is in unexpected format${RESET}"
         exit 1
     fi
-
-    # Escape spaces in filepath
-    filepath=${filepath// /\\ }
-
-    if [ -n "$fDebug" ]; then
-        echo -e "filepath:   ${COLOR}$filepath${RESET}"
-        echo -e "linenumber: ${COLOR}$linenumber${RESET}"
-        echo $SEPARATOR
-    fi
+    filepath=${filepath// /\\ } # Escape spaces in filepath
 
     if [[ "$fEditor" == "vim" ]]; then
         eval vim +"$linenumber" "$filepath"
     else
         eval "$fEditor" "$filepath":"$linenumber"
     fi
+
+    echo -e "Line opened: ${COLOR}${fzfSelected:0:80}${RESET}"
 }
 
 main() {
     parseOptions "$@"
+    [ -n "$fDebug" ] && set -x
     [ -n "$fCheckDepends" ] && checkDepends
     [ -z "$fNoClipboard" ]  && GetClipboardContent
     [ -z "$fRegularMatch" ] && polishQuery
     fuzzySearch
-
-    if [ -n "$fzfSelected" ];
-    then
-        # echo -e "Query: ${COLOR}${fQuery}${RESET}"
-        echo -en "Line opened: ${COLOR}${fzfSelected:0:80}${RESET}"
-    fi
+    [ -z "$fNoClipboard" ] && ClearClipboard
 }
 
 main "$@"
