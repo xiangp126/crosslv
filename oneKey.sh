@@ -3,8 +3,8 @@
 # set -x
 
 # Constants
-SCRIPT_NAME=$(basename $0)
 # USER_NOTATION="@@@@"
+SCRIPT_NAME=$(basename $0)
 # Variables
 fWKDir=$(cd $(dirname $0); pwd)
 # Tracked
@@ -19,6 +19,7 @@ fTKToolsDir=$fWKDir/ftnt-tools
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
+# A fzf plugin: fzf-tab-completion
 fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
 fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
@@ -286,33 +287,33 @@ followUpTKExceptions() {
 # Arguments:
 #   $1 - Source file
 #   $2 - Destination directory path to link to
-#   $3 - Prefix for destination filename. Exp: . for hidden files
+#   $3 - New link name (optional, default: as is)
 #
 # Returns:
 #   0 if successful, 1 if already linked, 2 if source file does not exist
 # ln [OPTION] TARGET LINK_NAME
 linkFile() {
-    local target="$1"           # The target to link
-    local linkPath="$2"         # Destination directory to link to
-    local linknamePrefix="$3"   # Prefix for destination filename. Exp: . for hidden files
+    local target="$1"      # The target to link
+    local linkPath="$2"    # Destination directory to link to
+    local newLinkName="$3" # New link name (optional, default: as is)
 
     [ ! -d "$linkPath" ] && echo "Destination directory $linkPath does not exist, abort!" && exit 1
     local filename=$(basename "$target")
-    local linkedFileName="${linknamePrefix}${filename}"
+    local linkName=${newLinkName:-$filename}
     local src="$target"
-    local dst="$linkPath/${linkedFileName}"
+    local dst="$linkPath/${linkName}"
 
-    echo -e "${COLOR}Creating symlink${RESET}: $linkedFileName -> $src"
+    echo -e "${COLOR}Creating symlink${RESET}: ${linkName} -> $src"
 
     [ ! -f "$target" ] && echo "Source file $target does not exist, abort!" && exit 1
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
         [ ! -d "$fBackupDir" ] && mkdir -p "$fBackupDir"
         echo -e "${BLUE}Warning: $dst is not a link, backing it up to $fBackupDir${RESET}"
-        mv "$dst" "$fBackupDir/${filename}.bak"
+        mv "$dst" "$fBackupDir/${linkName}.bak"
     fi
 
     if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$src" ]; then
-        echo -e "${GREY}${filename} is already well linked.${RESET}"
+        echo -e "${GREY}${linkName} is already well linked.${RESET}"
         return 1
     fi
 
@@ -325,6 +326,19 @@ linkFile() {
     fi
 }
 
+# linkFiles: Creates symbolic links for all files in a source directory to a specified destination directory.
+#
+# Usage:
+#   linkFiles /path/to/source/dir /path/to/destination/dir [linknamePrefix]
+#   e.g., linkFiles ~/mydir /data/backup
+#
+# Arguments:
+#   $1 - Source directory
+#   $2 - Destination directory path to link to
+#   $3 - Prefix for destination filename (optional, Exp: . for hidden files)
+#
+# Returns:
+#   0 if successful, 1 if already linked, 2 if source directory does not exist
 # ln [OPTION] TARGET LINK_NAME
 linkFiles() {
     local targetDir="$1"        # Source directory
@@ -336,7 +350,7 @@ linkFiles() {
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
 
     for file in "$targetDir"/*; do
-        linkFile "$file" "$linkPath" "$linknamePrefix"
+        linkFile "$file" "$linkPath" "${linknamePrefix}$(basename "$file")"
     done
 
     if [ "$linkPath" == "$HOME" ]; then
@@ -506,7 +520,7 @@ performLinkingFiles() {
             linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
             linkFiles "$fTKtemplateDir" "$HOME/Templates"
         fi
-        linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d"
+        linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
         linkFile "$fzfBinPath" "$HOME/.usr/bin"
     fi
 }

@@ -177,13 +177,13 @@ if command -v fd &> /dev/null; then
     }
 fi
 export LINES=100
-export FZF_TMUX_HEIGHT=50%
+export FZF_TMUX_HEIGHT=60%
 FZF_DEFAULT_OPTS="--layout=reverse \
                   --inline-info \
                   --color=fg+:247 \
                   --multi \
                   --style default \
-                  --tmux center,90%,80% \
+                  --tmux center,95%,80% \
                   "
 FZF_DEFAULT_OPTS=${FZF_DEFAULT_OPTS//+([[:space:]])/ }
 export FZF_DEFAULT_OPTS
@@ -193,4 +193,5 @@ export FZF_COMPLETION_TRIGGER='\'
 export FZF_COMPLETION_OPTS='+c -x'
 
 # For fzf-tab-completion vim plugin
+bind -r "*\t"
 bind -x '"*\t": fzf_bash_completion'

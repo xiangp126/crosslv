@@ -202,7 +202,7 @@ fuzzySearch() {
     )
 
     [ -z "$fKernelIncluded" ] && rgParams+=("--glob" "!linux-*/*")
-    [ -z "$fRegularMatch" ]   && rgParams+=("--fixed-strings")
+    [ -z "$fRegularMatch" ] && [ -n "$fQuery" ] && rgParams+=("--fixed-strings")
     rgParams+=("${fQuery:-.}")
     [ -n "$fQuery" ] && fzfParams+=("--query" "${fQuery}")
 
@@ -261,7 +261,7 @@ main() {
     if [ -n "$fzfSelected" ];
     then
         # echo -e "Query: ${COLOR}${fQuery}${RESET}"
-        echo -e "Line opened: ${COLOR}${fzfSelected:0:80}${RESET}"
+        echo -en "Line opened: ${COLOR}${fzfSelected:0:80}${RESET}"
     fi
 }
 
