@@ -8,7 +8,7 @@ fRgOnly=
 fEditor="code"
 fCheckDepends=
 fzfSelected=
-fRegularMatch=
+fREMatch=
 fNoClipboard=
 fQueryFromClipboard=
 fKernelIncluded=  # Include the linux kernel source code in the search
@@ -37,14 +37,14 @@ This script requires the following dependencies:
 Run this script with the --check-depends option to check if these dependencies are installed.
 
 Options:
-    -h, --help               Print this help message
-    -r, --rg-only            Only use rg to search, not use fzf
     -k, --kernel             Include the linux kernel source code in the search
     -v, --vim                Open the file with vim (default is $fEditor)
     -c, --check-depends      Check if dependencies are installed
     -n, --no-clipboard       Do not use clipboard content as the search term
-    --regular-match          Use regular expressions for matching (default is fixed strings)
     -d, --debug              Print debug information
+    --rg-only                Only use rg to search, not use fzf
+    --re-match               Use regular expressions for matching (default is fixed strings)
+    -h, --help               Print this help message
 
 Example: $SCRIPTNAME wad_tcp_bind
          $SCRIPTNAME --kernel
@@ -56,7 +56,7 @@ _EOF
 parseOptions() {
     # Define short and long options
     SHORTOPTS="hvdkcn"
-    LONGOPTS="help,vim,debug,kernel,rg-only,check-depends,no-clipboard,regular-match"
+    LONGOPTS="help,vim,debug,kernel,rg-only,check-depends,no-clipboard,re-match"
 
     # Use getopt to parse command-line options
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -93,8 +93,8 @@ parseOptions() {
                 fNoClipboard=true
                 shift
                 ;;
-            --regular-match)
-                fRegularMatch=true
+            --re-match)
+                fREMatch=true
                 shift
                 ;;
             --rg-only)
@@ -169,11 +169,13 @@ polishQuery() {
     fQuery="${fQuery%"${fQuery##*[![:space:]]}"}" # Right trim
     [ -z "$fQuery" ] && return
     # Round 2
-    fQuery="${fQuery:0:60}"       # Truncate to max 50 characters
-    fQuery="${fQuery//[&!;<\\]/}" # Remove special characters
-    fQuery="${fQuery%>}"          # Remove trailing '>' if present
-    fQuery="${fQuery%:[0-9]*}"    # Remove trailing colon and numbers
-    fQuery="${fQuery#func=}"      # Remove leading 'func=' if present
+    fQuery="${fQuery:0:60}"    # Truncate to max 50 characters
+    fQuery="${fQuery#!}"       # Remove leading '!' or '&'
+    fQuery="${fQuery#&}"       # Remove leading '!' or '&'
+    fQuery="${fQuery#func=}"   # Remove leading 'func=' if present
+    fQuery="${fQuery//[<\\]/}" # Remove other special characters
+    fQuery="${fQuery%;>]}"     # Remove trailing ';' or '>' if present
+    fQuery="${fQuery%:[0-9]*}" # Remove trailing colon and numbers
 }
 
 fuzzySearch() {
@@ -206,9 +208,10 @@ fuzzySearch() {
     )
 
     [ -z "$fKernelIncluded" ] && rgParams+=("--glob" "!linux-*/*")
-    [ -z "$fRegularMatch" ] && [ -n "$fQuery" ] && rgParams+=("--fixed-strings")
+    [ -z "$fREMatch" ] && [ -n "$fQuery" ] && rgParams+=("--fixed-strings")
+    [ -z "$fREMatch" ] && fzfParams+=("--no-extended")
     rgParams+=("${fQuery:-.}")
-    [ -n "$fQuery" ] && fzfParams+=("--query" "${fQuery}")
+    fzfParams+=("--query" "${fQuery}")
 
     if [ -n "$fRgOnly" ]; then
         rg "${rgParams[@]}"
@@ -252,7 +255,7 @@ main() {
     [ -n "$fDebug" ] && set -x
     [ -n "$fCheckDepends" ] && checkDepends
     [ -z "$fNoClipboard" ]  && GetClipboardContent
-    [ -z "$fRegularMatch" ] && polishQuery
+    [ -z "$fREMatch" ] && polishQuery
     fuzzySearch
     [ -z "$fNoClipboard" ] && ClearClipboard
 }
