@@ -15,7 +15,7 @@
     "editor.suggest.snippetsPreventQuickSuggestions": false,
     "git.openRepositoryInParentFolders": "never",
     "github.copilot.enable": {
-        "*": true,
+        "*": false,
         "plaintext": true,
         "markdown": true,
         "scminput": false,
@@ -509,7 +509,6 @@
     "gitlens.ai.model": "vscode",
     "gitlens.ai.vscode.model": "copilot:gpt-4",
     "editor.minimap.enabled": false,
-    "leetcode.workspaceFolder": "/home/xiangp/myGit/leetcode",
     "leetcode.defaultLanguage": "cpp",
     "markdown.preview.fontSize": 16,
     "github.copilot.selectedCompletionModel": "gpt-4o-copilot",
@@ -529,4 +528,6 @@
         "jr": "cd ${workspaceFolder}; jr '${selectedText}'",
         "jn": "cd ${workspaceFolder}; jn '${selectedText}'",
     },
+    "leetcode.workspaceFolder": "/home/xiangp/myGit/leetcode",
+    "chat.agent.enabled": true,
 }
