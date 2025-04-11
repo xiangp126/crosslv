@@ -1,75 +1,95 @@
 #!/bin/bash
 # set -x
 
-fNumOfCodePaths=
-fCodePaths=
+fForceSearch=
+fDebug=
+fArgs=("--goto")
+SCRIPTNAME=$(basename $0)
 MAGENTA='\033[0;35m'
 RESET='\033[0m'
 
-searchAndParse() {
-    local paths
-    findCmd="find $HOME/.vscode-server/cli -type f -name code -executable"
-    paths=$($findCmd)
-    if [[ -z $paths ]]; then
-        echo -e "${MAGENTA}Error: No code binary found in $HOME/.vscode-server/cli${RESET}"
-        exit 1
-    fi
-    # Originally, codePaths contains only one element joined by \n;
-    # It needs to be split into two separate elements.
-    # /home/userid/.vscode-server/bin/fee1edb8d6d72a0ddff41e5f71a671c23ed924b9/bin/remote-cli/code
-    # /home/userid/.vscode-server/bin/b1c0a14de1414fcdaa400695b4db1c0799bc3124/bin/remote-cli/code
-    IFS=$'\n' read -d '' -r -a fCodePaths <<< "$paths"
-    fNumOfCodePaths=${#fCodePaths[@]}
-    for i in "${!fCodePaths[@]}"
-    do
-        version=$(${fCodePaths[$i]} --version | head -n 1 | awk '{print $1}')
-        versionMap[$i]=$version
-    done
-}
+usage() {
+    cat << EOF
+Usage: $SCRIPTNAME [options] <args>
 
-printPathInfo () {
-    for i in "${!fCodePaths[@]}"
-    do
-        echo "${versionMap[$i]} : ${fCodePaths[$i]}"
-    done
-}
-
-function fcode() {
+Description:
+    A wrapper script for the VS Code server CLI.
+    It finds the VS Code server CLI binary and set the correct IPC socket.
+    The reason for this script is to avoid the bug which has never been fixed by Microsoft:
     # Unable to connect to VS Code server: Error in request - ENOENT /run/user/1000/vscode-ipc-*.sock
-    # https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
-    # https://github.com/microsoft/vscode-remote-release/issues/6362#issuecomment-1046458477
+    https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
+    https://github.com/microsoft/vscode-remote-release/issues/6362#issuecomment-1046458477
 
-    if [[ $fNumOfCodePaths -eq 0 ]]
-    then
-        echo "Error: No vscode code command found"
-        exit 1
-    elif [[ $fNumOfCodePaths -gt 1 ]]
-    then
-        echo -e "${MAGENTA}Error: More than one vscode code command found, please delete the older version(s) and try again.${RESET}"
-        printPathInfo
-        exit 1
-    fi
+Options:
+    -h, --help      Show this help message and exit
+    -f, --force     Force search for the code binary, ignoring \$VSCODE_BIN_PATH
+    -d, --debug     Enable debug mode (set -x)
 
-    local code syspath
-    code=${fCodePaths[0]}
-    syspath="/run/user/$UID"
-    # Get the latest vscode-ipc-*.sock file
-    new_IPC_HOOK=$(ls -t ${syspath}/vscode-ipc-*.sock | head -1)
-    if [[ -z $new_IPC_HOOK ]]
-    then
-        echo "Error: vscode-ipc-*.sock file not found";
-        exit 1
-    fi
+Example: $SCRIPTNAME --force
+         $SCRIPTNAME -d
+         $SCRIPTNAME -h
 
-    # Remove vscode-ipc-*.sock files except the latest one
-    # Cos a new vscode-ipc-*.sock file is created every time the vscode window is relaunched
-    find /run/user/$UID -maxdepth 1 -type s -name "vscode-ipc-*" ! -wholename "$new_IPC_HOOK" -delete
-
-    # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
-    export VSCODE_IPC_HOOK_CLI=$new_IPC_HOOK
-
-    $code "$@"
+EOF
+    exit 0
 }
 
-searchAndParse
-fcode -g "$@"
+parseOptions() {
+    SHORTOPTS="hfdv"
+    LONGOPTS="help,force,debug,version"
+    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+        echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
+        exit 1
+    fi
+    eval set -- "$PARSED"
+    while true; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            -d|--debug)
+                fDebug=true
+                shift
+                ;;
+            -f|--force)
+                fForceSearch=true
+                shift
+                ;;
+            -v|--version)
+                fArgs+=("--version")
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "${MAGENTA}Invalid option: $1${RESET}" >&2
+                exit 1
+        esac
+    done
+    [ -n "$1" ] && fArgs+=("$1")
+}
+
+preCheck() {
+    if ! declare -F setCodePath > /dev/null; then
+        echo -e "${MAGENTA}Error: setCodePath function is not defined.${RESET}" >&2
+        exit 1
+    fi
+}
+
+main() {
+    preCheck
+    parseOptions "$@"
+    [ -n "$fDebug" ] && set -x
+    [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForceSearch" ] && setCodePath
+    for _ in {1..2}; do
+        "$VSCODE_BIN_PATH" "${fArgs[@]}"
+        if [[ $? -eq 0 ]]; then
+            break
+        else
+            setCodePath
+        fi
+    done
+}
+
+main "$@"

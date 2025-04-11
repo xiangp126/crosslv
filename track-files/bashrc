@@ -92,15 +92,58 @@ alias cdN='__cd /usr/local/nginx'
 export QUOTING_STYLE=literal
 # set theme for the bat(batcat) command
 export BAT_THEME=TwoDark
+# VSCode settings
+setCodePath() {
+    [ -z "$VSCODE_IPC_HOOK_CLI" ] && return
+    local paths searchDir count version syspath newIPCHooK
+    local -A map=()
+    local MAGENTA='\033[0;35m'
+    local LIGHTYELLOW='\033[93m'
+    local RESET='\033[0m'
+    syspath="/run/user/$UID"
+    searchDir="$HOME/.vscode-server/cli"
+
+    readarray -d '' paths < <(find "$searchDir" -type f -name code -executable -print0)
+    count=${#paths[@]}
+    if [[ $count -eq 0 ]]; then
+        echo -e "${MAGENTA}Error: No code binary found under $searchDir${RESET}" >&2
+    elif [[ $count -gt 1 ]]; then
+        echo -e "${LIGHTYELLOW}Error: Please remove the older versions of code.${RESET}" >&2
+        for path in "${paths[@]}"
+        do
+            version=$("$path" --version | head -n 1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+')
+            map["$path"]=$version
+        done
+        for path in "${!map[@]}"
+        do
+            echo -e "${MAGENTA}${map[$path]}${RESET} : $path"
+        done
+    fi
+
+    # Get the most recenely created/modified vscode-ipc-*.sock file
+    newIPCHooK=$(find "$syspath" -maxdepth 1 -type s -name 'vscode-ipc-*.sock' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
+    if [[ -z $newIPCHooK ]]
+    then
+        echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found in $syspath${RESET}" >&2
+    fi
+
+    # Remove unused vscode-ipc-*.sock files
+    find "$syspath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" ! -wholename "$newIPCHooK" -delete
+
+    # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
+    # But you have to remember that only the sub shell can see the new value.
+    export VSCODE_IPC_HOOK_CLI=$newIPCHooK
+    export VSCODE_BIN_PATH="${paths[0]}"
+}
+export -f setCodePath
 
 # Useful local variables.
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
 # export SHELL=/bin/bash
-export EDITOR=vim
-# Wireshark to decode SSL/TLS traffic
-export SSLKEYLOGFILE=~/.ssl-keys.log
+# export EDITOR=vim
+export SSLKEYLOGFILE=~/.ssl-keys.log # Wireshark to decode SSL/TLS traffic
 PKG_CONFIG_PATH=$HOME/.usr/lib/pkgconfig:/usr/local/lib/pkgconfig
 LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/local/lib:/usr/local/lib64
 LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/.usr/lib:$HOME/.usr/lib64
@@ -112,18 +155,10 @@ export PATH
 export PKG_CONFIG_PATH
 export LD_LIBRARY_PATH
 unset TMOUT
-# FOS variables.
-export FORTIPKG="$HOME/fortipkg"
-# export USESUDO=`which sudo`
-# alias build_tags='ctags -R --extra=+f --languages=C,+C++ --links=no;cscope -Rbqk'
-
-# Enable programmable completion features (you don't need to enable
-# this, if it's already enabled in /etc/bash.bashrc and /etc/profile
-# sources /etc/bash.bashrc).
+export FORTIPKG="$HOME/fortipkg" # FOS variables.
 if [ -f /etc/bash_completion ] && ! shopt -oq posix; then
     . /etc/bash_completion
 fi
-
 # find bash completion for third-party tools | only for Mac
 if [[ -d /usr/local/etc/bash_completion.d ]]; then
     for file in /usr/local/etc/bash_completion.d/*; do
@@ -131,10 +166,9 @@ if [[ -d /usr/local/etc/bash_completion.d ]]; then
         [[ -L $file ]] && . "$file"
     done
 fi
-
-extraCompletionDir="$HOME/.bash_completion.d"
-if [[ -d "$extraCompletionDir" ]]; then
-    for file in "$extraCompletionDir"/*; do
+trackedCompletionDir="$HOME/.bash_completion.d"
+if [[ -d "$trackedCompletionDir" ]]; then
+    for file in "$trackedCompletionDir"/*; do
         # shellcheck disable=SC1090
         [[ -f $file ]] && source "$file"
     done
@@ -195,3 +229,4 @@ export FZF_COMPLETION_OPTS='+c -x'
 # For fzf-tab-completion vim plugin
 bind -r "*\t"
 bind -x '"*\t": fzf_bash_completion'
+setCodePath

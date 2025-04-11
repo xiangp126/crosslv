@@ -2,12 +2,8 @@
 # shellcheck disable=SC2155
 # set -x
 
-# Constants
-# USER_NOTATION="@@@@"
-SCRIPT_NAME=$(basename $0)
-# Variables
+# Tracking directories
 fWKDir=$(cd $(dirname $0); pwd)
-# Tracked
 fTKFilesDir=$fWKDir/track-files
 fTKCompDir=$fWKDir/completion
 fTKVimColorsDir=$fWKDir/assets/vim-colors
@@ -25,6 +21,8 @@ fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
 fInstallTools=
 fForceUpdate=
+# Constants
+SCRIPT_NAME=$(basename $0)
 # Colors
 CYAN='\033[36m'
 RED='\033[31m'
