@@ -667,10 +667,10 @@ displayInfo() {
         ;;
     *)
         echo -e "${BOLD}Target Options:${RESET}" >&2
-        echo -e "[t] Set SSH Target Device to: ${COLOR}$fTarget${RESET}" >&2
         echo -e "[l] Set SSH Username to: ${COLOR}$fTargetUser${RESET}" >&2
         echo -e "[p] Set SSH Password to: ${COLOR}$fTargetPwd${RESET}" >&2
-        echo -e "[P] Set SSH Connection Port to: ${COLOR}$fTargetPort${RESET}" >&2
+        echo -e "[P] Set SSH Conn Port to: ${COLOR}$fTargetPort${RESET}" >&2
+        echo -e "[t] Set SSH Target Dev to: ${COLOR}$fTarget${RESET}" >&2
         if [ -n "$fVdom" ]; then
             echo -e "[v] Set FGT/FPX VDOM to: ${COLOR}$fVdom${RESET}" >&2
         fi
