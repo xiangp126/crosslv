@@ -146,7 +146,6 @@ checkDepends() {
 #    - Rarely used, mainly for legacy applications
 GetClipboardContent() {
     if [ -z "$fQuery" ] && [ -n "$DISPLAY" ]; then
-        # Get clipboard content, remove newlines, and clear the clipboard
         fQuery=$(xsel -o -p 2> /dev/null)
         [ -n "$fQuery" ] && fQueryFromClipboard=true
     fi

@@ -835,7 +835,7 @@ handleSpecialCases() {
     fi
 }
 
-performLogin() {
+loginViaExpect() {
     # expect -d -c "
     expect -c "
         # Define ANSI color codes with capitalized names
@@ -1088,7 +1088,7 @@ main() {
     makeSpawnCmd
     dumpTips
     handleSpecialCases
-    performLogin
+    loginViaExpect
 }
 
 main "$@"

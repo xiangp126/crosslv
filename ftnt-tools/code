@@ -20,6 +20,17 @@ Description:
     https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
     https://github.com/microsoft/vscode-remote-release/issues/6362#issuecomment-1046458477
 
+    Sample Error message:
+
+    Unable to connect to VS Code server: Error in request.
+    Error: connect ENOENT /run/user/1677703415/vscode-ipc-df98ad2d-40c7-4415-af75-e304c3269b89.sock
+        at PipeConnectWrap.afterConnect [as oncomplete] (node:net:1611:16) {
+      errno: -2,
+      code: 'ENOENT',
+      syscall: 'connect',
+      address: '/run/user/1677703415/vscode-ipc-df98ad2d-40c7-4415-af75-e304c3269b89.sock'
+    }
+
 Options:
     -h, --help      Show this help message and exit
     -f, --force     Force search for the code binary, ignoring \$VSCODE_BIN_PATH
@@ -124,11 +135,12 @@ main() {
     [ -n "$fDebug" ] && set -x
     [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForceSearchCodeBin" ] && setCodePath
     for _ in {1..2}; do
-        "$VSCODE_BIN_PATH" "${fArgs[@]}"
+        "$VSCODE_BIN_PATH" "${fArgs[@]}" 2>&1
         if [[ $? -eq 0 ]]; then
             break
         else
             setCodePath
+            # echo -e "${MAGENTA}source ~/.bashrc${RESET}"
         fi
     done
 }
