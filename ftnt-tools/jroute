@@ -19,7 +19,7 @@ BLUE='\033[34m'
 RESET='\033[0m'
 COLOR=$MAGENTA
 
-# Gateway IP mappings
+# Gateway IP mappings: -A to declare an associative array
 declare -A gatewayIPs=(
     ["fgt1"]="192.168.103.6"
     ["fgt2"]="192.168.103.1"
@@ -27,10 +27,10 @@ declare -A gatewayIPs=(
     ["fpx1"]="192.168.103.2"
     ["fpx2"]="192.168.103.3"
     ["fpx3"]="192.168.103.5"
-    ["host_br1"]="192.168.101.254"
-    ["host_br2"]="192.168.102.254"
-    ["host_br3"]="192.168.103.254"
-    ["host_router"]="172.16.67.1"
+    ["h_br1"]="192.168.101.254"
+    ["h_br2"]="192.168.102.254"
+    ["h_br3"]="192.168.103.254"
+    ["h_router"]="172.16.67.1"
 )
 
 # Create reverse mapping

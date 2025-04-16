@@ -479,12 +479,12 @@ changeTMOUTToWritable() {
     echo -e "${COLOR}Changing TMOUT to writable${RESET}"
     # TMOUT is readonly in /etc/profile, change it to writable so that we can unset it in .bashrc
     if ! grep -q "TMOUT" /etc/profile; then
-        echo "TMOUT is not found in /etc/profile."
+        echo -e "${GREY}TMOUT is not found in /etc/profile.${RESET}"
         return
     fi
 
     if grep -q "^readonly TMOUT" /etc/profile; then
-        echo "TMOUT is readonly in /etc/profile, change it to writable"
+        echo -e "${GREY}TMOUT is readonly in /etc/profile, change it to writable${RESET}"
     else
         echo -e "${GREY}TMOUT is already writable in /etc/profile${RESET}"
         return
