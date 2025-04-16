@@ -183,8 +183,9 @@ polishQuery() {
 }
 
 fuzzySearch() {
+    # rg options:
+    # --fixed-strings Treat the pattern as a literal string
     # '--glob' '*.{c,h,cpp,js,ts,py,html,css,sh,php}'
-    # rg: --fixed-strings Treat the pattern as a literal string
     local rgParams=(
         "--smart-case"
         "--color=ansi"
@@ -196,6 +197,12 @@ fuzzySearch() {
         "--glob" "!linux-3.2.16/*"
         "--glob" "!.git/*"
     )
+    # By default, fzf starts in extended-search mode, which allows multiple search terms separated by spaces
+    # fzf options:
+    # --exact: Forces exact matching
+    #   requiring the query to appear literally in the input instead of allowing fuzzy matches.
+    # --no-extended: Disables extended-search mode
+    #   preventing the use of special syntax like ^, $, !, or space-separated terms for advanced queries.
     local fzfParams=(
         "--layout=reverse"
         "--inline-info"
@@ -213,7 +220,7 @@ fuzzySearch() {
 
     [ -z "$fKernelIncluded" ] && rgParams+=("--glob" "!linux-*/*")
     [ -z "$fREMatch" ] && [ -n "$fQuery" ] && rgParams+=("--fixed-strings")
-    [ -z "$fREMatch" ] && fzfParams+=("--no-extended")
+    [ -z "$fREMatch" ] && fzfParams+=("--exact")
     rgParams+=("${fQuery:-.}")
     fzfParams+=("--query" "${fQuery}")
 
