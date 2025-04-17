@@ -13,7 +13,7 @@ fWorkerType="worker"
 fSSHConnPort=22
 fUsername="admin"
 fPasswd="password"
-fExpectRoot="# "
+fExpectRoot="#"
 fOnlyDisplay=
 fReboot=
 fSilent=
@@ -308,8 +308,15 @@ attachDGBServer() {
             }
             send \"set wad-worker-count $fWADWorkerCnt\r\"
             expect \"$fExpectRoot\"
+            set timeout 5
             send \"end\r\"
-            expect \"$fExpectRoot\"
+            expect {
+                \"$fExpectRoot\" {}
+                timeout {
+                    puts stderr \"$USER_NOTATION \${COLOR}Timeout when exiting the config mode.\${RESET}\"
+                    exit 1
+                }
+            }
 
             send \"exit\r\"
             expect eof {
