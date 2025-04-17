@@ -167,19 +167,19 @@ ClearClipboard() {
 }
 
 polishQuery() {
-    # Round 1
-    fQuery="${fQuery%%$'\n'*}"                    # Remove everything after the first newline
-    fQuery="${fQuery#"${fQuery%%[![:space:]]*}"}" # Left trim
-    fQuery="${fQuery%"${fQuery##*[![:space:]]}"}" # Right trim
-    [ -z "$fQuery" ] && return
-    # Round 2
-    fQuery="${fQuery:0:60}"    # Truncate to max 50 characters
-    fQuery="${fQuery#!}"       # Remove leading '!' or '&'
-    fQuery="${fQuery#&}"       # Remove leading '!' or '&'
-    fQuery="${fQuery#func=}"   # Remove leading 'func=' if present
-    fQuery="${fQuery//[<\\]/}" # Remove other special characters
-    fQuery="${fQuery%;>]}"     # Remove trailing ';' or '>' if present
-    fQuery="${fQuery%:[0-9]*}" # Remove trailing colon and numbers
+    fQuery="${fQuery%%$'\n'*}"
+    # Trim leading/trailing whitespace
+    fQuery="${fQuery#"${fQuery%%[![:space:]]*}"}"
+    fQuery="${fQuery%"${fQuery##*[![:space:]]}"}"
+
+    # Remove leading &!< characters if present
+    [[ $fQuery =~ ^[\&!\<] ]] && fQuery="${fQuery:1}"
+    # Remove func= prefix if present
+    [[ $fQuery == func=* ]] && fQuery="${fQuery#func=}"
+    # Remove trailing semicolon and > if present
+    [[ $fQuery == *[\;\>] ]] && fQuery="${fQuery%?}"
+    # Remove :[0-9]+ from the end if present
+    [[ $fQuery =~ :[0-9]+$ ]] && fQuery="${fQuery%:*}"
 }
 
 fuzzySearch() {

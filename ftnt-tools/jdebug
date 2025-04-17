@@ -423,7 +423,7 @@ attachDGBServer() {
             puts -nonewline stderr \"$USER_NOTATION \"
             foreach pair \$pid_index_list {
                 lassign \$pair pid index
-                puts -nonewline stderr \"\[\$MAGENTA\${pid}, \${index}\${RESET}\] \"
+                puts -nonewline stderr \"\[\$MAGENTA\${pid}, #\${index}\${RESET}\] \"
             }
             puts stderr \"\"
         }
@@ -433,7 +433,7 @@ attachDGBServer() {
             puts stderr \"\n$USER_NOTATION Found \${LIGHTYELLOW}\$worker_cnt\${RESET} WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
             dump_pid_index_list \$pid_index_list
             if {[string match -nocase \"*work*\" $fWorkerType]} {
-                puts stderr \"$USER_NOTATION Select #\${worker_index}: \[\${RED}\${worker_pid}, \${worker_index}\${RESET}\]\"
+                puts stderr \"$USER_NOTATION Select #\${worker_index}\"
                 puts stderr \"$USER_NOTATION Warning: If you want to make life easier, retry the same command with \${BLUE}-N1\${RESET}\"
             } else {
                 puts stderr \"$USER_NOTATION Recommend to check the input WAD process type\"
