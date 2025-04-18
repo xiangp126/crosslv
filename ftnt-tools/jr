@@ -8,7 +8,7 @@ fRgOnly=
 fEditor="code"
 fCheckDepends=
 fzfSelected=
-fREMatch=
+fREMatching=
 fNoClipboard=
 fQueryFromClipboard=
 fKernelIncluded=  # Include the linux kernel source code in the search
@@ -42,8 +42,8 @@ Options:
     -c, --check-depends      Check if dependencies are installed
     -n, --no-clipboard       Do not use clipboard content as the search term
     -d, --debug              Print debug information
-    --rg-only                Only use rg to search, not use fzf
-    --re-match               Use regular expressions for matching (default is fixed strings)
+    --rg-only                Only use rg to search, not use fzf to select
+    --re-matching            Force regular expression matching in both rg and fzf
     -h, --help               Print this help message
 
 Example: $SCRIPTNAME wad_tcp_bind
@@ -56,7 +56,7 @@ _EOF
 parseOptions() {
     # Define short and long options
     SHORTOPTS="hvdkcn"
-    LONGOPTS="help,vim,debug,kernel,rg-only,check-depends,no-clipboard,re-match"
+    LONGOPTS="help,vim,debug,kernel,rg-only,check-depends,no-clipboard,re-matching"
 
     # Use getopt to parse command-line options
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -93,8 +93,8 @@ parseOptions() {
                 fNoClipboard=true
                 shift
                 ;;
-            --re-match)
-                fREMatch=true
+            --re-matching)
+                fREMatching=true
                 shift
                 ;;
             --rg-only)
@@ -204,6 +204,7 @@ fuzzySearch() {
     # --no-extended: Disables extended-search mode
     #   preventing the use of special syntax like ^, $, !, or space-separated terms for advanced queries.
     local fzfParams=(
+        "--prompt=☞ "
         "--layout=reverse"
         "--inline-info"
         "--color=fg+:247"
@@ -218,9 +219,11 @@ fuzzySearch() {
         "--exit-0"
     )
 
+    # 1. Exclude the linux kernel source code from the search by default to speed up the process
+    # 2. If the query is not empty, use exact matching in both rg and fzf
+    #    If the query is empty, use regular expression matching in both rg and fzf
     [ -z "$fKernelIncluded" ] && rgParams+=("--glob" "!linux-*/*")
-    [ -z "$fREMatch" ] && [ -n "$fQuery" ] && rgParams+=("--fixed-strings")
-    [ -z "$fREMatch" ] && fzfParams+=("--exact")
+    [ -n "$fQuery" ] && [ -z "$fREMatching" ] && rgParams+=("--fixed-strings") && fzfParams+=("--exact")
     rgParams+=("${fQuery:-.}")
     fzfParams+=("--query" "${fQuery}")
 
@@ -239,7 +242,6 @@ fuzzySearch() {
 
     # Sample output of fzfResult:
     # daemon/wad/wad_app_eng.c:3071:          goto session_make_failed;
-    # or
     # Z15 Bug 0996624 FTP fails active in TP mode/debug2_passive.c:398:CLNT lftp/4.9.2
     local filepath linenumber
     pattern='([^:]+):([0-9]+):'
@@ -265,8 +267,8 @@ main() {
     parseOptions "$@"
     [ -n "$fDebug" ] && set -x
     [ -n "$fCheckDepends" ] && checkDepends
-    [ -z "$fNoClipboard" ]  && GetClipboardContent
-    [ -z "$fREMatch" ] && polishQuery
+    [ -z "$fNoClipboard" ] && GetClipboardContent
+    [ -z "$fREMatching" ] && polishQuery
     fuzzySearch
     [ -z "$fNoClipboard" ] && ClearClipboard
 }
