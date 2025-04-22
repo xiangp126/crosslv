@@ -466,6 +466,7 @@ class PrintData(gdb.Command):
         self.wad_line_type = "struct wad_line"
         self.in_port_t_type = "in_port_t"
         self.ip_addr_t_type = "ip_addr_t"
+        self.in_addr_type = "struct in_addr"
         self.wad_buff_region_type   = "struct wad_buff_region"
         self.wad_http_hdr_line_type = "struct wad_http_hdr_line"
         self.wad_fts_sstr_type  = "struct fts_sstr"
@@ -546,14 +547,9 @@ class PrintData(gdb.Command):
                 return
             elif unqualified_type in [self.wad_sstr_type, self.wad_fts_sstr_type]:
                 pass
-            elif unqualified_type in [self.wad_addr_type, self.ip_addr_t_type]:
-                self.pmem.print_ip_address(addr, unqualified_type)
-                return
-            elif unqualified_type == self.in_port_t_type:
-                self.pmem.print_raw_memory(addr, 2)
-                return
-            elif unqualified_type == self.wad_session_context_type:
-                self.pmem.print_session_ctx(addr, unqualified_type)
+            elif unqualified_type in [self.wad_addr_type, self.ip_addr_t_type, self.in_addr_type,
+                                      self.in_port_t_type, self.wad_session_context_type]:
+                self.pmem.invoke(f"\"({type} *){addr}\"", False)
                 return
             else:
                 # For other types, print the value as is
