@@ -214,6 +214,15 @@ class PrintMemory(gdb.Command):
         except gdb.error as e:
             print(f"Error: {e}")
 
+    def complete(self, text, word):
+        # This method handles tab completion for the command's arguments.
+        # 'text' is the argument string typed so far.
+        # 'word' is the specific word being completed.
+
+        # Tell GDB to use symbol completion (variables, functions, types, etc.)
+        # for any argument following 'myprint'.
+        return gdb.COMPLETE_SYMBOL
+
     def process_command_args(self, args):
         if not args.address:
             print("Error: No address provided")
@@ -450,6 +459,15 @@ class SetWatch(gdb.Command):
         except gdb.error as e:
             print(f"Error: {e}")
 
+    def complete(self, text, word):
+        # This method handles tab completion for the command's arguments.
+        # 'text' is the argument string typed so far.
+        # 'word' is the specific word being completed.
+
+        # Tell GDB to use symbol completion (variables, functions, types, etc.)
+        # for any argument following 'myprint'.
+        return gdb.COMPLETE_SYMBOL
+
 # Instantiate the command
 SetWatch("setw")
 SetWatch("sw")
@@ -578,6 +596,15 @@ class PrintData(gdb.Command):
             print("Error executing command: {}".format(e))
             return -1
 
+    def complete(self, text, word):
+        # This method handles tab completion for the command's arguments.
+        # 'text' is the argument string typed so far.
+        # 'word' is the specific word being completed.
+
+        # Tell GDB to use symbol completion (variables, functions, types, etc.)
+        # for any argument following 'myprint'.
+        return gdb.COMPLETE_SYMBOL
+
     def _create_parser(self):
         parser = argparse.ArgumentParser(description='Print data with optional formatting')
         parser.add_argument('data', nargs='?', help='Data to print')
@@ -695,6 +722,15 @@ class SuperTraverse(gdb.Command):
         except gdb.error as e:
             print(f"Error: {e}")
             return
+
+    def complete(self, text, word):
+        # This method handles tab completion for the command's arguments.
+        # 'text' is the argument string typed so far.
+        # 'word' is the specific word being completed.
+
+        # Tell GDB to use symbol completion (variables, functions, types, etc.)
+        # for any argument following 'myprint'.
+        return gdb.COMPLETE_SYMBOL
 
     def lookup_type_with_variants(self, type_name):
         variants = [
