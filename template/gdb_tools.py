@@ -258,17 +258,17 @@ class PrintMemory(gdb.Command):
     def print_session_ctx(self, address, type):
         mem = f"({type} *) {address}"
         addresses = [
-            f"&({mem})->orig_src_addr.sa4.sin_addr",
-            f"&({mem})->orig_dst_addr.sa4.sin_addr",
             f"&({mem})->src_addr.sa4.sin_addr",
             f"&({mem})->dst_addr.sa4.sin_addr",
+            f"&({mem})->orig_src_addr.sa4.sin_addr",
+            f"&({mem})->orig_dst_addr.sa4.sin_addr",
         ]
 
         ports = [
-            f"&({mem})->orig_src_addr.sa4.sin_port",
-            f"&({mem})->orig_dst_addr.sa4.sin_port",
             f"&({mem})->src_addr.sa4.sin_port",
             f"&({mem})->dst_addr.sa4.sin_port",
+            f"&({mem})->orig_src_addr.sa4.sin_port",
+            f"&({mem})->orig_dst_addr.sa4.sin_port",
         ]
 
         for (address, port) in zip(addresses, ports):
@@ -428,6 +428,7 @@ class SetWatch(gdb.Command):
         super(SetWatch, self).__init__(name, gdb.COMMAND_USER)
         self.parser = argparse.ArgumentParser(
             description="Set a watchpoint on the memory location of the given input",
+            add_help=True
         )
         self.parser.add_argument(
             "variable",
@@ -440,6 +441,8 @@ class SetWatch(gdb.Command):
         # ++watch *((struct wad_port_ops*) 0x5575380b85a0 <g_wad_app_trap_port_ops>)
         # Error: A syntax error in expression, near `)'.
         try:
+            if not (arg.startswith("'") or arg.startswith('"')):
+                arg = f'"{arg}"'
             args = self.parser.parse_args(gdb.string_to_argv(arg))
             gdb.execute(f"watch -l {args.variable}")
         except SystemExit:
@@ -456,16 +459,20 @@ class PrintData(gdb.Command):
     def __init__(self, name):
         super(PrintData, self).__init__(name, gdb.COMMAND_DATA)
         # No need to lookup the canonical type of the structures using gdb.lookup_type()
+        self.wad_addr_type = "wad_addr"
+        self.wad_str_type  = "struct wad_str"
         self.fts_fstr_type = "struct fts_fstr"
         self.wad_sstr_type = "struct wad_sstr"
-        self.wad_fts_sstr_type  = "struct fts_sstr"
         self.wad_line_type = "struct wad_line"
-        self.wad_str_type  = "struct wad_str"
-        self.wad_http_hdr_type  = "struct wad_http_hdr"
-        self.unsigned_char_type = "unsigned char"
+        self.in_port_t_type = "in_port_t"
+        self.ip_addr_t_type = "ip_addr_t"
         self.wad_buff_region_type   = "struct wad_buff_region"
         self.wad_http_hdr_line_type = "struct wad_http_hdr_line"
+        self.wad_fts_sstr_type  = "struct fts_sstr"
+        self.wad_http_hdr_type  = "struct wad_http_hdr"
+        self.unsigned_char_type = "unsigned char"
         self.wad_http_start_line_type = "struct wad_http_start_line"
+        self.wad_session_context_type = "struct wad_session_context"
         # Define the formats
         self.formats = {
             "str": "s", "s": "s",
@@ -473,7 +480,7 @@ class PrintData(gdb.Command):
             "dec": "d", "d": "d",
             "bin": "t", "b": "t", "t": "t",
         }
-        # Create the parser
+        self.pmem = PrintMemory("pmem")
         self.parser = self._create_parser()
 
     def invoke(self, argument, from_tty):
@@ -522,7 +529,7 @@ class PrintData(gdb.Command):
 
             # Handle types with 'data' member
             if unqualified_type in [self.wad_buff_region_type, self.wad_line_type, self.wad_http_hdr_type,
-                                   self.wad_http_hdr_line_type, self.wad_http_start_line_type]:
+                                    self.wad_http_hdr_line_type, self.wad_http_start_line_type]:
                 # Replace the addr with the address of the 'data' member
                 var = gdb.parse_and_eval(f"(({type} *){addr})->data")
                 addr = var.address
@@ -539,6 +546,15 @@ class PrintData(gdb.Command):
                 return
             elif unqualified_type in [self.wad_sstr_type, self.wad_fts_sstr_type]:
                 pass
+            elif unqualified_type in [self.wad_addr_type, self.ip_addr_t_type]:
+                self.pmem.print_ip_address(addr, unqualified_type)
+                return
+            elif unqualified_type == self.in_port_t_type:
+                self.pmem.print_raw_memory(addr, 2)
+                return
+            elif unqualified_type == self.wad_session_context_type:
+                self.pmem.print_session_ctx(addr, unqualified_type)
+                return
             else:
                 # For other types, print the value as is
                 gdb.execute(f"p *(({type} *){addr})")

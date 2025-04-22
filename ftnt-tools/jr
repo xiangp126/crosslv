@@ -167,6 +167,7 @@ ClearClipboard() {
 }
 
 polishQuery() {
+    fQuery="${fQuery:0:80}"
     fQuery="${fQuery%%$'\n'*}"
     # Trim leading/trailing whitespace
     fQuery="${fQuery#"${fQuery%%[![:space:]]*}"}"
