@@ -22,7 +22,8 @@
         "c": true,
         "shellscript": true,
         "jsonc": true,
-        "powershell": true
+        "powershell": true,
+        "python": true
     },
     "remote.SSH.remotePlatform": {
         "remotedev": "linux",
@@ -178,9 +179,9 @@
             {
                 "scope": "variable.other.readwrite",
                 "settings": {
-                    // "foreground": "#9CDCFE",
                     // "foreground": "#b7b7b7"
-                    "foreground": "#d189cb",
+                    // "foreground": "#d189cb",
+                    "foreground": "#c98bc4",
                 },
             },
             {
@@ -251,7 +252,8 @@
                 "scope": "support.function",
                 "settings": {
                     // "foreground": "#DCDCAA",
-                    "foreground": "#b5b590",
+                    // "foreground": "#b5b590",
+                    "foreground": "#b1b188",
                 },
             },
             {
@@ -332,7 +334,8 @@
                 "scope": "constant.numeric",
                 "settings": {
                     // "foreground": "#B5CEA8",
-                    "foreground": "#9ab18e",
+                    // "foreground": "#9ab18e",
+                    "foreground": "#9eaf94",
                 }
             },
             {
@@ -437,6 +440,7 @@
     "git.detectSubmodulesLimit": 40,
     "gitlens.graph.minimap.enabled": false,
     "chat.editor.fontSize": 16,
+    "chat.agent.enabled": true,
     "editor.fontSize": 16,
     "editor.suggestFontSize": 16,
     "editor.minimap.size": "fill",
@@ -494,8 +498,8 @@
     "github.copilot.chat.experimental.startDebugging.enabled": false,
     "github.copilot.chat.experimental.setupTests.enabled": false,
     "settingsSync.ignoredExtensions": [
-        "github.copilot-chat",
-        "vscode.ipynb"
+        "vscode.ipynb",
+        "ms-vscode.js-debug-companion"
     ],
     "gitlens.views.commitDetails.avatars": false,
     "gitlens.views.commitDetails.pullRequests.enabled": false,
@@ -529,5 +533,5 @@
         "jn": "cd ${workspaceFolder}; jn '${selectedText}'",
     },
     "leetcode.workspaceFolder": "/home/xiangp/myGit/leetcode",
-    "chat.agent.enabled": true,
+    "files.eol": "\n",
 }

@@ -615,8 +615,7 @@
 },
 {
 	"key": "ctrl+shift+,",
-	"command": "gitlens.diffLineWithPrevious",
-	"when": "editorTextFocus && config.gitlens.keymap == 'chorded' && resource in 'gitlens:tabs:tracked'"
+	"command": "gitlens.diffLineWithPrevious"
 },
 {
 	"key": "ctrl+shift+g shift+,",
@@ -691,5 +690,32 @@
 {
 	"key": "ctrl+b q",
 	"command": "workbench.action.closeUnmodifiedEditors"
+},
+{
+	"key": "ctrl+shift+i",
+	"command": "-workbench.action.chat.openEditSession",
+	"when": "chatEditingParticipantRegistered && !chatSetupHidden && view != 'workbench.panel.chat.view.edits'"
+},
+{
+	"key": "ctrl+alt+i",
+	"command": "-workbench.action.chat.open",
+	"when": "!chatSetupHidden"
+},
+{
+	"key": "ctrl+alt+i",
+	"command": "-workbench.panel.chat",
+	"when": "workbench.panel.chat.view.copilot.active"
+},
+{
+	"key": "ctrl+p",
+	"command": "extension.vim_ctrl+p"
+},
+{
+	"key": "ctrl+pageup",
+	"command": "-workbench.action.previousEditor"
+},
+{
+	"key": "ctrl+pagedown",
+	"command": "-workbench.action.nextEditor"
 }
 ]
