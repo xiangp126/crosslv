@@ -125,10 +125,8 @@ setCodePath() {
     if [[ -z $newIPCHooK ]]
     then
         echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found in $syspath${RESET}" >&2
+        return
     fi
-
-    # Remove unused vscode-ipc-*.sock files
-    find "$syspath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" ! -wholename "$newIPCHooK" -delete
 
     # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
     # But you have to remember that only the sub shell can see the new value.

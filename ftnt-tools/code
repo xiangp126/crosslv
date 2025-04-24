@@ -2,8 +2,10 @@
 # set -x
 
 fArgs=("--goto")
-fForceSearchCodeBin=
 fDebug=
+fForceSearchCodeBin=
+fRmObsoleteIPCSocks=
+fSysPath="/run/user/$UID"
 SCRIPTNAME=$(basename $0)
 MAGENTA='\033[0;35m'
 RESET='\033[0m'
@@ -35,6 +37,8 @@ Options:
     -h, --help      Show this help message and exit
     -f, --force     Force search for the code binary, ignoring \$VSCODE_BIN_PATH
     -d, --debug     Enable debug mode (set -x)
+    -v, --version   Show version information
+    -r, --remove    Remove obsolete IPC sockets
 
 Example: $SCRIPTNAME --force
          $SCRIPTNAME -d
@@ -45,8 +49,8 @@ EOF
 }
 
 parseOptions() {
-    SHORTOPTS="hfdv"
-    LONGOPTS="help,force,debug,version"
+    SHORTOPTS="hfdvr"
+    LONGOPTS="help,force,debug,version,remove"
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
         echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
         exit 1
@@ -69,6 +73,10 @@ parseOptions() {
                 fArgs+=("--version")
                 shift
                 ;;
+            -r|--remove)
+                fRmObsoleteIPCSocks=true
+                shift
+                ;;
             --)
                 shift
                 break
@@ -87,12 +95,11 @@ preCheck() {
     fi
     setCodePath() {
         [ -z "$VSCODE_IPC_HOOK_CLI" ] && return
-        local paths searchDir count version syspath newIPCHooK
+        local paths searchDir count version newIPCHooK
         local -A map=()
         local MAGENTA='\033[0;35m'
         local LIGHTYELLOW='\033[93m'
         local RESET='\033[0m'
-        syspath="/run/user/$UID"
         searchDir="$HOME/.vscode-server/cli"
 
         readarray -d '' paths < <(find "$searchDir" -type f -name code -executable -print0)
@@ -113,14 +120,12 @@ preCheck() {
         fi
 
         # Get the most recenely created/modified vscode-ipc-*.sock file
-        newIPCHooK=$(find "$syspath" -maxdepth 1 -type s -name 'vscode-ipc-*.sock' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
+        newIPCHooK=$(find "$fSysPath" -maxdepth 1 -type s -name 'vscode-ipc-*.sock' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
         if [[ -z $newIPCHooK ]]
         then
-            echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found in $syspath${RESET}" >&2
+            echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found in $fSysPath${RESET}" >&2
+            exit 1
         fi
-
-        # Remove unused vscode-ipc-*.sock files
-        find "$syspath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" ! -wholename "$newIPCHooK" -delete
 
         # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
         # But you have to remember that only the sub shell can see the new value.
@@ -129,10 +134,21 @@ preCheck() {
     }
 }
 
+removeObsoleteIPCSocks() {
+    setCodePath
+    find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
+          grep -Fxv "$VSCODE_IPC_HOOK_CLI" |
+          while IFS= read -r sock; do
+        echo -e "Removing: ${MAGENTA}$sock${RESET}"
+        rm -f "$sock"
+    done
+}
+
 main() {
     preCheck
     parseOptions "$@"
     [ -n "$fDebug" ] && set -x
+    [ -n "$fRmObsoleteIPCSocks" ] && removeObsoleteIPCSocks && exit 0
     [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForceSearchCodeBin" ] && setCodePath
     for _ in {1..2}; do
         "$VSCODE_BIN_PATH" "${fArgs[@]}" 2>/dev/null
