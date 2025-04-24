@@ -8,6 +8,7 @@ fRmObsoleteIPCSocks=
 fSysPath="/run/user/$UID"
 SCRIPTNAME=$(basename $0)
 MAGENTA='\033[0;35m'
+LIGHTYELLOW='\033[93m'
 RESET='\033[0m'
 
 usage() {
@@ -139,7 +140,7 @@ removeObsoleteIPCSocks() {
     find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
           grep -Fxv "$VSCODE_IPC_HOOK_CLI" |
           while IFS= read -r sock; do
-        echo -e "Removing: ${MAGENTA}$sock${RESET}"
+        echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
         rm -f "$sock"
     done
 }
@@ -156,7 +157,6 @@ main() {
             break
         else
             setCodePath
-            # echo -e "${MAGENTA}source ~/.bashrc${RESET}"
         fi
     done
 }
