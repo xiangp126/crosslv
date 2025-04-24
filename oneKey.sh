@@ -12,6 +12,8 @@ fTKFontDir=$fWKDir/assets/fonts
 fTKFontConfigDir=$fWKDir/assets/fontconfig
 fTKtemplateDir=$fWKDir/template
 fTKToolsDir=$fWKDir/ftnt-tools
+fUpdateClangd=
+fDownloads=$HOME/Downloads
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -45,9 +47,10 @@ Usage: ./$SCRIPT_NAME [uth]
 This script is used to set up the coding environment in my predifined way.
 
 Options:
+    -h, --help      Print this help message
     -t, --tools     Link tools into \$HOME/.usr/bin
     -u, --update    Force an update of prerequisites
-    -h, --help      Print this help message
+    --clangd        Update clangd to the latest released version
 
 Examples:
     ./$SCRIPT_NAME
@@ -60,7 +63,7 @@ exit 0
 
 parseOptions() {
     SHORTOPTS="tuh"
-    LONGOPTS="tools,update,help"
+    LONGOPTS="help,tools,update,clangd"
 
     # Use getopt to parse command-line options
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -79,6 +82,10 @@ parseOptions() {
                 ;;
             -u|--update)
                 fForceUpdate=true
+                shift
+                ;;
+            --clangd)
+                fUpdateClangd=true
                 shift
                 ;;
             -h|--help)
@@ -145,6 +152,7 @@ updatePrerequisitesForDebian() {
         gdb
         bat
         curl
+        jq # JSON parser
         xsel # X11 clipboard
         xclip
         libcurl4
@@ -523,6 +531,84 @@ performLinkingFiles() {
     fi
 }
 
+updateClangd() {
+    echo -e "${COLOR}Updating Clangd${RESET}"
+    if ! command -v jq &> /dev/null; then
+        echo -e "${RED}Error: jq is required but not installed. Please install jq first.${RESET}"
+        return 1
+    fi
+
+    local currentVersion=""
+    local clangdPath=$(command -v clangd 2>/dev/null)
+    if [ -n "$clangdPath" ]; then
+        currentVersion=$($clangdPath --version | head -n1 | grep -oP 'version \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+        echo -e "Current clangd version: ${BLUE}$currentVersion${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}clangd is not currently installed${RESET}"
+        currentVersion="0.0.0"
+    fi
+
+    # Get the latest stable release version and download URL
+    echo -e "${LIGHTYELLOW}Fetching latest Clangd binary information${RESET}"
+    # 20.1.0
+    # https://github.com/clangd/clangd/releases/download/20.1.0/clangd-linux-20.1.0.zip
+    local output=$(curl -s https://api.github.com/repos/clangd/clangd/releases |
+        jq -r '[.[] | select(.prerelease == false)] | .[0] |
+               .name, (.assets[] | select(.name | contains("clangd-linux")) | .browser_download_url)')
+    mapfile -t lines <<< "$output"
+    local latestVersion="${lines[0]}"
+    local downloadUrl="${lines[1]}"
+    if [ -z "$latestVersion" ] || [ "$latestVersion" == "null" ]; then
+        echo -e "${RED}Error: Failed to get latest version information${RESET}"
+        return 1
+    fi
+
+    echo -e "Latest available clangd version: ${COLOR}$latestVersion${RESET}"
+    if [ -n "$currentVersion" ]; then
+        if [ "$(printf '%s\n' "$latestVersion" "$currentVersion" | sort -V -r | head -n1)" == "$currentVersion" ]; then
+            echo -e "${GREY}No update needed. Current version is up to date.${RESET}"
+            return 0
+        fi
+    fi
+
+    echo -e "${LIGHTYELLOW}Downloading latest version of Clangd${RESET}"
+    local fileName=$(basename "$downloadUrl")
+    local downloadDst="$fDownloads/$fileName"
+    if [ -f "$downloadDst" ]; then
+        echo -e "${GREY}File $fileName already exists in $fDownloads, skipping download.${RESET}"
+    else
+        curl -L -o "$downloadDst" "$downloadUrl"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Error: Failed to download the latest version${RESET}"
+            return 1
+        fi
+    fi
+
+    cd "$fDownloads" || exit 1
+    local peekInfo=$(zipinfo -1 "$downloadDst" | head -n 1)
+    local extractDir="$fDownloads/$(dirname "$peekInfo")"
+    if [ -d "$extractDir" ]; then
+        echo -e "${GREY}Directory $extractDir already exists, skipping extraction.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Extracting Clangd${RESET}"
+        unzip "$downloadDst"
+        if [ ! -d "$extractDir" ]; then
+            echo -e "${RED}Error: Failed to extract the downloaded file${RESET}"
+            exit 1
+        fi
+        echo -e "${GREEN}Successfully extracted to $extractDir${RESET}"
+    fi
+
+    # find binary named clangd under the extracted directory
+    local clangdBinary=$(find "$extractDir" -type f -name "clangd" -executable | head -n 1)
+    if [ -z "$clangdBinary" ]; then
+        echo -e "${RED}Error: Failed to find the clangd binary in the extracted directory${RESET}"
+        return 1
+    fi
+
+    linkFile "$clangdBinary" "$HOME/.usr/bin"
+}
+
 performRelinkingCmds() {
     relinkCommand "batcat" "bat"
     relinkCommand "fdfind" "fd"
@@ -535,6 +621,7 @@ main() {
     if [ "$fOSCategory" == "debian" ]; then
         [ -n "$fForceUpdate" ] && updatePrerequisitesForDebian
         performLinkingFiles
+        [ -n "$fUpdateClangd" ] && updateClangd
         updateVimPlugins
         performRelinkingCmds
         buildBatTheme
