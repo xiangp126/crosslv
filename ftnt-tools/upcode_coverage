@@ -35,11 +35,13 @@ if [ ! -d .git ]; then
 fi
 
 git diff HEAD~1 HEAD > "$dstDir/$diffName"
-cp fgtcoveragebuild.tar.xz "$dstDir/"
+
+[ -f "fgtcoveragebuild.tar.xz" ] && cp fgtcoveragebuild.tar.xz "$dstDir/"
 if [ $? -ne 0 ]; then
     echo "Error: Failed to copy fgtcoveragebuild.tar.xz to $dstDir"
     exit 1
 fi
+
 cp image.out "$dstDir/"
 if [ $? -ne 0 ]; then
     echo "Error: Failed to copy image.out to $dstDir"
