@@ -10,12 +10,13 @@ $if Gdb
 # F10: Execute "next" command
 "\e[21~":"next\n"
 
-# Shft + F12: Execute "fs prev" command
-"\e[24;2~": "fs prev\n"
-
 # Shift + F10: Execute "winheight src -2" command
 "\e[21;2~": "winheight src -2\n"
 
 # Shift + F11: Execute "winheight src +2" command
 "\e[23;2~": "winheight src +2\n"
+
+# Shft + F12: Execute "fs prev" command
+"\e[24;2~": "fs prev\n"
+
 $endif

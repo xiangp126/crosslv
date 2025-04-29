@@ -43,9 +43,19 @@ set style function foreground magenta
 set style function intensity normal
 set style filename foreground red
 set style filename intensity normal
-set tui tab-width 8
+set tui tab-width 4
 set tui compact-source
 
+# Layout settings
+# tui new-layout custom {-horizontal src weight1 cmd weight2} weight1+weight2
+# Exp: tui new-layout left {-horizontal src 3 cmd 2} 5
+# -horizontal: Indicates that the windows listed within the braces {} will be placed horizontally
+#   The default for most layouts is vertical
+# Define a new layout with src on the left and cmd on the right
+tui new-layout left {-horizontal src 4 cmd 3} 7
+# Define a new layout with src on the right and cmd on the left
+tui new-layout right {-horizontal cmd 1 src 1} 2
+# layout left => to switch to the layout named left
 layout src
 fs cmd
 winheight cmd +6
