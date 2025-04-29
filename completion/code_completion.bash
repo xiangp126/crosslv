@@ -27,7 +27,7 @@ _code_completion() {
     fi
 
     # If no options match, return standard file/directory completions
-    # COMPREPLY=( $(compgen -f -- "${cur}") )
+    COMPREPLY=( $(compgen -f -- "${cur}") )
     return 0
 }
 

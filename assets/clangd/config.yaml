@@ -1,0 +1,18 @@
+CompileFlags:
+  Add:
+    - -Wno-microsoft-anon-tag
+  Remove: []
+
+Diagnostics:
+  UnusedIncludes: Strict
+  MissingIncludes: None
+  ClangTidy:
+    Add:
+      # - cppcoreguidelines-*
+      # - bugprone-*
+      # - modernize-*
+      # - readability-*
+      # - google-*
+      - performance-*
+      - portability-*
+      - clang-analyzer-*

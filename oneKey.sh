@@ -3,15 +3,16 @@
 # set -x
 
 # Tracking directories
-fWKDir=$(cd $(dirname $0); pwd)
-fTKFilesDir=$fWKDir/track-files
-fTKCompDir=$fWKDir/completion
-fTKVimColorsDir=$fWKDir/assets/vim-colors
-fTKBatThemeDir=$fWKDir/assets/bat-themes
-fTKFontDir=$fWKDir/assets/fonts
-fTKFontConfigDir=$fWKDir/assets/fontconfig
-fTKtemplateDir=$fWKDir/template
-fTKToolsDir=$fWKDir/ftnt-tools
+fMainDir=$(cd $(dirname $0); pwd)
+fTKFilesDir=$fMainDir/track-files
+fTKCompDir=$fMainDir/completion
+fTKVimColorsDir=$fMainDir/assets/vim-colors
+fTKBatThemeDir=$fMainDir/assets/bat-themes
+fTKFontDir=$fMainDir/assets/fonts
+fTKFontConfigDir=$fMainDir/assets/fontconfig
+fTKClangdConfig=$fMainDir/assets/clangd/config.yaml
+fTKtemplateDir=$fMainDir/template
+fTKToolsDir=$fMainDir/ftnt-tools
 fUpdateClangd=
 fDownloads=$HOME/Downloads
 # Misc
@@ -48,6 +49,7 @@ This script is used to set up the coding environment in my predifined way.
 
 Options:
     -h, --help      Print this help message
+    -d, --debug     Enable debug mode
     -t, --tools     Link tools into \$HOME/.usr/bin
     -u, --update    Force an update of prerequisites
     --clangd        Update clangd to the latest released version
@@ -62,8 +64,8 @@ exit 0
 }
 
 parseOptions() {
-    SHORTOPTS="tuh"
-    LONGOPTS="help,tools,update,clangd"
+    SHORTOPTS="hdtu"
+    LONGOPTS="help,debug,tools,update,clangd"
 
     # Use getopt to parse command-line options
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -86,6 +88,10 @@ parseOptions() {
                 ;;
             --clangd)
                 fUpdateClangd=true
+                shift
+                ;;
+            -d|--debug)
+                set -x
                 shift
                 ;;
             -h|--help)
@@ -272,8 +278,8 @@ followUpTKExceptions() {
     # Copy back the privileged git config.
     gitconfigCheckFile=$HOME/.gitconfig.fortinet
     if [ -f "$gitconfigCheckFile"  ]; then
-        echo "The privileged file $gitconfigCheckFile exists."
-        echo "Relink $HOME/.gitconfig to $gitconfigCheckFile"
+        echo -e "${LIGHTYELLOW}The privileged file $gitconfigCheckFile exists.${RESET}"
+        echo -e "${LIGHTYELLOW}Relink $HOME/.gitconfig to $gitconfigCheckFile${RESET}"
         ln -sf "$gitconfigCheckFile" "$HOME"/.gitconfig
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}Success!${RESET}"
@@ -287,7 +293,7 @@ followUpTKExceptions() {
 # linkFile: Creates a symbolic link for a file to a specified destination (dir).
 #
 # Usage:
-#   linkFile /path/to/file /path/to/destination/dir
+#   linkFile /path/of/source/file /path/to/destination/dir
 #   e.g., linkFile ~/myfile.txt /data/backup
 #
 # Arguments:
@@ -309,12 +315,10 @@ linkFile() {
     local src="$target"
     local dst="$linkPath/${linkName}"
 
-    echo -e "${COLOR}Creating symlink${RESET}: ${linkName} -> $src"
-
     [ ! -f "$target" ] && echo "Source file $target does not exist, abort!" && exit 1
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
         [ ! -d "$fBackupDir" ] && mkdir -p "$fBackupDir"
-        echo -e "${BLUE}Warning: $dst is not a link, backing it up to $fBackupDir${RESET}"
+        echo -e "${BLUE}Warning: $dst is not a link, backing it up into $fBackupDir${RESET}"
         mv "$dst" "$fBackupDir/${linkName}.bak"
     fi
 
@@ -323,6 +327,7 @@ linkFile() {
         return 1
     fi
 
+    echo -e "${LIGHTYELLOW}Creating symlink${RESET}: ${linkName} -> $src"
     ln -sf "$target" "$dst"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
@@ -351,7 +356,7 @@ linkFiles() {
     local linkPath="$2"         # Destination directory
     local linknamePrefix="$3"   # Prefix for destination filename. Exp: . for hidden files
 
-    echo -e "${LIGHTYELLOW}Creating symlink: ${linkPath}/* -> $(basename "$targetDir")/*${RESET}"
+    echo -e "${COLOR}Creating symlink: ${linkPath}/* -> $(basename "$targetDir")/*${RESET}"
     [ ! -d "$targetDir" ] && echo "Source directory $targetDir does not exist, abort!" && exit 1
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
 
@@ -401,13 +406,12 @@ relinkCommand() {
         return 2
     fi
 
-    echo -e "${COLOR}Creating symlink: ${linkName} -> syscmd: ${sysCmdPath}${RESET}"
     if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$sysCmdPath" ]; then
         echo -e "${GREY}${linkName} is already linked to ${sysCmdPath}${RESET}"
         return 1
     fi
 
-    # Create the symlink
+    echo -e "${COLOR}Creating symlink: ${linkName} -> syscmd: ${sysCmdPath}${RESET}"
     ln -sf "$sysCmdPath" "$dst"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
@@ -419,7 +423,7 @@ relinkCommand() {
 
 buildBatTheme() {
     # https://github.com/sharkdp/bat/tree/master/assets/themes
-    echo -e "${LIGHTYELLOW}Building bat theme${RESET}"
+    echo -e "${COLOR}Building bat theme${RESET}"
     local batThemeDir=$HOME/.config/bat/themes
     local needBuild=
     [ ! -d "$batThemeDir" ] && mkdir -p "$batThemeDir"
@@ -443,7 +447,7 @@ buildBatTheme() {
 }
 
 buildExtraFonts() {
-    echo -e "${LIGHTYELLOW}Building extra fonts${RESET}"
+    echo -e "${COLOR}Building extra fonts${RESET}"
     local needBuild=
     local fontConfigDir="$HOME/.config/fontconfig/conf.d"
     local fontDir=$HOME/.local/share/fonts
@@ -517,18 +521,53 @@ checkSudoPrivilege() {
     fi
 }
 
-performLinkingFiles() {
+createBasicSymlinks() {
+    # The directories are guaranteed to exist when this function is called.
     linkFiles "$fTKFilesDir" "$HOME" "."
     linkFiles "$fTKCompDir" "$HOME/.bash_completion.d"
     linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
-    if [[ "$fOSCategory" != "mac" ]]; then
-        if [ -n "$fInstallTools" ]; then
-            linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
-            linkFiles "$fTKtemplateDir" "$HOME/Templates"
-        fi
-        linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
-        linkFile "$fzfBinPath" "$HOME/.usr/bin"
+}
+
+createExtraSymlinks() {
+    echo -e "${COLOR}Creating extra symlinks${RESET}"
+    # The directories are guaranteed to exist when this function is called.
+    linkFile "$fTKClangdConfig" "$HOME/.config/clangd"
+    linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
+    linkFile "$fzfBinPath" "$HOME/.usr/bin"
+    if [ -n "$fInstallTools" ]; then
+        linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
+        linkFiles "$fTKtemplateDir" "$HOME/Templates"
     fi
+
+    echo -e "${COLOR}Relinking commands${RESET}"
+    relinkCommand "batcat" "bat"
+    relinkCommand "fdfind" "fd"
+    relinkCommand "bash" "sh" "/bin/"
+}
+
+performSanityCheck() {
+    local dirsToCheck=(
+        "$fBackupDir"
+        "$HOME/Downloads"
+        "$HOME/Templates"
+        "$HOME/.bash_completion.d"
+        "$HOME/.usr/bin"
+        "$HOME/.local/share/fonts"
+        "$HOME/.config/bat/themes"
+        "$HOME/.config/fontconfig/conf.d"
+        "$HOME/.config/clangd"
+    )
+
+    for dir in "${dirsToCheck[@]}"; do
+        if [ ! -d "$dir" ]; then
+            echo -e "${LIGHTYELLOW}Creating directory: ${BLUE}$dir${RESET}"
+            mkdir -p "$dir"
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}Error: Failed to create directory $dir${RESET}"
+                exit 1
+            fi
+        fi
+    done
 }
 
 updateClangd() {
@@ -609,21 +648,16 @@ updateClangd() {
     linkFile "$clangdBinary" "$HOME/.usr/bin"
 }
 
-performRelinkingCmds() {
-    relinkCommand "batcat" "bat"
-    relinkCommand "fdfind" "fd"
-    relinkCommand "bash" "sh" "/bin/"
-}
-
 main() {
     parseOptions "$@"
     checkOSCategory
+    performSanityCheck
     if [ "$fOSCategory" == "debian" ]; then
         [ -n "$fForceUpdate" ] && updatePrerequisitesForDebian
-        performLinkingFiles
-        [ -n "$fUpdateClangd" ] && updateClangd
+        createBasicSymlinks
+        createExtraSymlinks
         updateVimPlugins
-        performRelinkingCmds
+        [ -n "$fUpdateClangd" ] && updateClangd
         buildBatTheme
         buildExtraFonts
         followUpTKExceptions
@@ -631,7 +665,7 @@ main() {
         changeTMOUTToWritable
     elif [ "$fOSCategory" == "mac" ]; then
         # [ -n "$fForceUpdate" ] && installPrequesitesForMac
-        performLinkingFiles
+        createBasicSymlinks
         updateVimPlugins
         buildBatTheme
         buildExtraFonts

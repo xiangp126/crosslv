@@ -1,0 +1,17 @@
+# Link it as .clang-format to the root of your project to apply the formatting rules.
+# Exp: ln -s /path/to/crosslv/assets/clang-format /data/fos/.clang-format
+---
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 8
+UseTab: Always
+---
+Language: Cpp
+# Force pointers to the type for C++.
+DerivePointerAlignment: false
+PointerAlignment: Left
+---
+Language: C
+# Apply the same pointer formatting for C
+DerivePointerAlignment: false
+PointerAlignment: Left
