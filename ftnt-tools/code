@@ -2,7 +2,6 @@
 # set -x
 
 fArgs=("--goto")
-fDebug=
 fForceSearchCodeBin=
 fRmObsoleteIPCSocks=
 fSysPath="/run/user/$UID"
@@ -36,8 +35,8 @@ Description:
 
 Options:
     -h, --help      Show this help message and exit
-    -f, --force     Force search for the code binary, ignoring \$VSCODE_BIN_PATH
     -d, --debug     Enable debug mode (set -x)
+    -f, --force     Force search for the code binary, ignoring \$VSCODE_BIN_PATH
     -v, --version   Show version information
     -r, --remove    Remove obsolete IPC sockets
 
@@ -63,7 +62,7 @@ parseOptions() {
                 usage
                 ;;
             -d|--debug)
-                fDebug=true
+                set -x
                 shift
                 ;;
             -f|--force)
@@ -143,12 +142,16 @@ removeObsoleteIPCSocks() {
         echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
         rm -f "$sock"
     done
+    echo "-------------------------------------------------------"
+    find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
+          while IFS= read -r sock; do
+        echo -e "Remaining: ${LIGHTYELLOW}$sock${RESET}"
+    done
 }
 
 main() {
     preCheck
     parseOptions "$@"
-    [ -n "$fDebug" ] && set -x
     [ -n "$fRmObsoleteIPCSocks" ] && removeObsoleteIPCSocks && exit 0
     [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForceSearchCodeBin" ] && setCodePath
     for _ in {1..2}; do
