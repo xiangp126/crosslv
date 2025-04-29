@@ -23,7 +23,9 @@
         "shellscript": true,
         "jsonc": true,
         "powershell": true,
-        "python": true
+        "python": true,
+        "properties": true,
+        "yaml": true
     },
     "remote.SSH.remotePlatform": {
         "remotedev": "linux",
@@ -231,6 +233,32 @@
                 "scope": "string.quoted.single.python",
                 "settings": {
                     // "foreground": "#569CD6",
+                    "foreground": "#CE9178",
+                },
+            },
+            {
+                "scope": "constant.character.escape.python",
+                "settings": {
+                    // "foreground": "#D7BA7D",
+                    "foreground": "#c4aa74",
+                },
+            },
+            {
+                "scope": "string.unquoted",
+                "settings": {
+                    // "foreground": "#569CD6",
+                    // "foreground": "#CE9178",
+                    "foreground": "#CE9178",
+                },
+            },
+            {
+                "scope": [
+                    "meta.bracket.square.access",
+                    "meta.bracket.round.access"
+                ],
+                "settings": {
+                    // "foreground": "#569CD6",
+                    // "foreground": "#CE9178",
                     "foreground": "#CE9178",
                 },
             },
@@ -446,6 +474,10 @@
     "editor.minimap.size": "fill",
     "editor.minimap.maxColumn": 60,
     "editor.largeFileOptimizations": false,
+    // Gutter is the area where the line numbers are displayed.
+    // The following 2 settings are used to Reduce the Gutter Width.
+    // "editor.glyphMargin": false, // Disable glyph margin to save space
+    "editor.folding": false, // Disable folding icons to reduce gutter width
     "workbench.editor.empty.hint": "hidden",
     "workbench.editor.tabSizing": "shrink",
     "workbench.editor.wrapTabs": true,

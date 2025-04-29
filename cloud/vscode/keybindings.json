@@ -717,5 +717,15 @@
 {
 	"key": "ctrl+pagedown",
 	"command": "-workbench.action.nextEditor"
+},
+{
+	"key": "ctrl+shift+\\",
+	"command": "-editor.action.jumpToBracket",
+	"when": "editorTextFocus"
+},
+{
+	"key": "ctrl+shift+,",
+	"command": "-workbench.action.terminal.configureSuggestSettings",
+	"when": "terminalFocus && terminalHasBeenCreated && terminalIsOpen && terminalSuggestWidgetVisible || terminalFocus && terminalIsOpen && terminalProcessSupported && terminalSuggestWidgetVisible"
 }
 ]
