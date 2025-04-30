@@ -29,9 +29,6 @@ fSyncUsername="admin"
 fSyncPassword="password"
 # Git associated variables
 fCompileCommandsJson="compile_commands.json"
-gitExcludePattern1=$fCompileCommandsJson
-gitExcludePattern2="\*.code-workspace"
-fGitExcludeList="$gitExcludePattern1 $gitExcludePattern2"
 fRMCompileCommandsJson=
 # Common Constants
 SEPARATOR="==================================================="
@@ -364,30 +361,28 @@ printBuildFlags() {
 }
 
 cleanTheRepo() {
-    if [[ -z "$fGitClean" ]]; then
-        return
-    fi
-
+    [ -z "$fGitClean" ] && return
     cd "$fWorkingDir" || exit
     echo "$USER_NOTATION Cleaning the working directory ..."
 
-    COLOR="$MAGENTA"
-    gitExcludePattern=""
-    for patt in $fGitExcludeList; do
-        if [ -n "$fRMCompileCommandsJson" ]; then
-            if [[ "$patt" == "$fCompileCommandsJson" ]]; then
-                # Do not add it to the exclude list
-                echo -e "$USER_NOTATION ${COLOR}Remove $fCompileCommandsJson${RESET}"
-                continue
-            fi
-        fi
+    local gitCleanCmd=
+    # .cache will match both the .cache and .cache/ directories
+    # .cache/ will only match the .cache/ directory
+    # .cache/* will match all files and directories under .cache/
+    declare -a gitExcludePatterns=(
+        "\*.code-workspace"
+        ".cache/"
+        ".clang-format"
+        ".clang-tidy"
+    )
+    [ -z "$fRMCompileCommandsJson" ] && gitExcludePatterns+=("$fCompileCommandsJson")
+    for patt in "${gitExcludePatterns[@]}"; do
         echo -e "$USER_NOTATION Exclude ${COLOR}$patt${RESET}"
-        gitExcludePattern+="--exclude=$patt "
+        gitExclude+="--exclude=$patt "
     done
 
-    COLOR="$BLUE"
-    gitCleanCmd="git clean -xdf $gitExcludePattern"
-    echo -e "$USER_NOTATION Running: ${COLOR}$gitCleanCmd${RESET}"
+    gitCleanCmd="git clean -xdf ${gitExclude}"
+    echo -e "$USER_NOTATION Running: ${BLUE}$gitCleanCmd${RESET}"
 
     sleep 1
     COLOR=$MAGENTA
