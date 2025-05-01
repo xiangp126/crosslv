@@ -145,7 +145,7 @@ removeObsoleteIPCSocks() {
     echo "-------------------------------------------------------"
     find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
           while IFS= read -r sock; do
-        echo -e "Remaining: ${LIGHTYELLOW}$sock${RESET}"
+        echo -e "Remaining: ${MAGENTA}$sock${RESET}"
     done
 }
 

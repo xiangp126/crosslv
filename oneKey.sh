@@ -529,17 +529,18 @@ createBasicSymlinks() {
 }
 
 createExtraSymlinks() {
-    echo -e "${COLOR}Creating extra symlinks${RESET}"
-    # The directories are guaranteed to exist when this function is called.
-    linkFile "$fTKClangdConfig" "$HOME/.config/clangd"
-    linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
-    linkFile "$fzfBinPath" "$HOME/.usr/bin"
     if [ -n "$fInstallTools" ]; then
         linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
         linkFiles "$fTKtemplateDir" "$HOME/Templates"
     fi
 
-    echo -e "${COLOR}Relinking commands${RESET}"
+    echo -e "${COLOR}Creating standalone symlinks${RESET}"
+    # The directories are guaranteed to exist when this function is called.
+    linkFile "$fTKClangdConfig" "$HOME/.config/clangd"
+    linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
+    linkFile "$fzfBinPath" "$HOME/.usr/bin"
+
+    echo -e "${COLOR}Relinking system commands${RESET}"
     relinkCommand "batcat" "bat"
     relinkCommand "fdfind" "fd"
     relinkCommand "bash" "sh" "/bin/"
