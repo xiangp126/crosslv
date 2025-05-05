@@ -169,8 +169,8 @@ GetClipboardContent() {
     if [ -z "$fQuery" ] && [ -n "$DISPLAY" ]; then
         fQuery=$(xsel -o -p 2> /dev/null)
         if [[ $? -ne 0 ]]; then
-            echo -e "${COLOR}Error: Failed to get PRIMARY clipboard content${RESET}"
-            echo -e "${COLOR}Please check the status of the X server${RESET}"
+            echo -e "${COLOR}Error: Failed to get PRIMARY clipboard content.${RESET}"
+            echo -e "${COLOR}Please check the status of the X server (VcXsrv on Windows).${RESET}"
             exit 1
         fi
         [ -n "$fQuery" ] && fQueryFromClipboard=true

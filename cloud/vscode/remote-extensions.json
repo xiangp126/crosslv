@@ -1,0 +1,298 @@
+[
+    {
+        "identifier": {
+            "id": "llvm-vs-code-extensions.vscode-clangd",
+            "uuid": "103154cb-b81d-4e1b-8281-c5f4fa563d37"
+        },
+        "version": "0.1.33",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/llvm-vs-code-extensions.vscode-clangd-0.1.33",
+            "scheme": "file"
+        },
+        "relativeLocation": "llvm-vs-code-extensions.vscode-clangd-0.1.33",
+        "metadata": {
+            "installedTimestamp": 1745431871627,
+            "source": "gallery",
+            "id": "103154cb-b81d-4e1b-8281-c5f4fa563d37",
+            "publisherId": "0f47d2a3-0735-453c-a89e-dc4193d6b6fa",
+            "publisherDisplayName": "LLVM",
+            "targetPlatform": "undefined",
+            "updated": false,
+            "private": false,
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "edonet.vscode-command-runner",
+            "uuid": "c4acb5b7-168f-4561-86ef-79352610787e"
+        },
+        "version": "0.0.124",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/edonet.vscode-command-runner-0.0.124",
+            "scheme": "file"
+        },
+        "relativeLocation": "edonet.vscode-command-runner-0.0.124",
+        "metadata": {
+            "installedTimestamp": 1745431872804,
+            "source": "vsix",
+            "id": "c4acb5b7-168f-4561-86ef-79352610787e",
+            "publisherDisplayName": "edonet",
+            "publisherId": "56102209-e938-4a27-8dad-976ac027ac55",
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "ms-python.python",
+            "uuid": "f1f59ae4-9318-4f3c-a9b5-81b2eaa5f8a5"
+        },
+        "version": "2025.4.0",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/ms-python.python-2025.4.0-linux-x64",
+            "scheme": "file"
+        },
+        "relativeLocation": "ms-python.python-2025.4.0-linux-x64",
+        "metadata": {
+            "installedTimestamp": 1745431882831,
+            "source": "gallery",
+            "id": "f1f59ae4-9318-4f3c-a9b5-81b2eaa5f8a5",
+            "publisherId": "998b010b-e2af-44a5-a6cd-0b5fd3b9b6f8",
+            "publisherDisplayName": "Microsoft",
+            "targetPlatform": "linux-x64",
+            "updated": false,
+            "private": false,
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "ms-python.debugpy",
+            "uuid": "4bd5d2c9-9d65-401a-b0b2-7498d9f17615"
+        },
+        "version": "2025.6.0",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/ms-python.debugpy-2025.6.0-linux-x64",
+            "scheme": "file"
+        },
+        "relativeLocation": "ms-python.debugpy-2025.6.0-linux-x64",
+        "metadata": {
+            "installedTimestamp": 1745431882831,
+            "source": "gallery",
+            "id": "4bd5d2c9-9d65-401a-b0b2-7498d9f17615",
+            "publisherId": "998b010b-e2af-44a5-a6cd-0b5fd3b9b6f8",
+            "publisherDisplayName": "Microsoft",
+            "targetPlatform": "linux-x64",
+            "updated": false,
+            "private": false,
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "leetcode.vscode-leetcode",
+            "uuid": "66682185-9f80-4b70-8b8c-9e492935c105"
+        },
+        "version": "0.18.4",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/leetcode.vscode-leetcode-0.18.4",
+            "scheme": "file"
+        },
+        "relativeLocation": "leetcode.vscode-leetcode-0.18.4",
+        "metadata": {
+            "installedTimestamp": 1745431884813,
+            "source": "vsix",
+            "id": "66682185-9f80-4b70-8b8c-9e492935c105",
+            "publisherDisplayName": "力扣 LeetCode",
+            "publisherId": "f47919e9-e19f-4775-b058-31456a401653",
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "ms-python.vscode-pylance",
+            "uuid": "364d2426-116a-433a-a5d8-a5098dc3afbd"
+        },
+        "version": "2025.4.1",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/ms-python.vscode-pylance-2025.4.1",
+            "scheme": "file"
+        },
+        "relativeLocation": "ms-python.vscode-pylance-2025.4.1",
+        "metadata": {
+            "installedTimestamp": 1745432079677,
+            "source": "vsix",
+            "id": "364d2426-116a-433a-a5d8-a5098dc3afbd",
+            "publisherDisplayName": "Microsoft",
+            "publisherId": "998b010b-e2af-44a5-a6cd-0b5fd3b9b6f8",
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "mads-hartmann.bash-ide-vscode",
+            "uuid": "b1b0f283-8246-4e90-832e-a6c409d378d1"
+        },
+        "version": "1.43.0",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/mads-hartmann.bash-ide-vscode-1.43.0",
+            "scheme": "file"
+        },
+        "relativeLocation": "mads-hartmann.bash-ide-vscode-1.43.0",
+        "metadata": {
+            "installedTimestamp": 1745448830223,
+            "pinned": true,
+            "source": "gallery",
+            "id": "b1b0f283-8246-4e90-832e-a6c409d378d1",
+            "publisherId": "f40c9497-3e29-43d8-954d-e60d92bc26f0",
+            "publisherDisplayName": "Mads Hartmann",
+            "targetPlatform": "undefined",
+            "updated": false,
+            "private": false,
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "github.copilot-chat",
+            "uuid": "7ec7d6e6-b89e-4cc5-a59b-d6c4d238246f"
+        },
+        "version": "0.26.7",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/github.copilot-chat-0.26.7",
+            "scheme": "file"
+        },
+        "relativeLocation": "github.copilot-chat-0.26.7",
+        "metadata": {
+            "installedTimestamp": 1746312411878,
+            "pinned": true,
+            "source": "gallery",
+            "id": "7ec7d6e6-b89e-4cc5-a59b-d6c4d238246f",
+            "publisherId": "7c1c19cd-78eb-4dfb-8999-99caf7679002",
+            "publisherDisplayName": "GitHub",
+            "targetPlatform": "undefined",
+            "updated": false,
+            "private": false,
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "github.copilot",
+            "uuid": "23c4aeee-f844-43cd-b53e-1113e483f1a6"
+        },
+        "version": "1.312.0",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/github.copilot-1.312.0",
+            "scheme": "file"
+        },
+        "relativeLocation": "github.copilot-1.312.0",
+        "metadata": {
+            "installedTimestamp": 1746312411877,
+            "pinned": true,
+            "source": "gallery",
+            "id": "23c4aeee-f844-43cd-b53e-1113e483f1a6",
+            "publisherId": "7c1c19cd-78eb-4dfb-8999-99caf7679002",
+            "publisherDisplayName": "GitHub",
+            "targetPlatform": "undefined",
+            "updated": false,
+            "private": false,
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "eamodio.gitlens",
+            "uuid": "4de763bd-505d-4978-9575-2b7696ecf94e"
+        },
+        "version": "17.0.3",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/eamodio.gitlens-17.0.3",
+            "scheme": "file"
+        },
+        "relativeLocation": "eamodio.gitlens-17.0.3",
+        "metadata": {
+            "isApplicationScoped": false,
+            "isMachineScoped": false,
+            "isBuiltin": false,
+            "installedTimestamp": 1746427449262,
+            "pinned": false,
+            "source": "vsix",
+            "id": "4de763bd-505d-4978-9575-2b7696ecf94e",
+            "publisherDisplayName": "GitKraken",
+            "publisherId": "678d198b-9b2e-49d3-96ff-6d801c9575df",
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "ms-vscode.cpptools",
+            "uuid": "690b692e-e8a9-493f-b802-8089d50ac1b2"
+        },
+        "version": "1.25.3",
+        "location": {
+            "$mid": 1,
+            "path": "/home/xiangp/.vscode-server/extensions/ms-vscode.cpptools-1.25.3",
+            "scheme": "file"
+        },
+        "relativeLocation": "ms-vscode.cpptools-1.25.3",
+        "metadata": {
+            "isApplicationScoped": false,
+            "isMachineScoped": false,
+            "isBuiltin": false,
+            "installedTimestamp": 1746427468830,
+            "pinned": false,
+            "source": "vsix",
+            "id": "690b692e-e8a9-493f-b802-8089d50ac1b2",
+            "publisherDisplayName": "Microsoft",
+            "publisherId": "5f5636e7-69ed-4afe-b5d6-8d231fb3d3ee",
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    },
+    {
+        "identifier": {
+            "id": "codeium.codeium"
+        },
+        "version": "1.46.1",
+        "location": {
+            "$mid": 1,
+            "fsPath": "/home/xiangp/.vscode-server/extensions/codeium.codeium-1.46.1",
+            "path": "/home/xiangp/.vscode-server/extensions/codeium.codeium-1.46.1",
+            "scheme": "file"
+        },
+        "relativeLocation": "codeium.codeium-1.46.1",
+        "metadata": {
+            "installedTimestamp": 1746430564917,
+            "source": "gallery",
+            "id": "acab4f40-b6db-42ec-bcd1-01802cbdd988",
+            "publisherId": "082b0525-4adf-4bcc-b60f-afa86c60860d",
+            "publisherDisplayName": "Windsurf",
+            "targetPlatform": "undefined",
+            "updated": false,
+            "private": false,
+            "isPreReleaseVersion": false,
+            "hasPreReleaseVersion": false
+        }
+    }
+]

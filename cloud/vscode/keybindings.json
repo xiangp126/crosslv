@@ -727,5 +727,47 @@
 	"key": "ctrl+shift+,",
 	"command": "-workbench.action.terminal.configureSuggestSettings",
 	"when": "terminalFocus && terminalHasBeenCreated && terminalIsOpen && terminalSuggestWidgetVisible || terminalFocus && terminalIsOpen && terminalProcessSupported && terminalSuggestWidgetVisible"
+},
+{
+	"key": "ctrl+b shift+f",
+	"command": "editor.action.formatSelection",
+	"when": "editorHasDocumentSelectionFormattingProvider && editorTextFocus && !editorReadonly"
+},
+{
+	"key": "ctrl+k ctrl+f",
+	"command": "-editor.action.formatSelection",
+	"when": "editorHasDocumentSelectionFormattingProvider && editorTextFocus && !editorReadonly"
+},
+{
+	"key": "ctrl+alt+i",
+	"command": "continue.focusEdit"
+},
+{
+	"key": "ctrl+i",
+	"command": "-continue.focusEdit"
+},
+{
+	"key": "ctrl+l",
+	"command": "-continue.focusContinueInput"
+},
+{
+	"key": "ctrl+i",
+	"command": "-codeium.openCodeiumCommand",
+	"when": "codeium.commandEnabled && editorTextFocus && !inlineSuggestionsVisible"
+},
+{
+	"key": "ctrl+shift+i",
+	"command": "-codeium.openCodeiumCommand",
+	"when": "codeium.commandEnabled && editorTextFocus && !inlineSuggestionsVisible"
+},
+{
+	"key": "ctrl+shift+a",
+	"command": "-codeium.openChatView",
+	"when": "true"
+},
+{
+	"key": "ctrl+alt+a",
+	"command": "-codeium.openChatView",
+	"when": "false"
 }
 ]

@@ -4,7 +4,7 @@
         "--enable-config",
         "--pretty",
         "--background-index",
-        "-j=15",
+        "-j=18",
         "--all-scopes-completion",
         "--completion-style=detailed",
         "--header-insertion=never",

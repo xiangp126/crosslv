@@ -16,7 +16,6 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 
-
 # Set the VM ISO file path to the provided argument or use the default
 if [ $# -ge 2 ]; then
     VM_ISO_PATH="$2"

@@ -14,19 +14,6 @@
     },
     "editor.suggest.snippetsPreventQuickSuggestions": false,
     "git.openRepositoryInParentFolders": "never",
-    "github.copilot.enable": {
-        "*": false,
-        "plaintext": true,
-        "markdown": true,
-        "scminput": false,
-        "c": true,
-        "shellscript": true,
-        "jsonc": true,
-        "powershell": true,
-        "python": true,
-        "properties": true,
-        "yaml": true
-    },
     "remote.SSH.remotePlatform": {
         "remotedev": "linux",
     },
@@ -468,6 +455,7 @@
     "git.detectSubmodulesLimit": 40,
     "gitlens.graph.minimap.enabled": false,
     "chat.editor.fontSize": 16,
+    "chat.editor.fontFamily": "Monaco",
     "chat.agent.enabled": true,
     "editor.fontSize": 16,
     "editor.suggestFontSize": 16,
@@ -513,22 +501,19 @@
     "window.confirmBeforeClose": "always",
     "window.zoomLevel": 0,
     "remote.autoForwardPorts": false,
-    "markdown-preview-enhanced.previewTheme": "night.css",
-    "markdown-preview-enhanced.revealjsTheme": "none.css",
-    "markdown-preview-enhanced.codeBlockTheme": "auto.css",
     "C_Cpp.intelliSenseEngine": "disabled",
     "files.autoGuessEncoding": true,
     "settingsSync.keybindingsPerPlatform": false,
     "diffEditor.ignoreTrimWhitespace": false,
     "diffEditor.maxComputationTime": 0,
     "diffEditor.renderSideBySide": true,
-    "github.copilot.chat.fixTestFailure.enabled": false,
     "github.copilot.chat.useProjectTemplates": false,
+    "github.copilot.selectedCompletionModel": "gpt-4o-copilot",
     "github.copilot.editor.enableCodeActions": false,
     "github.copilot.renameSuggestions.triggerAutomatically": false,
-    "github.copilot.chat.runCommand.enabled": false,
-    "github.copilot.chat.experimental.startDebugging.enabled": false,
-    "github.copilot.chat.experimental.setupTests.enabled": false,
+    "github.copilot.enable": {
+        "*": false,
+    },
     "settingsSync.ignoredExtensions": [
         "vscode.ipynb",
         "ms-vscode.js-debug-companion"
@@ -547,7 +532,6 @@
     "editor.minimap.enabled": false,
     "leetcode.defaultLanguage": "cpp",
     "markdown.preview.fontSize": 16,
-    "github.copilot.selectedCompletionModel": "gpt-4o-copilot",
     "leetcode.hint.commentDescription": false,
     "leetcode.hint.configWebviewMarkdown": false,
     "leetcode.hint.commandShortcut": false,
@@ -566,4 +550,18 @@
     },
     "leetcode.workspaceFolder": "/home/xiangp/myGit/leetcode",
     "files.eol": "\n",
+    "[shellscript]": {
+        "editor.defaultFormatter": "mads-hartmann.bash-ide-vscode"
+    },
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "chat.commandCenter.enabled": false,
+    "continue.enableTabAutocomplete": false,
+    "codeium.enableConfig": {
+        "*": true
+    },
+    "continue.showInlineTip": false,
+    "codeium.enableCommandSideHintEducation": false,
+    "telemetry.feedback.enabled": false,
 }
