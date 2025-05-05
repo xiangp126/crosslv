@@ -996,6 +996,9 @@ loginViaExpect() {
                     puts stderr \"$USER_NOTATION \${COLOR}No route to host\${RESET}\"
                     exit 1
                 }
+                {New Password:} {
+                    interact
+                }
                 timeout {
                     puts stderr \"$USER_NOTATION \${COLOR}Session \$session_id Timed out waiting for a response.\${RESET}\"
                     # close \$ssh_session_id

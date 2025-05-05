@@ -753,7 +753,7 @@ runSyncCommands() {
             exit $EMAXTRIES
             ;;
         $EPERMDENIED)
-            echo -e "$USER_NOTATION ${LIGHTYELLOW}Enable the admin-scp for you intelligently${RESET}"
+            echo -e "$USER_NOTATION ${LIGHTYELLOW}Enabling the admin-scp for you intelligently${RESET}"
             expect -c "
                 set RESET       \"\033\[0m\"
                 set BOLD        \"\033\[1m\"

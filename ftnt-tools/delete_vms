@@ -1,32 +1,131 @@
 #!/bin/bash
 
-# Check if the VM name is provided as a parameter
-if [ -z "$1" ]; then
-    echo "Usage: $0 <vm_name>"
-    echo "Example: $0 client1"
-    exit 1
-fi
+# Constants
+SCRIPTNAME=$(basename $0)
+# Colors for better output formatting
+BLUE='\033[34m'
+MAGENTA='\033[35m'
+RESET='\033[0m'
+COLOR=$MAGENTA
 
-# Assign the VM name from the parameter
-vm_name="$1"
+# Display help information
+showHelp() {
+    cat << _EOF
+Usage: $SCRIPTNAME [OPTIONS] VM_NAME
+Arguments:
+    VM_NAME               Name of the virtual machine to delete (required)
 
-# Check if the VM exists
-if virsh list --name --all | grep -q "^$vm_name$"; then
-    # Shut down the VM if it is running
-    if virsh domstate "$vm_name" | grep -qi "running"; then
-        sudo virsh destroy "$vm_name"
+Options:
+    -h, --help           Display this help message and exit
+    -k, --keep-disk      Keep the qcow2 disk file
+    -d, --debug          Enable debug output
+
+Description:
+    This script deletes a virtual machine and its associated qcow2 file
+
+Example:
+    $SCRIPTNAME client1      Delete the VM named 'client1'
+    $SCRIPTNAME -k client1   Delete the VM but keep the disk file
+    $SCRIPTNAME -d client1   Delete with debug output enabled
+
+_EOF
+    exit 0
+}
+
+# Initialize variables
+VM_NAME=""
+KEEP_DISK=""
+
+parseOptions() {
+    # Define short and long options
+    SHORTOPTS="hkd"
+    LONGOPTS="help,keep-disk,debug"
+
+    # Use getopt to parse command-line options
+    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$SCRIPTNAME" -- "$@"); then
+        echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
+        exit 1
+    fi
+
+    # Reset positional parameters to the parsed values
+    eval set -- "$PARSED"
+
+    # Parse options
+    while true; do
+        case "$1" in
+            -h|--help)
+                showHelp
+                ;;
+            -k|--keep-disk)
+                KEEP_DISK=true
+                shift
+                ;;
+            -d|--debug)
+                set -x
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "${COLOR}Invalid option: $1${RESET}"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Get the VM name
+    VM_NAME="$1"
+
+    # Check if VM name is provided
+    if [ -z "$VM_NAME" ]; then
+        echo -e "${COLOR}Error: VM_NAME is required.${RESET}"
+        echo "Run '$SCRIPTNAME --help' for more information"
+        exit 1
+    fi
+}
+
+# Main function to delete the VM
+delVms() {
+    # Check if the VM exists
+    if ! virsh list --name --all | grep -q "^$VM_NAME$"; then
+        echo -e "${COLOR}VM '$VM_NAME' not found.${RESET}"
+        exit 1
     fi
 
     # Get the path to the qcow2 file using xmllint
-    qcow2_file=$(virsh dumpxml "$vm_name" | xmllint --xpath "string(//disk/source/@file)" -)
+    qcow2_file=$(virsh dumpxml "$VM_NAME" | xmllint --xpath "string(//disk/source/@file)" -)
+
+    echo -e "${BLUE}VM disk file: $qcow2_file${RESET}"
+
+    # Shut down the VM if it is running
+    if virsh domstate "$VM_NAME" | grep -qi "running"; then
+        echo -e "VM is running, shutting it down..."
+        sudo virsh destroy "$VM_NAME"
+    fi
 
     # Undefine (delete) the VM
-    sudo virsh undefine "$vm_name"
+    echo -e "Undefining VM '$VM_NAME'..."
+    sudo virsh undefine "$VM_NAME"
 
-    # Remove the qcow2 file
-    sudo rm -f "$qcow2_file"
+    # Remove the qcow2 file if not keeping disk
+    if [ -z "$KEEP_DISK" ] && [ -f "$qcow2_file" ]; then
+        echo -e "Removing disk file..."
+        sudo rm -f "$qcow2_file"
+        echo -e "${MAGENTA}VM '$VM_NAME' has been deleted, and its disk file has been removed.${RESET}"
+    else
+        if [ -n "$KEEP_DISK" ]; then
+            echo -e "${MAGENTA}VM '$VM_NAME' has been deleted. Disk file kept at: $qcow2_file${RESET}"
+        else
+            echo -e "${MAGENTA}VM '$VM_NAME' has been deleted.${RESET}"
+        fi
+    fi
+}
 
-    echo "VM $vm_name has been deleted, and its qcow2 file has been removed."
-else
-    echo "VM $vm_name not found."
-fi
+main () {
+    parseOptions "$@"
+    delVms
+}
+
+main "$@"

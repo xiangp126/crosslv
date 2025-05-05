@@ -49,4 +49,4 @@ if [ $? -ne 0 ]; then
 fi
 
 cd - &> /dev/null || exit
-bat -p "$dstDir/$diffName"
+cat "$dstDir/$diffName"
