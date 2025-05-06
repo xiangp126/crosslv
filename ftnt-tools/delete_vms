@@ -108,6 +108,10 @@ delVms() {
     # Undefine (delete) the VM
     echo -e "Undefining VM '$VM_NAME'..."
     sudo virsh undefine "$VM_NAME"
+    if [ $? -ne 0 ]; then
+        echo -e "${COLOR}Failed to undefine VM '$VM_NAME'.${RESET}"
+        exit 1
+    fi
 
     # Remove the qcow2 file if not keeping disk
     if [ -z "$KEEP_DISK" ] && [ -f "$qcow2_file" ]; then
