@@ -91,14 +91,14 @@ parseOptions() {
     done
 
     if [ $# -lt 2 ]; then
-        echo "Error: Missing required arguments <vm_name> and <qcow2_path>."
+        echo -e "${COLOR}Error: Missing required arguments.${RESET}"
         usage
     fi
     QCOW2_NAME="$1"
     QCOW2_FILE_PATH="$2"
 
     if [ ! -f "$QCOW2_FILE_PATH" ]; then
-        echo "Error: Qcow2 file not found at '$QCOW2_FILE_PATH'"
+        echo -e "${COLOR}Error: File '$QCOW2_FILE_PATH' does not exist.${RESET}"
         exit 1
     fi
 }
@@ -231,7 +231,7 @@ summary() {
     echo -e "RAM: ${COLOR}$QCOW2_RAM MB${RESET}"
     echo -e "vCPUs: ${COLOR}$QCOW2_VCPUS${RESET}"
     echo -e "Virtual Size: ${COLOR}$QCOW2_VIRTUAL_SIZE${RESET}"
-    echo -e "Qcow2 Path: ${COLOR}$QCOW2_FILE_PATH${RESET}"
+    echo -e "Qcow2 Path: ${COLOR}${QCOW2_FILE_PATH// /\\ }${RESET}"
     echo -e "-------------------------------------------------------"
 }
 

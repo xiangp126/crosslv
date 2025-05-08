@@ -31,11 +31,12 @@ tigervncserver :9 -geometry $vnc_resolution
 echo "Starting all vms"
 start_all_vms
 
-echo "Starting OpenGrok"
-if command -v callIndexer &> /dev/null
-then
-    callIndexer -s
-fi
+# CPU usage at 100% and Tomcat not responding. Fix it.
+# echo "Starting OpenGrok"
+# if command -v callIndexer &> /dev/null
+# then
+#     callIndexer -s
+# fi
 
 echo "Reset the DNS Server"
 if command -v resetdns &> /dev/null
