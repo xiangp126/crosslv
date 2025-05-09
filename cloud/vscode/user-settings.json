@@ -45,8 +45,8 @@
         "inlineChat.foreground": "#b4b2b0",
         "sideBar.foreground": "#afaeae",
         // "sideBar.foreground": "#b4b3b3",
-        // "sideBar.background": "#212121",
-        "tab.activeBorderTop": "#989c9a",
+        "sideBar.background": "#1a1a1a",
+        "tab.activeBorderTop": "#a9a9a9",
         // "terminal.foreground": "#adadad",
         "terminal.foreground": "#a8a49f",
         "terminal.background": "#1a1a1a",
@@ -557,11 +557,16 @@
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "chat.commandCenter.enabled": false,
+    "continue.showInlineTip": false,
     "continue.enableTabAutocomplete": false,
     "codeium.enableConfig": {
         "*": true
     },
-    "continue.showInlineTip": false,
     "codeium.enableCommandSideHintEducation": false,
     "telemetry.feedback.enabled": false,
+    "codeium.searchMaxWorkspaceFileCount": 10,
+    "continue.pauseCodebaseIndexOnStart": true,
+    "continue.telemetryEnabled": false,
+    "codeium.enableExplainProblem": false,
+    "git.blame.editorDecoration.enabled": false,
 }
