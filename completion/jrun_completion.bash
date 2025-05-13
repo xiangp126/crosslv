@@ -45,11 +45,6 @@ _jrun_completion() {
         tmux list-panes -t "$session:$window" 2>/dev/null | cut -d: -f1
     }
 
-    # Function to suggest common command files
-    _get_common_files() {
-        echo "/data/bugzilla/debug.c /data/fos/command.txt $HOME/commands.txt"
-    }
-
     #---------------------------------------------------------------
     # TMUX TARGET COMPLETION HANDLER
     #---------------------------------------------------------------
@@ -134,11 +129,12 @@ _jrun_completion() {
         # File option
         -f|--file)
             # First suggest common command files, then fall back to regular file completion
-            local common_files=$(_get_common_files)
-            COMPREPLY=( $(compgen -W "${common_files}" -- ${cur}) )
-
-            # If no matches found among common files, use normal file completion
-            if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
+            local cmd_files
+            cmd_files=$(compgen -f -- "${cur}" | grep '^command')
+            if [[ -n "$cmd_files" ]]; then
+                COMPREPLY=( $(compgen -f -- "${cur}" | grep '^command') )
+            else
+                # If no command files found, fall back to common file completion
                 COMPREPLY=( $(compgen -f -- "${cur}") )
             fi
             return 0
