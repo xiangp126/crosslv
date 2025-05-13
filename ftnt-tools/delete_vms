@@ -2,44 +2,63 @@
 
 # Constants
 SCRIPTNAME=$(basename $0)
-# Colors for better output formatting
-BLUE='\033[34m'
+
+MAIN_BACKUP_DIR="/data/Backup/vms"
+fDeleteCandidates=()
+fVmKeepDisk=
+fDeletedVms=()
+fRestoreCandidates=()
+fRestoredVms=()
+fPerformRestore=
+fAllVms=
+
+# Color definitions
 MAGENTA='\033[35m'
+LIGHTYELLOW='\033[1;33m'
 RESET='\033[0m'
+BOLD='\033[1m'
+BLUE='\033[34m'
+NORMAL='\033[0m'
+GREEN='\033[32m'
 COLOR=$MAGENTA
 
 # Display help information
 showHelp() {
     cat << _EOF
-Usage: $SCRIPTNAME [OPTIONS] VM_NAME
+Usage: $SCRIPTNAME [OPTIONS] [VM_NAME1] [VM_NAME2] ...
 Arguments:
-    VM_NAME               Name of the virtual machine to delete (required)
+    VM_NAME              Name of the virtual machine to delete and restore
+                         Uess -a to restore all VMs
+
+    The script performs two stages:
+    1. Delete the VMs
+    2. Restore the VMs
 
 Options:
     -h, --help           Display this help message and exit
-    -k, --keep-disk      Keep the qcow2 disk file
     -d, --debug          Enable debug output
+    -r, --restore        Restore VMs (default: ${fPerformRestore:-false})
+    -a, --all            Restore all VMs (default: ${fAllVms:-false})
+    -b, --backup DIR     Set custom backup source directory (default: $MAIN_BACKUP_DIR)
+    -k, --keep-disk      Keep the original qcow2 disk file (default: ${fVmKeepDisk:-false})
 
 Description:
-    This script deletes a virtual machine and its associated qcow2 file
+    This script restores virtual machine disk images and configuration files from backups
 
 Example:
-    $SCRIPTNAME client1      Delete the VM named 'client1'
-    $SCRIPTNAME -k client1   Delete the VM but keep the disk file
-    $SCRIPTNAME -d client1   Delete with debug output enabled
+    $SCRIPTNAME client1               Delete the VM named 'client1'
+    $SCRIPTNAME client1 fpx1          Delete the VM named 'client1' and 'fpx1'
+    $SCRIPTNAME fpx1 --restore        Restore the VM named 'fpx1'
+    $SCRIPTNAME -b /tmp/backup --all  Restore all VMs from /tmp/backup
 
 _EOF
     exit 0
 }
 
-# Initialize variables
-VM_NAME=""
-KEEP_DISK=""
-
 parseOptions() {
     # Define short and long options
-    SHORTOPTS="hkd"
-    LONGOPTS="help,keep-disk,debug"
+    SHORTOPTS="hdab:kr"
+    LONGOPTS="help,debug,all,backup:,keep-disk,restore"
 
     # Use getopt to parse command-line options
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$SCRIPTNAME" -- "$@"); then
@@ -56,12 +75,24 @@ parseOptions() {
             -h|--help)
                 showHelp
                 ;;
-            -k|--keep-disk)
-                KEEP_DISK=true
-                shift
-                ;;
             -d|--debug)
                 set -x
+                shift
+                ;;
+            -a|--all)
+                fAllVms=true
+                shift
+                ;;
+            -b|--backup)
+                MAIN_BACKUP_DIR="$2"
+                shift 2
+                ;;
+            -k|--keep-disk)
+                fVmKeepDisk=true
+                shift
+                ;;
+            -r|--restore)
+                fPerformRestore=true
                 shift
                 ;;
             --)
@@ -75,61 +106,224 @@ parseOptions() {
         esac
     done
 
-    # Get the VM name
-    VM_NAME="$1"
+    COLOR=$LIGHTYELLOW
+    local availBackedUpVms=() # Available backed up VMs
+    local availLibvirtVms=()  # Available libvirt VMs
+    mapfile -t availBackedUpVms < <(find "$MAIN_BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
+    mapfile -t availLibvirtVms < <(virsh list --all --name | grep -v "^$")
+    if [ -n "$1" ]; then
+        local reqVms=("$@")
+        local found
 
-    # Check if VM name is provided
-    if [ -z "$VM_NAME" ]; then
-        echo -e "${COLOR}Error: VM_NAME is required.${RESET}"
-        echo "Run '$SCRIPTNAME --help' for more information"
-        exit 1
-    fi
-}
+        for vm in "${reqVms[@]}"; do
+            # Populate the fDeleteCandidates array
+            found=false
+            for avm in "${availLibvirtVms[@]}"; do
+                if [ "$vm" = "$avm" ]; then
+                    found=true
+                    break
+                fi
+            done
+            if [ "$found" = true ]; then
+                fDeleteCandidates+=("$vm")
+            else
+                echo -e "${COLOR}Warning: VM '$vm' not found in libvirt.${RESET}"
+            fi
 
-# Main function to delete the VM
-delVms() {
-    # Check if the VM exists
-    if ! virsh list --name --all | grep -q "^$VM_NAME$"; then
-        echo -e "${COLOR}VM '$VM_NAME' not found.${RESET}"
-        exit 1
-    fi
+            # Populate the fRestoreCandidates array
+            found=false
+            for avm in "${availBackedUpVms[@]}"; do
+                if [ "$vm" = "$avm" ]; then
+                    found=true
+                    break
+                fi
+            done
+            if [ "$found" = true ]; then
+                fRestoreCandidates+=("$vm")
+            else
+                echo -e "${COLOR}Warning: VM '$vm' not found in backup directory '$MAIN_BACKUP_DIR'${RESET}"
+            fi
 
-    # Get the path to the qcow2 file using xmllint
-    qcow2_file=$(virsh dumpxml "$VM_NAME" | xmllint --xpath "string(//disk/source/@file)" -)
+        done
 
-    echo -e "${BLUE}VM disk file: $qcow2_file${RESET}"
-
-    # Shut down the VM if it is running
-    if virsh domstate "$VM_NAME" | grep -qi "running"; then
-        echo -e "VM is running, shutting it down..."
-        sudo virsh destroy "$VM_NAME"
-    fi
-
-    # Undefine (delete) the VM
-    echo -e "Undefining VM '$VM_NAME'..."
-    sudo virsh undefine "$VM_NAME"
-    if [ $? -ne 0 ]; then
-        echo -e "${COLOR}Failed to undefine VM '$VM_NAME'.${RESET}"
-        exit 1
-    fi
-
-    # Remove the qcow2 file if not keeping disk
-    if [ -z "$KEEP_DISK" ] && [ -f "$qcow2_file" ]; then
-        echo -e "Removing disk file..."
-        sudo rm -f "$qcow2_file"
-        echo -e "${MAGENTA}VM '$VM_NAME' has been deleted, and its disk file has been removed.${RESET}"
+        if [ ${#fDeleteCandidates[@]} -eq 0 ]; then
+            echo -e "${COLOR}Warning: None of the specified VMs were found in libvirt.${RESET}"
+        fi
+        if [ ${#fRestoreCandidates[@]} -eq 0 ]; then
+            echo -e "${COLOR}Warning: None of the specified VMs were found in the backup directory.${RESET}"
+        fi
     else
-        if [ -n "$KEEP_DISK" ]; then
-            echo -e "${MAGENTA}VM '$VM_NAME' has been deleted. Disk file kept at: $qcow2_file${RESET}"
+        if [ -n "$fAllVms" ]; then
+            fDeleteCandidates=("${availLibvirtVms[@]}")
+            fRestoreCandidates=("${availBackedUpVms[@]}")
         else
-            echo -e "${MAGENTA}VM '$VM_NAME' has been deleted.${RESET}"
+            echo -e "${COLOR}Error: No VMs specified.${RESET}"
+            showHelp
         fi
     fi
+    COLOR=$MAGENTA
 }
 
-main () {
+deleteVms() {
+    # Loop through the VMs and delete them
+    COLOR=$NORMAL
+    for vm in "${fDeleteCandidates[@]}"; do
+        [ -z "$vm" ] && continue
+        echo -e "${MAGENTA}Deleting VM: $vm${RESET}"
+        fDeletedVms+=("$vm")
+
+        read -r _ vmDiskImagePath <<< "$(virsh domblklist "$vm" | awk '/vda|hda/')"
+        sudo virsh snapshot-list "$vm" --name | while read -r snapshot; do
+            if [ -n "$snapshot" ]; then
+                echo -e "${COLOR}Deleting snapshot: $snapshot${RESET}"
+                sudo virsh snapshot-delete "$vm" "$snapshot" --metadata
+            fi
+        done
+
+        echo -e "${COLOR}Destroying VM: $vm${RESET}"
+        virsh destroy "$vm" &>/dev/null || true
+
+        echo -e "${COLOR}Undefining VM: $vm${RESET}"
+        virsh undefine "$vm"
+
+        if [ -n "$vmDiskImagePath" ] && [ -z "$fVmKeepDisk" ]; then
+            echo -e "${COLOR}Deleting disk image: $vmDiskImagePath${RESET}"
+            sudo rm -f "$vmDiskImagePath"
+        fi
+    done
+    COLOR=$MAGENTA
+}
+
+deleteSummary() {
+    [ ${#fDeletedVms[@]} -eq 0 ] && return
+    echo -e "${COLOR}\nDeleted VMs:${RESET}"
+    echo -e "----------"
+    for vm in "${fDeletedVms[@]}"; do
+        echo -e -n "  - ${LIGHTYELLOW}$vm${RESET}"
+        echo -e " (${GREEN}Keep Disk: ${fVmKeepDisk:-No}${RESET})"
+    done
+    echo
+}
+
+restoreVms() {
+    # Check if the backup directory exists
+    if [ ! -d "$MAIN_BACKUP_DIR" ]; then
+        echo -e "${COLOR}Error: Backup directory '$MAIN_BACKUP_DIR' does not exist.${RESET}"
+        exit 1
+    fi
+
+    # Loop through the VMs and restore them
+    for vm in "${fRestoreCandidates[@]}"; do
+        [ -z "$vm" ] && continue
+
+        bkVmDir="$MAIN_BACKUP_DIR/$vm"
+        if [ ! -d "$bkVmDir" ]; then
+            echo -e "${LIGHTYELLOW}Error: Backup directory '$bkVmDir' not found for VM '$vm'.${RESET}\n"
+            continue
+        fi
+
+        echo -e "${COLOR}Restoring VM: $vm${RESET}"
+        # Find XML configuration file
+        bkQemuXmlPath="$bkVmDir/$vm.xml"
+        if [ ! -f "$bkQemuXmlPath" ]; then
+            echo -e "${LIGHTYELLOW}Error: XML configuration file not found at '$bkQemuXmlPath'.${RESET}\n"
+            continue
+        fi
+
+        vmDiskImagePath=$(sudo grep -o "<source file='[^']*'" "$bkQemuXmlPath" | head -1 | sed "s/<source file='//;s/'$//")
+        if [ -z "$vmDiskImagePath" ]; then
+            echo -e "${LIGHTYELLOW}Error: Could not extract disk path from XML file '$bkQemuXmlPath'.${RESET}\n"
+            continue
+        fi
+
+        # Find VM disk image file (qcow2) in backup directory
+        vmImageName=$(basename "$vmDiskImagePath")
+        bkVmDiskImagePath="$bkVmDir/$vmImageName"
+        if [ ! -f "$bkVmDiskImagePath" ]; then
+            echo -e "${LIGHTYELLOW}Error: Disk image '$vmImageName' not found in backup directory '$bkVmDir'.${RESET}\n"
+            continue
+        fi
+
+        echo -e "${GREEN}Disk Image: ${RESET}$bkVmDiskImagePath => $vmDiskImagePath"
+        echo -e "${GREEN}XML Config: ${RESET}$bkQemuXmlPath"
+
+        echo -e "${BOLD}Restoring disk image...${RESET}"
+        sudo rsync -av "$bkVmDiskImagePath" "$vmDiskImagePath"
+
+        # Define the VM
+        echo -e "${BOLD}Defining VM from XML...${RESET}"
+        if sudo virsh define "$bkQemuXmlPath"; then
+            fRestoredVms+=("$vm")
+
+            bkVmSnapshotDir="$bkVmDir/snapshots"
+            if [ -d "$bkVmSnapshotDir" ]; then
+                vmSnapshotDir="/var/lib/libvirt/qemu/snapshot/$vm"
+                [ ! -d "$vmSnapshotDir" ] && sudo mkdir -p "$vmSnapshotDir"
+
+                # Extract creation time from snapshot XML files and sort by it
+                declare -A snapshot_times
+                snapshotCount=0
+
+                # First, extract creation time from each snapshot file and store in associative array
+                while IFS= read -r snapshotXml; do
+                    [ -z "$snapshotXml" ] && continue
+
+                    # Extract creation time from XML file using grep
+                    creation_time=$(sudo grep -o "<creationTime>[0-9]*</creationTime>" "$snapshotXml" | sed 's/<creationTime>\([0-9]*\)<\/creationTime>/\1/')
+
+                    if [ -n "$creation_time" ]; then
+                        snapshot_times["$snapshotXml"]=$creation_time
+                    else
+                        # If can't extract time, use file modification time
+                        snapshot_times["$snapshotXml"]=$(stat -c %Y "$snapshotXml")
+                    fi
+                done < <(find "$bkVmSnapshotDir" -name "*.xml")
+
+                # Create sorted snapshot list based on creation times
+                readarray -t sorted_snapshots < <(
+                    for snap in "${!snapshot_times[@]}"; do
+                        echo "${snapshot_times[$snap]} $snap"
+                    done | sort -n | awk '{print $2}'
+                )
+
+                # Process snapshots in chronological order
+                for snapshotXml in "${sorted_snapshots[@]}"; do
+                    [ -z "$snapshotXml" ] && continue
+                    snapshotName=$(basename "$snapshotXml" .xml)
+                    echo -e "${GREEN}Creating snapshot: ${RESET}${BOLD}$snapshotName${RESET} ($(date -d @"${snapshot_times[$snapshotXml]}" "+%Y-%m-%d %H:%M:%S"))"
+                    sudo virsh snapshot-create "$vm" "$snapshotXml" --redefine
+                    ((snapshotCount++))
+                done
+
+                echo -e "${NORMAL}Restored $snapshotCount snapshots for VM '$vm'.\n${RESET}"
+            fi
+
+            echo -e "${BLUE}Starting VM $vm...${RESET}"
+            sudo virsh start "$vm"
+
+            echo -e "${LIGHTYELLOW}VM restore completed for: $vm${RESET}"
+        else
+            echo -e "${LIGHTYELLOW}Error: Failed to define VM '$vm'.${RESET}"
+        fi
+    done
+}
+
+restoreSummary() {
+    [ ${#fRestoredVms[@]} -eq 0 ] && return
+    echo -e "${COLOR}\nRestored VMs and IPs:${RESET}"
+    echo -e "----------"
+    for vm in "${fRestoredVms[@]}"; do
+        echo -e -n "  - ${LIGHTYELLOW}$vm${RESET}"
+        vmIP=$(virsh domifaddr "$vm" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+        echo -e " (${GREEN}IP: ${vmIP:-None}${RESET})"
+    done
+    echo
+}
+
+main() {
     parseOptions "$@"
-    delVms
+    deleteVms && deleteSummary
+    [ -n "$fPerformRestore" ] && restoreVms && restoreSummary
 }
 
 main "$@"

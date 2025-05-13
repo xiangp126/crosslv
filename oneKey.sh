@@ -22,7 +22,7 @@ fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
 fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
 fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
-fInstallTools=
+fNoInstallTools=
 fForceUpdate=
 # Constants
 SCRIPT_NAME=$(basename $0)
@@ -48,11 +48,11 @@ Usage: ./$SCRIPT_NAME [uth]
 This script is used to set up the coding environment in my predifined way.
 
 Options:
-    -h, --help      Print this help message
-    -d, --debug     Enable debug mode
-    -t, --tools     Link tools into \$HOME/.usr/bin
-    -u, --update    Force an update of prerequisites
-    --clangd        Update clangd to the latest released version
+    -h, --help          Print this help message
+    -n, --no-tools      Don't install tools
+    -d, --debug         Enable debug mode
+    -u, --update        Force an update of prerequisites
+    --clangd            Update clangd to the latest released version
 
 Examples:
     ./$SCRIPT_NAME
@@ -64,8 +64,8 @@ exit 0
 }
 
 parseOptions() {
-    SHORTOPTS="hdtu"
-    LONGOPTS="help,debug,tools,update,clangd"
+    SHORTOPTS="hdnu"
+    LONGOPTS="help,debug,no-tools,update,clangd"
 
     # Use getopt to parse command-line options
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -78,8 +78,8 @@ parseOptions() {
 
     while true; do
         case "$1" in
-            -t|--tools)
-                fInstallTools=true
+            -n|--no-tools)
+                fNoInstallTools=true
                 shift
                 ;;
             -u|--update)
@@ -529,7 +529,7 @@ createBasicSymlinks() {
 }
 
 createExtraSymlinks() {
-    if [ -n "$fInstallTools" ]; then
+    if [ -z "$fNoInstallTools" ]; then
         linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
         linkFiles "$fTKtemplateDir" "$HOME/Templates"
     fi
