@@ -107,7 +107,7 @@ preCheck() {
         if [[ $count -eq 0 ]]; then
             echo -e "${MAGENTA}Error: No code binary found under $searchDir${RESET}" >&2
         elif [[ $count -gt 1 ]]; then
-            echo -e "${LIGHTYELLOW}Error: Please remove the older versions of code.${RESET}" >&2
+            echo -e "${LIGHTYELLOW}Warning: Please remove the older versions of code.${RESET}" >&2
             for path in "${paths[@]}"
             do
                 version=$("$path" --version | head -n 1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+')
