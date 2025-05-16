@@ -1,5 +1,5 @@
 # Link it as .clang-format to the root of your project to apply the formatting rules.
-# Exp: ln -s /path/to/crosslv/assets/clang-format /data/fos/.clang-format
+# Exp: ln -s $HOME/myGit/crosslv/assets/clang-format /data/fos/.clang-format
 ---
 BasedOnStyle: LLVM
 IndentWidth: 8
