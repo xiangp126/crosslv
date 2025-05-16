@@ -18,7 +18,7 @@ fRunConfigure=
 fNeedBuild=
 fPrintBuildFlags= # Print build flags
 fGitClean=
-fDisableOptimization=
+fEnableOptimization=
 fInputCmd=
 fBuildTimeFormatted=
 # Sync Options
@@ -65,7 +65,7 @@ Usage: $SCRIPT_NAME [-m|--model model] [-w|--working-dir working_dir] [-j|--jobs
              [--bear-remove] [--max-build-attempt max_attempt] [-t|--target sync_target]
              [-s|--sync-file sync_file] [-P|--sync-port sync_port] [-l/-u|--username username]
              [-p|--password password] [-B|--build-target build_target]
-             [-bcCohkO|--bear --clean --configure --build --help --kernel --disable-optimization]
+             [-bcCohkO|--bear --clean --configure --build --help --kernel --optimization]
 
 Build Flags:
     -c, --clean                 Clean the repo (default: ${fGitClean:-false})
@@ -73,7 +73,7 @@ Build Flags:
     -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
     -b, --bear                  Use Bear to generate $fCompileCommandsJson (default: ${fUseBear:-false})
     --bear-remove               Remove $fCompileCommandsJson (default: ${fRMCompileCommandsJson:-false})
-    -O, --disable-optimization  Disable optimization (default: ${fDisableOptimization:-false})
+    -O, --optimization          Enable optimization (default: ${fEnableOptimization:-false})
 
 Build Options:
     -m, --model                 Set the build model  (default: ${fBuildModel:-KVM})
@@ -107,12 +107,12 @@ _EOF
 fInputCmd="$SCRIPT_NAME $*"
 
 SHORTOPTS="hcCobOm:j:w:kB:s:t:P:u:l:p:"
-LONGOPTS="help,clean,configure,build,disable-optimization,bear,bear-remove,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
+LONGOPTS="help,clean,configure,build,optimization,bear,bear-remove,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
 sync-file:,sync_port:,target:,username:,password:"
 # getopt is a command that standardizes and validates command-line arguments.
 # It takes the messy input arguments and converts them into a standardized format.
-# CLI Input: jmake TEST --model=VMWARE -j 8 --disable-optimization
-# getopt will convert it into:  --model 'VMWARE' -j '8' --disable-optimization -- 'TEST'
+# CLI Input: jmake TEST --model=VMWARE -j 8 --optimization
+# getopt will convert it into:  --model 'VMWARE' -j '8' --optimization -- 'TEST'
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
     exit 1
@@ -128,7 +128,7 @@ eval set -- "$PARSED"
 # $2 = VMWARE
 # $3 = -j
 # $4 = 8
-# $5 = --disable-optimization
+# $5 = --optimization
 # $6 = --
 # $7 = TEST
 
@@ -167,8 +167,8 @@ while true; do
             fNeedBuild=true
             shift
             ;;
-        -O|--disable-optimization)
-            fDisableOptimization=true
+        -O|--optimization)
+            fEnableOptimization=true
             fNeedBuild=true
             shift
             ;;
@@ -331,7 +331,7 @@ printBuildFlags() {
         [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} rebuild"
         [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Bear${RESET} to generate compile_commands.json"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} the existing $fCompileCommandsJson"
-        [ -n "$fDisableOptimization" ]   && echo -e "[O] ${COLOR}Optimization${RESET} disabled"
+        [ -n "$fEnableOptimization" ]   && echo -e "[O] ${COLOR}Optimization${RESET} enabled"
     fi
 
     # Print the build options
@@ -420,7 +420,7 @@ runConfigure() {
     # -O   Disable optimization
     # -c   Enable code coverage
     params="-m $fBuildModel -d y -c"
-    if [ -n "$fDisableOptimization" ]; then
+    if [ -z "$fEnableOptimization" ]; then
         params+=" -O"
     fi
     CONFIGURE_CMD="./Configure $params"

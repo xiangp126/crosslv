@@ -8,7 +8,7 @@ _code_completion() {
 
     # Define options
     opts="-h -f -d -d -v -r"
-    long_opts="--help --force --debug --version --remove"
+    long_opts="--help --force --debug --version --remove --install-extension"
 
     case "${prev}" in
 	*)

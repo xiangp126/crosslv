@@ -2,8 +2,9 @@
 # set -x
 
 fArgs=("--goto")
-fForceSearchCodeBin=
+fForce=
 fRmObsoleteIPCSocks=
+fExtensionToInstall=
 fSysPath="/run/user/$UID"
 SCRIPTNAME=$(basename $0)
 MAGENTA='\033[0;35m'
@@ -34,15 +35,17 @@ Description:
     }
 
 Options:
-    -h, --help      Show this help message and exit
-    -d, --debug     Enable debug mode (set -x)
-    -f, --force     Force search for the code binary, ignoring \$VSCODE_BIN_PATH
-    -v, --version   Show version information
-    -r, --remove    Remove obsolete IPC sockets
+    -h, --help              Show this help message and exit
+    -d, --debug             Enable debug mode (set -x)
+    -f, --force             Force search for the code binary, ignoring \$VSCODE_BIN_PATH,
+                            or force install an extension
+    -v, --version           Show version information
+    --install-extension     Install the specified extension from a .vsix file
+    -r, --remove            Remove obsolete IPC sockets
 
-Example: $SCRIPTNAME --force
+Example: $SCRIPTNAME --version
          $SCRIPTNAME -d
-         $SCRIPTNAME -h
+         $SCRIPTNAME --install-extension gitlens-13.0.2.vsix
 
 EOF
     exit 0
@@ -50,7 +53,7 @@ EOF
 
 parseOptions() {
     SHORTOPTS="hfdvr"
-    LONGOPTS="help,force,debug,version,remove"
+    LONGOPTS="help,force,debug,version,remove,install-extension:"
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
         echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
         exit 1
@@ -66,12 +69,16 @@ parseOptions() {
                 shift
                 ;;
             -f|--force)
-                fForceSearchCodeBin=true
+                fForce=true
                 shift
                 ;;
             -v|--version)
                 fArgs+=("--version")
                 shift
+                ;;
+            --install-extension)
+                fExtensionToInstall="$2"
+                shift 2
                 ;;
             -r|--remove)
                 fRmObsoleteIPCSocks=true
@@ -149,19 +156,30 @@ removeObsoleteIPCSocks() {
     done
 }
 
+installExtension() {
+    localparam=
+    [ -n "$fForce" ] && param="--force"
+    $VSCODE_BIN_PATH --install-extension "$fExtensionToInstall" $param
+    exit 0
+}
+
 main() {
     preCheck
     parseOptions "$@"
     [ -n "$fRmObsoleteIPCSocks" ] && removeObsoleteIPCSocks && exit 0
-    [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForceSearchCodeBin" ] && setCodePath
-    for _ in {1..2}; do
-        "$VSCODE_BIN_PATH" "${fArgs[@]}" 2>/dev/null
-        if [[ $? -eq 0 ]]; then
-            break
-        else
-            setCodePath
-        fi
-    done
+    [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForce" ] && setCodePath
+    if [ -z "$fExtensionToInstall" ]; then
+        for _ in {1..2}; do
+            "$VSCODE_BIN_PATH" "${fArgs[@]}" 2>/dev/null
+            if [[ $? -eq 0 ]]; then
+                break
+            else
+                setCodePath
+            fi
+        done
+    else
+        installExtension
+    fi
 }
 
 main "$@"
