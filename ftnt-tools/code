@@ -157,7 +157,7 @@ removeObsoleteIPCSocks() {
 }
 
 installExtension() {
-    localparam=
+    local param=
     [ -n "$fForce" ] && param="--force"
     $VSCODE_BIN_PATH --install-extension "$fExtensionToInstall" $param
     exit 0

@@ -331,7 +331,8 @@ printBuildFlags() {
         [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} rebuild"
         [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Bear${RESET} to generate compile_commands.json"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} the existing $fCompileCommandsJson"
-        [ -n "$fEnableOptimization" ]   && echo -e "[O] ${COLOR}Optimization${RESET} enabled"
+        [ -n "$fEnableOptimization" ]    && echo -e "[O] ${COLOR}Optimization${RESET} enabled" \
+                                         || echo -e "[O] ${COLOR}Optimization${RESET} disabled"
     fi
 
     # Print the build options
