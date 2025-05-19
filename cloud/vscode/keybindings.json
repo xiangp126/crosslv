@@ -431,15 +431,20 @@
 	"command": "-cursorWordEndRightSelect",
 	"when": "textInputFocus && !accessibilityModeEnabled"
 },
-{
-	"key": "ctrl+f",
-	"command": "-actions.find",
-	"when": "editorFocus || editorIsOpen"
-},
-{
-	"key": "ctrl+f",
-	"command": "actions.find"
-},
+// {
+// 	"key": "ctrl+f",
+// 	"command": "actions.find",
+// 	"when": "editorFocus || editorIsOpen"
+// },
+// {
+// 	"key": "ctrl+f",
+// 	"command": "-actions.find",
+// 	"when": "editorFocus || editorIsOpen"
+// },
+// {
+// 	"key": "ctrl+f",
+// 	"command": "actions.find"
+// },
 {
 	"key": "f3",
 	"command": "actions.find"
@@ -751,6 +756,10 @@
 	"command": "-continue.focusContinueInput"
 },
 {
+	"key": "ctrl+shift+i",
+	"command": "-continue.focusEditWithoutClear"
+},
+{
 	"key": "ctrl+i",
 	"command": "-codeium.openCodeiumCommand",
 	"when": "codeium.commandEnabled && editorTextFocus && !inlineSuggestionsVisible"
@@ -769,5 +778,50 @@
 	"key": "ctrl+alt+a",
 	"command": "-codeium.openChatView",
 	"when": "false"
+},
+{
+	"key": "ctrl+shift+i",
+	"command": "-workbench.panel.chatEditing",
+	"when": "workbench.panel.chat.view.edits.active"
+},
+{
+	"key": "ctrl+shift+i",
+	"command": "workbench.panel.chat.view.copilot.focus"
+},
+{
+	"key": "ctrl+alt+c",
+	"command": "continue.newSession"
+},
+{
+	"key": "ctrl+alt+f",
+	"command": "continue.fixGrammar"
+},
+{
+	"key": "ctrl+shift+e",
+	"command": "-workbench.view.explorer",
+	"when": "viewContainer.workbench.view.explorer.enabled"
+},
+{
+	"key": "ctrl+shift+e",
+	"command": "gitlens.revealCommitInView"
+},
+{
+	"key": "ctrl+shift+g",
+	"command": "-workbench.action.terminal.openDetectedLink",
+	"when": "accessibleViewIsShown && terminalHasBeenCreated && accessibleViewCurrentProviderId == 'terminal'"
+},
+{
+	"key": "ctrl+shift+g",
+	"command": "-workbench.view.scm",
+	"when": "workbench.scm.active"
+},
+{
+	"key": "ctrl+shift+g g",
+	"command": "-workbench.view.scm",
+	"when": "workbench.scm.active && !gitlens:disabled && config.gitlens.keymap == 'chorded'"
+},
+{
+	"key": "ctrl+shift+g g",
+	"command": "gitlens.views.commits.focus"
 }
 ]

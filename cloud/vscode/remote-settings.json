@@ -1,6 +1,7 @@
 {
     "editor.inlayHints.enabled": "off",
     "clangd.arguments": [
+        "--log=error",
         "--enable-config",
         "--pretty",
         "--background-index",
@@ -16,7 +17,6 @@
     "clangd.checkUpdates": true,
     "editor.tabSize": 8,
     "editor.insertSpaces": false,
-    "gitlens.plusFeatures.enabled": false,
     "gitlens.graph.avatars": false,
     "gitlens.blame.avatars": false,
     "gitlens.hovers.avatars": false,
@@ -31,7 +31,6 @@
     "gitlens.views.searchAndCompare.avatars": false,
     "gitlens.views.workspaces.avatars": false,
     "gitlens.views.patchDetails.avatars": false,
-    "gitlens.views.commits.avatars": false,
     "gitlens.defaultGravatarsStyle": "mp",
     "remote.autoForwardPorts": false,
     "gitlens.gitCommands.avatars": false,
