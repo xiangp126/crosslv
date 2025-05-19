@@ -3,7 +3,7 @@
 # set -x
 
 # Tracking directories
-fMainDir=$(cd $(dirname $0); pwd)
+fMainDir=$(cd "$(dirname "$(readlink -f "$0")")" || exit; pwd)
 fTKFilesDir=$fMainDir/track-files
 fTKCompDir=$fMainDir/completion
 fTKVimColorsDir=$fMainDir/assets/vim-colors
@@ -15,6 +15,7 @@ fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/ftnt-tools
 fUpdateClangd=
 fDownloads=$HOME/Downloads
+fHasBeenInvoked=".has_been_invoked"
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -43,7 +44,7 @@ COLOR=$MAGENTA
 
 usage() {
     cat << _EOF
-Usage: ./$SCRIPT_NAME [uth]
+Usage: $SCRIPT_NAME [OPTIONS]
 
 This script is used to set up the coding environment in my predifined way.
 
@@ -109,6 +110,17 @@ parseOptions() {
     done
 }
 
+checkSudoPrivilege() {
+    echo -e "${COLOR}Checking sudo privilege${RESET}"
+    # Check if the user can run sudo without a password
+    if sudo -n true 2>/dev/null; then
+        echo "User likely has passwordless sudo access."
+    else
+        echo "User likely does not have passwordless sudo access or needs a password."
+        exit 0
+    fi
+}
+
 checkOSCategory() {
     echo -e "${COLOR}Checking OS platform${RESET}"
     if [[ -f /etc/os-release ]]; then
@@ -168,7 +180,6 @@ updatePrerequisitesForDebian() {
         sshfs
         sshpass
         shellcheck
-        mlocate
         net-tools
         nftables
         bash-completion
@@ -211,9 +222,9 @@ updatePrerequisitesForDebian() {
 
     echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
 
-    sudo apt-get update
-    sudo apt-get install -y "${prerequisitesForUbuntu[@]}"
-    sudo updatedb
+    sudo apt remove -y wireshark lightdm
+    sudo apt update
+    sudo apt install -y "${prerequisitesForUbuntu[@]}"
 }
 
 updatePrequesitesForMac() {
@@ -239,6 +250,20 @@ setTimeZone() {
         return
     fi
     sudo timedatectl set-timezone America/Vancouver
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Success!${RESET}"
+    else
+        echo -e "${RED}Failed!${RESET}"
+        exit 1
+    fi
+}
+
+installTPM() {
+    if [ -d ~/.tmux/plugins/tpm ]; then
+        return
+    fi
+    echo -e "${COLOR}Installing TPM${RESET}"
+    git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
     else
@@ -273,8 +298,11 @@ updateVimPlugins (){
     fi
 }
 
-followUpTKExceptions() {
-    echo -e "${COLOR}Follow up the exceptions${RESET}"
+tackleTheExceptions() {
+    if [ "$(hostname)" != "VAN-935558-PC0" ]; then
+        return
+    fi
+    echo -e "${COLOR}Tackling exceptions${RESET}"
     # Copy back the privileged git config.
     gitconfigCheckFile=$HOME/.gitconfig.fortinet
     if [ -f "$gitconfigCheckFile"  ]; then
@@ -398,6 +426,7 @@ relinkCommand() {
     local linkPath=$HOME/.usr/bin
     [ -n "$3" ] && linkPath=$3
     local dst=$linkPath/$linkName
+    local exePrefix=
 
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
     sysCmdPath=$(command -v "$sysCmd")
@@ -412,13 +441,17 @@ relinkCommand() {
     fi
 
     echo -e "${COLOR}Creating symlink: ${linkName} -> syscmd: ${sysCmdPath}${RESET}"
-    ln -sf "$sysCmdPath" "$dst"
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Success!${RESET}"
-    else
-        echo -e "${RED}Failed!${RESET}"
-        exit 2
-    fi
+    for _ in {1..2}; do
+        $exePrefix ln -sf "$sysCmdPath" "$dst"
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Success!${RESET}"
+            exePrefix=
+        else
+            echo -e "${RED}Failed!${RESET}"
+            exePrefix="sudo "
+            continue
+        fi
+    done
 }
 
 buildBatTheme() {
@@ -508,16 +541,6 @@ changeTMOUTToWritable() {
     else
         echo -e "${RED}Failed!${RESET}"
         exit 1
-    fi
-}
-
-checkSudoPrivilege() {
-    echo -e "${COLOR}Checking sudo privilege${RESET}"
-    if sudo -v >/dev/null 2>&1; then
-        echo "You have sudo privilege. Continue!"
-    else
-        echo "You do not have sudo privilege. Abort!"
-        exit 0
     fi
 }
 
@@ -649,24 +672,32 @@ updateClangd() {
     linkFile "$clangdBinary" "$HOME/.usr/bin"
 }
 
+createFirstTimeFile() {
+    touch "$fHasBeenInvoked"
+}
+
 main() {
     parseOptions "$@"
+    [ ! -f "$fHasBeenInvoked" ] && fForceUpdate=true
     checkOSCategory
     performSanityCheck
     if [ "$fOSCategory" == "debian" ]; then
         [ -n "$fForceUpdate" ] && updatePrerequisitesForDebian
         createBasicSymlinks
-        createExtraSymlinks
+        installTPM
         updateVimPlugins
+        createExtraSymlinks
         [ -n "$fUpdateClangd" ] && updateClangd
         buildBatTheme
         buildExtraFonts
-        followUpTKExceptions
+        tackleTheExceptions
         setTimeZone
         changeTMOUTToWritable
+        [ ! -f "$fHasBeenInvoked" ] && createFirstTimeFile
     elif [ "$fOSCategory" == "mac" ]; then
         # [ -n "$fForceUpdate" ] && installPrequesitesForMac
         createBasicSymlinks
+        installTPM
         updateVimPlugins
         buildBatTheme
         buildExtraFonts

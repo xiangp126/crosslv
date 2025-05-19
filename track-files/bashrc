@@ -39,12 +39,10 @@ export LS_COLORS=$LS_COLORS:'ex=0;0:ln=36:di=34'
 
 if [[ $(uname -s) == 'Darwin' ]]; then
     alias ls='ls -G' # Compatible with Mac
-    # alias netstat='netstat -an -p tcp'
 else
     # Linux
     alias ls='ls --color=auto'
     alias dir='dir --color=auto'
-    # alias netstat='netstat -tuanp'
 fi
 alias ll='ls -lF'
 alias ll.='ls -alF'
@@ -55,9 +53,6 @@ alias grep='grep -i --color=auto'
 alias gdb='gdb -q'
 # alias valgrind='valgrind --tool=memcheck --leak-check=full --show-reachable=yes'
 alias rg='rg --smart-case --color=ansi'
-# alias 7zP='7z a -mhe=on -p'
-# alias 7zA='7z a'
-# alias 7zX='7z x'
 alias tmux='tmux -u'
 alias yt-dlp='yt-dlp --verbose'
 alias youtube-dl='yt-dlp --external-downloader aria2c --external-downloader-args "-x 16 -s 16" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --write-auto-subs --sub-langs zh-Hans'
@@ -154,9 +149,18 @@ export PKG_CONFIG_PATH
 export LD_LIBRARY_PATH
 unset TMOUT
 export FORTIPKG="$HOME/fortipkg" # FOS variables.
-if [ -f /etc/bash_completion ] && ! shopt -oq posix; then
+
+# enable programmable completion features (you don't need to enable
+# this, if it's already enabled in /etc/bash.bashrc and /etc/profile
+# sources /etc/bash.bashrc).
+if ! shopt -oq posix; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
     . /etc/bash_completion
+  fi
 fi
+
 # find bash completion for third-party tools | only for Mac
 if [[ -d /usr/local/etc/bash_completion.d ]]; then
     for file in /usr/local/etc/bash_completion.d/*; do
