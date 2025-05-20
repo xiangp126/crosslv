@@ -51,14 +51,13 @@ alias mv='mv -i'
 alias cp='cp -i'
 alias grep='grep -i --color=auto'
 alias gdb='gdb -q'
-# alias valgrind='valgrind --tool=memcheck --leak-check=full --show-reachable=yes'
 alias rg='rg --smart-case --color=ansi'
 alias tmux='tmux -u'
 alias yt-dlp='yt-dlp --verbose'
 alias youtube-dl='yt-dlp --external-downloader aria2c --external-downloader-args "-x 16 -s 16" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --write-auto-subs --sub-langs zh-Hans'
 alias rsync='rsync -azPv'
 alias jn='jr --no-clipboard'
-# alias to change directory
+
 function __cd () {
     if [ -d "$1" ]; then
         cd "$1" || exit
@@ -77,15 +76,13 @@ alias cdR='__cd $HOME/Recycled'
 alias cdd='__cd /data'
 alias cdB='__cd /data/bugzilla'
 alias cdL='__cd /data/bugzilla'
-# alias cdL='__cd /data/logs'
 alias cdo='__cd /opt'
 alias cds='__cd /opt/src'
 alias cdn='__cd /opt/nginx'
 alias cdN='__cd /usr/local/nginx'
 
-# print entry names without quoting
+# Print entry names without quoting
 export QUOTING_STYLE=literal
-# set theme for the bat(batcat) command
 export BAT_THEME=TwoDark
 # VSCode settings
 setCodePath() {
@@ -134,8 +131,6 @@ export -f setCodePath
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 export LC_CTYPE=en_US.UTF-8
-# export SHELL=/bin/bash
-# export EDITOR=vim
 export SSLKEYLOGFILE=~/.ssl-keys.log # Wireshark to decode SSL/TLS traffic
 PKG_CONFIG_PATH=$HOME/.usr/lib/pkgconfig:/usr/local/lib/pkgconfig
 LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/local/lib:/usr/local/lib64
@@ -150,7 +145,7 @@ export LD_LIBRARY_PATH
 unset TMOUT
 export FORTIPKG="$HOME/fortipkg" # FOS variables.
 
-# enable programmable completion features (you don't need to enable
+# Enable programmable completion features (you don't need to enable
 # this, if it's already enabled in /etc/bash.bashrc and /etc/profile
 # sources /etc/bash.bashrc).
 if ! shopt -oq posix; then
@@ -161,16 +156,18 @@ if ! shopt -oq posix; then
   fi
 fi
 
-# find bash completion for third-party tools | only for Mac
+# Find bash completion for third-party tools | only for Mac
 if [[ -d /usr/local/etc/bash_completion.d ]]; then
     for file in /usr/local/etc/bash_completion.d/*; do
         # shellcheck disable=SC1090
         [[ -L $file ]] && . "$file"
     done
 fi
-trackedCompletionDir="$HOME/.bash_completion.d"
-if [[ -d "$trackedCompletionDir" ]]; then
-    for file in "$trackedCompletionDir"/*; do
+
+# Find bash completion for self-defined tools
+TK_COMPLETION_SELF="$HOME/.bash_completion.d"
+if [[ -d "$TK_COMPLETION_SELF" ]]; then
+    for file in "$TK_COMPLETION_SELF"/*; do
         # shellcheck disable=SC1090
         [[ -f $file ]] && source "$file"
     done

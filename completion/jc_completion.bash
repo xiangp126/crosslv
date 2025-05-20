@@ -7,7 +7,7 @@ _jc_complete() {
     
     # Define command options
     opts="-h -n -d -u"
-    long_opts="--help --no-tools --debug --update --clangd"
+    long_opts="--help --no-tools --debug --update --clangd --link-clang-format"
     
     if [[ ${cur} == -* ]]; then
         # If it starts with --, only suggest long options
