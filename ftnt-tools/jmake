@@ -280,7 +280,7 @@ searchBuildModel() {
     esac
 }
 
-parseOptions() {
+preConfigure() {
     # Set fRunConfigure to true if $fNeedBuild is true
     [ -n "$fNeedBuild" ] && fRunConfigure=true
     [ -n "$fGitClean" ] || [ -n "$fRunConfigure" ] || [ -n "$fNeedBuild" ] || [ -n "$fUseBear" ] || [ -n "$fRMCompileCommandsJson" ] && fPrintBuildFlags=true
@@ -829,7 +829,7 @@ runSyncCommands() {
 }
 
 main () {
-    parseOptions "$@"
+    preConfigure "$@"
     showLogo
     printBuildFlags
     cleanTheRepo

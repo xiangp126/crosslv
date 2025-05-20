@@ -66,59 +66,61 @@ _EOF
 exit 0
 }
 
-parseOptions() {
-    SHORTOPTS="hdnu"
-    LONGOPTS="help,debug,no-tools,update,clangd,link-clang-format:"
+SHORTOPTS="hdnu"
+LONGOPTS="help,debug,no-tools,update,clangd,link-clang-format::"
 
-    # Use getopt to parse command-line options
-    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
-        echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
-        exit 1
-    fi
+# Use getopt to parse command-line options
+if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+    echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
+    exit 1
+fi
 
-    # Reset positional parameters to the parsed values
-    eval set -- "$PARSED"
+# Reset positional parameters to the parsed values
+eval set -- "$PARSED"
 
-    while true; do
-        case "$1" in
-            -n|--no-tools)
-                fNoInstallTools=true
-                shift
-                ;;
-            -u|--update)
-                fForceUpdate=true
-                shift
-                ;;
-            --clangd)
-                fUpdateClangd=true
-                shift
-                ;;
-            --link-clang-format)
-                fLinkClangFormatPath="$2"
-                if [ ! -d "$fLinkClangFormatPath" ]; then
-                    echo -e "${LIGHTYELLOW}Link Path $fLinkClangFormatPath does not exist, abort!${RESET}"
-                    exit 1
-                fi
-                shift 2
-                ;;
-            -d|--debug)
-                set -x
-                shift
-                ;;
-            -h|--help)
-                usage
-                ;;
-            --)
-                shift
-                break
-                ;;
-            *)
-                echo "Internal error!"
-                exit 1
-                ;;
-        esac
-    done
-}
+while true; do
+    case "$1" in
+        -n|--no-tools)
+            fNoInstallTools=true
+            shift
+            ;;
+        -u|--update)
+            fForceUpdate=true
+            shift
+            ;;
+        --clangd)
+            fUpdateClangd=true
+            shift
+            ;;
+        --link-clang-format)
+            # $1 is '--link-clang-format'
+            # $2 is an empty string '' no matter whether it has an argument
+            # The argument if provided will be put in sequence in the positional parameters
+            # Exp: $ jc huhu --link-clang-format ~/ shi he
+            #          --link-clang-format '' -- 'huhu' '/home/xiangp/' 'shi' 'he'
+            # CRITICAL: Always shift 2 to consume both the option token ($1)
+            # and its argument/empty placeholder token ($2).
+            fLinkClangFormatPath="$PWD"
+            shift 2
+            ;;
+        -d|--debug)
+            set -x
+            echo -e "${COLOR}Debug mode enabled${RESET}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo -e "${RED}Error: Invalid option: $1${RESET}" >&2
+            exit 1
+            ;;
+    esac
+done
 
 checkSudoPrivilege() {
     echo -e "${COLOR}Checking sudo privilege${RESET}"
@@ -702,15 +704,24 @@ createFirstTimeFile() {
 
 linkClangFormat() {
     [ -z "$fLinkClangFormatPath" ] && return
-    local clangFormatPath=$fMainDir/assets/clangd/clang-format
-    echo -e "${LIGHTYELLOW}Linking clang-format to $fLinkClangFormatPath${RESET}"
-    linkFile "$clangFormatPath" "$fLinkClangFormatPath" .clang-format
+
+    local argVal="$1"
+    if [ -n "$argVal" ]; then
+        if [ ! -d "$argVal" ]; then
+            echo -e "${RED}Error: Link path '$argVal' is not a valid directory.${RESET}" >&2
+            exit 1
+        fi
+        fLinkClangFormatPath="$argVal"
+    fi
+
+    local realClangFormatPath=$fMainDir/assets/clangd/clang-format
+    echo -e "${LIGHTYELLOW}Linking clang-format to $fLinkClangFormatPath/.clang-format${RESET}"
+    linkFile "$realClangFormatPath" "$fLinkClangFormatPath" .clang-format
     exit 0
 }
 
 main() {
-    parseOptions "$@"
-    linkClangFormat
+    linkClangFormat "$1"
     checkOSCategory
     performSanityCheck
     if [ "$fOSCategory" == "debian" ]; then
