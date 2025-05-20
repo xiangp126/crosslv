@@ -1,20 +1,56 @@
 ### Introduction
-- I wrote some tools to help me work more efficiently. These tools are mainly used for building, debugging, searching and connecting to devices.
+- I wrote some tools to help me work more efficiently. These tools are mainly used for building, debugging, searching, connecting, and setting up working environments.
 - The tools are versatile, though they are primarily written for use in the Fortinet environment. However, they can be easily modified to support other devices.
 
 ### Key Tools
 
 | Tool | Description |
-|:------:|-------------|
+|:------|-------------|
+| [jc/jcross](#jc) | Setting up working environment |
 | [jmake](#jmake) | Building tool for large C projects |
 | [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or Telnet |
 | [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
-| [jrun](#jrun) | Command Runner by sending commands to a tmux pane running an SSH session |
-| [jr](#jr) | Powerful search tool for searching code in large projects |
-| [jt](#jt) | Log file viewer with syntax highlighting |
 | [jroute](#jroute) | Simple script to switch the default route between available gateways |
+| [jrun](#jrun) | Command Runner by sending commands to a tmux pane running an SSH session |
+| [jr/jregex](#jr) | Powerful search tool for searching code in large projects |
+| [jt/jtail](#jt) | Log file viewer with syntax highlighting |
+
+### Other Tools
+
+| Tool | Description |
+|:------|-------------|
 | [gdb_tools](#gdb_tools) | Python tools for visualizing data structures in memory while debugging with GDB |
 | [completion](#completion) | Bash completion scripts for all the above tools |
+
+<a id="jc"></a>
+#### [jc/jcross](./jc)
+```bash
+$ git clone https://github.com/crosslv/crosslv.git
+$ cd crosslv
+# Do not use sh to run the script on a freshly installed ubuntu
+# Use bash cos sh is not linked to bash on a freshly installed ubuntu
+$ bash jc
+
+$ jc -h
+Usage: jc [OPTIONS]
+
+This script is used to set up the coding environment in my predefined way.
+
+Options:
+    -h, --help              Print this help message
+    -n, --no-tools          Don't install tools
+    -d, --debug             Enable debug mode
+    -u, --update            Force an update of prerequisites
+    --clangd                Update clangd to the latest released version
+    --link-clang-format     Link clang-format to current path
+
+Examples:
+    ./jc
+    ./jc -t
+    ./jc -h
+```
+
+
 
 <a id="jmake"></a>
 #### [jmake](./ftnt-tools/jmake)

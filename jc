@@ -17,7 +17,7 @@ fJCPath=$fMainDir/jc
 fUpdateClangd=
 fLinkClangFormatPath=
 fDownloads=$HOME/Downloads
-fHasBeenInvoked=$fMainDir/".has_been_invoked"
+fFirstTimeFile=$fMainDir/".has_been_invoked"
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -169,7 +169,7 @@ checkOSCategory() {
 }
 
 installPrerequisitesForDebian() {
-    [ ! -f "$fHasBeenInvoked" ] && fForceUpdate=true
+    [ ! -f "$fFirstTimeFile" ] && fForceUpdate=true
     [ -z "$fForceUpdate" ] && return
     echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
 
@@ -696,8 +696,8 @@ updateClangd() {
 }
 
 createFirstTimeFile() {
-    [ -z "$fCreateFirstTimeFile" ] && return
-    touch "$fHasBeenInvoked"
+    [ -f "$fFirstTimeFile" ] && return
+    touch "$fFirstTimeFile"
 }
 
 linkClangFormat() {
