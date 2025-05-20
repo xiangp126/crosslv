@@ -58,9 +58,8 @@ Options:
     --link-clang-format     Link clang-format to current path
 
 Examples:
-    ./$SCRIPT_NAME
-    ./$SCRIPT_NAME -t
-    ./$SCRIPT_NAME -h
+    $SCRIPT_NAME -h
+    $SCRIPT_NAME --link-clang-format \$HOME/crosslv
 
 _EOF
 exit 0
@@ -96,8 +95,8 @@ while true; do
             # $1 is '--link-clang-format'
             # $2 is an empty string '' no matter whether it has an argument
             # The argument if provided will be put in sequence in the positional parameters
-            # Exp: $ jc huhu --link-clang-format ~/ shi he
-            #          --link-clang-format '' -- 'huhu' '/home/xiangp/' 'shi' 'he'
+            # Exp: $ jc huhu --link-clang-format ~/ he
+            #          --link-clang-format '' -- 'huhu' '/home/user1/' 'he'
             # CRITICAL: Always shift 2 to consume both the option token ($1)
             # and its argument/empty placeholder token ($2).
             fLinkClangFormatPath="$PWD"
@@ -233,13 +232,14 @@ installPrerequisitesForDebian() {
         tigervnc-xorg-extension
         tigervnc-viewer
         remmina # remote desktop client
-        # samba
-        # smbclient
+        samba
+        smbclient
     )
 
     sudo apt remove -y wireshark lightdm
     sudo apt update
     sudo apt install -y "${prerequisitesForUbuntu[@]}"
+    sudo apt autoremove -y
 }
 
 updatePrequesitesForMac() {

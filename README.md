@@ -24,11 +24,11 @@
 
 <a id="jc"></a>
 #### [jc/jcross](./jc)
+- Do not use `sh` to run the script on a freshly installed ubuntu.
+- Use `bash` cos `sh` is not linked to `bash` on a freshly installed ubuntu.
 ```bash
 $ git clone https://github.com/crosslv/crosslv.git
 $ cd crosslv
-# Do not use sh to run the script on a freshly installed ubuntu
-# Use bash cos sh is not linked to bash on a freshly installed ubuntu
 $ bash jc
 
 $ jc -h
@@ -45,12 +45,10 @@ Options:
     --link-clang-format     Link clang-format to current path
 
 Examples:
-    ./jc
-    ./jc -t
-    ./jc -h
+    jc -h
+    jc --link-clang-format $HOME/crosslv
+
 ```
-
-
 
 <a id="jmake"></a>
 #### [jmake](./ftnt-tools/jmake)
