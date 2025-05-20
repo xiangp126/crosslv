@@ -5,9 +5,8 @@ TMUX_TARG_TAG="3.3"
 USER_NOTATION="@@@@"
 TMUX_REPO_URL="https://github.com/tmux/tmux"
 DOWNLOAD_DIR="$HOME/Downloads"
-NEED_UPDATE=false
 NEED_CLEAN=false
-INSTALL_FLAG=false
+INSTALL_FLAG=
 INSTALL_DIR="$HOME/.usr/"
 SCRIPT_NAME=$(basename "$0")
 
@@ -30,9 +29,6 @@ exit 0
 
 while getopts "uich" opt; do
     case $opt in
-        u)
-            NEED_UPDATE=true
-            ;;
         i)
             INSTALL_FLAG=true
             ;;
@@ -82,16 +78,15 @@ _EOF_
     fi
 fi
 
-if [[ "$NEED_UPDATE" != false ]]; then
-    echo "$USER_NOTATION Installing necessary build tools"
-    # Ensure you have necessary build tools installed
-    sudo apt-get update
-    sudo apt-get install -y build-essential \
-                            libevent-dev \
-                            libncurses5-dev \
-                            autoconf \
-                            automake
-fi
+echo "$USER_NOTATION Installing necessary build tools"
+# Ensure you have necessary build tools installed
+sudo apt-get update
+sudo apt-get install -y build-essential \
+                        libevent-dev \
+                        libncurses5-dev \
+                        autoconf \
+                        automake \
+                        bison byacc
 
 # Navigate to the download directory
 cd "$DOWNLOAD_DIR" || exit
@@ -139,7 +134,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-if [[ "$INSTALL_FLAG" != false ]]; then
+if [ -n "$INSTALL_FLAG" ]; then
     echo "$USER_NOTATION Installing TMUX ..."
     make install
     if [ $? -ne 0 ]; then

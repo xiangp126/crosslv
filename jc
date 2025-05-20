@@ -25,6 +25,7 @@ fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
 fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
 fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
+fArch=
 fNoInstallTools=
 fForceUpdate=
 # Constants
@@ -133,23 +134,24 @@ checkSudoPrivilege() {
 checkOSCategory() {
     echo -e "${COLOR}Checking OS platform${RESET}"
     if [[ -f /etc/os-release ]]; then
-        local os_name
-        os_name=$(awk -F= '/^ID=/{print $2}' /etc/os-release)
+        local osName
+        osName=$(awk -F= '/^ID=/{print $2}' /etc/os-release)
+        fArch=$(uname -m)
 
-        case "$os_name" in
+        case "$osName" in
             "ubuntu")
                 fOSCategory=debian
-                echo "The current OS type is Ubuntu."
+                echo -e "The current OS type is ${LIGHTYELLOW}Ubuntu${RESET}. Arch: ${LIGHTYELLOW}$fArch${RESET}"
                 ;;
             "centos")
                 fOSCategory=redhat
-                echo "The current OS type is CentOS."
+                echo "The current OS type is CentOS. Arch: $fArch"
                 echo "We currently do not support CentOS."
                 exit
                 ;;
             "raspbian")
                 fOSCategory=debian
-                echo "The current OS type is raspbian."
+                echo "The current OS type is raspbian. Arch: $fArch"
                 ;;
             *)
                 echo "We currently do not support this OS type."
@@ -611,6 +613,12 @@ performSanityCheck() {
 updateClangd() {
     [ -z "$fUpdateClangd" ] && return
     echo -e "${COLOR}Updating Clangd${RESET}"
+    # Check if the current architecture is arm64
+    if [ "$fArch" == "aarch64" ]; then
+        sudo apt install clangd -y
+        return
+    fi
+
     if ! command -v jq &> /dev/null; then
         echo -e "${RED}Error: jq is required but not installed. Please install jq first.${RESET}"
         return 1
