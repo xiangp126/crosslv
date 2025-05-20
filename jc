@@ -17,7 +17,7 @@ fJCPath=$fMainDir/jc
 fUpdateClangd=
 fLinkClangFormatPath=
 fDownloads=$HOME/Downloads
-fHasBeenInvoked=".has_been_invoked"
+fHasBeenInvoked=$fMainDir/".has_been_invoked"
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -166,7 +166,11 @@ checkOSCategory() {
     fi
 }
 
-updatePrerequisitesForDebian() {
+installPrerequisitesForDebian() {
+    [ ! -f "$fHasBeenInvoked" ] && fForceUpdate=true
+    [ -z "$fForceUpdate" ] && return
+    echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
+
     checkSudoPrivilege
     prerequisitesForUbuntu=(
         tmux # Basic tools
@@ -228,8 +232,6 @@ updatePrerequisitesForDebian() {
         # samba
         # smbclient
     )
-
-    echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
 
     sudo apt remove -y wireshark lightdm
     sudo apt update
@@ -602,9 +604,12 @@ performSanityCheck() {
             fi
         fi
     done
+
+    cd "$fMainDir" || exit
 }
 
 updateClangd() {
+    [ -z "$fUpdateClangd" ] && return
     echo -e "${COLOR}Updating Clangd${RESET}"
     if ! command -v jq &> /dev/null; then
         echo -e "${RED}Error: jq is required but not installed. Please install jq first.${RESET}"
@@ -683,10 +688,12 @@ updateClangd() {
 }
 
 createFirstTimeFile() {
+    [ -z "$fCreateFirstTimeFile" ] && return
     touch "$fHasBeenInvoked"
 }
 
 linkClangFormat() {
+    [ -z "$fLinkClangFormatPath" ] && return
     local clangFormatPath=$fMainDir/assets/clangd/clang-format
     echo -e "${LIGHTYELLOW}Linking clang-format to $fLinkClangFormatPath${RESET}"
     linkFile "$clangFormatPath" "$fLinkClangFormatPath" .clang-format
@@ -695,30 +702,30 @@ linkClangFormat() {
 
 main() {
     parseOptions "$@"
-    [ ! -f "$fHasBeenInvoked" ] && fForceUpdate=true
-    [ -n "$fLinkClangFormatPath" ] && linkClangFormat
+    linkClangFormat
     checkOSCategory
     performSanityCheck
     if [ "$fOSCategory" == "debian" ]; then
-        [ -n "$fForceUpdate" ] && updatePrerequisitesForDebian
+        installPrerequisitesForDebian
         createBasicSymlinks
         installTPM
         updateVimPlugins
         createExtraSymlinks
-        [ -n "$fUpdateClangd" ] && updateClangd
+        updateClangd
         buildBatTheme
         buildExtraFonts
         tackleTheExceptions
         setTimeZone
         changeTMOUTToWritable
-        [ ! -f "$fHasBeenInvoked" ] && createFirstTimeFile
+        createFirstTimeFile
     elif [ "$fOSCategory" == "mac" ]; then
-        # [ -n "$fForceUpdate" ] && installPrequesitesForMac
         createBasicSymlinks
         installTPM
         updateVimPlugins
+        createExtraSymlinks
         buildBatTheme
         buildExtraFonts
+        createFirstTimeFile
     fi
 }
 
