@@ -203,6 +203,8 @@ installPrerequisitesForDebian() {
         python3-dev
         ffmpeg
         build-essential # build essentials
+        gnupg
+        lsb-release
         cmake
         libboost-all-dev
         ragel
@@ -273,7 +275,7 @@ setTimeZone() {
     fi
 }
 
-installTPM() {
+installTmuxPluginsManager() {
     if [ -d ~/.tmux/plugins/tpm ]; then
         return
     fi
@@ -322,7 +324,7 @@ tackleTheExceptions() {
     gitconfigCheckFile=$HOME/.gitconfig.fortinet
     if [ -f "$gitconfigCheckFile"  ]; then
         echo -e "${LIGHTYELLOW}The privileged file $gitconfigCheckFile exists.${RESET}"
-        echo -e "${LIGHTYELLOW}Relink $HOME/.gitconfig to $gitconfigCheckFile${RESET}"
+        echo -e "Relink $HOME/.gitconfig to $gitconfigCheckFile"
         ln -sf "$gitconfigCheckFile" "$HOME"/.gitconfig
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}Success!${RESET}"
@@ -559,7 +561,7 @@ changeTMOUTToWritable() {
     fi
 }
 
-createBasicSymlinks() {
+createTKSymlinks() {
     # The directories are guaranteed to exist when this function is called.
     linkFiles "$fTKFilesDir" "$HOME" "."
     linkFiles "$fTKCompDir" "$HOME/.bash_completion.d"
@@ -612,7 +614,7 @@ performSanityCheck() {
     cd "$fMainDir" || exit
 }
 
-updateClangd() {
+installUpdateClangd() {
     [ -z "$fUpdateClangd" ] && return
     echo -e "${COLOR}Updating Clangd${RESET}"
     # Check if the current architecture is arm64
@@ -702,6 +704,100 @@ createFirstTimeFile() {
     touch "$fFirstTimeFile"
 }
 
+installDocker() {
+    if command -v docker &> /dev/null; then
+        echo -e "${GREY}Docker is already installed.${RESET}"
+        docker --version
+        return 0
+    fi
+
+    echo -e "${COLOR}Attempting to install Docker for Ubuntu${RESET}"
+
+    # 1. Uninstall old versions
+    echo -e "${LIGHTYELLOW}Uninstalling old Docker versions (if any)...${RESET}"
+    sudo apt-get remove -y docker docker-engine docker.io containerd runc > /dev/null 2>&1
+    sudo apt-get autoremove -y > /dev/null 2>&1
+    echo -e "${GREY}Old versions uninstalled/autoremoved (if any existed).${RESET}"
+
+    # 2. Set up the repository
+    echo -e "${LIGHTYELLOW}Setting up Docker repository...${RESET}"
+    if ! sudo apt-get update; then
+        echo -e "${RED}Failed to update apt package list.${RESET}"
+        exit 1
+    fi
+
+    if ! sudo install -m 0755 -d /etc/apt/keyrings; then
+        echo -e "${RED}Failed to create /etc/apt/keyrings directory.${RESET}"
+        exit 1
+    fi
+
+    # Download Docker's official GPG key
+    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+        echo -e "${RED}Failed to download or dearmor Docker GPG key.${RESET}"
+        exit 1
+    fi
+    if ! sudo chmod a+r /etc/apt/keyrings/docker.gpg; then
+        echo -e "${RED}Failed to set permissions for Docker GPG key.${RESET}"
+        exit 1
+    fi
+
+    # Add Docker repository to Apt sources
+    # shellcheck disable=SC2024 # sudo tee is generally fine with output redirection here.
+    if ! echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | \
+      sudo tee /etc/apt/sources.list.d/docker.list > /dev/null; then
+        echo -e "${RED}Failed to add Docker repository to apt sources.${RESET}"
+        exit 1
+    fi
+    echo -e "${GREEN}Docker repository set up successfully.${RESET}"
+
+    # 3. Install Docker Engine
+    echo -e "${LIGHTYELLOW}Installing Docker Engine...${RESET}"
+    if ! sudo apt-get update; then
+        echo -e "${RED}Failed to update apt package list after adding Docker repo.${RESET}"
+        exit 1
+    fi
+    if ! sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        echo -e "${RED}Failed to install Docker Engine packages.${RESET}"
+        exit 1
+    fi
+    echo -e "${GREEN}Docker Engine installed successfully.${RESET}"
+
+    # 4. Verify installation
+    echo -e "${LIGHTYELLOW}Verifying Docker installation by running hello-world...${RESET}"
+    if sudo docker run hello-world; then
+        echo -e "${GREEN}Docker hello-world container ran successfully.${RESET}"
+    else
+        echo -e "${RED}Docker hello-world container failed to run. Docker might be installed but requires attention.${RESET}"
+    fi
+
+    # 5. Post-installation steps
+    echo -e "${LIGHTYELLOW}Configuring Docker to run without sudo for current user ($USER)...${RESET}"
+    if ! getent group docker > /dev/null; then
+        echo -e "${GREY}Docker group does not exist, creating it...${RESET}"
+        if ! sudo groupadd docker; then
+            echo -e "${RED}Failed to create 'docker' group. You may need to do this manually.${RESET}"
+        else
+            echo -e "${GREEN}'docker' group created.${RESET}"
+        fi
+    else
+        echo -e "${GREY}'docker' group already exists.${RESET}"
+    fi
+
+    if getent group docker > /dev/null; then
+        if sudo usermod -aG docker "$USER"; then
+            echo -e "${LIGHTYELLOW}IMPORTANT: You must log out and log back in, or run 'newgrp docker' in your terminal, for this change to take full effect.${RESET}"
+        else
+            echo -e "${RED}Failed to add user $USER to the 'docker' group. You may need to do this manually (e.g., sudo usermod -aG docker \"\$USER\").${RESET}"
+        fi
+    else
+        echo -e "${RED}Cannot add user to 'docker' group as the group does not exist or could not be created.${RESET}"
+    fi
+
+    echo -e "${GREEN}Docker installation and basic configuration process completed.${RESET}"
+}
+
 linkClangFormat() {
     [ -z "$fLinkClangFormatPath" ] && return
 
@@ -720,17 +816,22 @@ linkClangFormat() {
     exit 0
 }
 
+doCoreJobs() {
+    createTKSymlinks
+    updateVimPlugins
+    installTmuxPluginsManager
+    installDocker
+    installUpdateClangd
+    createExtraSymlinks
+}
+
 main() {
     linkClangFormat "$1"
     checkOSCategory
     performSanityCheck
     if [ "$fOSCategory" == "debian" ]; then
         installPrerequisitesForDebian
-        createBasicSymlinks
-        installTPM
-        updateVimPlugins
-        createExtraSymlinks
-        updateClangd
+        doCoreJobs
         buildBatTheme
         buildExtraFonts
         tackleTheExceptions
@@ -738,13 +839,12 @@ main() {
         changeTMOUTToWritable
         createFirstTimeFile
     elif [ "$fOSCategory" == "mac" ]; then
-        createBasicSymlinks
-        installTPM
+        createTKSymlinks
+        installTmuxPluginsManager
         updateVimPlugins
         createExtraSymlinks
         buildBatTheme
         buildExtraFonts
-        createFirstTimeFile
     fi
 }
 
