@@ -5,7 +5,7 @@ TMUX_TARG_TAG="3.3"
 USER_NOTATION="@@@@"
 TMUX_REPO_URL="https://github.com/tmux/tmux"
 DOWNLOAD_DIR="$HOME/Downloads"
-NEED_CLEAN=false
+NEED_CLEAN=
 INSTALL_FLAG=
 INSTALL_DIR="$HOME/.usr/"
 SCRIPT_NAME=$(basename "$0")
@@ -14,13 +14,14 @@ usage() {
     cat << _EOF_
 Usage: $SCRIPT_NAME [-uic]
 
+This script compiles and installs TMUX
+
 Options:
-    -u  Install the necessary build tools
     -i  Install TMUX
     -c  Clean the build directory before compiling
 
 Examples:
-    $SCRIPT_NAME -u
+    $SCRIPT_NAME -h
     $SCRIPT_NAME -i
 
 _EOF_
@@ -114,7 +115,7 @@ else
     fi
 fi
 
-if [[ "$NEED_CLEAN" != false ]]; then
+if [ -n "$NEED_CLEAN" ]; then
     echo "$USER_NOTATION Cleaning the build directory"
     make distclean
 fi
