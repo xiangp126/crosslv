@@ -37,13 +37,12 @@
     "files.exclude": {
         "**/.vscode-server": true,
         "**/devops": true,
-        "**/Downloads": true,
         "**/fortipkg": true,
-        "**/mmt": true
-    },
-    "files.watcherExclude": {
-        "**/.vscode-server": true
+        "**/Downloads": true,
+        "**/Templates/": true,
+        "**/mmt": true,
+        "**/.usr/": true
     },
     "files.autoGuessEncoding": true,
-    "gitlens.views.commitDetails.autolinks.enhanced": false,
+    "gitlens.views.commitDetails.autolinks.enhanced": false
 }
