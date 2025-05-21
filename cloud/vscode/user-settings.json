@@ -565,7 +565,8 @@
     "continue.enableTabAutocomplete": false,
     "codeium.enableConfig": {
         "*": true,
-        "properties": true
+        "properties": true,
+        "markdown": true
     },
     "codeium.enableCommandSideHintEducation": false,
     "codeium.searchMaxWorkspaceFileCount": 10,
@@ -575,4 +576,6 @@
     "git.blame.editorDecoration.enabled": false,
     "telemetry.telemetryLevel": "off",
     "telemetry.feedback.enabled": false,
+    "terminal.integrated.macOptionIsMeta": true,
+    "terminal.external.osxExec": "iTerm2",
 }
