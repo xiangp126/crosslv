@@ -598,7 +598,7 @@ createExtraSymlinks() {
         linkFiles "$fTKtemplateDir" "$HOME/Templates"
     fi
 
-    echo -e "${COLOR}Creating extr symlinks${RESET}"
+    echo -e "${COLOR}Creating extra symlinks${RESET}"
     # The directories are guaranteed to exist when this function is called.
     linkFile "$fTKClangdConfig" "$HOME/.config/clangd"
     linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
