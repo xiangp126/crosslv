@@ -169,7 +169,7 @@ checkOSCategory() {
     fi
 }
 
-installPrerequisitesForDebian() {
+updatePrerequisitesForDebian() {
     [ ! -f "$fFirstTimeFile" ] && fForceUpdate=true
     [ -z "$fForceUpdate" ] && return
     echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
@@ -203,10 +203,10 @@ installPrerequisitesForDebian() {
         python3-dev
         ffmpeg
         build-essential # build essentials
-        gnupg
-        lsb-release
         cmake
         libboost-all-dev
+        gnupg
+        lsb-release
         ragel
         sqlite3
         libsqlite3-dev
@@ -830,7 +830,7 @@ main() {
     checkOSCategory
     performSanityCheck
     if [ "$fOSCategory" == "debian" ]; then
-        installPrerequisitesForDebian
+        updatePrerequisitesForDebian
         doCoreJobs
         buildBatTheme
         buildExtraFonts
