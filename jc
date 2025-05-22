@@ -16,6 +16,7 @@ fTKToolsDir=$fMainDir/ftnt-tools
 fJCPath=$fMainDir/jc
 fUpdateClangd=
 fLinkClangFormatPath=
+fLinkNodeJs=
 fDownloads=$HOME/Downloads
 fFirstTimeFile=$fMainDir/".has_been_invoked"
 # Misc
@@ -56,6 +57,7 @@ Options:
     -u, --update            Force an update of prerequisites
     --clangd                Update clangd to the latest released version
     --link-clang-format     Link clang-format to current path
+    --link-nodejs           Link nodejs from VsCode Server to current path
 
 Examples:
     $SCRIPT_NAME -h
@@ -66,7 +68,7 @@ exit 0
 }
 
 SHORTOPTS="hdnu"
-LONGOPTS="help,debug,no-tools,update,clangd,link-clang-format::"
+LONGOPTS="help,debug,no-tools,update,clangd,link-clang-format::,link-nodejs"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -101,6 +103,10 @@ while true; do
             # and its argument/empty placeholder token ($2).
             fLinkClangFormatPath="$PWD"
             shift 2
+            ;;
+        --link-nodejs)
+            fLinkNodeJs=true
+            shift
             ;;
         -d|--debug)
             set -x
@@ -202,6 +208,8 @@ updatePrerequisitesForDebian() {
         openssh-server
         python3-dev
         ffmpeg
+        nodejs # Node.js
+        npm
         build-essential # build essentials
         cmake
         libboost-all-dev
@@ -401,7 +409,7 @@ linkFiles() {
     local linkPath="$2"         # Destination directory
     local linknamePrefix="$3"   # Prefix for destination filename. Exp: . for hidden files
 
-    echo -e "${COLOR}Creating symlink: ${linkPath}/* -> $(basename "$targetDir")/*${RESET}"
+    echo -e "${COLOR}Creating symlinks From ${linkPath}/* To $(basename "$targetDir")/*${RESET}"
     [ ! -d "$targetDir" ] && echo "Source directory $targetDir does not exist, abort!" && exit 1
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
 
@@ -568,13 +576,29 @@ createTKSymlinks() {
     linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
 }
 
+linkNodeJsFromCodeServer() {
+    [ -z $fLinkNodeJs ] && return
+    local vscodeServerDir="$HOME/.vscode-server"
+    if [ ! -d "$vscodeServerDir" ]; then
+        echo -e "${LIGHTYELLOW}VSCode Server directory not found: ${BLUE}$vscodeServerDir${RESET}"
+        echo -e "${LIGHTYELLOW}Skipping linking Node.js from VSCode Server.${RESET}"
+        return
+    fi
+    echo -e "${LIGHTYELLOW}Searching for Node.js executable in ${BLUE}$vscodeServerDir${RESET}..."
+    local latestNodeJsPath=$(find "$vscodeServerDir" -name "node" -type f -executable \
+            -exec stat -c '%W %n' {} \; 2>/dev/null | sort -nr | cut -d' ' -f2- | head -n1)
+
+    echo -e "${GREEN}Found latest Node.js executable at: ${BLUE}$latestNodeJsPath${RESET}"
+    linkFile "$latestNodeJsPath" "$HOME/.usr/bin" "node"
+}
+
 createExtraSymlinks() {
     if [ -z "$fNoInstallTools" ]; then
         linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
         linkFiles "$fTKtemplateDir" "$HOME/Templates"
     fi
 
-    echo -e "${COLOR}Creating standalone symlinks${RESET}"
+    echo -e "${COLOR}Creating extr symlinks${RESET}"
     # The directories are guaranteed to exist when this function is called.
     linkFile "$fTKClangdConfig" "$HOME/.config/clangd"
     linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
@@ -585,6 +609,8 @@ createExtraSymlinks() {
     relinkCommand "batcat" "bat"
     relinkCommand "fdfind" "fd"
     relinkCommand "bash" "sh" "/bin/"
+
+    linkNodeJsFromCodeServer
 }
 
 performSanityCheck() {
@@ -711,7 +737,7 @@ installDocker() {
         return 0
     fi
 
-    echo -e "${COLOR}Attempting to install Docker for Ubuntu${RESET}"
+    echo -e "${COLOR}Attempting to install Docker${RESET}"
 
     # 1. Uninstall old versions
     echo -e "${LIGHTYELLOW}Uninstalling old Docker versions (if any)...${RESET}"
@@ -838,7 +864,7 @@ main() {
         setTimeZone
         changeTMOUTToWritable
         createFirstTimeFile
-    elif [ "$fOSCategory" == "mac" ]; then
+    elif [ "$fOSCategory" == "mac" ]; then # Deprecated
         createTKSymlinks
         installTmuxPluginsManager
         updateVimPlugins
