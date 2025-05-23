@@ -13,11 +13,12 @@ fTKFontConfigDir=$fMainDir/assets/fontconfig
 fTKClangdConfig=$fMainDir/assets/clangd/config.yaml
 fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/ftnt-tools
+fDownloads=$HOME/Downloads
 fJCPath=$fMainDir/jc
 fUpdateClangd=
+fUpdateDocker=
 fLinkClangFormatPath=
 fLinkNodeJs=
-fDownloads=$HOME/Downloads
 fFirstTimeFile=$fMainDir/".has_been_invoked"
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
@@ -54,10 +55,13 @@ Options:
     -h, --help              Print this help message
     -n, --no-tools          Don't install tools
     -d, --debug             Enable debug mode
-    -u, --update            Force an update of prerequisites
+    -f, --force             Force an update of prerequisites
+    --docker                Update Docker
     --clangd                Update clangd to the latest released version
     --link-clang-format     Link clang-format to current path
     --link-nodejs           Link nodejs from VsCode Server to current path
+    --auto-remove           Remove unused packages
+    --upgrade               Upgrade all packages
 
 Examples:
     $SCRIPT_NAME -h
@@ -67,8 +71,9 @@ _EOF
 exit 0
 }
 
-SHORTOPTS="hdnu"
-LONGOPTS="help,debug,no-tools,update,clangd,link-clang-format::,link-nodejs"
+SHORTOPTS="hdnf"
+LONGOPTS="help,debug,no-tools,force,clangd,docker,link-clang-format::, \
+         link-nodejs, auto-remove,upgrade"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -85,8 +90,12 @@ while true; do
             fNoInstallTools=true
             shift
             ;;
-        -u|--update)
+        -f|--force)
             fForceUpdate=true
+            shift
+            ;;
+        --docker)
+            fUpdateDocker=true
             shift
             ;;
         --clangd)
@@ -107,6 +116,16 @@ while true; do
         --link-nodejs)
             fLinkNodeJs=true
             shift
+            ;;
+        --auto-remove)
+            sudo apt autoremove -y
+            shift
+            exit 0
+            ;;
+        --upgrade)
+            sudo apt upgrade -y
+            shift
+            exit 0
             ;;
         -d|--debug)
             set -x
@@ -731,7 +750,7 @@ createFirstTimeFile() {
 }
 
 installDocker() {
-    if command -v docker &> /dev/null; then
+    if command -v docker &> /dev/null && [ -z "$fUpdateDocker" ]; then
         echo -e "${GREY}Docker is already installed.${RESET}"
         docker --version
         return 0
@@ -752,15 +771,22 @@ installDocker() {
         exit 1
     fi
 
-    if ! sudo install -m 0755 -d /etc/apt/keyrings; then
+    if [ ! -d /etc/apt/keyrings ] && ! sudo install -m 0755 -d /etc/apt/keyrings; then
         echo -e "${RED}Failed to create /etc/apt/keyrings directory.${RESET}"
         exit 1
     fi
 
     # Download Docker's official GPG key
-    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
-        echo -e "${RED}Failed to download or dearmor Docker GPG key.${RESET}"
-        exit 1
+    local dockerGpgKey="/etc/apt/keyrings/docker.gpg"
+    if [ -f "$dockerGpgKey" ]; then
+        echo -e "${GREY}Docker GPG key already exists at $dockerGpgKey. Verifying permissions...${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Downloading Docker's official GPG key...${RESET}"
+        if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o "$dockerGpgKey"; then
+            echo -e "${RED}Failed to download or dearmor Docker GPG key.${RESET}"
+            exit 1
+        fi
+        echo -e "${GREEN}Docker GPG key downloaded and dearmored successfully.${RESET}"
     fi
     if ! sudo chmod a+r /etc/apt/keyrings/docker.gpg; then
         echo -e "${RED}Failed to set permissions for Docker GPG key.${RESET}"

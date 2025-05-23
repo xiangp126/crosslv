@@ -30,7 +30,8 @@
 $ git clone https://github.com/crosslv/crosslv.git
 $ cd crosslv
 $ bash jc
-
+```
+```bash
 $ jc -h
 Usage: jc [OPTIONS]
 
@@ -40,9 +41,13 @@ Options:
     -h, --help              Print this help message
     -n, --no-tools          Don't install tools
     -d, --debug             Enable debug mode
-    -u, --update            Force an update of prerequisites
+    -f, --force             Force an update of prerequisites
+    --docker                Update Docker
     --clangd                Update clangd to the latest released version
     --link-clang-format     Link clang-format to current path
+    --link-nodejs           Link nodejs from VsCode Server to current path
+    --auto-remove           Remove unused packages
+    --upgrade               Upgrade all packages
 
 Examples:
     jc -h

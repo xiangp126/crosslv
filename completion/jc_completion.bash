@@ -6,9 +6,9 @@ _jc_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}" # Current cursor position
     
     # Define command options
-    opts="-h -n -d -u"
-    long_opts="--help --no-tools --debug --update --clangd --link-clang-format \
-               --link-nodejs"
+    opts="-h -n -d -f"
+    long_opts="--help --no-tools --debug --force --clangd --link-clang-format \
+               --link-nodejs --auto-remove --upgrade --docker"
     
     if [[ ${cur} == -* ]]; then
         # If it starts with --, only suggest long options
