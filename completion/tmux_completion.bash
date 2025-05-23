@@ -146,6 +146,12 @@ _tmux() {
             #---------------------------------------------------------------
             # WINDOW OPERATIONS
             #---------------------------------------------------------------
+            swap-window|swapw)
+                case "$prev" in
+                    -s) _tmux_complete_window "${cur}" ;;
+                    -t) _tmux_complete_window "${cur}" ;;
+                    *) options="-s -t" ;;
+                esac ;;
             link-window|linkw)
                 case "$prev" in
                     -s) _tmux_complete_window "${cur}" ;;
