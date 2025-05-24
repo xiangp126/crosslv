@@ -19,6 +19,7 @@ fUpdateClangd=
 fUpdateDocker=
 fLinkClangFormatPath=
 fLinkNodeJs=
+fTlsInsecure=
 fFirstTimeFile=$fMainDir/".has_been_invoked"
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
@@ -56,6 +57,7 @@ Options:
     -n, --no-tools          Don't install tools
     -d, --debug             Enable debug mode
     -f, --force             Force an update of prerequisites
+    --insecure              Allow insecure TLS
     --docker                Update Docker
     --clangd                Update clangd to the latest released version
     --link-clang-format     Link clang-format to current path
@@ -73,7 +75,7 @@ exit 0
 
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,force,clangd,docker,link-clang-format::, \
-         link-nodejs, auto-remove,upgrade"
+         link-nodejs, auto-remove,upgrade,insecure"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -96,6 +98,10 @@ while true; do
             ;;
         --docker)
             fUpdateDocker=true
+            shift
+            ;;
+        --insecure)
+            fTlsInsecure="--insecure"
             shift
             ;;
         --clangd)
@@ -326,7 +332,7 @@ updateVimPlugins (){
 
     if [ ! -f "$fVimPlugsManagerPath" ]; then
         # use the --insecure option to avoid certificate check
-        curl --insecure -fLo "$fVimPlugsManagerPath" --create-dirs \
+        curl $fTlsInsecure -fLo "$fVimPlugsManagerPath" --create-dirs \
         https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
     else
         echo -e "${GREY}Vim Plug is already installed${RESET}"
@@ -687,7 +693,7 @@ installUpdateClangd() {
     echo -e "${LIGHTYELLOW}Fetching latest Clangd binary information${RESET}"
     # 20.1.0
     # https://github.com/clangd/clangd/releases/download/20.1.0/clangd-linux-20.1.0.zip
-    local output=$(curl -s https://api.github.com/repos/clangd/clangd/releases |
+    local output=$(curl $fTlsInsecure -s https://api.github.com/repos/clangd/clangd/releases |
         jq -r '[.[] | select(.prerelease == false)] | .[0] |
                .name, (.assets[] | select(.name | contains("clangd-linux")) | .browser_download_url)')
     mapfile -t lines <<< "$output"
@@ -712,7 +718,7 @@ installUpdateClangd() {
     if [ -f "$downloadDst" ]; then
         echo -e "${GREY}File $fileName already exists in $fDownloads, skipping download.${RESET}"
     else
-        curl -L -o "$downloadDst" "$downloadUrl"
+        curl $fTlsInsecure -Lo "$downloadDst" "$downloadUrl"
         if [ $? -ne 0 ]; then
             echo -e "${RED}Error: Failed to download the latest version${RESET}"
             return 1
@@ -782,7 +788,7 @@ installDocker() {
         echo -e "${GREY}Docker GPG key already exists at $dockerGpgKey. Verifying permissions...${RESET}"
     else
         echo -e "${LIGHTYELLOW}Downloading Docker's official GPG key...${RESET}"
-        if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o "$dockerGpgKey"; then
+        if ! curl $fTlsInsecure -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o "$dockerGpgKey"; then
             echo -e "${RED}Failed to download or dearmor Docker GPG key.${RESET}"
             exit 1
         fi
