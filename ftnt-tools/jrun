@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034
 # set -x
 
 # Constants
@@ -8,32 +9,76 @@ SEPARATOR_LT="=================================="
 SEPARATOR_RT="=================================="
 # Variables
 fSessionId=
+fTmuxTarget=
 fWinId=1
 fPaneId=1
-fTmuxTarget=
 fSendNewLine=
-fDebug=
-fCmdFile=
 fTmuxPrefix="C-x"
 fCleanedCmd=
-# Flags for quick options
-fWadDebug=
-fKernelDebug=
-fOutputDirectly=
-fPacketTrace=
 fPacketTraceAddr=
-fIPSDebug=
-fScanUnitDebug=
-fDNSDebug=
-fAutoCmdMode=
+fDebugMode="none"
+fCmdFile="commands.txt"
 # Colors
 RED='\033[31m'
 MAGENTA='\033[35m'
 CYAN='\033[36m'
+LIGHTYELLOW='\033[93m'
 LIGHTGREEN='\033[92m'
 GREY='\033[90m'
 RESET='\033[0m'
 COLOR=$MAGENTA
+declare -r -A DEBUG_CONFIG=(
+    ["none"]=""
+    ["wad"]="Enables WAD debugging|(
+        diag debug reset
+        diag wad debug enable all
+        diag debug enable
+    )"
+    ["output"]="Configures console for direct output|(
+        config system console
+        set output standard
+        end
+    )"
+    ["kernel"]="Enables kernel debugging and kmiglogd trace|(
+        diag debug reset
+        diag debug enable
+        diag debug application kmiglogd -1
+    )"
+    ["ptrace"]="Enables packet flow tracing for specific IP|(
+        diag debug reset
+        diag debug flow filter clear
+        diag debug enable
+        diag debug flow filter addr %s
+        diag debug flow show function-name enable
+        diag debug flow trace start 100
+    )"
+    ["ips"]="Enables IPS debugging and filters|(
+        diag debug reset
+        diag wad debug ips-filter all
+        diag ips debug enable all
+        diag wad debug enable all
+        diag debug enable
+    )"
+    ["scanunit"]="Enables scan unit debugging|(
+        diag debug reset
+        diag sys scanunit debug all
+        diag wad debug enable all
+        diag debug enable
+    )"
+    ["dns"]="Enables DNS proxy debugging|(
+        diag debug reset
+        diag debug application dnsproxy -1
+        diag wad debug enable all
+        diag debug enable
+    )"
+    ["vfcache"]="Toggles video filter cache settings|(
+        diag debug enable
+        diag test app wad 2200
+        diag test app wad 328
+        diag test app wad 329
+        diag test app wad 330
+    )"
+)
 
 logo() {
 cat << _EOF
@@ -68,19 +113,22 @@ Options:
     -I, --ips-debug          Send IPS debug commands automatically
     -S, --scanunit-debug     Send scanunit debug commands automatically
     -D, --dns-debug          Send DNS debug commands automatically
+    -V, --toggle-vf-cache    Toggles video filter cache settings
 
 Examples:
-    $SCRIPT_NAME --session=log --window=2 --pane=2 --file=$HOME/commands.txt
+    $SCRIPT_NAME --session=log --window=2 --pane=2 --file=\$HOME/commands.txt
     $SCRIPT_NAME log --wad-debug      # Uses default window $fWinId and pane $fPaneId
     $SCRIPT_NAME log:2 --wad-debug    # Uses default pane $fPaneId
     $SCRIPT_NAME log:2.3 --wad-debug  # Specifies all parts
-    $SCRIPT_NAME log -t --packet-trace-addr=192.168.1.100
+    $SCRIPT_NAME log --packet-trace 192.168.1.100
 
 Tips:
+  For tmux, you can use:
     1. Type '$fTmuxPrefix, q' to view the pane number within the tmux window.
     2. Type '$fTmuxPrefix, s' to view the session name in tmux.
-    3. Use // to comment out a line in the command file.
-    4. Use ! to omit the rest of the commands in the command file.
+  When using command files, you can use:
+    1. // to comment out a line in the command file.
+    2. ! to omit the rest of the commands in the command file.
 
 _EOF
     exit 0
@@ -100,9 +148,10 @@ isValidIP() {
 }
 
 parseOptions() {
-    SHORTOPTS="hs:w:p:f:dWOKTISD"
-    LONGOPTS="help,session:,window:,pane:,file:,debug,wad-debug,output-directly,kernel-debug,ips-debug,scanunit-debug,dns-debug,packet-trace:"
-    if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
+    SHORTOPTS="hs:w:p:f:dWOKT:ISD"
+    LONGOPTS="help,session:,window:,pane:,file:,debug,wad-debug,output-directly,kernel-debug,\
+              ips-debug,scanunit-debug,dns-debug,packet-trace:,toggle-vf-cache"
+    if ! PARSED=$(getopt --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
         echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
         echo -e "${MAGENTA}The argument --packet-trace requires an IP address.${RESET}" >&2
         exit 1
@@ -133,23 +182,23 @@ parseOptions() {
                 shift 2
                 ;;
             -d|--debug)
-                fDebug="true"
+                set -x
                 shift
                 ;;
             -W|--wad-debug)
-                fWadDebug="true"
+                fDebugMode="wad"
                 shift
                 ;;
             -O|--output-directly)
-                fOutputDirectly="true"
+                fDebugMode="output"
                 shift
                 ;;
             -K|--kernel-debug)
-                fKernelDebug="true"
+                fDebugMode="kernel"
                 shift
                 ;;
             -T|--packet-trace)
-                fPacketTrace="true"
+                fDebugMode="ptrace"
                 fPacketTraceAddr="$2"
                 # In bash, 0 represents true while non-zero represents false
                 if ! isValidIP "$fPacketTraceAddr"; then
@@ -159,15 +208,19 @@ parseOptions() {
                 shift 2
                 ;;
             -I|--ips-debug)
-                fIPSDebug="true"
+                fDebugMode="ips"
                 shift
                 ;;
             -S|--scanunit-debug)
-                fScanUnitDebug="true"
+                fDebugMode="scanunit"
                 shift
                 ;;
             -D|--dns-debug)
-                fDNSDebug="true"
+                fDebugMode="dns"
+                shift
+                ;;
+            --toggle-vf-cache)
+                fDebugMode="vfcache"
                 shift
                 ;;
             --)
@@ -202,6 +255,7 @@ parseOptions() {
     fTmuxTarget="$fSessionId:$fWinId.$fPaneId"
 }
 
+# Display information about current settings
 displayInfo() {
     logo
     echo $SEPARATOR_LT
@@ -209,19 +263,19 @@ displayInfo() {
     echo -e "[w] Set Window ID to: ${COLOR}$fWinId${RESET}"
     echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
     echo -e "[/] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
-    COLOR=$GREY
-    [ -n "$fWadDebug" ]      && fAutoCmdMode="true" && echo -e "[W] ${COLOR}Sending WAD debug commands${RESET}"
-    [ -n "$fOutputDirectly" ]&& fAutoCmdMode="true" && echo -e "[O] ${COLOR}Configuring console for direct output${RESET}"
-    [ -n "$fKernelDebug" ]   && fAutoCmdMode="true" && echo -e "[K] ${COLOR}Sending kernel debug commands${RESET}"
-    [ -n "$fIPSDebug" ]      && fAutoCmdMode="true" && echo -e "[I] ${COLOR}Sending IPS debug commands${RESET}"
-    [ -n "$fScanUnitDebug" ] && fAutoCmdMode="true" && echo -e "[S] ${COLOR}Sending scanunit debug commands${RESET}"
-    [ -n "$fDNSDebug" ]      && fAutoCmdMode="true" && echo -e "[D] ${COLOR}Sending DNS debug commands${RESET}"
-    [ -n "$fPacketTrace" ]   && fAutoCmdMode="true" && echo -e "[T] ${COLOR}Sending packet trace commands for IP: ${MAGENTA}$fPacketTraceAddr${RESET}"
-    COLOR=$MAGENTA
 
-    if [[ -z "$fAutoCmdMode" ]]; then
+    if [[ $fDebugMode != "none" ]]; then
+        COLOR=$LIGHTYELLOW
+        IFS='|' read -r desc cmds <<< "${DEBUG_CONFIG[$fDebugMode]}"
+        if [[ $fDebugMode == "ptrace" ]]; then
+            echo -e "[*] ${COLOR}$desc: ${MAGENTA}$fPacketTraceAddr${RESET}"
+        else
+            echo -e "[*] ${COLOR}$desc${RESET}"
+        fi
+    else
+        COLOR=$MAGENTA
         if [[ ! -f "$fCmdFile" ]]; then
-            echo -e "Error: ${MAGENTA}Command file not found.${RESET}"
+            echo -e "Error: ${COLOR}Command file not found.${RESET}"
             exit 1
         fi
         echo -e "[f] Set command file to: ${COLOR}$fCmdFile${RESET}"
@@ -229,9 +283,28 @@ displayInfo() {
     echo $SEPARATOR_RT
 }
 
-sendDebugCmds() {
-    local -n commands=$1
-    for cmd in "${commands[@]}"; do
+sendBuiltinCmds() {
+    # 1. Access the value for the "$fDebugMode" key
+    fullCmds="${DEBUG_CONFIG["$fDebugMode"]}"
+
+    # 2. Extract the command block string
+    # Remove the description part up to and including "|("
+    cmds="${fullCmds#*|(}"
+    # Remove the trailing ")"
+    cmds="${cmds%)}"
+
+    readarray -t cmdsArray < <(printf '%s' "$cmds")
+    for cmd in "${cmdsArray[@]}"; do
+        # Trim whitespace
+        cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+        [ -z "$cmd" ] && continue
+
+        # Replace placeholders
+        if [[ $fDebugMode == "ptrace" ]]; then
+            # shellcheck disable=SC2059
+            printf -v cmd "$cmd" "$fPacketTraceAddr"
+        fi
+
         echo -e "$USER_NOTATION Sending: ${LIGHTGREEN}$cmd${RESET}"
         tmux send-keys -t "$fTmuxTarget" -l "$cmd"
         tmux send-keys -t "$fTmuxTarget" Enter
@@ -240,70 +313,9 @@ sendDebugCmds() {
             echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $cmd${RESET}"
             exit 1
         fi
-        sleep 0.1  # This sleeps for 100 milliseconds
+        sleep 0.1
     done
-}
-
-sendPreDefinedCmds() {
-    # Define WAD debug commands
-    declare -ga fWadDebugCommands=(
-        "diag debug reset"
-        "diag wad debug enable all"
-        "diag debug enable"
-    )
-    # Define output configuration commands
-    declare -ga fOutputCommands=(
-        "config system console"
-        "set output standard"
-        "end"
-    )
-    # Define kernel debug commands
-    declare -ga fKernelDebugCommands=(
-        "diag debug reset"
-        "diag debug enable"
-        "diag debug application kmiglogd -1"
-    )
-    # Define packet trace commands
-    declare -ga fPacketTraceCommands=(
-        "diag debug reset"
-        "diag debug flow filter clear"
-        "diag debug enable"
-        "diag debug flow filter addr $fPacketTraceAddr"
-        "diag debug flow show function-name enable"
-        # "diag debug flow show iprope enable"
-        "diag debug flow trace start 100"
-    )
-    # Define IPS debug commands
-    declare -ga fIPSDebugCommands=(
-        "diag debug reset"
-        "diag wad debug ips-filter all"
-        # "diag wad debug ips-db filter all"
-        "diag ips debug enable all"
-        "diag wad debug enable all"
-        "diag debug enable"
-    )
-    # Define scanunit debug commands
-    declare -ga fScanUnitDebugCommands=(
-        "diag debug reset"
-        "diag sys scanunit debug all"
-        "diag wad debug enable all"
-        "diag debug enable"
-    )
-    # Define DNS debug commands
-    declare -ga fDNSDebugCommands=(
-        "diag debug reset"
-        "diag debug application dnsproxy -1"
-        "diag wad debug enable all"
-        "diag debug enable"
-    )
-
-    [ -n "$fWadDebug" ]       && sendDebugCmds fWadDebugCommands      && exit 0
-    [ -n "$fOutputDirectly" ] && sendDebugCmds fOutputCommands        && exit 0
-    [ -n "$fKernelDebug" ]    && sendDebugCmds fKernelDebugCommands   && exit 0
-    [ -n "$fIPSDebug" ]       && sendDebugCmds fIPSDebugCommands      && exit 0
-    [ -n "$fScanUnitDebug" ]  && sendDebugCmds fScanUnitDebugCommands && exit 0
-    [ -n "$fDNSDebug" ]       && sendDebugCmds fDNSDebugCommands      && exit 0
-    [ -n "$fPacketTrace" ]    && sendDebugCmds fPacketTraceCommands   && exit 0
+    exit 0
 }
 
 sendCmdsFromFile() {
@@ -341,11 +353,12 @@ sendCmdsFromFile() {
 
 main() {
     parseOptions "$@"
-    [ -n "$fDebug" ] && set -x
     displayInfo
-    sendPreDefinedCmds
-    sendCmdsFromFile
-    [ -n "$fDebug" ] && set +x
+    if [[ "$fDebugMode" != "none" ]]; then
+        sendBuiltinCmds
+    else
+        sendCmdsFromFile
+    fi
 }
 
 main "$@"

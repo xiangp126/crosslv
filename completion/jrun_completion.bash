@@ -18,10 +18,10 @@ _jrun_completion() {
     #---------------------------------------------------------------
 
     # Define short and long options
-    opts="-h -s -w -p -f -d -W -O -K -T -I -S -D"
+    opts="-h -s -w -p -f -d -W -O -K -T -I -S -D -V"
     longopts="--help --session --window --pane --file --debug --wad-debug \
               --output-directly --kernel-debug --packet-trace --ips-debug \
-              --scanunit-debug --dns-debug --packet-trace"
+              --scanunit-debug --dns-debug --packet-trace --toggle-vf-cache"
 
     #---------------------------------------------------------------
     # HELPER FUNCTIONS

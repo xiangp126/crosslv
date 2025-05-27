@@ -856,6 +856,83 @@ installDocker() {
     echo -e "${GREEN}Docker installation and basic configuration process completed.${RESET}"
 }
 
+installRimePinyinInputMethod() {
+    echo -e "${COLOR}Attempting to install Fcitx5 Rime Pinyin input method${RESET}"
+
+    # Define required packages for Fcitx5 with Rime Pinyin
+    local fcitx5_packages=("fcitx5" "fcitx5-rime" "rime-data-pinyin-simp" "fcitx5-configtool")
+    # Frontend packages (e.g., fcitx5-frontend-gtk3, fcitx5-frontend-qt5) are usually
+    # pulled in as dependencies of fcitx5 or fcitx5-rime.
+
+    local all_installed=true
+    for pkg in "${fcitx5_packages[@]}"; do
+        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+            all_installed=false
+            echo -e "${GREY}Package $pkg is not installed.${RESET}" # Optional: for debugging
+            break
+        fi
+    done
+
+    if $all_installed; then
+        echo -e "${GREY}Fcitx5, Rime engine, Pinyin data, and config tool appear to be already installed.${RESET}"
+        # Optionally, one could still try to set fcitx5 as default here,
+        # but for consistency with the original script's behavior, we'll just return.
+        return 0
+    fi
+
+    echo -e "${LIGHTYELLOW}Installing Fcitx5, Rime engine for Fcitx5, Pinyin data, and Fcitx5 config tool...${RESET}"
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo -e "${RED}Error: sudo command not found. This script needs sudo privileges to install packages.${RESET}"
+        return 1
+    fi
+
+    # Ensure im-config is available, as it's crucial for setting the default IM
+    if ! command -v im-config >/dev/null 2>&1; then
+        echo -e "${LIGHTYELLOW}im-config command not found. Attempting to install it (package 'im-config')...${RESET}"
+        if ! sudo apt-get update || ! sudo apt-get install -y im-config; then
+            echo -e "${RED}Failed to install 'im-config'. Cannot automatically set Fcitx5 as the default input method.${RESET}"
+            echo -e "${RED}Please install 'im-config' manually, then run 'im-config -n fcitx5' and re-login.${RESET}"
+            # Continue with Fcitx5 package installation, but IM setup will be manual.
+        else
+            echo -e "${GREEN}im-config installed successfully.${RESET}"
+        fi
+    fi
+
+    if ! sudo apt-get update; then
+        echo -e "${RED}Failed to update package lists.${RESET}"
+        return 1
+    fi
+
+    if ! sudo apt-get install -y "${fcitx5_packages[@]}"; then
+        echo -e "${RED}Failed to install Fcitx5 Rime Pinyin packages.${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}Fcitx5 Rime Pinyin packages installed successfully.${RESET}"
+
+    echo -e "${LIGHTYELLOW}Attempting to set Fcitx5 as the default input method system for the current user...${RESET}"
+    # im-config should be run as the user to configure their environment.
+    # If the script is run like './jc' (and uses `sudo` internally for apt), $USER is correct.
+    # If 'im-config' is present, try to set fcitx5.
+    if command -v im-config >/dev/null 2>&1; then
+        if im-config -n fcitx5; then
+            echo -e "${GREEN}Fcitx5 has been set as the preferred input method for the current user via 'im-config'.${RESET}"
+        else
+            echo -e "${RED}Command 'im-config -n fcitx5' failed or was interrupted.${RESET}"
+        fi
+    fi
+    # Restart IBus for changes to take effect (optional, often requires logout/login)
+    # ibus-daemon -rdx
+
+    echo -e "${GREEN}Rime Pinyin input method installation and basic configuration completed.${RESET}"
+    echo -e "${LIGHTYELLOW}You may need to log out and log back in, or reboot your system.${RESET}"
+    echo -e "${LIGHTYELLOW}After logging back in, you should be able to select 'Chinese (Rime)'"
+    echo -e "${LIGHTYELLOW}from your input method switcher (usually in the system tray or settings).${RESET}"
+    echo -e "${LIGHTYELLOW}You might also need to open 'IBus Preferences', go to the 'Input Method' tab,"
+    echo -e "${LIGHTYELLOW}click 'Add', find 'Chinese', and then select 'Rime'.${RESET}"
+    echo -e "${LIGHTYELLOW}Within Rime settings (often by pressing F4 or Ctrl+\`), ensure Pinyin is selected.${RESET}"
+}
+
 linkClangFormat() {
     [ -z "$fLinkClangFormatPath" ] && return
 
@@ -884,6 +961,9 @@ doCoreJobs() {
 }
 
 main() {
+    installRimePinyinInputMethod
+
+    exit
     linkClangFormat "$1"
     checkOSCategory
     performSanityCheck
