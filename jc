@@ -15,12 +15,13 @@ fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/ftnt-tools
 fDownloads=$HOME/Downloads
 fJCPath=$fMainDir/jc
+fFirstTimeFile=$fMainDir/".has_been_invoked"
 fUpdateClangd=
 fUpdateDocker=
 fLinkClangFormatPath=
 fLinkNodeJs=
 fTlsInsecure=
-fFirstTimeFile=$fMainDir/".has_been_invoked"
+fRimePinyinInputMethod=
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -62,6 +63,7 @@ Options:
     --clangd                Update clangd to the latest released version
     --link-clang-format     Link clang-format to current path
     --link-nodejs           Link nodejs from VsCode Server to current path
+    --rime-pinyin           Install Rime Pinyin
     --auto-remove           Remove unused packages
     --upgrade               Upgrade all packages
 
@@ -75,7 +77,7 @@ exit 0
 
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,force,clangd,docker,link-clang-format::, \
-         link-nodejs, auto-remove,upgrade,insecure"
+         link-nodejs, auto-remove,upgrade,insecure,rime-pinyin"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -108,6 +110,10 @@ while true; do
             fUpdateClangd=true
             shift
             ;;
+        --rime-pinyin)
+            fRimePinyinInputMethod=true
+            shift
+            ;;
         --link-clang-format)
             # $1 is '--link-clang-format'
             # $2 is an empty string '' no matter whether it has an argument
@@ -124,11 +130,13 @@ while true; do
             shift
             ;;
         --auto-remove)
+            echo -e "${COLOR}Removing unused packages${RESET}"
             sudo apt autoremove -y
             shift
             exit 0
             ;;
         --upgrade)
+            echo -e "${COLOR}Upgrading all packages${RESET}"
             sudo apt upgrade -y
             shift
             exit 0
@@ -666,7 +674,6 @@ performSanityCheck() {
 }
 
 installUpdateClangd() {
-    [ -z "$fUpdateClangd" ] && return
     echo -e "${COLOR}Updating Clangd${RESET}"
     # Check if the current architecture is arm64
     if [ "$fArch" == "aarch64" ]; then
@@ -857,80 +864,129 @@ installDocker() {
 }
 
 installRimePinyinInputMethod() {
-    echo -e "${COLOR}Attempting to install Fcitx5 Rime Pinyin input method${RESET}"
-
-    # Define required packages for Fcitx5 with Rime Pinyin
-    local fcitx5_packages=("fcitx5" "fcitx5-rime" "rime-data-pinyin-simp" "fcitx5-configtool")
-    # Frontend packages (e.g., fcitx5-frontend-gtk3, fcitx5-frontend-qt5) are usually
-    # pulled in as dependencies of fcitx5 or fcitx5-rime.
-
-    local all_installed=true
-    for pkg in "${fcitx5_packages[@]}"; do
-        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
-            all_installed=false
-            echo -e "${GREY}Package $pkg is not installed.${RESET}" # Optional: for debugging
-            break
-        fi
-    done
-
-    if $all_installed; then
-        echo -e "${GREY}Fcitx5, Rime engine, Pinyin data, and config tool appear to be already installed.${RESET}"
-        # Optionally, one could still try to set fcitx5 as default here,
-        # but for consistency with the original script's behavior, we'll just return.
+    echo -e "${COLOR}Attempting to install Rime Pinyin input method from official repositories on Ubuntu/Debian${RESET}"
+    if command -v fcitx5-configtool &> /dev/null || \
+       command -v fcitx-configtool  &> /dev/null; then
+        echo -e "${GREY}An Fcitx configuration tool (e.g., fcitx5-configtool, fcitx-configtool) is already installed.${RESET}"
+        echo -e "${GREY}Skipping Rime Pinyin input method installation as Fcitx seems to be present.${RESET}"
         return 0
     fi
 
-    echo -e "${LIGHTYELLOW}Installing Fcitx5, Rime engine for Fcitx5, Pinyin data, and Fcitx5 config tool...${RESET}"
-
-    if ! command -v sudo >/dev/null 2>&1; then
-        echo -e "${RED}Error: sudo command not found. This script needs sudo privileges to install packages.${RESET}"
+    echo -e "${LIGHTYELLOW}Updating package lists...${RESET}"
+    if ! sudo apt update; then
+        echo -e "${RED}Failed to update apt package list. Aborting Rime installation.${RESET}"
         return 1
     fi
 
-    # Ensure im-config is available, as it's crucial for setting the default IM
-    if ! command -v im-config >/dev/null 2>&1; then
-        echo -e "${LIGHTYELLOW}im-config command not found. Attempting to install it (package 'im-config')...${RESET}"
-        if ! sudo apt-get update || ! sudo apt-get install -y im-config; then
-            echo -e "${RED}Failed to install 'im-config'. Cannot automatically set Fcitx5 as the default input method.${RESET}"
-            echo -e "${RED}Please install 'im-config' manually, then run 'im-config -n fcitx5' and re-login.${RESET}"
-            # Continue with Fcitx5 package installation, but IM setup will be manual.
+    echo -e "${LIGHTYELLOW}Installing Chinese language support packages...${RESET}"
+    sudo apt install -y "$(check-language-support -l zh_CN)"
+
+    # --- Attempt Fcitx5-Rime first ---
+    echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
+    # Check if fcitx5-rime is available from enabled repositories
+    if apt-cache show fcitx5-rime > /dev/null 2>&1; then
+        echo -e "${GREEN}Fcitx5-Rime (fcitx5-rime) appears to be available. Attempting installation.${RESET}"
+        local packagesToInstallFcitx5=(
+            fcitx5
+            fcitx5-rime
+            fcitx5-chinese-addons # Provides general Chinese support, dictionaries, etc.
+            fcitx5-gtk            # GTK2/GTK3 IM module
+            fcitx5-qt             # Qt5/Qt6 IM module
+            fcitx5-configtool     # GUI configuration tool (e.g., fcitx5-config-qt)
+            im-config             # Input method configuration tool (sets fcitx5 as default)
+            # Recommended Chinese fonts for good character display
+            fonts-noto-cjk        # Google Noto CJK fonts (comprehensive)
+            fonts-wqy-microhei    # WenQuanYi Micro Hei (popular, good quality)
+            fonts-wqy-zenhei      # WenQuanYi Zen Hei
+        )
+
+        echo -e "${LIGHTYELLOW}Installing Fcitx5 packages: ${packagesToInstallFcitx5[*]}${RESET}"
+        if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx5[@}"; then
+            echo -e "${GREEN}Successfully installed Fcitx5 and Rime packages.${RESET}"
+            echo -e "${LIGHTYELLOW}Setting fcitx5 as the default input method system-wide using im-config...${RESET}"
+            if sudo im-config -n fcitx5; then
+                echo -e "${GREEN}Successfully configured fcitx5 as the default input method via im-config.${RESET}"
+                echo -e "${GREY}(im-config handles setting environment variables like XMODIFIERS, GTK_IM_MODULE, QT_IM_MODULE for graphical sessions)${RESET}"
+            else
+                echo -e "${RED}Failed to set fcitx5 as the default input method using im-config.${RESET}"
+                echo -e "${LIGHTYELLOW}You might need to run 'im-config' (as a regular user, not sudo) to select fcitx5, or configure it via your desktop environment's settings.${RESET}"
+                echo -e "${LIGHTYELLOW}Alternatively, for X11 sessions, ensure these lines are in your ~/.xprofile or similar (e.g., ~/.profile, ~/.xinitrc):${RESET}"
+                echo -e "${LIGHTYELLOW}  export GTK_IM_MODULE=fcitx5${RESET}"
+                echo -e "${LIGHTYELLOW}  export QT_IM_MODULE=fcitx5${RESET}"
+                echo -e "${LIGHTYELLOW}  export XMODIFIERS=@im=fcitx5${RESET}"
+            fi
+
+            echo -e "${GREEN}Fcitx5-Rime installation and basic configuration process completed.${RESET}"
+            echo -e "${BOLD}${MAGENTA}IMPORTANT: A system REBOOT or RE-LOGIN is REQUIRED for all changes to take full effect.${RESET}"
+            echo -e "${LIGHTYELLOW}After rebooting/re-logging in:${RESET}"
+            echo -e "${LIGHTYELLOW}1. Fcitx5 should start automatically. If not, add 'fcitx5' to your session's startup applications.${RESET}"
+            echo -e "${LIGHTYELLOW}2. Open 'Fcitx 5 Configuration' (command: ${BLUE}fcitx5-configtool${RESET}).${RESET}"
+            echo -e "${LIGHTYELLOW}3. In the 'Input Method' tab, ensure 'Pinyin' (from Rime) is in the list of active input methods. ${RESET}"
+            echo -e "${LIGHTYELLOW}   If not, click the '+' button, uncheck 'Only Show Current Language' if needed, find 'Pinyin' (Rime), and add it.${RESET}"
+            echo -e "${LIGHTYELLOW}4. You can switch input methods using the configured hotkey (often Ctrl+Space or Super+Space). Check 'Global Options' tab in fcitx5-configtool for 'Trigger Input Method'.${RESET}"
+            echo -e "${LIGHTYELLOW}5. For Rime specific settings (e.g., traditional Chinese, fuzzy pinyin), create/edit files in ${BLUE}~/.local/share/fcitx5/rime/${RESET} (e.g., default.custom.yaml). Refer to Rime documentation.${RESET}"
+            return 0
         else
-            echo -e "${GREEN}im-config installed successfully.${RESET}"
+            echo -e "${RED}Failed to install Fcitx5-Rime packages. Will try Fcitx4-Rime as a fallback.${RESET}"
         fi
+    else
+        echo -e "${LIGHTYELLOW}Fcitx5-Rime (fcitx5-rime) not found in official repositories. Checking for Fcitx4-Rime.${RESET}"
     fi
 
-    if ! sudo apt-get update; then
-        echo -e "${RED}Failed to update package lists.${RESET}"
-        return 1
-    fi
+    # --- Attempt Fcitx4-Rime (fcitx) if Fcitx5-Rime was not available or failed ---
+    echo -e "${COLOR}Checking for Fcitx4-Rime (fcitx-rime) availability...${RESET}"
+    if apt-cache show fcitx-rime > /dev/null 2>&1; then
+        echo -e "${GREEN}Fcitx4-Rime (fcitx-rime) appears to be available. Attempting installation.${RESET}"
+        local packagesToInstallFcitx4=(
+            fcitx
+            fcitx-rime
+            fcitx-table-all       # Common tables for fcitx4, includes pinyin etc.
+            fcitx-frontend-gtk2
+            fcitx-frontend-gtk3
+            fcitx-frontend-qt5    # Or fcitx-libs-qt5 on older systems
+            fcitx-config-gtk      # GUI config tool for fcitx4 (or fcitx-configtool)
+            im-config
+            fonts-noto-cjk
+            fonts-wqy-microhei
+            fonts-wqy-zenhei
+        )
 
-    if ! sudo apt-get install -y "${fcitx5_packages[@]}"; then
-        echo -e "${RED}Failed to install Fcitx5 Rime Pinyin packages.${RESET}"
-        return 1
-    fi
-    echo -e "${GREEN}Fcitx5 Rime Pinyin packages installed successfully.${RESET}"
+        echo -e "${LIGHTYELLOW}Installing Fcitx4 packages: ${packagesToInstallFcitx4[*]}${RESET}"
+        if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx4[@]}"; then
+            echo -e "${GREEN}Successfully installed Fcitx4 and Rime packages.${RESET}"
 
-    echo -e "${LIGHTYELLOW}Attempting to set Fcitx5 as the default input method system for the current user...${RESET}"
-    # im-config should be run as the user to configure their environment.
-    # If the script is run like './jc' (and uses `sudo` internally for apt), $USER is correct.
-    # If 'im-config' is present, try to set fcitx5.
-    if command -v im-config >/dev/null 2>&1; then
-        if im-config -n fcitx5; then
-            echo -e "${GREEN}Fcitx5 has been set as the preferred input method for the current user via 'im-config'.${RESET}"
+            echo -e "${LIGHTYELLOW}Setting fcitx as the default input method system-wide using im-config...${RESET}"
+            if sudo im-config -n fcitx; then # Note: 'fcitx' for fcitx4
+                echo -e "${GREEN}Successfully configured fcitx as the default input method via im-config.${RESET}"
+            else
+                echo -e "${RED}Failed to set fcitx as the default input method using im-config.${RESET}"
+                echo -e "${LIGHTYELLOW}You might need to run 'im-config' (as a regular user) to select fcitx, or configure it via your desktop environment's settings.${RESET}"
+                echo -e "${LIGHTYELLOW}Alternatively, for X11 sessions, ensure these lines are in your ~/.xprofile or similar:${RESET}"
+                echo -e "${LIGHTYELLOW}  export GTK_IM_MODULE=fcitx${RESET}"
+                echo -e "${LIGHTYELLOW}  export QT_IM_MODULE=fcitx${RESET}"
+                echo -e "${LIGHTYELLOW}  export XMODIFIERS=@im=fcitx${RESET}"
+            fi
+
+            echo -e "${GREEN}Fcitx4-Rime installation and basic configuration process completed.${RESET}"
+            echo -e "${BOLD}${MAGENTA}IMPORTANT: A system REBOOT or RE-LOGIN is REQUIRED for all changes to take full effect.${RESET}"
+            echo -e "${LIGHTYELLOW}After rebooting/re-logging in:${RESET}"
+            echo -e "${LIGHTYELLOW}1. Fcitx should start automatically. If not, add 'fcitx' to your session's startup applications.${RESET}"
+            echo -e "${LIGHTYELLOW}2. Open 'Fcitx Configuration' (command: ${BLUE}fcitx-config-gtk${RESET} or ${BLUE}fcitx-configtool${RESET}).${RESET}"
+            echo -e "${LIGHTYELLOW}3. Ensure 'Rime' is in the list of active input methods. If not, add it.${RESET}"
+            echo -e "${LIGHTYELLOW}4. Switch input methods using the configured hotkey (e.g., Ctrl+Space).${RESET}"
+            echo -e "${LIGHTYELLOW}5. Rime user data for fcitx4 is typically in ${BLUE}~/.config/fcitx/rime/${RESET}. Check Rime documentation.${RESET}"
+            return 0
         else
-            echo -e "${RED}Command 'im-config -n fcitx5' failed or was interrupted.${RESET}"
+            echo -e "${RED}Failed to install Fcitx4-Rime packages.${RESET}"
         fi
+    else
+        echo -e "${LIGHTYELLOW}Fcitx4-Rime (fcitx-rime) not found in official repositories.${RESET}"
     fi
-    # Restart IBus for changes to take effect (optional, often requires logout/login)
-    # ibus-daemon -rdx
 
-    echo -e "${GREEN}Rime Pinyin input method installation and basic configuration completed.${RESET}"
-    echo -e "${LIGHTYELLOW}You may need to log out and log back in, or reboot your system.${RESET}"
-    echo -e "${LIGHTYELLOW}After logging back in, you should be able to select 'Chinese (Rime)'"
-    echo -e "${LIGHTYELLOW}from your input method switcher (usually in the system tray or settings).${RESET}"
-    echo -e "${LIGHTYELLOW}You might also need to open 'IBus Preferences', go to the 'Input Method' tab,"
-    echo -e "${LIGHTYELLOW}click 'Add', find 'Chinese', and then select 'Rime'.${RESET}"
-    echo -e "${LIGHTYELLOW}Within Rime settings (often by pressing F4 or Ctrl+\`), ensure Pinyin is selected.${RESET}"
+    echo -e "${RED}Could not install Rime (neither Fcitx5-Rime nor Fcitx4-Rime) from official repositories.${RESET}"
+    echo -e "${LIGHTYELLOW}Please ensure your system is Ubuntu/Debian based and your package sources are correctly configured.${RESET}"
+    echo -e "${LIGHTYELLOW}No Rime input method was installed.${RESET}"
+    return 1
 }
 
 linkClangFormat() {
@@ -956,15 +1012,17 @@ doCoreJobs() {
     updateVimPlugins
     installTmuxPluginsManager
     installDocker
-    installUpdateClangd
+    [ -n "$fUpdateClangd" ] && installUpdateClangd
+    [ -n "$fRimePinyinInputMethod" ] && installRimePinyinInputMethod
     createExtraSymlinks
 }
 
-main() {
-    installRimePinyinInputMethod
-
-    exit
+doEarlyExitJobs() {
     linkClangFormat "$1"
+}
+
+main() {
+    doEarlyExitJobs "$1"
     checkOSCategory
     performSanityCheck
     if [ "$fOSCategory" == "debian" ]; then
