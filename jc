@@ -21,6 +21,7 @@ fUpdateDocker=
 fLinkClangFormatPath=
 fLinkNodeJs=
 fTlsInsecure=
+fStartVncServer=
 fRimePinyinInputMethod=
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
@@ -31,7 +32,9 @@ fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
 fArch=
 fNoInstallTools=
+# Force options
 fForceUpdate=
+fForceChinesePinyin=
 # Constants
 SCRIPT_NAME=$(basename $0)
 # Colors
@@ -40,8 +43,8 @@ GREEN='\033[32m'
 NORMAL='\033[0m'
 MAGENTA='\033[35m'
 LIGHTYELLOW='\033[93m'
-BOLD='\033[1m'
 NORMAL='\033[0m'
+BOLD='\033[1m'
 BLUE='\033[34m'
 GREY='\033[90m'
 RESET='\033[0m'
@@ -54,18 +57,22 @@ Usage: $SCRIPT_NAME [OPTIONS]
 This script is used to set up the coding environment in my predefined way.
 
 Options:
-    -h, --help              Print this help message
-    -n, --no-tools          Don't install tools
-    -d, --debug             Enable debug mode
-    -f, --force             Force an update of prerequisites
-    --insecure              Allow insecure TLS
-    --docker                Update Docker
-    --clangd                Update clangd to the latest released version
-    --link-clang-format     Link clang-format to current path
-    --link-nodejs           Link nodejs from VsCode Server to current path
-    --rime-pinyin           Install Rime Pinyin
-    --auto-remove           Remove unused packages
-    --upgrade               Upgrade all packages
+    -h, --help               Print this help message
+    -n, --no-tools           Don't install tools
+    -d, --debug              Enable debug mode
+    --insecure               Allow insecure TLS
+    --docker                 Update Docker
+    --clangd                 Update clangd to the latest released version
+    --link-clang-format      Link clang-format to current path
+    --link-nodejs            Link nodejs from VsCode Server to current path
+    --vnc                    Start VNC server
+    --chinese-pinyin         Install Rime Pinyin
+    --auto-remove            Remove unused packages
+    --upgrade                Upgrade all packages
+
+Force options:
+    --force-update           Force update
+    --force-chinese-pinyin   Force install Rime Pinyin
 
 Examples:
     $SCRIPT_NAME -h
@@ -76,8 +83,8 @@ exit 0
 }
 
 SHORTOPTS="hdnf"
-LONGOPTS="help,debug,no-tools,force,clangd,docker,link-clang-format::, \
-         link-nodejs, auto-remove,upgrade,insecure,rime-pinyin"
+LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
+          upgrade,insecure,chinese-pinyin,vnc,force-update,force-chinese-pinyin"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -94,7 +101,7 @@ while true; do
             fNoInstallTools=true
             shift
             ;;
-        -f|--force)
+        --force-update)
             fForceUpdate=true
             shift
             ;;
@@ -110,8 +117,17 @@ while true; do
             fUpdateClangd=true
             shift
             ;;
-        --rime-pinyin)
+        --vnc)
+            fStartVncServer=true
+            shift
+            ;;
+        --chinese-pinyin)
             fRimePinyinInputMethod=true
+            shift
+            ;;
+        --force-chinese-pinyin)
+            fRimePinyinInputMethod=true
+            fForceChinesePinyin=true
             shift
             ;;
         --link-clang-format)
@@ -264,9 +280,12 @@ updatePrerequisitesForDebian() {
         autoconf
         gettext
         autopoint
+        ifupdown
+        bridge-utils
         bear # llvm & clangd
         libear
-        gdm3 # gnome desktop
+        firefox
+        gdm3 # gnome display manager
         ubuntu-desktop
         gnome-keyring
         xfce4
@@ -304,7 +323,7 @@ setTimeZone() {
     echo -e "${COLOR}Setting timezone to Vancouver${RESET}"
     # check time zone if it is already vancouver
     if [ $(timedatectl | grep "Time zone" | awk '{print $3}') == "America/Vancouver" ]; then
-        echo -e "${GREY}Time zone is already vancouver${RESET}"
+        echo -e "${GREEN}✔${GREY} Time zone is already vancouver${RESET}"
         return
     fi
     sudo timedatectl set-timezone America/Vancouver
@@ -343,15 +362,15 @@ updateVimPlugins (){
         curl $fTlsInsecure -fLo "$fVimPlugsManagerPath" --create-dirs \
         https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
     else
-        echo -e "${GREY}Vim Plug is already installed${RESET}"
+        echo -e "${GREEN}✔${GREY} Vim Plug Manager is already installed${RESET}"
     fi
 
     echo -e "${COLOR}Updating Vim Plugins${RESET}"
     vim +PlugInstall +PlugUpdate +qall
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Success!${RESET}"
+        echo -e "${GREEN}✔ Success!${RESET}"
     else
-        echo -e "${RED}Failed!${RESET}"
+        echo -e "${RED}x Failed!${RESET}"
         exit 1
     fi
 }
@@ -409,7 +428,7 @@ linkFile() {
     fi
 
     if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$src" ]; then
-        echo -e "${GREY}${linkName} is already well linked.${RESET}"
+        echo -e "${GREEN}✔${GREY} Link ${BLUE}${linkName}${GREY} is already up to date.${RESET}"
         return 1
     fi
 
@@ -494,7 +513,7 @@ relinkCommand() {
     fi
 
     if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$sysCmdPath" ]; then
-        echo -e "${GREY}${linkName} is already linked to ${sysCmdPath}${RESET}"
+        echo -e "${GREEN}✔${GREY} Link ${BLUE}${linkName}${GREY} is already up to date.${RESET}"
         return 1
     fi
 
@@ -556,7 +575,7 @@ buildExtraFonts() {
         local fontFile=$(basename "$font")
         local fontExists=$(fc-list | grep -i "$fontFile")
         if [ -n "$fontExists" ]; then
-            echo -e "${GREY}Font $fontFile already exists in system.${RESET}"
+            echo -e "${GREEN}✔${GREY} Font ${BLUE}${fontFile}${GREY} is already up to date.${RESET}"
             continue
         fi
 
@@ -579,17 +598,15 @@ buildExtraFonts() {
 }
 
 changeTMOUTToWritable() {
-    echo -e "${COLOR}Changing TMOUT to writable${RESET}"
     # TMOUT is readonly in /etc/profile, change it to writable so that we can unset it in .bashrc
     if ! grep -q "TMOUT" /etc/profile; then
-        echo -e "${GREY}TMOUT is not found in /etc/profile.${RESET}"
         return
     fi
-
+    echo -e "${COLOR}Changing TMOUT to writable${RESET}"
     if grep -q "^readonly TMOUT" /etc/profile; then
         echo -e "${GREY}TMOUT is readonly in /etc/profile, change it to writable${RESET}"
     else
-        echo -e "${GREY}TMOUT is already writable in /etc/profile${RESET}"
+        echo -e "${GREEN}✔${GREY} TMOUT is already writable$ in /etc/profile${RESET}"
         return
     fi
 
@@ -763,13 +780,15 @@ createFirstTimeFile() {
 }
 
 installDocker() {
+    echo -e "${COLOR}Checking Docker...${RESET}"
     if command -v docker &> /dev/null && [ -z "$fUpdateDocker" ]; then
-        echo -e "${GREY}Docker is already installed.${RESET}"
+        echo -e "${GREEN}✔${GREY} Docker is already installed.${RESET}"
+        printf "  "
         docker --version
         return 0
     fi
 
-    echo -e "${COLOR}Attempting to install Docker${RESET}"
+    echo -e "${COLOR}Installing Docker${RESET}"
 
     # 1. Uninstall old versions
     echo -e "${LIGHTYELLOW}Uninstalling old Docker versions (if any)...${RESET}"
@@ -864,22 +883,24 @@ installDocker() {
 }
 
 installRimePinyinInputMethod() {
-    echo -e "${COLOR}Attempting to install Rime Pinyin input method from official repositories on Ubuntu/Debian${RESET}"
-    if command -v fcitx5-configtool &> /dev/null || \
-       command -v fcitx-configtool  &> /dev/null; then
-        echo -e "${GREY}An Fcitx configuration tool (e.g., fcitx5-configtool, fcitx-configtool) is already installed.${RESET}"
-        echo -e "${GREY}Skipping Rime Pinyin input method installation as Fcitx seems to be present.${RESET}"
-        return 0
+    echo -e "${COLOR}Checking Rime Pinyin input method...${RESET}"
+    if [ -z "$fForceChinesePinyin" ]; then
+        if command -v fcitx5-configtool &> /dev/null || \
+           command -v fcitx-configtool  &> /dev/null; then
+                echo -e "${GREY}Rime Pinyin input method is already installed.${RESET}"
+                return 0
+        fi
     fi
 
+    echo -e "${COLOR}Installing Rime Pinyin input method${RESET}"
     echo -e "${LIGHTYELLOW}Updating package lists...${RESET}"
     if ! sudo apt update; then
         echo -e "${RED}Failed to update apt package list. Aborting Rime installation.${RESET}"
         return 1
     fi
 
-    echo -e "${LIGHTYELLOW}Installing Chinese language support packages...${RESET}"
-    sudo apt install -y "$(check-language-support -l zh_CN)"
+    # echo -e "${LIGHTYELLOW}Installing Chinese language support packages...${RESET}"
+    # sudo apt install -y "$(check-language-support -l zh_CN)"
 
     # --- Attempt Fcitx5-Rime first ---
     echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
@@ -890,8 +911,6 @@ installRimePinyinInputMethod() {
             fcitx5
             fcitx5-rime
             fcitx5-chinese-addons # Provides general Chinese support, dictionaries, etc.
-            fcitx5-gtk            # GTK2/GTK3 IM module
-            fcitx5-qt             # Qt5/Qt6 IM module
             fcitx5-configtool     # GUI configuration tool (e.g., fcitx5-config-qt)
             im-config             # Input method configuration tool (sets fcitx5 as default)
             # Recommended Chinese fonts for good character display
@@ -901,7 +920,7 @@ installRimePinyinInputMethod() {
         )
 
         echo -e "${LIGHTYELLOW}Installing Fcitx5 packages: ${packagesToInstallFcitx5[*]}${RESET}"
-        if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx5[@}"; then
+        if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx5[@]}"; then
             echo -e "${GREEN}Successfully installed Fcitx5 and Rime packages.${RESET}"
             echo -e "${LIGHTYELLOW}Setting fcitx5 as the default input method system-wide using im-config...${RESET}"
             if sudo im-config -n fcitx5; then
@@ -1007,6 +1026,59 @@ linkClangFormat() {
     exit 0
 }
 
+startVncServer() {
+    if ! command -v tigervncserver &> /dev/null; then
+        echo -e "${RED}Error: vncserver is not installed.${RESET}" >&2
+        exit 1
+    fi
+    # How to adjust the resolution of a VNC session?
+    # Say your local desktop resolution is 1920x1080 (width x height)
+    # and you may need to set the VNC resolution to around 2060x1080 to fit your screen
+    # How to adjust it?
+    # Keep the height of the resolution the same, and only change the width
+    # Start by adjusting the width from 1080 to 2060 or more, and choose the one that best fits your screen.
+    local vncPort=9
+    local realVncPort="590${vncPort}"
+    local vncResolution=2060x1080
+    local hostIpAddress=$(hostname -I | awk '{print $1}')
+    local hostUsername=$(whoami)
+    local xstartupPath=$fMainDir/readonly/xstartup
+    local xstartupDest=$HOME/.vnc/xstartup
+    cd "$HOME"/.vnc || exit
+    if [ ! -f "$xstartupDest" ]; then
+        echo -e "${LIGHTYELLOW}Linking xstartup to $xstartupDest${RESET}"
+        linkFile "$xstartupPath" "$HOME/.vnc" xstartup
+    fi
+    if lsof -i :$realVncPort | grep --quiet LISTEN; then
+        echo -e "${LIGHTYELLOW}Port $realVncPort is already in use. Killing existing VNC server.${RESET}"
+        tigervncserver -kill :9
+        sleep 3
+    fi
+    echo -e "${GREEN}Starting VNC server...${RESET}"
+    local startCmd="tigervncserver :$vncPort -geometry $vncResolution -SecurityTypes None -localhost"
+    echo -e "${GREEN}Starting VNC server using command:${RESET} ${BOLD}${NORMAL}$startCmd${RESET}"
+    $startCmd
+    # Display the status of the VNC server
+    echo -e "${GREEN}VNC server status:${RESET}"
+    sudo lsof -i :5909
+    echo -e "${MAGENTA}VNC server started successfully.${RESET}"
+    echo -e "${GREEN}To kill the VNC server, run 'tigervncserver -kill :$vncPort'${RESET}"
+    cat << _EOF
+===================================================
+On your local machine:
+1. Setup the SSH tunnel
+ssh -L $realVncPort:localhost:$realVncPort $hostUsername@$hostIpAddress
+ssh -L $realVncPort:localhost:$realVncPort droplet1
+2. Connect to the VNC server
+ - On Linux:
+ vncviewer localhost:$realVncPort
+ - On macOS:
+ open vnc://localhost:$realVncPort in your Finder
+===================================================
+_EOF
+    exit 0
+}
+
 doCoreJobs() {
     createTKSymlinks
     updateVimPlugins
@@ -1019,6 +1091,7 @@ doCoreJobs() {
 
 doEarlyExitJobs() {
     linkClangFormat "$1"
+    [ -n "$fStartVncServer" ] && startVncServer
 }
 
 main() {
