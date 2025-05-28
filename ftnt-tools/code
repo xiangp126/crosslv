@@ -1,14 +1,19 @@
 #!/bin/bash
+# shellcheck disable=SC2012 disable=SC2155
 # set -x
 
-fArgs=("--goto")
+# Variables
+fArgs=()
 fForce=
-fRmObsoleteIPCSocks=
-fExtensionToInstall=
+fPrint=
 fSysPath="/run/user/$UID"
 SCRIPTNAME=$(basename $0)
+# Colors
 MAGENTA='\033[0;35m'
 LIGHTYELLOW='\033[93m'
+GREY='\033[0;90m'
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
 RESET='\033[0m'
 
 usage() {
@@ -35,13 +40,16 @@ Description:
     }
 
 Options:
-    -h, --help              Show this help message and exit
-    -d, --debug             Enable debug mode (set -x)
-    -f, --force             Force search for the code binary, ignoring \$VSCODE_BIN_PATH,
-                            or force install an extension
-    -v, --version           Show version information
-    --install-extension     Install the specified extension from a .vsix file
-    -r, --remove            Remove obsolete IPC sockets
+    -h, --help                       Show this help message and exit
+    -d, --debug                      Enable debug mode (set -x)
+    -f, --force                      Force search for the code binary, ignoring \$VSCODE_BIN_PATH,
+    -v, --version                    Show version information
+    -r, --remove                     Remove obsolete IPC sockets
+    -s, --status                     Print process usage and diagnostics information
+    --print                          Print the vscode server info
+    --install-extension              Forcely install the specified extension from a .vsix file
+    --list-extensions                List the installed extensions with versions
+    --locate-shell-integration-path  Print the path to a terminal shell integration script
 
 Example: $SCRIPTNAME --version
          $SCRIPTNAME -d
@@ -52,8 +60,9 @@ EOF
 }
 
 parseOptions() {
-    SHORTOPTS="hfdvr"
-    LONGOPTS="help,force,debug,version,remove,install-extension:"
+    SHORTOPTS="hfdvrs"
+    LONGOPTS="help,force,debug,version,remove,install-extension:,locate-shell-integration-path,\
+              status,list-extensions,print"
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
         echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
         exit 1
@@ -72,16 +81,32 @@ parseOptions() {
                 fForce=true
                 shift
                 ;;
+            --print)
+                fPrint=true
+                shift
+                ;;
             -v|--version)
-                fArgs+=("--version")
+                fArgs=("--version")
                 shift
                 ;;
             --install-extension)
-                fExtensionToInstall="$2"
+                fArgs=("--install-extension" "$2")
                 shift 2
                 ;;
             -r|--remove)
-                fRmObsoleteIPCSocks=true
+                removeObsoleteIPCSocks
+                exit 0
+                ;;
+            --list-extensions)
+                fArgs=("--list-extensions" "--show-versions")
+                shift
+                ;;
+            -s|--status)
+                fArgs=("--status")
+                shift
+                ;;
+            --locate-shell-integration-path)
+                fArgs=("--locate-shell-integration-path")
                 shift
                 ;;
             --)
@@ -93,56 +118,89 @@ parseOptions() {
                 exit 1
         esac
     done
-    [ -n "$1" ] && fArgs+=("$1")
+    [ -n "$1" ] && fArgs+=("--goto" "$1")
 }
 
-preCheck() {
-    if declare -F setCodePath > /dev/null; then
+checkFunctionDefinition() {
+    if declare -F __set_vscode_code_path > /dev/null; then
         return
     fi
-    setCodePath() {
-        [ -z "$VSCODE_IPC_HOOK_CLI" ] && return
-        local paths searchDir count version newIPCHooK
-        local -A map=()
-        local MAGENTA='\033[0;35m'
-        local LIGHTYELLOW='\033[93m'
-        local RESET='\033[0m'
-        searchDir="$HOME/.vscode-server/cli"
+    __set_vscode_code_path() {
+        local syspath="/run/user/$UID"
+        local searchPath="$HOME/.vscode-server/cli/servers"
 
-        readarray -d '' paths < <(find "$searchDir" -type f -name code -executable -print0)
-        count=${#paths[@]}
-        if [[ $count -eq 0 ]]; then
-            echo -e "${MAGENTA}Error: No code binary found under $searchDir${RESET}" >&2
-        elif [[ $count -gt 1 ]]; then
-            echo -e "${LIGHTYELLOW}Warning: Please remove the older versions of code.${RESET}" >&2
-            for path in "${paths[@]}"
-            do
-                version=$("$path" --version | head -n 1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+')
-                map["$path"]=$version
-            done
-            for path in "${!map[@]}"
-            do
-                echo -e "${MAGENTA}${map[$path]}${RESET} : $path"
-            done
+        # Step 1: Find the commit ID of the active VS Code server
+        # Use process substitution to ensure `commitId` is set in the current shell scope, not a subshell.
+        # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
+        local pidFile currentPid commitId=
+        cd "$searchPath" || exit
+        while IFS= read -r -d $'\0' pidFile; do
+            if [ -f "$pidFile" ]; then
+                currentPid=$(cat "$pidFile" 2>/dev/null)
+                if [ -n "$currentPid" ] && [[ "$currentPid" =~ ^[0-9]+$ ]]; then
+                    # Check if the process is actually running
+                    if ps -p "$currentPid" -o pid= > /dev/null 2>&1; then
+                        commitId=$(basename "$(dirname "$pidFile")")
+                        break
+                    fi
+                fi
+            fi
+        done < <(find . -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
+
+        # Step 2: Set the VSCODE_BIN_PATH
+        if [[ -z "$commitId" ]]; then
+            echo -e "${MAGENTA}Error: No active VS Code server found with a valid pid.txt under $searchPath.${RESET}" >&2
+            return 1
+        fi
+        VSCODE_BIN_PATH="$searchPath/$commitId/server/bin/remote-cli/code"
+        if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
+            echo -e "${MAGENTA}Error: VS Code binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
+            return 1
         fi
 
-        # Get the most recenely created/modified vscode-ipc-*.sock file
-        newIPCHooK=$(find "$fSysPath" -maxdepth 1 -type s -name 'vscode-ipc-*.sock' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
-        if [[ -z $newIPCHooK ]]
-        then
-            echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found in $fSysPath${RESET}" >&2
-            exit 1
+        # Step 3: Get the most recenely created vscode-ipc-*.sock file
+        local newIPCHook=$(ls -t "$syspath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+        if [ -z "$newIPCHook" ]; then
+            echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $syspath${RESET}" >&2
+            return 1
         fi
 
         # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
         # But you have to remember that only the sub shell can see the new value.
-        export VSCODE_IPC_HOOK_CLI=$newIPCHooK
-        export VSCODE_BIN_PATH="${paths[0]}"
+        export VSCODE_IPC_HOOK_CLI=$newIPCHook
+        export VSCODE_BIN_PATH
+
+        # Step 4: Print the results
+        if [ -n "$fPrint" ]; then
+            echo -e "${MAGENTA}VS Code Server Details${RESET}" >&2
+            echo "======================"
+            echo -e "${GREEN}✔${GREY} Active PID:${BLUE} $currentPid${RESET}"
+            echo -e "${GREEN}✔${GREY} PID File:${BLUE} $searchPath/$commitId/pid.txt${RESET}"
+            echo -e "${GREEN}✔${GREY} Active VS Code Binary Path:${BLUE} $VSCODE_BIN_PATH${RESET}"
+            echo -e "${GREEN}✔${GREY} Active VS Code IPC Hook:${BLUE} $VSCODE_IPC_HOOK_CLI${RESET}"
+        fi
+
+        # Step 5: Return to the original directory
+        cd - &> /dev/null || exit
     }
+    export -f __set_vscode_code_path
+}
+
+runCmd() {
+    for _ in {1..2}; do
+        "$VSCODE_BIN_PATH" "${fArgs[@]}" 2>/dev/null
+        if [[ $? -eq 0 ]]; then
+            break
+        else
+            checkFunctionDefinition
+            __set_vscode_code_path
+        fi
+    done
 }
 
 removeObsoleteIPCSocks() {
-    setCodePath
+    checkFunctionDefinition
+    __set_vscode_code_path
     find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
           grep -Fxv "$VSCODE_IPC_HOOK_CLI" |
           while IFS= read -r sock; do
@@ -156,30 +214,13 @@ removeObsoleteIPCSocks() {
     done
 }
 
-installExtension() {
-    local param=
-    [ -n "$fForce" ] && param="--force"
-    $VSCODE_BIN_PATH --install-extension "$fExtensionToInstall" $param
-    exit 0
-}
-
 main() {
-    preCheck
     parseOptions "$@"
-    [ -n "$fRmObsoleteIPCSocks" ] && removeObsoleteIPCSocks && exit 0
-    [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForce" ] && setCodePath
-    if [ -z "$fExtensionToInstall" ]; then
-        for _ in {1..2}; do
-            "$VSCODE_BIN_PATH" "${fArgs[@]}" 2>/dev/null
-            if [[ $? -eq 0 ]]; then
-                break
-            else
-                setCodePath
-            fi
-        done
-    else
-        installExtension
+    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForce" ]; then
+        checkFunctionDefinition
+        __set_vscode_code_path
     fi
+    runCmd
 }
 
 main "$@"
