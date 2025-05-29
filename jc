@@ -51,6 +51,7 @@ LIGHTYELLOW='\033[93m'
 BOLD='\033[1m'
 BLUE='\033[34m'
 GREY='\033[90m'
+CYAN='\033[36m'
 RESET='\033[0m'
 COLOR=$MAGENTA
 
@@ -470,7 +471,7 @@ linkFile() {
     [ ! -f "$target" ] && echo "Source file $target does not exist, abort!" && exit 1
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
         [ ! -d "$fBackupDir" ] && mkdir -p "$fBackupDir"
-        echo -e "${BLUE}Warning: $dst is not a link, backing it up into $fBackupDir${RESET}"
+        echo -e "${CYAN}Warning: $dst is not a link, backing it up into $fBackupDir${RESET}"
         mv "$dst" "$fBackupDir/${linkName}.bak"
     fi
 
@@ -479,7 +480,9 @@ linkFile() {
         return 1
     fi
 
-    echo -e "${LIGHTYELLOW}Creating symlink${RESET}: ${linkName} -> $src"
+    # echo -e "${LIGHTYELLOW}Creating symlink${RESET}: $linkName -> $src"
+    echo -e "${LIGHTYELLOW}Creating symlink${RESET}: $dst"
+    echo "               => $src"
     ln -sf "$target" "$dst"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
@@ -1134,15 +1137,14 @@ installDebFirefox() {
     # Check if Firefox is installed and if it's the DEB version from Mozilla PPA
     if command -v firefox &>/dev/null; then
         firefoxPolicy=$(apt-cache policy firefox)
-        if echo "$firefoxPolicy" | grep -q "mozillateam/ppa"; then
+        if echo "$firefoxPolicy" | grep -q "snap"; then
+            echo -e "${LIGHTYELLOW}Snap version of Firefox found. Will attempt to replace with DEB version.${RESET}"
+        else
             installedVersion=$(echo "$firefoxPolicy" | grep "Installed:" | awk '{print $2}')
-            candidateVersion=$(echo "$firefoxPolicy" | grep "Candidate:" | awk '{print $2}')
-            if [ "$installedVersion" != "(none)" ] && [ "$installedVersion" == "$candidateVersion" ]; then
-                echo -e "${GREEN}✔${GREY} Firefox (DEB version from Mozilla PPA) is already installed and up-to-date (${installedVersion}).${RESET}"
+            if [ "$installedVersion" != "(none)" ]; then
+                echo -e "${GREEN}✔${GREY} Firefox (DEB version) is already installed (${installedVersion}).${RESET}"
                 return 0
             fi
-        elif echo "$firefoxPolicy" | grep -q "snap"; then
-            echo -e "${LIGHTYELLOW}Snap version of Firefox found. Will attempt to replace with DEB version.${RESET}"
         fi
     fi
 
