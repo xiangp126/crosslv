@@ -46,7 +46,7 @@ Options:
     -v, --version                    Show version information
     -r, --remove                     Remove obsolete IPC sockets
     -s, --status                     Print process usage and diagnostics information
-    --print                          Print the vscode server info
+    --print                          Print core variables
     --install-extension              Forcely install the specified extension from a .vsix file
     --list-extensions                List the installed extensions with versions
     --locate-shell-integration-path  Print the path to a terminal shell integration script
@@ -82,6 +82,7 @@ parseOptions() {
                 shift
                 ;;
             --print)
+                fArgs=("--version")
                 fPrint=true
                 shift
                 ;;
@@ -158,35 +159,36 @@ checkFunctionDefinition() {
             return 1
         fi
 
-        # Step 3: Get the most recenely created vscode-ipc-*.sock file
+        # Step 3: Set the VSCODE_IPC_HOOK_CLI
+        # Get the most recenely created vscode-ipc-*.sock file
         local newIPCHook=$(ls -t "$syspath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
         if [ -z "$newIPCHook" ]; then
             echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $syspath${RESET}" >&2
             return 1
         fi
-
         # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
         # But you have to remember that only the sub shell can see the new value.
         export VSCODE_IPC_HOOK_CLI=$newIPCHook
         export VSCODE_BIN_PATH
 
-        # Step 4: Print the results
-        if [ -n "$fPrint" ]; then
-            echo -e "${MAGENTA}VS Code Server Details${RESET}" >&2
-            echo "======================"
-            echo -e "${GREEN}✔${GREY} Active PID:${BLUE} $currentPid${RESET}"
-            echo -e "${GREEN}✔${GREY} PID File:${BLUE} $searchPath/$commitId/pid.txt${RESET}"
-            echo -e "${GREEN}✔${GREY} Active VS Code Binary Path:${BLUE} $VSCODE_BIN_PATH${RESET}"
-            echo -e "${GREEN}✔${GREY} Active VS Code IPC Hook:${BLUE} $VSCODE_IPC_HOOK_CLI${RESET}"
-        fi
-
-        # Step 5: Return to the original directory
+        # Step 4: Return to the original directory
         cd - &> /dev/null || exit
     }
     export -f __set_vscode_code_path
 }
 
+printCoreVars() {
+    if [ -n "$fPrint" ]; then
+        echo -e "${MAGENTA}VS Code Server Core Vars:${RESET}"
+        echo "==============================================="
+        echo -e "${GREEN}✔${GREY} Active VS Code Binary Path:${BLUE} $VSCODE_BIN_PATH${RESET}"
+        echo -e "${GREEN}✔${GREY} Active VS Code IPC Hook:${BLUE} $VSCODE_IPC_HOOK_CLI${RESET}"
+        echo "==============================================="
+    fi
+}
+
 runCmd() {
+    [[ ${#fArgs[@]} -eq 0 ]] && return
     for _ in {1..2}; do
         "$VSCODE_BIN_PATH" "${fArgs[@]}" 2>/dev/null
         if [[ $? -eq 0 ]]; then
@@ -196,6 +198,7 @@ runCmd() {
             __set_vscode_code_path
         fi
     done
+    printCoreVars
 }
 
 removeObsoleteIPCSocks() {

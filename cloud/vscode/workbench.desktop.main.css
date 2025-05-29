@@ -1,7 +1,10 @@
 /*!--------------------------------------------------------
  * Copyright (C) Microsoft Corporation. All rights reserved.
- * On Windows, The file is under
- * C:\Users\xiangp\AppData\Local\Programs\Microsoft VS Code\resources\app\out\vs\workbench\workbench.desktop.main.css
+ * On Windows, Open File Explorer
+ *  - Paste the following path into the address bar
+ *    C:\Users\xiangp\AppData\Local\Programs\Microsoft VS Code\resources\app\out\vs\workbench\workbench.desktop.main.css
+ *  - Open workbench.desktop.main.css
+ *  - Copy the contents of this file
  *--------------------------------------------------------*/
 .monaco-aria-container {
     left: -999em;

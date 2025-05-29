@@ -75,6 +75,8 @@ alias cdU='__cd $HOME/Uploads'
 alias cdP='__cd $HOME/Public'
 alias cdB='__cd /data/bugzilla'
 alias cdL='__cd /data/bugzilla'
+alias cdd='__cd /data'
+alias cdf='__cd /data/fos'
 alias cdo='__cd /opt'
 alias cds='__cd /opt/src'
 
@@ -117,14 +119,14 @@ if ! declare -F _fzf_compgen_path > /dev/null; then
             return 1
         fi
 
-        # Step 3: Get the most recenely created vscode-ipc-*.sock file
+        # Step 3: Set the VSCODE_IPC_HOOK_CLI
+        # Get the most recenely created vscode-ipc-*.sock file
         # shellcheck disable=SC2012
         local newIPCHook=$(ls -t "$syspath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
         if [ -z "$newIPCHook" ]; then
             echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $syspath${RESET}" >&2
             return 1
         fi
-
         # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
         # But you have to remember that only the sub shell can see the new value.
         export VSCODE_IPC_HOOK_CLI=$newIPCHook

@@ -1045,7 +1045,7 @@ startVncServer() {
     local xstartupPath=$fMainDir/readonly/xstartup
     local xstartupDest=$HOME/.vnc/xstartup
     cd "$HOME"/.vnc || exit
-    if [ ! -f "$xstartupDest" ]; then
+    if [ ! -L "$xstartupDest" ]; then
         echo -e "${LIGHTYELLOW}Linking xstartup to $xstartupDest${RESET}"
         linkFile "$xstartupPath" "$HOME/.vnc" xstartup
     fi
