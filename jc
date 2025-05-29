@@ -35,9 +35,9 @@ fNoInstallTools=
 fVncSimplePort=9
 fVncRealPort="590${fVncSimplePort}"
 fVncResolution=2060x1080
-fVncServer= # 1: start VNC server; 2: kill VNC server
+fVncServer= # 1: start VNC server; 2: kill VNC server 3: restart VNC server
 # Force options
-fForceUpdate=
+fForceInstallPrerequisites=
 fForceChinesePinyin=
 # Constants
 SCRIPT_NAME=$(basename $0)
@@ -67,8 +67,9 @@ Options:
     --clangd                 Update clangd to the latest released version
     --link-clang-format      Link clang-format to current path
     --link-nodejs            Link nodejs from VsCode Server to current path
-    --vnc-kill               Kill VNC server
-    --vnc                    Start VNC server
+    --vnc-start              Start VNC server
+    --vnc-stop               Stop VNC server
+    --vnc-restart            Restart VNC server
     --unlock-vnc             Unlock VNC
     --lock-vnc               Lock VNC
     --chinese-pinyin         Install Rime Pinyin
@@ -76,8 +77,8 @@ Options:
     --upgrade                Upgrade all packages
 
 Force options:
-    --force-update           Force update
-    --force-chinese-pinyin   Force install Rime Pinyin
+    --prerequisite           Force install prerequisites
+    --chinese-pinyin-force   Force install Rime Pinyin
 
 Examples:
     $SCRIPT_NAME -h
@@ -89,8 +90,8 @@ exit 0
 
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
-          upgrade,insecure,chinese-pinyin,force-update,force-chinese-pinyin,vnc,vnc-kill,\
-          unlock-vnc,lock-vnc"
+          upgrade,insecure,chinese-pinyin,prerequisite,force-chinese-pinyin,vnc-restart,\
+          vnc-stop,unlock-vnc,lock-vnc,vnc-start"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -107,8 +108,8 @@ while true; do
             fNoInstallTools=true
             shift
             ;;
-        --force-update)
-            fForceUpdate=true
+        --prerequisite)
+            fForceInstallPrerequisites=true
             shift
             ;;
         --docker)
@@ -123,12 +124,16 @@ while true; do
             fUpdateClangd=true
             shift
             ;;
-        --vnc)
+        --vnc-start)
             fVncServer=1
             shift
             ;;
-        --vnc-kill)
+        --vnc-stop)
             fVncServer=2
+            shift
+            ;;
+        --vnc-restart)
+            fVncServer=3
             shift
             ;;
         --unlock-vnc)
@@ -245,8 +250,8 @@ checkOSCategory() {
 }
 
 updatePrerequisitesForDebian() {
-    [ ! -f "$fFirstTimeFile" ] && fForceUpdate=true
-    [ -z "$fForceUpdate" ] && return
+    [ ! -f "$fFirstTimeFile" ] && fForceInstallPrerequisites=true
+    [ -z "$fForceInstallPrerequisites" ] && return
     echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
 
     checkSudoPrivilege
@@ -926,7 +931,6 @@ installRimePinyinInputMethod() {
     local fcitxXProfilePath=$fMainDir/readonly/fcitx5.xprofile
     # --- Attempt Fcitx5-Rime first ---
     echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
-    # Check if fcitx5-rime is available from enabled repositories
     if apt-cache show fcitx5-rime > /dev/null 2>&1; then
         echo -e "${GREEN}Fcitx5-Rime (fcitx5-rime) appears to be available. Attempting installation.${RESET}"
         local packagesToInstallFcitx5=(
@@ -1045,12 +1049,20 @@ linkClangFormat() {
     exit 0
 }
 
-stopVncServer() {
+isVncServerRunning() {
     if ! command -v tigervncserver &> /dev/null; then
         echo -e "${RED}Error: vncserver is not installed.${RESET}" >&2
         exit 1
     fi
     if lsof -i :$fVncRealPort | grep --quiet LISTEN; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+stopVncServer() {
+    if isVncServerRunning; then
         echo -e "${LIGHTYELLOW}Stopping VNC server on port $fVncRealPort...${RESET}"
         tigervncserver -kill :$fVncSimplePort
     else
@@ -1059,7 +1071,10 @@ stopVncServer() {
 }
 
 startVncServer() {
-    stopVncServer && sleep 1
+    if isVncServerRunning; then
+        echo -e "${LIGHTYELLOW}VNC server on port $fVncRealPort is already running.${RESET}"
+        return 0
+    fi
     local hostIpAddress=$(hostname -I | awk '{print $1}')
     local hostUsername=$(whoami)
     local xstartupPath=$fMainDir/readonly/xstartup
@@ -1074,21 +1089,25 @@ startVncServer() {
     echo -e "${MAGENTA}$startCmd${RESET}"
     $startCmd
     # Display the status of the VNC server
-    echo -e "${GREEN}VNC server status:${RESET}"
+    echo -e "${MAGENTA}VNC server started successfully:${RESET}"
     sudo lsof -i :5909
-    echo -e "${MAGENTA}VNC server started successfully.${RESET}"
-    echo -e "${GREEN}To kill the VNC server, run 'tigervncserver -kill :$fVncSimplePort'${RESET}"
     cat << _EOF
 ===================================================
-On your local machine:
-1. Setup the SSH tunnel
-ssh -NL $fVncRealPort:localhost:$fVncRealPort $hostUsername@$hostIpAddress
-ssh -NL $fVncRealPort:localhost:$fVncRealPort droplet1
-2. Connect to the VNC server
-vncviewer localhost:$fVncRealPort
+- On your local machine, setup the SSH tunnel as follows:
+  Option 1. Use Vs Code Port Forward feature to forward the port $fVncRealPort
+  Option 2. Open a terminal and run the following command:
+    ssh -NL $fVncRealPort:localhost:$fVncRealPort $hostUsername@$hostIpAddress
+    ssh -NL $fVncRealPort:localhost:$fVncRealPort droplet1
+- Connect to the VNC server
+  vncviewer localhost:$fVncRealPort
 ===================================================
 _EOF
-    exit 0
+}
+
+restartVncServer() {
+    stopVncServer
+    sleep 1
+    startVncServer
 }
 
 doCoreJobs() {
@@ -1105,8 +1124,12 @@ doEarlyExitJobs() {
     linkClangFormat "$1"
     if [[ "$fVncServer" == "1" ]]; then
         startVncServer
+        exit 0
     elif [[ "$fVncServer" == "2" ]]; then
         stopVncServer
+        exit 0
+    elif [[ "$fVncServer" == "3" ]]; then
+        restartVncServer
         exit 0
     fi
 }
