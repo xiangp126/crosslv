@@ -282,7 +282,7 @@ updatePrerequisitesForDebian() {
         gdb
         bat
         curl
-	firefox
+        firefox
         # Recommended Chinese fonts for good character display
         fonts-noto-cjk
         fonts-wqy-microhei
@@ -511,7 +511,7 @@ linkFiles() {
     local linkPath="$2"         # Destination directory
     local linknamePrefix="$3"   # Prefix for destination filename. Exp: . for hidden files
 
-    echo -e "${COLOR}Creating symlinks From ${linkPath}/* To $(basename "$targetDir")/*${RESET}"
+    echo -e "${COLOR}Creating symlinks pointing from ${linkPath}/* to $(basename "$targetDir")/*${RESET}"
     [ ! -d "$targetDir" ] && echo "Source directory $targetDir does not exist, abort!" && exit 1
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
 
@@ -1134,22 +1134,25 @@ restartVncServer() {
 
 installDebFirefox() {
     echo -e "${COLOR}Checking for DEB version of Firefox...${RESET}"
+    if ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
+        return 0
+    fi
     # Check if Firefox is installed and if it's the DEB version from Mozilla PPA
     if command -v firefox &>/dev/null; then
         firefoxPolicy=$(apt-cache policy firefox)
-        if echo "$firefoxPolicy" | grep -q "snap"; then
-            echo -e "${LIGHTYELLOW}Snap version of Firefox found. Will attempt to replace with DEB version.${RESET}"
-        else
+        if echo "$firefoxPolicy" | grep -q "mozillateam/ppa"; then
             installedVersion=$(echo "$firefoxPolicy" | grep "Installed:" | awk '{print $2}')
-            if [ "$installedVersion" != "(none)" ]; then
-                echo -e "${GREEN}✔${GREY} Firefox (DEB version) is already installed (${installedVersion}).${RESET}"
+            candidateVersion=$(echo "$firefoxPolicy" | grep "Candidate:" | awk '{print $2}')
+            if [ "$installedVersion" != "(none)" ] && [ "$installedVersion" == "$candidateVersion" ]; then
+                echo -e "${GREEN}✔${GREY} Firefox (DEB version from Mozilla PPA) is already installed and up-to-date (${installedVersion}).${RESET}"
                 return 0
             fi
+        elif echo "$firefoxPolicy" | grep -q "snap"; then
+            echo -e "${LIGHTYELLOW}Snap version of Firefox found. Will attempt to replace with DEB version.${RESET}"
         fi
     fi
 
     echo -e "${COLOR}Installing Firefox (DEB version) from Mozilla PPA${RESET}"
-
     # 1. Add the Mozilla PPA
     echo -e "${LIGHTYELLOW}Adding Mozilla PPA (ppa:mozillateam/ppa)...${RESET}"
     if ! sudo add-apt-repository -y ppa:mozillateam/ppa; then
