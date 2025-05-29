@@ -1,5 +1,11 @@
 #!/bin/bash
+
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
+PATH=/usr/bin:/usr/sbin:$PATH
+export XKL_XMODMAP_DISABLE=1
+setxkbmap us
+# Optioin 1: Start xfce
 exec startxfce4
+# Option 2: Start Gnome
 # exec gnome-session

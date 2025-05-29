@@ -8,8 +8,8 @@ _jc_complete() {
     # Define command options
     opts="-h -n -d -f"
     long_opts="--help --no-tools --debug --clangd --link-clang-format --link-nodejs \
-               --auto-remove --upgrade --docker --insecure --chinese-pinyin --vnc \
-               --force-update --force-chinese-pinyin"
+               --auto-remove --upgrade --docker --insecure --chinese-pinyin --force-update \
+               --force-chinese-pinyin --vnc --vnc-kill --unlock-vnc --lock-vnc"
     
     if [[ ${cur} == -* ]]; then
         # If it starts with --, only suggest long options

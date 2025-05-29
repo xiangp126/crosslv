@@ -21,7 +21,6 @@ fUpdateDocker=
 fLinkClangFormatPath=
 fLinkNodeJs=
 fTlsInsecure=
-fStartVncServer=
 fRimePinyinInputMethod=
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
@@ -32,6 +31,11 @@ fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
 fArch=
 fNoInstallTools=
+# VNC server
+fVncSimplePort=9
+fVncRealPort="590${fVncSimplePort}"
+fVncResolution=2060x1080
+fVncServer= # 1: start VNC server; 2: kill VNC server
 # Force options
 fForceUpdate=
 fForceChinesePinyin=
@@ -40,10 +44,8 @@ SCRIPT_NAME=$(basename $0)
 # Colors
 RED='\033[31m'
 GREEN='\033[32m'
-NORMAL='\033[0m'
 MAGENTA='\033[35m'
 LIGHTYELLOW='\033[93m'
-NORMAL='\033[0m'
 BOLD='\033[1m'
 BLUE='\033[34m'
 GREY='\033[90m'
@@ -65,7 +67,10 @@ Options:
     --clangd                 Update clangd to the latest released version
     --link-clang-format      Link clang-format to current path
     --link-nodejs            Link nodejs from VsCode Server to current path
+    --vnc-kill               Kill VNC server
     --vnc                    Start VNC server
+    --unlock-vnc             Unlock VNC
+    --lock-vnc               Lock VNC
     --chinese-pinyin         Install Rime Pinyin
     --auto-remove            Remove unused packages
     --upgrade                Upgrade all packages
@@ -84,7 +89,8 @@ exit 0
 
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
-          upgrade,insecure,chinese-pinyin,vnc,force-update,force-chinese-pinyin"
+          upgrade,insecure,chinese-pinyin,force-update,force-chinese-pinyin,vnc,vnc-kill,\
+          unlock-vnc,lock-vnc"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -118,8 +124,20 @@ while true; do
             shift
             ;;
         --vnc)
-            fStartVncServer=true
+            fVncServer=1
             shift
+            ;;
+        --vnc-kill)
+            fVncServer=2
+            shift
+            ;;
+        --unlock-vnc)
+            loginctl unlock-session
+            exit 0
+            ;;
+        --lock-vnc)
+            loginctl lock-session
+            exit 0
             ;;
         --chinese-pinyin)
             fRimePinyinInputMethod=true
@@ -231,6 +249,7 @@ updatePrerequisitesForDebian() {
 
     checkSudoPrivilege
     prerequisitesForUbuntu=(
+        opencc # Simplified Chinese
         tmux # Basic tools
         rsync
         fd-find # fd
@@ -284,7 +303,6 @@ updatePrerequisitesForDebian() {
         bridge-utils
         bear # llvm & clangd
         libear
-        firefox
         gdm3 # gnome display manager
         ubuntu-desktop
         gnome-keyring
@@ -887,7 +905,7 @@ installRimePinyinInputMethod() {
     if [ -z "$fForceChinesePinyin" ]; then
         if command -v fcitx5-configtool &> /dev/null || \
            command -v fcitx-configtool  &> /dev/null; then
-                echo -e "${GREY}Rime Pinyin input method is already installed.${RESET}"
+                echo -e "${GREEN}✔${GREY} Rime Pinyin input method is already installed.${RESET}"
                 return 0
         fi
     fi
@@ -899,9 +917,8 @@ installRimePinyinInputMethod() {
         return 1
     fi
 
-    # echo -e "${LIGHTYELLOW}Installing Chinese language support packages...${RESET}"
-    # sudo apt install -y "$(check-language-support -l zh_CN)"
-
+    local fcitxXProfilePath=$fMainDir/readonly/xprofile_fcitx5
+    local rimeDefaultYamlPath=$fMainDir/readonly/rime.default.custom.yaml
     # --- Attempt Fcitx5-Rime first ---
     echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
     # Check if fcitx5-rime is available from enabled repositories
@@ -919,6 +936,7 @@ installRimePinyinInputMethod() {
             fonts-wqy-zenhei      # WenQuanYi Zen Hei
         )
 
+        linkFile "$fcitxXProfilePath" "$HOME" .xprofile
         echo -e "${LIGHTYELLOW}Installing Fcitx5 packages: ${packagesToInstallFcitx5[*]}${RESET}"
         if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx5[@]}"; then
             echo -e "${GREEN}Successfully installed Fcitx5 and Rime packages.${RESET}"
@@ -970,6 +988,8 @@ installRimePinyinInputMethod() {
             fonts-wqy-zenhei
         )
 
+        fcitxXProfilePath=$fMainDir/readonly/xprofile_fcitx
+        linkFile "$fcitxXProfilePath" "$HOME" .xprofile
         echo -e "${LIGHTYELLOW}Installing Fcitx4 packages: ${packagesToInstallFcitx4[*]}${RESET}"
         if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx4[@]}"; then
             echo -e "${GREEN}Successfully installed Fcitx4 and Rime packages.${RESET}"
@@ -1026,20 +1046,21 @@ linkClangFormat() {
     exit 0
 }
 
-startVncServer() {
+stopVncServer() {
     if ! command -v tigervncserver &> /dev/null; then
         echo -e "${RED}Error: vncserver is not installed.${RESET}" >&2
         exit 1
     fi
-    # How to adjust the resolution of a VNC session?
-    # Say your local desktop resolution is 1920x1080 (width x height)
-    # and you may need to set the VNC resolution to around 2060x1080 to fit your screen
-    # How to adjust it?
-    # Keep the height of the resolution the same, and only change the width
-    # Start by adjusting the width from 1080 to 2060 or more, and choose the one that best fits your screen.
-    local vncPort=9
-    local realVncPort="590${vncPort}"
-    local vncResolution=2060x1080
+    if lsof -i :$fVncRealPort | grep --quiet LISTEN; then
+        echo -e "${LIGHTYELLOW}Stopping VNC server on port $fVncRealPort...${RESET}"
+        tigervncserver -kill :$fVncSimplePort
+    else
+        echo -e "${LIGHTYELLOW}VNC server on port $fVncRealPort is not running.${RESET}"
+    fi
+}
+
+startVncServer() {
+    stopVncServer && sleep 1
     local hostIpAddress=$(hostname -I | awk '{print $1}')
     local hostUsername=$(whoami)
     local xstartupPath=$fMainDir/readonly/xstartup
@@ -1049,31 +1070,23 @@ startVncServer() {
         echo -e "${LIGHTYELLOW}Linking xstartup to $xstartupDest${RESET}"
         linkFile "$xstartupPath" "$HOME/.vnc" xstartup
     fi
-    if lsof -i :$realVncPort | grep --quiet LISTEN; then
-        echo -e "${LIGHTYELLOW}Port $realVncPort is already in use. Killing existing VNC server.${RESET}"
-        tigervncserver -kill :9
-        sleep 3
-    fi
     echo -e "${GREEN}Starting VNC server...${RESET}"
-    local startCmd="tigervncserver :$vncPort -geometry $vncResolution -SecurityTypes None -localhost"
-    echo -e "${GREEN}Starting VNC server using command:${RESET} ${BOLD}${NORMAL}$startCmd${RESET}"
+    local startCmd="tigervncserver :$fVncSimplePort -geometry $fVncResolution -SecurityTypes None -localhost"
+    echo -e "${MAGENTA}$startCmd${RESET}"
     $startCmd
     # Display the status of the VNC server
     echo -e "${GREEN}VNC server status:${RESET}"
     sudo lsof -i :5909
     echo -e "${MAGENTA}VNC server started successfully.${RESET}"
-    echo -e "${GREEN}To kill the VNC server, run 'tigervncserver -kill :$vncPort'${RESET}"
+    echo -e "${GREEN}To kill the VNC server, run 'tigervncserver -kill :$fVncSimplePort'${RESET}"
     cat << _EOF
 ===================================================
 On your local machine:
 1. Setup the SSH tunnel
-ssh -L $realVncPort:localhost:$realVncPort $hostUsername@$hostIpAddress
-ssh -L $realVncPort:localhost:$realVncPort droplet1
+ssh -NL $fVncRealPort:localhost:$fVncRealPort $hostUsername@$hostIpAddress
+ssh -NL $fVncRealPort:localhost:$fVncRealPort droplet1
 2. Connect to the VNC server
- - On Linux:
- vncviewer localhost:$realVncPort
- - On macOS:
- open vnc://localhost:$realVncPort in your Finder
+vncviewer localhost:$fVncRealPort
 ===================================================
 _EOF
     exit 0
@@ -1091,7 +1104,12 @@ doCoreJobs() {
 
 doEarlyExitJobs() {
     linkClangFormat "$1"
-    [ -n "$fStartVncServer" ] && startVncServer
+    if [[ "$fVncServer" == "1" ]]; then
+        startVncServer
+    elif [[ "$fVncServer" == "2" ]]; then
+        stopVncServer
+        exit 0
+    fi
 }
 
 main() {

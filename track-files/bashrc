@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2155
+# shellcheck disable=SC2155 disable=SC1090
 
 # If not running interactively, don't do anything
 [ -z "$PS1" ] && return
@@ -83,7 +83,7 @@ alias cds='__cd /opt/src'
 # Print entry names without quotation marks
 export QUOTING_STYLE=literal
 export BAT_THEME=TwoDark
-if ! declare -F _fzf_compgen_path > /dev/null; then
+if ! declare -F __set_vscode_code_path &> /dev/null; then
     __set_vscode_code_path() {
         local MAGENTA='\033[0;35m'
         local RESET='\033[0m'
@@ -177,13 +177,16 @@ if ! shopt -oq posix; then
     . /etc/bash_completion
   fi
 fi
-
 # Find bash completion for third-party tools | only for Mac
 if [[ -d /usr/local/etc/bash_completion.d ]]; then
     for file in /usr/local/etc/bash_completion.d/*; do
-        # shellcheck disable=SC1090
         [[ -L $file ]] && . "$file"
     done
+fi
+
+# Load xprofile - bash profile for X11
+if [ -f ~/.xprofile ]; then
+    . ~/.xprofile
 fi
 
 # Find bash completion for self-defined tools
