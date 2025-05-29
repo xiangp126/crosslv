@@ -5,6 +5,20 @@ unset DBUS_SESSION_BUS_ADDRESS
 PATH=/usr/bin:/usr/sbin:$PATH
 export XKL_XMODMAP_DISABLE=1
 setxkbmap us
+# Try to start an input method editor, preferring fcitx5, then fcitx.
+# Only start one if it's available and not already running.
+for im in fcitx5 fcitx; do
+    if command -v "$im" &>/dev/null; then
+        if ! pgrep -x "$im" >/dev/null; then
+            # It's available but not running, so start it.
+            "$im" -d -r &
+        fi
+        # Whether it was started now or already running,
+        # we've processed our preferred available IM, so stop looking for others.
+        break
+    fi
+done
+
 # Optioin 1: Start xfce
 exec startxfce4
 # Option 2: Start Gnome

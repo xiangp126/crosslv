@@ -132,10 +132,12 @@ while true; do
             shift
             ;;
         --unlock-vnc)
+            set -x
             loginctl unlock-session
             exit 0
             ;;
         --lock-vnc)
+            set -x
             loginctl lock-session
             exit 0
             ;;
@@ -260,6 +262,10 @@ updatePrerequisitesForDebian() {
         gdb
         bat
         curl
+        # Recommended Chinese fonts for good character display
+        fonts-noto-cjk
+        fonts-wqy-microhei
+        fonts-wqy-zenhei
         jq # JSON parser
         xsel # X11 clipboard
         xclip
@@ -917,8 +923,7 @@ installRimePinyinInputMethod() {
         return 1
     fi
 
-    local fcitxXProfilePath=$fMainDir/readonly/xprofile_fcitx5
-    local rimeDefaultYamlPath=$fMainDir/readonly/rime.default.custom.yaml
+    local fcitxXProfilePath=$fMainDir/readonly/fcitx5.xprofile
     # --- Attempt Fcitx5-Rime first ---
     echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
     # Check if fcitx5-rime is available from enabled repositories
@@ -930,12 +935,9 @@ installRimePinyinInputMethod() {
             fcitx5-chinese-addons # Provides general Chinese support, dictionaries, etc.
             fcitx5-configtool     # GUI configuration tool (e.g., fcitx5-config-qt)
             im-config             # Input method configuration tool (sets fcitx5 as default)
-            # Recommended Chinese fonts for good character display
-            fonts-noto-cjk        # Google Noto CJK fonts (comprehensive)
-            fonts-wqy-microhei    # WenQuanYi Micro Hei (popular, good quality)
-            fonts-wqy-zenhei      # WenQuanYi Zen Hei
         )
 
+        # Link the xprofile file
         linkFile "$fcitxXProfilePath" "$HOME" .xprofile
         echo -e "${LIGHTYELLOW}Installing Fcitx5 packages: ${packagesToInstallFcitx5[*]}${RESET}"
         if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx5[@]}"; then
@@ -978,17 +980,14 @@ installRimePinyinInputMethod() {
             fcitx
             fcitx-rime
             fcitx-table-all       # Common tables for fcitx4, includes pinyin etc.
-            fcitx-frontend-gtk2
             fcitx-frontend-gtk3
             fcitx-frontend-qt5    # Or fcitx-libs-qt5 on older systems
             fcitx-config-gtk      # GUI config tool for fcitx4 (or fcitx-configtool)
             im-config
-            fonts-noto-cjk
-            fonts-wqy-microhei
-            fonts-wqy-zenhei
         )
 
-        fcitxXProfilePath=$fMainDir/readonly/xprofile_fcitx
+        # Link .xprofile to ~/.xprofile
+        fcitxXProfilePath=$fMainDir/readonly/fcitx.xprofile
         linkFile "$fcitxXProfilePath" "$HOME" .xprofile
         echo -e "${LIGHTYELLOW}Installing Fcitx4 packages: ${packagesToInstallFcitx4[*]}${RESET}"
         if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx4[@]}"; then
