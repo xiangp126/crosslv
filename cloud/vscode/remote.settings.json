@@ -1,5 +1,4 @@
 {
-    "editor.inlayHints.enabled": "off",
     "clangd.arguments": [
         "--log=error",
         "--enable-config",
@@ -15,24 +14,7 @@
     ],
     "clangd.path": "clangd",
     "clangd.checkUpdates": true,
-    "editor.insertSpaces": false,
-    "gitlens.graph.avatars": false,
-    "gitlens.blame.avatars": false,
-    "gitlens.hovers.avatars": false,
-    "gitlens.views.fileHistory.avatars": false,
-    "gitlens.views.lineHistory.avatars": false,
-    "gitlens.views.repositories.avatars": false,
-    "gitlens.views.branches.avatars": false,
-    "gitlens.views.remotes.avatars": false,
-    "gitlens.views.tags.avatars": false,
-    "gitlens.views.worktrees.avatars": false,
-    "gitlens.views.contributors.avatars": false,
-    "gitlens.views.searchAndCompare.avatars": false,
-    "gitlens.views.workspaces.avatars": false,
-    "gitlens.views.patchDetails.avatars": false,
-    "gitlens.defaultGravatarsStyle": "mp",
     "remote.autoForwardPorts": false,
-    "gitlens.gitCommands.avatars": false,
     "files.exclude": {
         "**/.vscode-server": true,
         "**/devops": true,
@@ -42,6 +24,4 @@
         "**/mmt": true,
         "**/.usr/": true
     },
-    "files.autoGuessEncoding": true,
-    "gitlens.views.commitDetails.autolinks.enhanced": false
 }
