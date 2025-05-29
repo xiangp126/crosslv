@@ -124,7 +124,7 @@
 	"command": "-workbench.action.showCommands"
 },
 {
-	"key": "f1",
+	"key": "ctrl+shift+p",
 	"command": "workbench.action.showCommands"
 },
 {
@@ -414,15 +414,6 @@
 	"when": "terminalFindFocused && terminalHasBeenCreated || terminalFindFocused && terminalProcessSupported || terminalFocusInAny && terminalHasBeenCreated || terminalFocusInAny && terminalProcessSupported"
 },
 {
-	"key": "ctrl+right",
-	"command": "cursorWordRight"
-},
-{
-	"key": "ctrl+right",
-	"command": "-cursorWordEndRight",
-	"when": "textInputFocus && !accessibilityModeEnabled"
-},
-{
 	"key": "ctrl+shift+right",
 	"command": "cursorWordRightSelect"
 },
@@ -431,27 +422,14 @@
 	"command": "-cursorWordEndRightSelect",
 	"when": "textInputFocus && !accessibilityModeEnabled"
 },
-// {
-// 	"key": "ctrl+f",
-// 	"command": "actions.find",
-// 	"when": "editorFocus || editorIsOpen"
-// },
-// {
-// 	"key": "ctrl+f",
-// 	"command": "-actions.find",
-// 	"when": "editorFocus || editorIsOpen"
-// },
-// {
-// 	"key": "ctrl+f",
-// 	"command": "actions.find"
-// },
 {
 	"key": "f3",
 	"command": "actions.find"
 },
 {
 	"key": "ctrl+shift+.",
-	"command": "gitlens.diffLineWithWorking"
+	"command": "gitlens.diffLineWithWorking",
+	"when": "editorTextFocus"
 },
 {
 	"key": "ctrl+b shift+x",
@@ -578,17 +556,8 @@
 	"when": "editorTextFocus"
 },
 {
-	"key": "ctrl+alt+j",
-	"command": "-bookmarks.jumpToPrevious",
-	"when": "editorTextFocus"
-},
-{
 	"key": "ctrl+alt+l",
 	"command": "bookmarks.jumpToNext"
-},
-{
-	"key": "ctrl+alt+j",
-	"command": "bookmarks.jumpToPrevious"
 },
 {
 	"key": "ctrl+pagedown",
@@ -620,7 +589,8 @@
 },
 {
 	"key": "ctrl+shift+,",
-	"command": "gitlens.diffLineWithPrevious"
+	"command": "gitlens.diffLineWithPrevious",
+	"when": "editorTextFocus"
 },
 {
 	"key": "ctrl+shift+g shift+,",
@@ -734,7 +704,7 @@
 	"when": "terminalFocus && terminalHasBeenCreated && terminalIsOpen && terminalSuggestWidgetVisible || terminalFocus && terminalIsOpen && terminalProcessSupported && terminalSuggestWidgetVisible"
 },
 {
-	"key": "ctrl+b shift+f",
+	"key": "ctrl+shift+g shift+f",
 	"command": "editor.action.formatSelection",
 	"when": "editorHasDocumentSelectionFormattingProvider && editorTextFocus && !editorReadonly"
 },
@@ -823,5 +793,128 @@
 {
 	"key": "ctrl+shift+g g",
 	"command": "gitlens.views.commits.focus"
+},
+{
+	"key": "shift+cmd+p",
+	"command": "-workbench.action.showCommands"
+},
+{
+	"key": "alt+right",
+	"command": "workbench.action.navigateForward",
+	"when": "canNavigateForward"
+},
+{
+	"key": "ctrl+shift+-",
+	"command": "-workbench.action.navigateForward",
+	"when": "canNavigateForward"
+},
+{
+	"key": "alt+left",
+	"command": "-cursorWordLeft",
+	"when": "textInputFocus"
+},
+{
+	"key": "ctrl+left",
+	"command": "cursorWordLeft"
+},
+{
+	"key": "ctrl+right",
+	"command": "cursorWordRight"
+},
+{
+	"key": "alt+left",
+	"command": "workbench.action.navigateBack",
+	"when": "canNavigateBack"
+},
+{
+	"key": "ctrl+-",
+	"command": "-workbench.action.navigateBack",
+	"when": "canNavigateBack"
+},
+{
+	"key": "ctrl+shift+l",
+	"command": "continue.focusContinueInputWithoutClear"
+},
+{
+	"key": "shift+cmd+l",
+	"command": "-continue.focusContinueInputWithoutClear"
+},
+{
+	"key": "ctrl+alt+k",
+	"command": "bookmarks.toggle",
+	"when": "editorTextFocus"
+},
+{
+	"key": "alt+cmd+k",
+	"command": "-bookmarks.toggle",
+	"when": "editorTextFocus"
+},
+{
+	"key": "ctrl+alt+j",
+	"command": "bookmarks.jumpToPrevious",
+	"when": "editorTextFocus"
+},
+{
+	"key": "alt+cmd+j",
+	"command": "-bookmarks.jumpToPrevious",
+	"when": "editorTextFocus"
+},
+{
+	"key": "alt+cmd+l",
+	"command": "-bookmarks.jumpToNext",
+	"when": "editorTextFocus"
+},
+{
+	"key": "ctrl+backspace",
+	"command": "deleteWordLeft",
+	"when": "textInputFocus && !editorReadonly"
+},
+{
+	"key": "alt+backspace",
+	"command": "-deleteWordLeft",
+	"when": "textInputFocus && !editorReadonly"
+},
+{
+	"key": "ctrl+i",
+	"command": "inlineChat2.reveal",
+	"when": "inlineChatHasEditsAgent && !chatEdits.isGlobalEditingSession && chatEdits.requestCount >= 1"
+},
+{
+	"key": "cmd+i",
+	"command": "-inlineChat2.reveal",
+	"when": "inlineChatHasEditsAgent && !chatEdits.isGlobalEditingSession && chatEdits.requestCount >= 1"
+},
+{
+	"key": "ctrl+i",
+	"command": "workbench.action.terminal.chat.start",
+	"when": "chatIsEnabled && terminalChatAgentRegistered && terminalFocusInAny && terminalHasBeenCreated || chatIsEnabled && terminalChatAgentRegistered && terminalFocusInAny && terminalProcessSupported"
+},
+{
+	"key": "cmd+i",
+	"command": "-workbench.action.terminal.chat.start",
+	"when": "chatIsEnabled && terminalChatAgentRegistered && terminalFocusInAny && terminalHasBeenCreated || chatIsEnabled && terminalChatAgentRegistered && terminalFocusInAny && terminalProcessSupported"
+},
+{
+	"key": "ctrl+/",
+	"command": "editor.action.commentLine",
+	"when": "editorTextFocus && !editorReadonly"
+},
+{
+	"key": "cmd+/",
+	"command": "-editor.action.commentLine",
+	"when": "editorTextFocus && !editorReadonly"
+},
+{
+	"key": "ctrl+shift+r",
+	"command": "continue.debugTerminal"
+},
+{
+	"key": "shift+cmd+r",
+	"command": "-continue.debugTerminal"
+},
+{
+	"key": "ctrl+shift+g",
+	"command": "-workbench.view.scm",
+	"when": "workbench.scm.active && !gitlens:disabled && config.gitlens.keymap == 'chorded'"
 }
 ]

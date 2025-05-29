@@ -15,7 +15,6 @@
     ],
     "clangd.path": "clangd",
     "clangd.checkUpdates": true,
-    "editor.tabSize": 8,
     "editor.insertSpaces": false,
     "gitlens.graph.avatars": false,
     "gitlens.blame.avatars": false,

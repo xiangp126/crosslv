@@ -21,16 +21,32 @@
     "remote.SSH.connectTimeout": 20,
     "editor.accessibilitySupport": "off",
     "editor.indentSize": "tabSize",
-    "files.watcherExclude": {
-        "**/.venv/**": true,
-        "**/.vscode-server": true
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    "[h]": {
+        "editor.tabSize": 8,
+        "editor.insertSpaces": false,
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "[c]": {
+        "editor.tabSize": 8,
+        "editor.insertSpaces": false,
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "[cpp]": {
+        "editor.tabSize": 8,
+        "editor.insertSpaces": false,
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
     },
     "files.exclude": {
-        "**/.vscode-server": true
-    },
-    "search.exclude": {
-        "**/recycled": true,
-        "~/.usr/bin": true
+        "/**/.vscode-server/": true,
+        "/**/.venv/": true,
+        "/**/recycled/": true,
+        "/**/Downloads/": true,
+        "**/Templates/": true,
+        "**/mmt": true,
+        "**/.usr/": true,
     },
     "terminal.integrated.enableMultiLinePasteWarning": "never",
     "terminal.integrated.fontSize": 17,
@@ -443,6 +459,7 @@
                 "scope": "storage.modifier",
                 "settings": {
                     // "foreground": "#569CD6",
+                    "foreground": "#9f9f9f",
                 },
             },
         ]
@@ -531,7 +548,6 @@
         "vscode.ipynb",
         "ms-vscode.js-debug-companion"
     ],
-    "bookmarks.keepBookmarksOnLineDelete": true,
     "bookmarks.experimental.enableNewStickyEngine": false,
     "editor.minimap.enabled": false,
     "leetcode.defaultLanguage": "cpp",
@@ -539,9 +555,6 @@
     "leetcode.hint.commentDescription": false,
     "leetcode.hint.configWebviewMarkdown": false,
     "leetcode.hint.commandShortcut": false,
-    "[c]": {
-        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
-    },
     // Command-Runner settings
     // refer to https://marketplace.visualstudio.com/items?itemName=edonet.vscode-command-runner
     // ${workspaceFolder}: activated workspace folder path
@@ -578,4 +591,6 @@
     "telemetry.feedback.enabled": false,
     "terminal.integrated.macOptionIsMeta": true,
     "terminal.external.osxExec": "iTerm2",
+    "bookmarks.keepBookmarksOnLineDelete": true,
+    "editor.stickyScroll.maxLineCount": 2,
 }
