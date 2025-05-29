@@ -36,6 +36,8 @@ fVncSimplePort=9
 fVncRealPort="590${fVncSimplePort}"
 fVncResolution=2060x1080
 fVncServer= # 1: start VNC server; 2: kill VNC server 3: restart VNC server
+# Deb Firefox
+fInstallDebFirefox=
 # Force options
 fForceInstallPrerequisites=
 fForceChinesePinyin=
@@ -65,6 +67,7 @@ Options:
     --insecure               Allow insecure TLS
     --docker                 Update Docker
     --clangd                 Update clangd to the latest released version
+    --firefox-deb            Install deb version of Firefox
     --link-clang-format      Link clang-format to current path
     --link-nodejs            Link nodejs from VsCode Server to current path
     --vnc-start              Start VNC server
@@ -74,6 +77,7 @@ Options:
     --lock-vnc               Lock VNC
     --chinese-pinyin         Install Rime Pinyin
     --auto-remove            Remove unused packages
+    --update                 Update all packages
     --upgrade                Upgrade all packages
 
 Force options:
@@ -91,7 +95,7 @@ exit 0
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
           upgrade,insecure,chinese-pinyin,prerequisite,force-chinese-pinyin,vnc-restart,\
-          vnc-stop,unlock-vnc,lock-vnc,vnc-start"
+          vnc-stop,unlock-vnc,lock-vnc,vnc-start,firefox-deb,update"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -122,6 +126,10 @@ while true; do
             ;;
         --clangd)
             fUpdateClangd=true
+            shift
+            ;;
+        --firefox-deb)
+            fInstallDebFirefox=true
             shift
             ;;
         --vnc-start)
@@ -173,6 +181,12 @@ while true; do
         --auto-remove)
             echo -e "${COLOR}Removing unused packages${RESET}"
             sudo apt autoremove -y
+            shift
+            exit 0
+            ;;
+        --update)
+            echo -e "${COLOR}Updating all packages${RESET}"
+            sudo apt update -y
             shift
             exit 0
             ;;
@@ -267,6 +281,7 @@ updatePrerequisitesForDebian() {
         gdb
         bat
         curl
+	firefox
         # Recommended Chinese fonts for good character display
         fonts-noto-cjk
         fonts-wqy-microhei
@@ -424,7 +439,7 @@ tackleTheExceptions() {
     fi
 }
 
-# linkFile: Creates a symbolic link for a file to a specified destination (dir).
+# linkFile: Creates a symbolic link for a file to a directory (destination).
 #
 # Usage:
 #   linkFile /path/of/source/file /path/to/destination/dir
@@ -443,7 +458,10 @@ linkFile() {
     local linkPath="$2"    # Destination directory to link to
     local newLinkName="$3" # New link name (optional, default: as is)
 
-    [ ! -d "$linkPath" ] && echo "Destination directory $linkPath does not exist, abort!" && exit 1
+    if [ ! -d "$linkPath" ]; then
+        echo -e "${RED}Destination directory $linkPath does not exist, abort!${RESET}"
+        exit 1
+    fi
     local filename=$(basename "$target")
     local linkName=${newLinkName:-$filename}
     local src="$target"
@@ -683,6 +701,7 @@ createExtraSymlinks() {
     linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
     linkFile "$fzfBinPath" "$HOME/.usr/bin"
     linkFile "$fJCPath" "$HOME/.usr/bin"
+    linkFile "$fMainDir"/cloud/vscode/remote.settings.json "$HOME"/.vscode-server/data/Machine "settings.json"
 
     echo -e "${COLOR}Relinking system commands${RESET}"
     relinkCommand "batcat" "bat"
@@ -1110,11 +1129,111 @@ restartVncServer() {
     startVncServer
 }
 
+installDebFirefox() {
+    echo -e "${COLOR}Checking for DEB version of Firefox...${RESET}"
+    # Check if Firefox is installed and if it's the DEB version from Mozilla PPA
+    if command -v firefox &>/dev/null; then
+        firefoxPolicy=$(apt-cache policy firefox)
+        if echo "$firefoxPolicy" | grep -q "mozillateam/ppa"; then
+            installedVersion=$(echo "$firefoxPolicy" | grep "Installed:" | awk '{print $2}')
+            candidateVersion=$(echo "$firefoxPolicy" | grep "Candidate:" | awk '{print $2}')
+            if [ "$installedVersion" != "(none)" ] && [ "$installedVersion" == "$candidateVersion" ]; then
+                echo -e "${GREEN}✔${GREY} Firefox (DEB version from Mozilla PPA) is already installed and up-to-date (${installedVersion}).${RESET}"
+                return 0
+            fi
+        elif echo "$firefoxPolicy" | grep -q "snap"; then
+            echo -e "${LIGHTYELLOW}Snap version of Firefox found. Will attempt to replace with DEB version.${RESET}"
+        fi
+    fi
+
+    echo -e "${COLOR}Installing Firefox (DEB version) from Mozilla PPA${RESET}"
+
+    # 1. Add the Mozilla PPA
+    echo -e "${LIGHTYELLOW}Adding Mozilla PPA (ppa:mozillateam/ppa)...${RESET}"
+    if ! sudo add-apt-repository -y ppa:mozillateam/ppa; then
+        echo -e "${RED}Failed to add Mozilla PPA. Aborting Firefox DEB installation.${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}Mozilla PPA added successfully.${RESET}"
+
+    # 2. Create the preference file to prioritize PPA Firefox
+    local preferenceFilePath="/etc/apt/preferences.d/mozilla-firefox-nosnap"
+    local preferenceContent=$(cat <<EOF
+Package: *
+Pin: release o=LP-PPA-mozillateam
+Pin-Priority: 1001
+
+Package: firefox
+Pin: release o=Ubuntu*
+Pin-Priority: -1
+EOF
+)
+    echo -e "${LIGHTYELLOW}Setting up APT preferences to prioritize Mozilla PPA Firefox...${RESET}"
+    if [ -f "$preferenceFilePath" ] && cmp -s <(echo "$preferenceContent") "$preferenceFilePath"; then
+        echo -e "${GREY}APT preference file '$preferenceFilePath' already exists and is correctly configured.${RESET}"
+    else
+        echo "$preferenceContent" | sudo tee "$preferenceFilePath" > /dev/null
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}APT preference file '$preferenceFilePath' created/updated successfully.${RESET}"
+        else
+            echo -e "${RED}Failed to create/update APT preference file '$preferenceFilePath'. Aborting.${RESET}"
+            return 1
+        fi
+    fi
+
+    # 3. Uninstall Snap Firefox (if present)
+    if snap list firefox &>/dev/null; then
+        echo -e "${LIGHTYELLOW}Uninstalling Snap version of Firefox...${RESET}"
+        if ! sudo snap remove firefox; then
+            echo -e "${RED}Failed to remove Snap Firefox. This might interfere. Continuing, but manual removal might be needed.${RESET}"
+        else
+            echo -e "${GREEN}Snap Firefox removed successfully.${RESET}"
+        fi
+    else
+        echo -e "${GREY}Snap version of Firefox not found. Skipping removal.${RESET}"
+    fi
+
+    # 4. Install DEB Firefox
+    echo -e "${LIGHTYELLOW}Updating package lists...${RESET}"
+    if ! sudo apt update; then
+        echo -e "${RED}Failed to update apt package list after PPA and preference changes. Aborting Firefox installation.${RESET}"
+        return 1
+    fi
+
+    echo -e "${LIGHTYELLOW}Installing Firefox (DEB version)...${RESET}"
+    if ! sudo apt install -y firefox; then
+        echo -e "${RED}Failed to install Firefox (DEB version).${RESET}"
+        echo -e "${LIGHTYELLOW}Attempting to install specific components that might be missing (e.g., language packs)...${RESET}"
+        sudo apt install -y firefox-locale-en # Example for English, adjust if needed
+        if ! sudo apt install -y firefox; then # Retry main installation
+             echo -e "${RED}Still failed to install Firefox (DEB version) after attempting component install.${RESET}"
+             return 1
+        fi
+    fi
+
+    # 5. Verify installation
+    if command -v firefox &>/dev/null; then
+        firefoxVersion=$(firefox --version)
+        firefoxPolicyAfter=$(apt-cache policy firefox)
+        if echo "$firefoxPolicyAfter" | grep -q "mozillateam/ppa"; then
+            echo -e "${GREEN}Firefox (DEB version) installed successfully! Version: $firefoxVersion${RESET}"
+            echo -e "${GREY}Policy check confirms it's from Mozilla PPA.${RESET}"
+        else
+            echo -e "${RED}Firefox installed, but it might not be the DEB version from Mozilla PPA. Please check 'apt-cache policy firefox'.${RESET}"
+        fi
+    else
+        echo -e "${RED}Firefox installation failed or binary not found in PATH.${RESET}"
+        return 1
+    fi
+    return 0
+}
+
 doCoreJobs() {
     createTKSymlinks
     updateVimPlugins
     installTmuxPluginsManager
     installDocker
+    [ -n "$fInstallDebFirefox" ] && installDebFirefox
     [ -n "$fUpdateClangd" ] && installUpdateClangd
     [ -n "$fRimePinyinInputMethod" ] && installRimePinyinInputMethod
     createExtraSymlinks

@@ -22,6 +22,7 @@
         "**/Downloads": true,
         "**/Templates/": true,
         "**/mmt": true,
-        "**/.usr/": true
-    },
+        "**/.usr/": true,
+        "**/.bash_completion.d/": true
+    }
 }
