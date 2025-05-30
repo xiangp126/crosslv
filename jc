@@ -73,7 +73,7 @@ Options:
     --link-nodejs            Link nodejs from VsCode Server to current path
     --vnc-start              Start VNC server
     --vnc-stop               Stop VNC server
-    --vnc-restart            Restart VNC server
+    --vnc,--vnc-restart      Restart VNC server
     --unlock-vnc             Unlock VNC
     --lock-vnc               Lock VNC
     --chinese-pinyin         Install Rime Pinyin
@@ -96,7 +96,7 @@ exit 0
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
           upgrade,insecure,chinese-pinyin,prerequisite,force-chinese-pinyin,vnc-restart,\
-          vnc-stop,unlock-vnc,lock-vnc,vnc-start,firefox-deb,update"
+          vnc-stop,unlock-vnc,lock-vnc,vnc-start,vnc,firefox-deb,update"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -141,7 +141,7 @@ while true; do
             fVncServer=2
             shift
             ;;
-        --vnc-restart)
+        --vnc|--vnc-restart)
             fVncServer=3
             shift
             ;;
