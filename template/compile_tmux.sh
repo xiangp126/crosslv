@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # Define the target TMUX version tag
-TMUX_TARG_TAG="3.3"
+TMUX_TARG_TAG="3.5a"
 USER_NOTATION="@@@@"
 TMUX_REPO_URL="https://github.com/tmux/tmux"
 DOWNLOAD_DIR="$HOME/Downloads"
 NEED_CLEAN=
-INSTALL_FLAG=
+NO_INSTALL_FLAG=
 INSTALL_DIR="$HOME/.usr/"
 SCRIPT_NAME=$(basename "$0")
 
@@ -17,21 +17,21 @@ Usage: $SCRIPT_NAME [-uic]
 This script compiles and installs TMUX
 
 Options:
-    -i  Install TMUX
+    -n  Do not install TMUX
     -c  Clean the build directory before compiling
 
 Examples:
     $SCRIPT_NAME -h
-    $SCRIPT_NAME -i
+    $SCRIPT_NAME -n
 
 _EOF_
 exit 0
 }
 
-while getopts "uich" opt; do
+while getopts "unch" opt; do
     case $opt in
-        i)
-            INSTALL_FLAG=true
+        n)
+            NO_INSTALL_FLAG=true
             ;;
         c)
             NEED_CLEAN=true
@@ -135,7 +135,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-if [ -n "$INSTALL_FLAG" ]; then
+if [ -z "$NO_INSTALL_FLAG" ]; then
     echo "$USER_NOTATION Installing TMUX ..."
     make install
     if [ $? -ne 0 ]; then

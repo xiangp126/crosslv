@@ -193,7 +193,6 @@ fi
 TK_COMPLETION_SELF="$HOME/.bash_completion.d"
 if [ -d "$TK_COMPLETION_SELF" ]; then
     for file in "$TK_COMPLETION_SELF"/*; do
-        # shellcheck disable=SC1090
         [[ -f $file ]] && source "$file"
     done
 fi
