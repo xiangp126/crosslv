@@ -245,7 +245,7 @@ restoreVms() {
         fi
 
         echo -e "${GREEN}Disk Image: ${RESET}$bkVmDiskImagePath => $vmDiskImagePath"
-        echo -e "${GREEN}XML Config: ${RESET}$bkQemuXmlPath"
+        echo -e "${GREEN}XML Config: ${RESET}$bkQemuXmlPath => /etc/libvirt/qemu/$vm.xml"
 
         echo -e "${BOLD}Restoring disk image...${RESET}"
         sudo rsync -av "$bkVmDiskImagePath" "$vmDiskImagePath"
