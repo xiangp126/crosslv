@@ -491,10 +491,10 @@ linkFile() {
         $execPrefix ln -sf "$target" "$dst"
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}Success!${RESET}"
+            break
         else
-            echo -e "${RED}Failed!${RESET}"
+            echo -e "${RED}Failed! Retrying with sudo...${RESET}"
             execPrefix="sudo "
-            echo -e "${RED}Retrying with sudo${RESET}"
             continue
         fi
     done
@@ -580,10 +580,10 @@ relinkCommand() {
         $execPrefix ln -sf "$sysCmdPath" "$dst"
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}Success!${RESET}"
+            break
         else
-            echo -e "${RED}Failed!${RESET}"
+            echo -e "${RED}Failed! Retrying with sudo...${RESET}"
             execPrefix="sudo "
-            echo -e "${RED}Retrying with sudo${RESET}"
             continue
         fi
     done

@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2046
 
 unset SESSION_MANAGER
 # unset DBUS_SESSION_BUS_ADDRESS # Don't do this!
@@ -23,7 +24,7 @@ for im in fcitx5 fcitx; do
         break
     fi
 done
-# Optioin 1: Start xfce
+# Optioin 1: Start xfce (Recommended)
 exec startxfce4
 # Option 2: Start Gnome
 # exec gnome-session
