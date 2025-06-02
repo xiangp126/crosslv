@@ -1,0 +1,14 @@
+[Unit]
+Description=VNC Server (XDMCP Query via GDM3) for %I on Display :9 (Port 5909)
+After=gdm.service
+Requires=gdm.service
+
+[Service]
+Type=simple
+ExecStart=-/usr/bin/Xvnc -inetd -query localhost -geometry 2060x1080 -depth 24 -once -SecurityTypes None -desktop GDM3-XFCE-Login-Port5909 -Log /var/log/Xvnc-gdm-login-5909-%I.log -terminate -NeverShared -nolisten tcp
+User=root
+StandardInput=socket
+StandardError=journal
+
+KillMode=process
+

@@ -343,9 +343,12 @@ updatePrerequisitesForDebian() {
         smbclient
     )
 
-    sudo apt remove -y wireshark lightdm
     sudo apt update
-    sudo apt install -y "${prerequisitesForUbuntu[@]}"
+    sudo apt remove --purge -y lightdm
+
+    echo "gdm3 shared/default-x-display-manager select gdm3" | sudo debconf-set-selections
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y "${prerequisitesForUbuntu[@]}"
+    sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure gdm3
     sudo apt autoremove -y
 }
 
@@ -467,6 +470,7 @@ linkFile() {
     local linkName=${newLinkName:-$filename}
     local src="$target"
     local dst="$linkPath/${linkName}"
+    local execPrefix=
 
     [ ! -f "$target" ] && echo "Source file $target does not exist, abort!" && exit 1
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
@@ -483,13 +487,17 @@ linkFile() {
     # echo -e "${LIGHTYELLOW}Creating symlink${RESET}: $linkName -> $src"
     echo -e "${LIGHTYELLOW}Creating symlink${RESET}: $dst"
     echo "               => $src"
-    ln -sf "$target" "$dst"
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Success!${RESET}"
-    else
-        echo -e "${RED}Failed!${RESET}"
-        exit 2
-    fi
+    for _ in {1..2}; do
+        $execPrefix ln -sf "$target" "$dst"
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Success!${RESET}"
+        else
+            echo -e "${RED}Failed!${RESET}"
+            execPrefix="sudo "
+            echo -e "${RED}Retrying with sudo${RESET}"
+            continue
+        fi
+    done
 }
 
 # linkFiles: Creates symbolic links for all files in a source directory to a specified destination directory.
@@ -553,7 +561,7 @@ relinkCommand() {
     local linkPath=$HOME/.usr/bin
     [ -n "$3" ] && linkPath=$3
     local dst=$linkPath/$linkName
-    local exePrefix=
+    local execPrefix=
 
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
     sysCmdPath=$(command -v "$sysCmd")
@@ -569,13 +577,13 @@ relinkCommand() {
 
     echo -e "${COLOR}Creating symlink: ${linkName} -> syscmd: ${sysCmdPath}${RESET}"
     for _ in {1..2}; do
-        $exePrefix ln -sf "$sysCmdPath" "$dst"
+        $execPrefix ln -sf "$sysCmdPath" "$dst"
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}Success!${RESET}"
-            exePrefix=
         else
             echo -e "${RED}Failed!${RESET}"
-            exePrefix="sudo "
+            execPrefix="sudo "
+            echo -e "${RED}Retrying with sudo${RESET}"
             continue
         fi
     done
@@ -704,7 +712,7 @@ createExtraSymlinks() {
     linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
     linkFile "$fzfBinPath" "$HOME/.usr/bin"
     linkFile "$fJCPath" "$HOME/.usr/bin"
-    linkFile "$fMainDir"/cloud/vscode/remote.settings.json "$HOME"/.vscode-server/data/Machine "settings.json"
+    linkFile "$fMainDir"/assets/vscode/remote.settings.json "$HOME"/.vscode-server/data/Machine "settings.json"
 
     echo -e "${COLOR}Relinking system commands${RESET}"
     relinkCommand "batcat" "bat"
@@ -950,7 +958,7 @@ installRimePinyinInputMethod() {
         return 1
     fi
 
-    local fcitxXProfilePath=$fMainDir/readonly/fcitx5.xprofile
+    local fcitxXProfilePath=$fMainDir/assets/vnc/fcitx5.xprofile
     # --- Attempt Fcitx5-Rime first ---
     echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
     if apt-cache show fcitx5-rime > /dev/null 2>&1; then
@@ -1013,7 +1021,7 @@ installRimePinyinInputMethod() {
         )
 
         # Link .xprofile to ~/.xprofile
-        fcitxXProfilePath=$fMainDir/readonly/fcitx.xprofile
+        fcitxXProfilePath=$fMainDir/assets/vnc/fcitx.xprofile
         linkFile "$fcitxXProfilePath" "$HOME" .xprofile
         echo -e "${LIGHTYELLOW}Installing Fcitx4 packages: ${packagesToInstallFcitx4[*]}${RESET}"
         if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx4[@]}"; then
@@ -1099,31 +1107,30 @@ startVncServer() {
     fi
     local hostIpAddress=$(hostname -I | awk '{print $1}')
     local hostUsername=$(whoami)
-    local xstartupPath=$fMainDir/readonly/xstartup
+    local xstartupPath=$fMainDir/assets/vnc/xstartup
     local xstartupDest=$HOME/.vnc/xstartup
     cd "$HOME"/.vnc || exit
-    if [ ! -L "$xstartupDest" ]; then
-        echo -e "${LIGHTYELLOW}Linking xstartup to $xstartupDest${RESET}"
-        linkFile "$xstartupPath" "$HOME/.vnc" xstartup
-    fi
+    linkFile "$xstartupPath" "$HOME/.vnc" xstartup
+    linkFile "$fMainDir/assets/gdm3/custom.conf" "/etc/gdm3" custom.conf
     echo -e "${GREEN}Starting VNC server...${RESET}"
-    local startCmd="tigervncserver :$fVncSimplePort -geometry $fVncResolution -SecurityTypes None -localhost"
+    local startCmd="tigervncserver :$fVncSimplePort -geometry $fVncResolution -SecurityTypes None -localhost yes -xstartup $xstartupDest"
     echo -e "${MAGENTA}$startCmd${RESET}"
     $startCmd
-    # Display the status of the VNC server
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to start VNC server.${RESET}"
+        return 1
+    fi
     echo -e "${MAGENTA}VNC server started successfully:${RESET}"
     sudo lsof -i :5909
-    cat << _EOF
-===================================================
-- On your local machine, setup the SSH tunnel as follows:
-  Option 1. Use Vs Code Port Forward feature to forward the port $fVncRealPort
-  Option 2. Open a terminal and run the following command:
-    ssh -NL $fVncRealPort:localhost:$fVncRealPort $hostUsername@$hostIpAddress
-    ssh -NL $fVncRealPort:localhost:$fVncRealPort droplet1
-- Connect to the VNC server
-  vncviewer localhost:$fVncRealPort
-===================================================
-_EOF
+    echo -e "${CYAN}===================================================${RESET}"
+    echo -e "${BOLD}${LIGHTYELLOW}- On your local machine, setup the SSH tunnel as follows:${RESET}"
+    echo -e "  ${GREEN}Option 1.${RESET} Use Vs Code Port Forward feature to forward the port ${MAGENTA}$fVncRealPort${RESET}"
+    echo -e "  ${GREEN}Option 2.${RESET} Open a terminal and run the following command:"
+    echo -e "    ${BLUE}ssh -NL ${MAGENTA}$fVncRealPort${BLUE}:localhost:${MAGENTA}$fVncRealPort ${MAGENTA}$hostUsername@$hostIpAddress${RESET}"
+    echo -e "    ${GREY}or simply:${RESET} ${BLUE}ssh -NL ${MAGENTA}$fVncRealPort${BLUE}:localhost:${MAGENTA}$fVncRealPort ${MAGENTA}droplet1${RESET}"
+    echo -e "${BOLD}${LIGHTYELLOW}- Connect to the VNC server using a VNC viewer:${RESET}"
+    echo -e "  ${BLUE}vncviewer localhost:${MAGENTA}$fVncRealPort${RESET}"
+    echo -e "${CYAN}===================================================${RESET}"
 }
 
 restartVncServer() {
