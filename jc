@@ -108,7 +108,7 @@ exit 0
 
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
-          upgrade,insecure,chinese-pinyin,prerequisite,force-chinese-pinyin,vnc-restart,\
+          upgrade,insecure,chinese-pinyin,prerequisite,chinese-pinyin-force,vnc-restart,\
           vnc-stop,unlock-vnc,lock-vnc,vnc-start,vnc,firefox-deb,update,opengrok,opengrok-start,\
           opengrok-stop,opengrok-restart,opengrok-indexer"
 
@@ -189,7 +189,7 @@ while true; do
             fRimePinyinInputMethod=true
             shift
             ;;
-        --force-chinese-pinyin)
+        --chinese-pinyin-force)
             fRimePinyinInputMethod=true
             fForceChinesePinyin=true
             shift
@@ -375,10 +375,10 @@ updatePrerequisitesForDebian() {
     )
 
     sudo apt update
-    sudo apt remove --purge -y lightdm thunderbird
+    sudo apt remove --purge -y thunderbird lightdm
 
     echo "gdm3 shared/default-x-display-manager select gdm3" | sudo debconf-set-selections
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y "${prerequisitesForUbuntu[@]}"
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends "${prerequisitesForUbuntu[@]}"
     sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure gdm3
     sudo apt autoremove -y
 }
@@ -999,7 +999,8 @@ installRimePinyinInputMethod() {
             fcitx5
             fcitx5-rime
             fcitx5-chinese-addons # Provides general Chinese support, dictionaries, etc.
-            fcitx5-configtool     # GUI configuration tool (e.g., fcitx5-config-qt)
+            # fcitx5-configtool     # GUI configuration tool (e.g., fcitx5-config-qt)
+            fcitx5-config-qt      # GUI configuration tool
             im-config             # Input method configuration tool (sets fcitx5 as default)
         )
 
@@ -1394,9 +1395,38 @@ restartOpenGrokContainer() {
     startOpenGrokContainer
 }
 
+addUserIntoLibvirtGrp() {
+    echo -e "${COLOR}Configuring Libvirt group membership for current user ($USER)...${RESET}"
+
+    if ! getent group libvirt > /dev/null; then
+        echo -e "${RED}Error: The 'libvirt' group does not exist.${RESET}"
+        echo -e "${LIGHTYELLOW}This might indicate that 'libvirt-daemon-system' or similar packages are not installed or not installed correctly.${RESET}"
+        echo -e "${LIGHTYELLOW}Please verify libvirt installation. Skipping group membership addition.${RESET}"
+        return 1
+    fi
+
+    if id -nG "$USER" | grep -qw libvirt; then
+        echo -e "${GREEN}✔${GREY} User '$USER' is already a member of the 'libvirt' group.${RESET}"
+        return 0
+    fi
+
+    echo -e "${LIGHTYELLOW}Attempting to add user '$USER' to the 'libvirt' group...${RESET}"
+    if sudo usermod -aG libvirt "$USER"; then
+        echo -e "${GREEN}Successfully added user '$USER' to the 'libvirt' group.${RESET}"
+        echo -e "${BOLD}${MAGENTA}IMPORTANT: You must log out and log back in, or open a new shell session (or run 'newgrp libvirt'), for this group membership change to take effect.${RESET}"
+    else
+        echo -e "${RED}Failed to add user '$USER' to the 'libvirt' group.${RESET}"
+        echo -e "${LIGHTYELLOW}Please try adding the user manually: ${BLUE}sudo usermod -aG libvirt $USER${RESET}"
+        return 1
+    fi
+
+    return 0
+}
+
 doCoreJobs() {
     createTKSymlinks
     updateVimPlugins
+    addUserIntoLibvirtGrp
     installTmuxPluginsManager
     installDocker
     [ -n "$fInstallDebFirefox" ] && installDebFirefox
