@@ -1,3 +1,0 @@
-# use 'id pi' to get the uid and gid of user pi. Say here the uid is 1001
-# mount -t cifs -o username=pi,uid=1001,gid=1001 //192.168.10.1/STM /mnt/STM
-//192.168.10.1/STM /mnt/STM cifs credentials=/home/pi/.smbcredentials,uid=1001,gid=1001 0 0

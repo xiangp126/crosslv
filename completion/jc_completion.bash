@@ -10,7 +10,8 @@ _jc_complete() {
     long_opts="--help --no-tools --debug --clangd --link-clang-format --link-nodejs \
                --auto-remove --upgrade --docker --insecure --chinese-pinyin --prerequisite \
                --chinese-pinyin-force --vnc-start --vnc-stop --unlock-vnc --lock-vnc \
-               --vnc-restart --vnc --firefox-deb --update"
+               --vnc-restart --vnc --firefox-deb --update --opengrok-start --opengrok-stop \
+               --opengrok-restart --opengrok --opengrok-indexer"
 
     if [[ ${cur} == -* ]]; then
         # If it starts with --, only suggest long options

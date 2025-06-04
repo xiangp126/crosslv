@@ -1,0 +1,25 @@
+############# !!JUST FOR REFERENCE!! ############
+############# !!DO NOT USE THIS FILE DIRECTORY!! ############
+# Exp 1: mount via samba
+# Use id command to get uid and gid
+# Onetime command on Bash:
+##mount -t cifs -o username=pi,uid=1001,gid=1001 //192.168.10.1/STM /mnt/STM
+# Write in fstab
+# //192.168.10.1/STM /mnt/STM cifs credentials=/home/pi/.smbcredentials,uid=1001,gid=1001 0 0
+
+# Exp 2: mount directly
+# sudo mkdir /data
+# Persistence: UUIDs (Universally Unique Identifiers)
+# UUID is unique to the filesystem on the partition.
+# UUID is stored within the filesystem's metadata on the partition itself.
+# UUID will never change until the partition is reformatted.
+# $ sudo blkid /dev/sda
+# /dev/sda: UUID="3d59fbcd-5b98-47b8-9c92-c9b2bafff637" BLOCK_SIZE="4096" TYPE="ext4"
+# Onetime command on Bash:
+##sudo umount /media/ubuntu/3d59fbcd-5b98-47b8-9c92-c9b2bafff637
+##sudo mount UUID="3d59fbcd-5b98-47b8-9c92-c9b2bafff637" /data
+# Write in fstab and remove the comment symbol
+# UUID="3d59fbcd-5b98-47b8-9c92-c9b2bafff637" /data ext4 defaults,errors=remount-ro 0 0
+# Now test it
+# sudo unmount /data
+# sudo mount -a
