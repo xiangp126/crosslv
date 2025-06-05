@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2155
+# shellcheck disable=SC2155 disable=SC2120
 # set -x
 
 # Tracking directories
@@ -45,6 +45,8 @@ OPENGROK_DATA_VOLUME="$HOME/.usr/local/opengrok/data" # Docker named volume for 
 OPENGROK_ETC_VOLUME="$HOME/.usr/local/opengrok/etc"   # Docker named volume for OpenGrok configuration
 OPENGROK_HOST_PORT="8080"
 OPENGROK_CONTAINER_PORT="8080"
+# Samba Server
+fSambaServer= # 1: Start samba server; 2: Start samba server without setting password
 # Deb Firefox
 fInstallDebFirefox=
 # Force options
@@ -90,6 +92,8 @@ Options:
     --opengrok-stop                 Stop OpenGrok Docker container
     --opengrok,--opengrok-restart   Restart OpenGrok Docker container
     --opengrok-indexer              Start OpenGrok indexer
+    --samba                         Install and configure Samba Server
+    --samba-bypass-password         Don't set password for Samba Server again
     --auto-remove                   Remove unused packages
     --update                        Update all packages
     --upgrade                       Upgrade all packages
@@ -110,7 +114,7 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
           upgrade,insecure,chinese-pinyin,prerequisite,chinese-pinyin-force,vnc-restart,\
           vnc-stop,unlock-vnc,lock-vnc,vnc-start,vnc,firefox-deb,update,opengrok,opengrok-start,\
-          opengrok-stop,opengrok-restart,opengrok-indexer"
+          opengrok-stop,opengrok-restart,opengrok-indexer,samba,samba-bypass-password"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -161,6 +165,14 @@ while true; do
             ;;
         --opengrok-indexer)
             fOpenGrokContainer=4
+            shift
+            ;;
+        --samba)
+            fSambaServer=1
+            shift
+            ;;
+        --samba-bypass-password)
+            fSambaServer=2
             shift
             ;;
         --vnc-start)
@@ -375,12 +387,10 @@ updatePrerequisitesForDebian() {
         tigervnc-xorg-extension
         tigervnc-viewer
         remmina # remote desktop client
-        samba
-        smbclient
     )
 
     sudo apt update
-    sudo apt remove --purge -y thunderbird lightdm
+    sudo apt remove --purge -y thunderbird lightdm xrdp xorgxrdp
 
     echo "gdm3 shared/default-x-display-manager select gdm3" | sudo debconf-set-selections
     sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends "${prerequisitesForUbuntu[@]}"
@@ -406,7 +416,7 @@ updatePrequesitesForMac() {
 setTimeZone() {
     echo -e "${COLOR}Setting timezone to Vancouver${RESET}"
     # check time zone if it is already vancouver
-    if [ $(timedatectl | grep "Time zone" | awk '{print $3}') == "America/Vancouver" ]; then
+    if [ "$(timedatectl | grep "Time zone" | awk '{print $3}')" == "America/Vancouver" ]; then
         echo -e "${GREEN}✔${GREY} Time zone is already vancouver${RESET}"
         return
     fi
@@ -417,6 +427,56 @@ setTimeZone() {
         echo -e "${RED}Failed!${RESET}"
         exit 1
     fi
+}
+
+stopAndDisableDaemonService() {
+    local targetServiceName="${1:-networking.service}"
+    # Check if the service exists
+    if ! systemctl cat "$targetServiceName" >/dev/null 2>&1; then
+        echo -e "${RED}Error: Service '${targetServiceName}' does not exist.${RESET}"
+        return 1
+    fi
+    # Stop the service
+    local targetServiceStatus=$(systemctl is-active "$targetServiceName" 2>&1)
+    if [ "$targetServiceStatus" == "active" ]; then
+        echo -e "${LIGHTYELLOW}Service '${targetServiceName}' is active. Attempting to stop it...${RESET}"
+        if sudo systemctl stop "$targetServiceName"; then
+            echo -e "${GREEN}✔${GREY} Successfully stopped service '${targetServiceName}'.${RESET}"
+        else
+            echo -e "${RED}Failed to stop service '${targetServiceName}'.${RESET}"
+        fi
+    elif [ "$targetServiceStatus" == "inactive" ] || [ "$targetServiceStatus" == "failed" ]; then
+        echo -e "${GREEN}✔${GREY} Service '${targetServiceName}' is inactive (status: $targetServiceStatus).${RESET}"
+    else
+        echo -e "${RED}Failed to check status for service '${targetServiceName}'.${RESET}"
+        return 1
+    fi
+
+    # Disable the service
+    local targetServiceEnabledStatus=$(systemctl is-enabled "$targetServiceName" 2>&1)
+    case "$targetServiceEnabledStatus" in
+        "disabled")
+            echo -e "${GREEN}✔${GREY} Service '${targetServiceName}' is already disabled.${RESET}"
+            return 0
+            ;;
+        "static")
+            echo -e "${GREEN}✔${GREY} Service '${targetServiceName}' is static (cannot be enabled/disabled conventionally). No action needed.${RESET}"
+            return 0
+            ;;
+        "masked")
+            echo -e "${GREEN}✔${GREY} networking.service is masked. No disable action needed.${RESET}"
+            return 0
+            ;;
+        *)
+            echo -e "${LIGHTYELLOW}Attempting to disable service '${targetServiceName}' (current status: '$targetServiceEnabledStatus')...${RESET}"
+            if sudo systemctl disable "$targetServiceName"; then
+                echo -e "${GREEN}✔${GREY} Successfully disabled service '${targetServiceName}'.${RESET}"
+            else
+                echo -e "${RED}Failed to disable service '${targetServiceName}'. It might be already disabled or an error occurred.${RESET}"
+                return 1
+            fi
+            ;;
+    esac
 }
 
 # There are two primary services associated with networking in Debian/Ubuntu-based systems:
@@ -443,51 +503,10 @@ setTimeZone() {
 #   is the intended primary network manager.
 checkNetworkManagerStatus() {
     echo -e "${COLOR}Checking NetworkManager.service status...${RESET}"
-    stopNetworkingService() {
-        local networkingServiceStatus=$(systemctl is-active networking.service 2>&1)
-        if [ "$networkingServiceStatus" == "active" ]; then
-            echo -e "${LIGHTYELLOW}networking.service is also active. Stopping and disabling networking.service...${RESET}"
-            if sudo systemctl stop networking.service; then
-                echo -e "${GREEN}✔${GREY} Successfully stopped networking.service.${RESET}"
-            else
-                echo -e "${RED}Failed to stop networking.service.${RESET}"
-            fi
-        elif [ "$networkingServiceStatus" == "inactive" ] || [ "$networkingServiceStatus" == "failed" ]; then
-            echo -e "${GREEN}✔${GREY} networking.service is inactive (status: $networkingServiceStatus).${RESET}"
-        else
-            echo -e "${RED}Failed to check networking.service status.${RESET}"
-        fi
-    }
-    disableNetworkingService() {
-        local currentIsEnabledStatus=$(systemctl is-enabled networking.service 2>&1)
-        case "$currentIsEnabledStatus" in
-            "disabled")
-                echo -e "${GREEN}✔${GREY} networking.service is already disabled.${RESET}"
-                return 0
-                ;;
-            "static")
-                echo -e "${GREEN}✔${GREY} networking.service is static (cannot be disabled/enabled conventionally). No action needed.${RESET}"
-                return 0
-                ;;
-            "masked")
-                echo -e "${GREEN}✔${GREY} networking.service is masked. No disable action needed.${RESET}"
-                return 0
-                ;;
-            *)
-                echo -e "${LIGHTYELLOW}Attempting to disable networking.service (current status: '$currentIsEnabledStatus')...${RESET}"
-                if sudo systemctl disable networking.service; then
-                    echo -e "${GREEN}✔${GREY} Successfully disabled networking.service.${RESET}"
-                else
-                    echo -e "${RED}Failed to disable networking.service. It might be already disabled or an error occurred.${RESET}"
-                fi
-                ;;
-        esac
-    }
     local nmServiceStatus=$(systemctl is-active NetworkManager.service 2>&1)
     if [ "$nmServiceStatus" == "active" ]; then
         echo -e "${GREEN}✔${GREY} NetworkManager is active.${RESET}"
-        stopNetworkingService
-        disableNetworkingService
+        stopAndDisableDaemonService "networking.service"
     elif [ "$nmServiceStatus" == "inactive" ] || [ "$nmServiceStatus" == "failed" ]; then
         echo -e "${LIGHTYELLOW}NetworkManager is not active (status: ${nmServiceStatus}).${RESET}"
         echo -e "${LIGHTYELLOW}Consider enabling and starting NetworkManager if it's intended to manage network connections.${RESET}"
@@ -497,6 +516,19 @@ checkNetworkManagerStatus() {
     else
         echo -e "${RED}Could not determine status of NetworkManager (status: '$nmServiceStatus').${RESET}"
     fi
+}
+
+stopUnnecessaryServices() {
+    checkNetworkManagerStatus
+    echo -e "${COLOR}Stopping unnecessary services...${RESET}"
+    local services_to_manage=(
+        "cups.service"          # CUPS (Common UNIX Printing System)
+        "nmbd.service"          # NetBIOS Name Service
+        "xrdp-sesman.service"   # Remote Desktop Protocol
+    )
+    for service in "${services_to_manage[@]}"; do
+        stopAndDisableDaemonService "$service"
+    done
 }
 
 installTmuxPluginsManager() {
@@ -835,10 +867,11 @@ createExtraSymlinks() {
     relinkCommand "/bin/fdfind" "fd"
     relinkCommand "/bin/bash" "sh" "/bin/"
 
+    # Link Node.js from VSCode Server
     linkNodeJsFromCodeServer
 }
 
-setupMainDirectories() {
+setupCoreDirectories() {
     local dirsToCheck=(
         "$fBackupDir"
         "$HOME/Downloads"
@@ -1508,68 +1541,255 @@ addUserIntoLibvirtGrp() {
     return 0
 }
 
+installSambaServer() {
+    echo -e "${COLOR}Starting Samba Server Installation/Configuration${RESET}"
+    # Step 1: Check if Samba is already installed
+    if command -v smbd &> /dev/null; then
+        echo -e "${GREEN}✔${GREY} Samba (smbd) is already installed.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Samba (smbd) not found. Attempting installation...${RESET}"
+        if ! sudo apt update; then
+            echo -e "${RED}Error: Failed to update apt package list. Aborting Samba installation.${RESET}"
+            return 1
+        fi
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y samba smbclient; then
+            echo -e "${RED}Error: Failed to install Samba packages. Aborting.${RESET}"
+            return 1
+        fi
+        echo -e "${GREEN}Samba installed successfully.${RESET}"
+    fi
+
+    # Step 2: Configure Samba
+    local sambaSysConfFile="/etc/samba/smb.conf"
+    local mySambaConfSource="$fMainDir/assets/samba/ubuntu.smb.conf"
+    if [ ! -f "$mySambaConfSource" ]; then
+        echo -e "${RED}Error: Source Samba configuration file ('smb.conf') not found at ${BLUE}$mySambaConfSource${RESET}"
+        echo -e "${LIGHTYELLOW}This script expects a custom 'smb.conf' to be present in the assets.${RESET}"
+        exit 1
+    fi
+    linkFile "$mySambaConfSource" /etc/samba smb.conf
+    echo -e "${LIGHTYELLOW}Validating Samba configuration with 'testparm'...${RESET}"
+    if sudo testparm -s; then
+        echo -e "${GREEN}✔${GREY} Samba configuration appears valid.${RESET}"
+    else
+        echo -e "${RED}Error: Samba configuration validation failed (testparm reported errors).${RESET}"
+        echo -e "${LIGHTYELLOW}Please review '${BLUE}$sambaSysConfFile${LIGHTYELLOW}' and the output above.${RESET}"
+        exit 1
+    fi
+
+    # Step 3: Create a dedicated Samba group and user
+    local sambaShareGroup="sambashare"
+    local sambaSysUser="smbowner" # A system user for file ownership
+    if getent group "$sambaShareGroup" &>/dev/null; then
+        echo -e "${GREEN}✔${GREY} Samba group '${sambaShareGroup}' already exists.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Samba group '${sambaShareGroup}' does not exist. Creating it...${RESET}"
+        if sudo groupadd "$sambaShareGroup"; then
+            echo -e "${GREEN}✔${GREY} Group '${sambaShareGroup}' created successfully.${RESET}"
+        else
+            echo -e "${RED}Error: Failed to create group '${sambaShareGroup}'. Aborting.${RESET}"
+            return 1
+        fi
+    fi
+
+    # Create a dedicated system user for file ownership if it doesn't exist
+    if id -u "$sambaSysUser" &>/dev/null; then
+        echo -e "${GREEN}✔${GREY} System user '${sambaSysUser}' for file ownership already exists.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}System user '${sambaSysUser}' does not exist. Creating it...${RESET}"
+        # -r: create a system account
+        # -g: primary group
+        # -M: do not create home directory
+        # -s /usr/sbin/nologin: prevent interactive login
+        if sudo useradd -r -g "$sambaShareGroup" -M -s /usr/sbin/nologin "$sambaSysUser"; then
+            echo -e "${GREEN}✔${GREY} System user '${sambaSysUser}' created successfully.${RESET}"
+        else
+            echo -e "${RED}Error: Failed to create system user '${sambaSysUser}'.${RESET}"
+            return 1
+        fi
+    fi
+
+    # Add the current user to the Samba group
+    if id -nG "$USER" | grep -qw "$sambaShareGroup"; then
+        echo -e "${GREEN}✔${GREY} Current user '$USER' is already a member of the '${sambaShareGroup}' group.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Adding current user '$USER' to the '${sambaShareGroup}' group...${RESET}"
+        if sudo usermod -aG "$sambaShareGroup" "$USER"; then
+            echo -e "${GREEN}Successfully added user '$USER' to the '${sambaShareGroup}' group.${RESET}"
+            echo -e "${BOLD}${MAGENTA}NOTE: A re-login or new shell is required for this group change to take effect for the current session.${RESET}"
+        else
+            echo -e "${RED}Error: Failed to add user '$USER' to group '${sambaShareGroup}'.${RESET}"
+            return 1
+        fi
+    fi
+
+    # Set Samba password for the Samba user, who will be authenticating
+    echo -e "${LIGHTYELLOW}Setting Samba password for user '${BOLD}$sambaSysUser${LIGHTYELLOW}'...${RESET}"
+    local sambaPassword=""
+    local sambaPasswordConfirm=""
+    if [[ "$fSambaServer" != "2" ]]; then # Do not set password again
+        while true; do
+            echo -en "${LIGHTYELLOW}Enter new Samba password for user ${BOLD}$sambaSysUser${LIGHTYELLOW} (must not be empty): ${RESET}"
+            read -r -s sambaPassword
+            echo
+            if [ -z "$sambaPassword" ]; then
+                echo -e "${RED}Password cannot be empty. Please try again.${RESET}"
+                continue
+            fi
+            echo -en "${LIGHTYELLOW}Confirm Samba password: ${RESET}"
+            read -r -s sambaPasswordConfirm
+            echo
+            if [ "$sambaPassword" = "$sambaPasswordConfirm" ]; then
+                break
+            else
+                echo -e "${RED}Passwords do not match. Please try again.${RESET}"
+            fi
+        done
+        # Add/update the Samba user in Samba's database and set the password
+        if (echo "$sambaPassword"; echo "$sambaPassword") | sudo smbpasswd -a "$sambaSysUser" -s; then
+            echo -e "${GREEN}✔${GREY} Samba password for user '$sambaSysUser' set successfully.${RESET}"
+        else
+            echo -e "${RED}Error: Failed to set Samba password for user '$sambaSysUser'.${RESET}"
+            echo -e "${LIGHTYELLOW}Ensure '$sambaSysUser' is a valid system user and you have sudo privileges.${RESET}"
+            return 1
+        fi
+    fi
+
+    # Step 4: Enable and start Samba services
+    # local servicesToManage=("smbd" "nmbd")
+    local servicesToManage=("smbd")
+    local overallSuccess=true
+    for service in "${servicesToManage[@]}"; do
+        echo -e "${LIGHTYELLOW}Managing service: $service...${RESET}"
+        if sudo systemctl restart "$service"; then
+            echo -e "  ${GREEN}✔${GREY} $service restarted successfully.${RESET}"
+        else
+            echo -e "  ${RED}Error: Failed to restart $service.${RESET}"
+            echo -e "  ${LIGHTYELLOW}Check with: sudo systemctl status $service && journalctl -xeu $service${RESET}"
+            if [ "$service" == "smbd" ]; then
+                overallSuccess=false;
+            fi # Critical
+        fi
+        if sudo systemctl is-enabled "$service" | grep -q "enabled"; then
+            echo -e "  ${GREEN}✔${GREY} $service is already enabled to start on boot.${RESET}"
+        else
+            if sudo systemctl enable "$service"; then
+                echo -e "  ${GREEN}✔${GREY} $service enabled successfully for boot start.${RESET}"
+            else
+                echo -e "  ${RED}Error: Failed to enable $service for boot start.${RESET}"
+                if [ "$service" == "smbd" ]; then
+                    overallSuccess=false;
+                fi # Critical
+            fi
+        fi
+    done
+    if [ "$overallSuccess" = false ]; then
+        echo -e "${RED}Critical error managing Samba services. Aborting further Samba setup.${RESET}"
+        exit 1
+    fi
+
+    # Step 5: Configuring Firewall (UFW)
+    if command -v ufw &> /dev/null; then
+        if sudo ufw status | grep -qw "Status: active"; then
+            echo -e "${LIGHTYELLOW}UFW firewall is active. Checking/Adding rules for Samba...${RESET}"
+            if sudo ufw status | grep -Ewq "Samba|ALLOW IN.*137,138/(udp|UDP)|ALLOW IN.*139,445/(tcp|TCP)"; then
+                 echo -e "${GREEN}✔${GREY} UFW rule for 'Samba' or its specific ports already seems to exist or is allowed.${RESET}"
+            else
+                echo -e "${LIGHTYELLOW}Attempting to allow Samba through UFW (using 'samba' application profile)...${RESET}"
+                if sudo ufw allow 445/tcp; then
+                    echo -e "${GREEN}✔${GREY} UFW rule for Samba added successfully.${RESET}"
+                    echo -e "${GREY}Current UFW status: ${RESET}"
+                    sudo ufw status
+                else
+                    echo -e "${RED}Warning: Failed to add UFW rule for Samba using 'ufw allow samba'.${RESET}"
+                    echo -e "${LIGHTYELLOW}You may need to manually allow TCP ports 445: sudo ufw allow 445/tcp${RESET}"
+                fi
+            fi
+        else
+            echo -e "${GREY}UFW firewall is installed but not active. Skipping UFW rule configuration.${RESET}"
+        fi
+    else
+        echo -e "${GREY}UFW firewall manager not found. Skipping UFW configuration.${RESET}"
+    fi
+
+    # 6. Final message
+    echo -e "\n${GREEN}--- Samba Server Installation/Configuration Process Completed ---${RESET}"
+    echo -e "${LIGHTYELLOW}Summary:${RESET}"
+    echo -e "  - Samba packages checked/installed."
+    echo -e "  - Configuration '${BLUE}$sambaSysConfFile${LIGHTYELLOW}' applied/validated."
+    echo -e "  - Samba password set for user '${BOLD}$sambaSysUser${LIGHTYELLOW}'."
+    echo -e "  - Services ${servicesToManage[*]} restarted and enabled."
+    echo -e "  - Firewall rules for Samba (if UFW active) checked/added."
+    echo -e "\n${BOLD}${LIGHTYELLOW}Next Steps & Testing:${RESET}"
+    echo -e "  1. Ensure your share definitions in '${BLUE}$sambaSysConfFile${LIGHTYELLOW}' are correct for your needs."
+    echo -e "  2. Test connection from this machine: ${BLUE}smbclient -L localhost -U $sambaSysUser${RESET}"
+    echo -e "     (You will be prompted for the Samba password you just set)."
+    echo -e "  3. Test from another client machine on the network using this server's IP address."
+    echo -e "     - ${BOLD}On Linux/macOS:${RESET}"
+    echo -e "       - Example (list shares): ${BLUE}smbclient -L //SERVER_IP_ADDRESS -U $sambaSysUser${RESET}"
+    echo -e "       - Example (connect to a share): ${BLUE}smbclient //SERVER_IP_ADDRESS/sharename -U $sambaSysUser${RESET}"
+    echo -e "     - ${BOLD}On Windows:${RESET}"
+    echo -e "       - In File Explorer, type ${BLUE}\\\\\\SERVER_IP_ADDRESS${RESET} in the address bar."
+    echo -e "       - When prompted, use username '${BOLD}$sambaSysUser${RESET}' and the password you set."
+    echo -e "     Or map a network drive via your client OS's file explorer."
+    echo -e "  4. Remember to change the group ownership of the share directory to '${BOLD}$sambaSysUser${RESET}'."
+    echo -e "     You can do this using the '${BLUE}chgrp -R $sambaSysUser /path/to/share/directory${RESET}' command."
+    echo -e "${GREY}If issues arise, check Samba logs (e.g., 'journalctl -u smbd -u nmbd', '/var/log/samba/log.<client_hostname_or_ip>') and 'sudo smbstatus'.${RESET}"
+
+    return 0
+}
+
 doCoreJobs() {
+    updatePrerequisitesForDebian
     createTKSymlinks
     updateVimPlugins
-    addUserIntoLibvirtGrp
     installTmuxPluginsManager
-    installDocker
-    [ -n "$fInstallDebFirefox" ] && installDebFirefox
-    [ -n "$fUpdateClangd" ] && installUpdateClangd
-    [ -n "$fRimePinyinInputMethod" ] && installRimePinyinInputMethod
     createExtraSymlinks
+    addUserIntoLibvirtGrp
+    installDocker
+    stopUnnecessaryServices
 }
 
 doEarlyExitJobs() {
-    if [ -n "$fLinkClangFormatPath" ]; then
-        linkClangFormat "$1"
-        exit 0
+    [ -n "$fLinkClangFormatPath" ]   && { linkClangFormat "$1"; exit 0; }
+    [ -n "$fInstallDebFirefox" ]     && { installDebFirefox; exit 0; }
+    [ -n "$fUpdateClangd" ]          && { installUpdateClangd; exit 0; }
+    [ -n "$fRimePinyinInputMethod" ] && { installRimePinyinInputMethod; exit 0; }
+    [ -n "$fSambaServer" ]           && { installSambaServer; exit 0; }
+    case "$fVncServer" in
+        1) startVncServer;       exit 0 ;;
+        2) stopVncServer;        exit 0 ;;
+        3) restartVncServer;     exit 0 ;;
+    esac
+    case "$fOpenGrokContainer" in
+        1) startOpenGrokContainer;   exit 0 ;;
+        2) stopOpenGrokContainer;    exit 0 ;;
+        3) restartOpenGrokContainer; exit 0 ;;
+        4) startOpenGrokIndexer;     exit 0 ;;
+    esac
+}
+
+showUfwStatus() {
+    if ! command -v ufw &> /dev/null || sudo ufw status | grep -qw "Status: inactive"; then
+        return
     fi
-    if [ -n "$fVncServer" ]; then
-        case "$fVncServer" in
-            "1")
-            startVncServer
-            exit 0
-                ;;
-            "2")
-            stopVncServer
-            exit 0
-                ;;
-            "3")
-            restartVncServer
-            exit 0
-                ;;
-        esac
-    fi
-    if [ -n "$fOpenGrokContainer" ]; then
-        case "$fOpenGrokContainer" in
-            "1")
-            startOpenGrokContainer
-            exit 0
-                ;;
-            "2")
-            stopOpenGrokContainer
-            exit 0
-                ;;
-            "3")
-            restartOpenGrokContainer
-            exit 0
-                ;;
-            "4")
-            startOpenGrokIndexer
-            exit 0
-                ;;
-        esac
-    fi
+    echo -e "${COLOR}Checking UFW Firewall Status...${RESET}"
+    # echo -e "${BOLD}${LIGHTYELLOW}UFW Firewall Status:${RESET}"
+    sudo ufw status verbose
+    echo -e "${LIGHTYELLOW}Tip: Common UFW commands:${RESET}"
+    echo -e "  ${GREY}- sudo ufw status        : Check if the firewall is active.${RESET}"
+    echo -e "  ${GREY}- sudo ufw enable        : Enable the firewall.${RESET}"
+    echo -e "  ${GREY}- sudo ufw disable       : Disable the firewall.${RESET}"
+    echo -e "  ${GREY}- sudo ufw allow <port>  : Allow traffic on a specific port (e.g., sudo ufw allow 445/tcp).${RESET}"
+    echo -e "  ${GREY}- sudo ufw deny <port>   : Deny traffic on a specific port.${RESET}"
+    echo -e "  ${GREY}- sudo ufw delete allow <port>: Delete an allow rule (e.g., sudo ufw delete allow 445/tcp).\n${RESET}"
 }
 
 main() {
     doEarlyExitJobs "$1"
     checkOSCategory
-    checkNetworkManagerStatus
-    setupMainDirectories
+    setupCoreDirectories
     if [ "$fOSCategory" == "debian" ]; then
-        updatePrerequisitesForDebian
         doCoreJobs
         buildBatTheme
         buildExtraFonts
@@ -1585,6 +1805,7 @@ main() {
         buildBatTheme
         buildExtraFonts
     fi
+    showUfwStatus
 }
 
 main "$@"
