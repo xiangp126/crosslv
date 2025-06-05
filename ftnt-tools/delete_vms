@@ -16,6 +16,7 @@ fAllVms=
 MAGENTA='\033[35m'
 LIGHTYELLOW='\033[1;33m'
 RESET='\033[0m'
+CYAN='\033[36m'
 BOLD='\033[1m'
 BLUE='\033[34m'
 NORMAL='\033[0m'
@@ -212,6 +213,8 @@ restoreVms() {
         exit 1
     fi
 
+    [ ! -d "/usr/local/vms" ] && sudo mkdir -p "/usr/local/vms"
+
     # Loop through the VMs and restore them
     for vm in "${fRestoreCandidates[@]}"; do
         [ -z "$vm" ] && continue
@@ -244,8 +247,8 @@ restoreVms() {
             continue
         fi
 
-        echo -e "${GREEN}Disk Image: ${RESET}$bkVmDiskImagePath => $vmDiskImagePath"
-        echo -e "${GREEN}XML Config: ${RESET}$bkQemuXmlPath => /etc/libvirt/qemu/$vm.xml"
+        echo -e "${GREEN}Disk Image${RESET}: ${CYAN}$bkVmDiskImagePath${RESET} => ${CYAN}$vmDiskImagePath${RESET}"
+        echo -e "${GREEN}XML Config${RESET}: ${CYAN}$bkQemuXmlPath${RESET} => ${CYAN}/etc/libvirt/qemu/$vm.xml${RESET}"
 
         echo -e "${BOLD}Restoring disk image...${RESET}"
         sudo rsync -av "$bkVmDiskImagePath" "$vmDiskImagePath"

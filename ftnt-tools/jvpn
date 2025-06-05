@@ -27,7 +27,7 @@ reInstallForticlient() {
     echo -e "${COLOR}Reinstalling forticlient${RESET}"
     echo -e "${COLOR}Removing forticlient${RESET}"
 
-    sudo apt-get remove forticlient
+    sudo apt-get -y remove forticlient
 
     echo -e "${COLOR}Installing forticlient${RESET}"
     cd "$fForticlientDir" || exit 1
@@ -36,7 +36,7 @@ reInstallForticlient() {
         exit 1
     fi
 
-    sudo apt install ./"$fForticlientPkg"
+    sudo apt install -y ./"$fForticlientPkg"
 
     if [ $? -ne 0 ]; then
         echo -e "${COLOR}Failed to reinstall forticlient${RESET}"

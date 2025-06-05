@@ -346,6 +346,9 @@ updatePrerequisitesForDebian() {
         libpcap-dev
         libvirt-daemon-system # libvirt
         libvirt-clients
+        virt-manager
+        qemu-kvm
+        qemu-utils
         texinfo
         libisl-dev
         libgmp-dev
