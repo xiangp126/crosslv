@@ -71,21 +71,21 @@ Usage: $SCRIPT_NAME [OPTIONS]
 This script is used to set up the coding environment in my predefined way.
 
 Options:
-    -h, --help               Print this help message
-    -n, --no-tools           Don't install tools
-    -d, --debug              Enable debug mode
-    --insecure               Allow insecure TLS
-    --docker                 Update Docker
-    --clangd                 Update clangd to the latest released version
-    --firefox-deb            Install deb version of Firefox
-    --link-clang-format      Link clang-format to current path
-    --link-nodejs            Link nodejs from VsCode Server to current path
-    --vnc-start              Start VNC server
-    --vnc-stop               Stop VNC server
-    --vnc,--vnc-restart      Restart VNC server
-    --unlock-vnc             Unlock VNC
-    --lock-vnc               Lock VNC
-    --chinese-pinyin         Install Rime Pinyin
+    -h, --help                      Print this help message
+    -n, --no-tools                  Don't install tools
+    -d, --debug                     Enable debug mode
+    --insecure                      Allow insecure TLS
+    --docker                        Update Docker
+    --clangd                        Update clangd to the latest released version
+    --firefox-deb                   Install deb version of Firefox
+    --link-clang-format             Link clang-format to current path
+    --link-nodejs                   Link nodejs from VsCode Server to current path
+    --vnc-start                     Start VNC server
+    --vnc-stop                      Stop VNC server
+    --vnc,--vnc-restart             Restart VNC server
+    --unlock-vnc                    Unlock VNC
+    --lock-vnc                      Lock VNC
+    --chinese-pinyin                Install Rime Pinyin
     --opengrok-start                Start OpenGrok Docker container
     --opengrok-stop                 Stop OpenGrok Docker container
     --opengrok,--opengrok-restart   Restart OpenGrok Docker container
@@ -416,6 +416,86 @@ setTimeZone() {
     else
         echo -e "${RED}Failed!${RESET}"
         exit 1
+    fi
+}
+
+# There are two primary services associated with networking in Debian/Ubuntu-based systems:
+# 1. networking.service:
+#    - This is the traditional System V init-style networking service.
+#    - It primarily manages network interfaces configured in `/etc/network/interfaces`.
+#    - It's often used for statically configured interfaces or simpler network setups.
+#    - On modern systems, especially desktops and laptops, NetworkManager often takes precedence.
+#
+# 2. NetworkManager.service:
+#    - This is a more dynamic and feature-rich network management daemon.
+#    - It's the default on most modern desktop Linux distributions, including Ubuntu Desktop.
+#    - It provides automatic detection and configuration for various network types (Ethernet, Wi-Fi, VPNs, etc.).
+#    - It manages connections through profiles and can handle roaming, multiple connections, and user-specific settings.
+#    - It usually takes control of interfaces *not* explicitly managed by `/etc/network/interfaces` (unless configured otherwise).
+#
+# Coexistence and Conflicts:
+# - Generally, it's recommended to use *either* `networking.service` (via `/etc/network/interfaces`) *or* `NetworkManager.service` to manage a particular network interface, but not both.
+# - Having both active and attempting to manage the same interfaces can lead to conflicts, unpredictable behavior, or connection issues.
+# - For desktop environments, NetworkManager is usually preferred for its ease of use and dynamic capabilities.
+# - For servers, especially with static IPs, `networking.service` with `/etc/network/interfaces` is often sufficient and more straightforward.
+# - The script below checks if NetworkManager is active. If it is, and `networking.service` is also active,
+#   it attempts to stop and disable `networking.service` to prevent potential conflicts, assuming NetworkManager
+#   is the intended primary network manager.
+checkNetworkManagerStatus() {
+    echo -e "${COLOR}Checking NetworkManager.service status...${RESET}"
+    stopNetworkingService() {
+        local networkingServiceStatus=$(systemctl is-active networking.service 2>&1)
+        if [ "$networkingServiceStatus" == "active" ]; then
+            echo -e "${LIGHTYELLOW}networking.service is also active. Stopping and disabling networking.service...${RESET}"
+            if sudo systemctl stop networking.service; then
+                echo -e "${GREEN}✔${GREY} Successfully stopped networking.service.${RESET}"
+            else
+                echo -e "${RED}Failed to stop networking.service.${RESET}"
+            fi
+        elif [ "$networkingServiceStatus" == "inactive" ] || [ "$networkingServiceStatus" == "failed" ]; then
+            echo -e "${GREEN}✔${GREY} networking.service is inactive (status: $networkingServiceStatus).${RESET}"
+        else
+            echo -e "${RED}Failed to check networking.service status.${RESET}"
+        fi
+    }
+    disableNetworkingService() {
+        local currentIsEnabledStatus=$(systemctl is-enabled networking.service 2>&1)
+        case "$currentIsEnabledStatus" in
+            "disabled")
+                echo -e "${GREEN}✔${GREY} networking.service is already disabled.${RESET}"
+                return 0
+                ;;
+            "static")
+                echo -e "${GREEN}✔${GREY} networking.service is static (cannot be disabled/enabled conventionally). No action needed.${RESET}"
+                return 0
+                ;;
+            "masked")
+                echo -e "${GREEN}✔${GREY} networking.service is masked. No disable action needed.${RESET}"
+                return 0
+                ;;
+            *)
+                echo -e "${LIGHTYELLOW}Attempting to disable networking.service (current status: '$currentIsEnabledStatus')...${RESET}"
+                if sudo systemctl disable networking.service; then
+                    echo -e "${GREEN}✔${GREY} Successfully disabled networking.service.${RESET}"
+                else
+                    echo -e "${RED}Failed to disable networking.service. It might be already disabled or an error occurred.${RESET}"
+                fi
+                ;;
+        esac
+    }
+    local nmServiceStatus=$(systemctl is-active NetworkManager.service 2>&1)
+    if [ "$nmServiceStatus" == "active" ]; then
+        echo -e "${GREEN}✔${GREY} NetworkManager is active.${RESET}"
+        stopNetworkingService
+        disableNetworkingService
+    elif [ "$nmServiceStatus" == "inactive" ] || [ "$nmServiceStatus" == "failed" ]; then
+        echo -e "${LIGHTYELLOW}NetworkManager is not active (status: ${nmServiceStatus}).${RESET}"
+        echo -e "${LIGHTYELLOW}Consider enabling and starting NetworkManager if it's intended to manage network connections.${RESET}"
+        if [ "$(systemctl is-active networking.service 2>/dev/null)" == "active" ]; then
+            echo -e "${GREY}networking.service is active. This might be intentional if NetworkManager is not used.${RESET}"
+        fi
+    else
+        echo -e "${RED}Could not determine status of NetworkManager (status: '$nmServiceStatus').${RESET}"
     fi
 }
 
@@ -758,7 +838,7 @@ createExtraSymlinks() {
     linkNodeJsFromCodeServer
 }
 
-performSanityCheck() {
+setupMainDirectories() {
     local dirsToCheck=(
         "$fBackupDir"
         "$HOME/Downloads"
@@ -1486,7 +1566,8 @@ doEarlyExitJobs() {
 main() {
     doEarlyExitJobs "$1"
     checkOSCategory
-    performSanityCheck
+    checkNetworkManagerStatus
+    setupMainDirectories
     if [ "$fOSCategory" == "debian" ]; then
         updatePrerequisitesForDebian
         doCoreJobs
