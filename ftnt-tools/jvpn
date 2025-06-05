@@ -4,8 +4,8 @@
 # Set the header for the Expect script
 SCRIPT_NAME=$(basename $0)
 fForticlientDir="$HOME/Downloads/"
-fForticlientPkg="forticlient_7.2.0.0644_amd64.deb"
-# fForticlientPkg="forticlient_7.2.6.0872_amd64.deb"
+# fForticlientPkg="forticlient_7.2.0.0644_amd64.deb"
+fForticlientPkg="forticlient_7.2.6.0872_amd64.deb"
 fVpnCmdPath="/opt/forticlient/vpn"
 # Colors
 MAGENTA='\033[0;35m'
@@ -105,6 +105,7 @@ ftnt_password=${credentials[1]}
 
 echo -e "${COLOR}Starting the VPN connection${RESET}"
 spawnCmd="sudo $fVpnCmdPath -s scm.van.corp.fortinet.com:443 -u $ftnt_username -p"
+# spawnCmd="sudo $fVpnCmdPath -s us-vpn3.myfortinet.com:10443 -u $ftnt_username -p"
 echo -e "Spawned command: ${COLOR}$spawnCmd${RESET}"
 
 expect -c "

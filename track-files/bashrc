@@ -165,7 +165,7 @@ export PATH
 export PKG_CONFIG_PATH
 export LD_LIBRARY_PATH
 unset TMOUT
-export FORTIPKG="$HOME/fortipkg" # FOS variables.
+# export FORTIPKG="$HOME/fortipkg"
 
 # Enable programmable completion features (you don't need to enable
 # this, if it's already enabled in /etc/bash.bashrc and /etc/profile

@@ -91,7 +91,7 @@ parseOptions() {
                 shift
                 ;;
             --install-extension)
-                fArgs=("--install-extension" "--force" "$2")
+                fArgs=("--install-extension" "$2")
                 shift 2
                 ;;
             -r|--remove)

@@ -458,6 +458,10 @@ runConfigure() {
                 # send \"exit\r\"
                 send \"\x04\r\"
             }
+            {yes/no} {
+                send \"yes\r\"
+                exp_continue
+            }
             timeout {
                 puts stderr \"$USER_NOTATION Timeout. Action aborted.\n\"
                 exit 1
