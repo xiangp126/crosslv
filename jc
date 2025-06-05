@@ -367,8 +367,10 @@ updatePrerequisitesForDebian() {
         gdm3 # gnome display manager
         ubuntu-desktop
         gnome-keyring
-        xfce4
+        network-manager-gnome
+        xfce4 # xfce
         xfce4-goodies
+        xfce4-screensaver
         tigervnc-standalone-server # TigerVNC
         tigervnc-xorg-extension
         tigervnc-viewer
