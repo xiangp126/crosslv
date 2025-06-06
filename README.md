@@ -6,14 +6,23 @@
 
 | Tool | Description |
 |:------|-------------|
-| [jc/jcross](#jc) | Setting up working environment |
-| [jmake](#jmake) | Building tool for large C projects |
-| [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or Telnet |
-| [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
-| [jroute](#jroute) | Simple script to switch the default route between available gateways |
+| [jc](#jc) | Setting up working environment |
+| [jr](#jr) | Powerful search tool for searching code in large projects |
+| [jt](#jt) | Log file viewer with syntax highlighting |
+
+| Tool | Description |
+|:------|-------------|
+| [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up live packet capture |
 | [jrun](#jrun) | Command Runner by sending commands to a tmux pane running an SSH session |
-| [jr/jregex](#jr) | Powerful search tool for searching code in large projects |
-| [jt/jtail](#jt) | Log file viewer with syntax highlighting |
+
+| Tool | Description |
+|:------|-------------|
+| [jmake](#jmake) | Building tool for large C projects |
+| [jroute](#jroute) | Simple script to switch the default route between available gateways |
+
+| Tool | Description |
+|:------|-------------|
+| [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
 
 ### Other Tools
 
@@ -38,16 +47,34 @@ Usage: jc [OPTIONS]
 This script is used to set up the coding environment in my predefined way.
 
 Options:
-    -h, --help              Print this help message
-    -n, --no-tools          Don't install tools
-    -d, --debug             Enable debug mode
-    -f, --force             Force an update of prerequisites
-    --docker                Update Docker
-    --clangd                Update clangd to the latest released version
-    --link-clang-format     Link clang-format to current path
-    --link-nodejs           Link nodejs from VsCode Server to current path
-    --auto-remove           Remove unused packages
-    --upgrade               Upgrade all packages
+    -h, --help                      Print this help message
+    -n, --no-tools                  Don't install tools
+    -d, --debug                     Enable debug mode
+    --insecure                      Allow insecure TLS
+    --docker                        Update Docker
+    --clangd                        Update clangd to the latest released version
+    --firefox-deb                   Install deb version of Firefox
+    --link-clang-format             Link clang-format to current path
+    --link-nodejs                   Link nodejs from VsCode Server to current path
+    --vnc-start                     Start VNC server
+    --vnc-stop                      Stop VNC server
+    --vnc,--vnc-restart             Restart VNC server
+    --unlock-vnc                    Unlock VNC
+    --lock-vnc                      Lock VNC
+    --chinese-pinyin                Install Rime Pinyin
+    --opengrok-start                Start OpenGrok Docker container
+    --opengrok-stop                 Stop OpenGrok Docker container
+    --opengrok,--opengrok-restart   Restart OpenGrok Docker container
+    --opengrok-indexer              Start OpenGrok indexer
+    --samba                         Install and configure Samba Server
+    --samba-bypass-password         Don't set password for Samba Server again
+    --auto-remove                   Remove unused packages
+    --update                        Update all packages
+    --upgrade                       Upgrade all packages
+
+Force options:
+    --prerequisite                  Force install prerequisites
+    --chinese-pinyin-force          Force install Rime Pinyin
 
 Examples:
     jc -h
@@ -59,12 +86,8 @@ Examples:
 #### [jmake](./ftnt-tools/jmake)
 `jmake` is a tool to build large C projects with many additional features.
 ```bash
-$ jmake
-Usage: jmake [-m|--model model] [-w|--working-dir working_dir] [-j|--jobs num_of_jobs]
-             [--bear-remove] [--max-build-attempt max_attempt] [-t|--target sync_target]
-             [-s|--sync-file sync_file] [-P|--sync-port sync_port] [-l/-u|--username username]
-             [-p|--password password] [-B|--build-target build_target]
-             [-bcCohkO|--bear --clean --configure --build --help --kernel --disable-optimization]
+$ jmake -h
+Usage: jmake [OPTIONS]
 
 Build Flags:
     -c, --clean                 Clean the repo (default: false)
@@ -72,12 +95,12 @@ Build Flags:
     -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
     -b, --bear                  Use Bear to generate compile_commands.json (default: false)
     --bear-remove               Remove compile_commands.json (default: false)
-    -O, --disable-optimization  Disable optimization (default: false)
+    -O, --optimization          Enable optimization (default: false)
 
 Build Options:
     -m, --model                 Set the build model  (default: KVM)
     -j, --jobs                  Set the number of jobs (default: 20)
-    -w, --working-dir           Set working directory  (default: /data/fpx)
+    -w, --working-dir           Set working directory  (default: /home/xiangp/myGit/crosslv)
     -k, --kernel                Rebuild the kernel (default: false)
     --max-build-attempt         Set the maximum number of build attempts (default: 1)
     -B, --build-target          Set the build target (default: image.out)
@@ -97,6 +120,7 @@ Example:
     jmake -m VMWARE
     jmake -t fgt1 -s FGT_VM64_KVM-v7-build1662.out -l "admin" -p "password" -P 22
     jmake -h
+
 ```
 
 <a id="jssh"></a>

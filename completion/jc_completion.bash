@@ -24,7 +24,9 @@ _jc_complete() {
         return 0
     fi
 
-    # Add more completion logic here if necessary
+    COMPREPLY=( $(compgen -f -- "${cur}") )
+
+    return 0
 }
 
 # Register the completion function

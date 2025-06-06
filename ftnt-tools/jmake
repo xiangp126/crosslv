@@ -61,11 +61,7 @@ _EOF
 
 usage() {
     cat << _EOF
-Usage: $SCRIPT_NAME [-m|--model model] [-w|--working-dir working_dir] [-j|--jobs num_of_jobs]
-             [--bear-remove] [--max-build-attempt max_attempt] [-t|--target sync_target]
-             [-s|--sync-file sync_file] [-P|--sync-port sync_port] [-l/-u|--username username]
-             [-p|--password password] [-B|--build-target build_target]
-             [-bcCohkO|--bear --clean --configure --build --help --kernel --optimization]
+Usage: $SCRIPT_NAME [OPTIONS]
 
 Build Flags:
     -c, --clean                 Clean the repo (default: ${fGitClean:-false})

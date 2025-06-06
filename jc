@@ -99,8 +99,8 @@ Options:
     --upgrade                       Upgrade all packages
 
 Force options:
-    --prerequisite           Force install prerequisites
-    --chinese-pinyin-force   Force install Rime Pinyin
+    --prerequisite                  Force install prerequisites
+    --chinese-pinyin-force          Force install Rime Pinyin
 
 Examples:
     $SCRIPT_NAME -h
@@ -433,7 +433,6 @@ stopAndDisableDaemonService() {
     local targetServiceName="${1:-networking.service}"
     # Check if the service exists
     if ! systemctl cat "$targetServiceName" >/dev/null 2>&1; then
-        echo -e "${RED}Error: Service '${targetServiceName}' does not exist.${RESET}"
         return 1
     fi
     # Stop the service
@@ -524,7 +523,7 @@ stopUnnecessaryServices() {
     local services_to_manage=(
         "cups.service"          # CUPS (Common UNIX Printing System)
         "nmbd.service"          # NetBIOS Name Service
-        "xrdp-sesman.service"   # Remote Desktop Protocol
+        "xrdp.service"          # Remote Desktop Protocol
     )
     for service in "${services_to_manage[@]}"; do
         stopAndDisableDaemonService "$service"
@@ -1567,76 +1566,42 @@ installSambaServer() {
         echo -e "${LIGHTYELLOW}This script expects a custom 'smb.conf' to be present in the assets.${RESET}"
         exit 1
     fi
-    linkFile "$mySambaConfSource" /etc/samba smb.conf
     echo -e "${LIGHTYELLOW}Validating Samba configuration with 'testparm'...${RESET}"
-    if sudo testparm -s; then
+    if testparm -s "$mySambaConfSource"; then
         echo -e "${GREEN}✔${GREY} Samba configuration appears valid.${RESET}"
     else
         echo -e "${RED}Error: Samba configuration validation failed (testparm reported errors).${RESET}"
-        echo -e "${LIGHTYELLOW}Please review '${BLUE}$sambaSysConfFile${LIGHTYELLOW}' and the output above.${RESET}"
+        echo -e "${LIGHTYELLOW}Please review '${BLUE}$mySambaConfSource${LIGHTYELLOW}' and the output above.${RESET}"
         exit 1
     fi
+    linkFile "$mySambaConfSource" /etc/samba smb.conf
 
-    # Step 3: Create a dedicated Samba group and user
-    local sambaShareGroup="sambashare"
-    local sambaSysUser="smbowner" # A system user for file ownership
-    if getent group "$sambaShareGroup" &>/dev/null; then
-        echo -e "${GREEN}✔${GREY} Samba group '${sambaShareGroup}' already exists.${RESET}"
-    else
-        echo -e "${LIGHTYELLOW}Samba group '${sambaShareGroup}' does not exist. Creating it...${RESET}"
-        if sudo groupadd "$sambaShareGroup"; then
-            echo -e "${GREEN}✔${GREY} Group '${sambaShareGroup}' created successfully.${RESET}"
-        else
-            echo -e "${RED}Error: Failed to create group '${sambaShareGroup}'. Aborting.${RESET}"
-            return 1
-        fi
+    # Step 3: Configure Samba to use the current user
+    local smbUser="$USER"
+    local smbShareGroup=$(id -gn "$USER")
+
+    if [ -z "$smbUser" ]  || [ -z "$smbShareGroup" ]; then
+        echo -e "${RED}Error: Could not determine current user or their primary group. Aborting Samba setup.${RESET}"
+        return 1
     fi
 
-    # Create a dedicated system user for file ownership if it doesn't exist
-    if id -u "$sambaSysUser" &>/dev/null; then
-        echo -e "${GREEN}✔${GREY} System user '${sambaSysUser}' for file ownership already exists.${RESET}"
-    else
-        echo -e "${LIGHTYELLOW}System user '${sambaSysUser}' does not exist. Creating it...${RESET}"
-        # -r: create a system account
-        # -g: primary group
-        # -M: do not create home directory
-        # -s /usr/sbin/nologin: prevent interactive login
-        if sudo useradd -r -g "$sambaShareGroup" -M -s /usr/sbin/nologin "$sambaSysUser"; then
-            echo -e "${GREEN}✔${GREY} System user '${sambaSysUser}' created successfully.${RESET}"
-        else
-            echo -e "${RED}Error: Failed to create system user '${sambaSysUser}'.${RESET}"
-            return 1
-        fi
-    fi
-
-    # Add the current user to the Samba group
-    if id -nG "$USER" | grep -qw "$sambaShareGroup"; then
-        echo -e "${GREEN}✔${GREY} Current user '$USER' is already a member of the '${sambaShareGroup}' group.${RESET}"
-    else
-        echo -e "${LIGHTYELLOW}Adding current user '$USER' to the '${sambaShareGroup}' group...${RESET}"
-        if sudo usermod -aG "$sambaShareGroup" "$USER"; then
-            echo -e "${GREEN}Successfully added user '$USER' to the '${sambaShareGroup}' group.${RESET}"
-            echo -e "${BOLD}${MAGENTA}NOTE: A re-login or new shell is required for this group change to take effect for the current session.${RESET}"
-        else
-            echo -e "${RED}Error: Failed to add user '$USER' to group '${sambaShareGroup}'.${RESET}"
-            return 1
-        fi
-    fi
+    echo -e "${LIGHTYELLOW}Samba will be configured for the current user: ${BOLD}$smbUser${RESET}"
+    echo -e "${LIGHTYELLOW}The user's primary group will be used for file sharing: ${BOLD}$smbShareGroup${RESET}"
 
     # Set Samba password for the Samba user, who will be authenticating
-    echo -e "${LIGHTYELLOW}Setting Samba password for user '${BOLD}$sambaSysUser${LIGHTYELLOW}'...${RESET}"
+    echo -e "${LIGHTYELLOW}Setting Samba password for user '${BOLD}$smbUser${LIGHTYELLOW}'...${RESET}"
     local sambaPassword=""
     local sambaPasswordConfirm=""
     if [[ "$fSambaServer" != "2" ]]; then # Do not set password again
         while true; do
-            echo -en "${LIGHTYELLOW}Enter new Samba password for user ${BOLD}$sambaSysUser${LIGHTYELLOW} (must not be empty): ${RESET}"
+            echo -en "${GREY}Enter new Samba password for user ${BOLD}$smbUser${LIGHTYELLOW} (must not be empty): ${RESET}"
             read -r -s sambaPassword
             echo
             if [ -z "$sambaPassword" ]; then
                 echo -e "${RED}Password cannot be empty. Please try again.${RESET}"
                 continue
             fi
-            echo -en "${LIGHTYELLOW}Confirm Samba password: ${RESET}"
+            echo -en "${GREY}Confirm Samba password: ${RESET}"
             read -r -s sambaPasswordConfirm
             echo
             if [ "$sambaPassword" = "$sambaPasswordConfirm" ]; then
@@ -1646,11 +1611,11 @@ installSambaServer() {
             fi
         done
         # Add/update the Samba user in Samba's database and set the password
-        if (echo "$sambaPassword"; echo "$sambaPassword") | sudo smbpasswd -a "$sambaSysUser" -s; then
-            echo -e "${GREEN}✔${GREY} Samba password for user '$sambaSysUser' set successfully.${RESET}"
+        if (echo "$sambaPassword"; echo "$sambaPassword") | sudo smbpasswd -a "$smbUser" -s; then
+            echo -e "${GREEN}✔${GREY} Samba password for user '$smbUser' set successfully.${RESET}"
         else
-            echo -e "${RED}Error: Failed to set Samba password for user '$sambaSysUser'.${RESET}"
-            echo -e "${LIGHTYELLOW}Ensure '$sambaSysUser' is a valid system user and you have sudo privileges.${RESET}"
+            echo -e "${RED}Error: Failed to set Samba password for user '$smbUser'.${RESET}"
+            echo -e "${LIGHTYELLOW}Ensure '$smbUser' is a valid system user and you have sudo privileges.${RESET}"
             return 1
         fi
     fi
@@ -1716,24 +1681,24 @@ installSambaServer() {
     echo -e "\n${GREEN}--- Samba Server Installation/Configuration Process Completed ---${RESET}"
     echo -e "${LIGHTYELLOW}Summary:${RESET}"
     echo -e "  - Samba packages checked/installed."
-    echo -e "  - Configuration '${BLUE}$sambaSysConfFile${LIGHTYELLOW}' applied/validated."
-    echo -e "  - Samba password set for user '${BOLD}$sambaSysUser${LIGHTYELLOW}'."
+    echo -e "  - Configuration '${BLUE}$sambaSysConfFile${RESET}' applied/validated."
+    echo -e "  - Samba password set for user '${BOLD}$smbUser${RESET}'."
     echo -e "  - Services ${servicesToManage[*]} restarted and enabled."
     echo -e "  - Firewall rules for Samba (if UFW active) checked/added."
     echo -e "\n${BOLD}${LIGHTYELLOW}Next Steps & Testing:${RESET}"
-    echo -e "  1. Ensure your share definitions in '${BLUE}$sambaSysConfFile${LIGHTYELLOW}' are correct for your needs."
-    echo -e "  2. Test connection from this machine: ${BLUE}smbclient -L localhost -U $sambaSysUser${RESET}"
+    echo -e "  1. Ensure your share definitions in '$sambaSysConfFile' are correct for your needs."
+    echo -e "  2. ${LIGHTYELLOW}Test connection from this machine: ${BLUE}smbclient -L localhost -U $smbUser${RESET}"
     echo -e "     (You will be prompted for the Samba password you just set)."
     echo -e "  3. Test from another client machine on the network using this server's IP address."
     echo -e "     - ${BOLD}On Linux/macOS:${RESET}"
-    echo -e "       - Example (list shares): ${BLUE}smbclient -L //SERVER_IP_ADDRESS -U $sambaSysUser${RESET}"
-    echo -e "       - Example (connect to a share): ${BLUE}smbclient //SERVER_IP_ADDRESS/sharename -U $sambaSysUser${RESET}"
+    echo -e "       - Example (list shares): ${BLUE}smbclient --list //SERVER_IP_ADDRESS -U $smbUser${RESET}"
+    echo -e "       - Example (connect to a share): ${BLUE}smbclient //SERVER_IP_ADDRESS/sharename -U $smbUser${RESET}"
     echo -e "     - ${BOLD}On Windows:${RESET}"
     echo -e "       - In File Explorer, type ${BLUE}\\\\\\SERVER_IP_ADDRESS${RESET} in the address bar."
-    echo -e "       - When prompted, use username '${BOLD}$sambaSysUser${RESET}' and the password you set."
+    echo -e "       - When prompted, use username '${BOLD}$smbUser${RESET}' and the password you set."
     echo -e "     Or map a network drive via your client OS's file explorer."
-    echo -e "  4. Remember to change the group ownership of the share directory to '${BOLD}$sambaSysUser${RESET}'."
-    echo -e "     You can do this using the '${BLUE}chgrp -R $sambaSysUser /path/to/share/directory${RESET}' command."
+    echo -e "  4. Remember to change the ownership of the share directory to '${BOLD}$smbUser${RESET}'."
+    echo -e "     You can do this using the '${BLUE}chown -R $smbUser:$smbShareGroup /path/to/share/directory${RESET}' command."
     echo -e "${GREY}If issues arise, check Samba logs (e.g., 'journalctl -u smbd -u nmbd', '/var/log/samba/log.<client_hostname_or_ip>') and 'sudo smbstatus'.${RESET}"
 
     return 0

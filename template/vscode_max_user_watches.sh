@@ -9,11 +9,14 @@ fi
 
 echo "Change the max file watchers to $desired_value ..."
 
-sudo sysctl fs.inotify.max_user_watches=524288
+sudo sysctl -w fs.inotify.max_user_watches=524288
 if [ $? -ne 0 ]; then
     echo "Failed to change the max file watchers!"
     exit 1
 fi
 
+echo "Writing to /etc/sysctl.conf..."
+echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
+
 cat /proc/sys/fs/inotify/max_user_watches
-echo "Max file watchers changed successfully!"
+echo "Done!"
