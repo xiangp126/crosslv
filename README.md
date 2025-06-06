@@ -14,6 +14,7 @@
 |:------|-------------|
 | [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up live packet capture |
 | [jrun](#jrun) | Command Runner by sending commands to a tmux pane running an SSH session |
+| [code](#code) | Wrapper for the `code` command provided by VSCode |
 
 | Tool | Description |
 |:------|-------------|
@@ -32,7 +33,7 @@
 | [completion](#completion) | Bash completion scripts for all the above tools |
 
 <a id="jc"></a>
-#### [jc/jcross](./jc)
+#### [jc](./jc)
 - Do not use `sh` to run the script on a freshly installed ubuntu.
 - Use `bash` cos `sh` is not linked to `bash` on a freshly installed ubuntu.
 ```bash
@@ -154,6 +155,50 @@ Advanced Options:
     -m, --mount      Mount a remote directory to a local directory using sshfs. Format: [remote_dir:]mountpoint
     -S, --sftp       Connect to the target device via SFTP
     -T, --telnet     Auth to the target device via Telnet
+```
+
+<a id="code"></a>
+#### [code](./ftnt-tools/code)
+`code` is a wrapper for the `code` command provided by VSCode. It allows you to open files in VSCode with additional features.
+```bash
+$ code -h
+Usage: code [options] <args>
+
+Description:
+    A wrapper script for the VS Code server CLI.
+    It finds the VS Code server CLI binary and set the correct IPC socket.
+    The reason for this script is to avoid the bug which has never been fixed by Microsoft:
+    # Unable to connect to VS Code server: Error in request - ENOENT /run/user/1000/vscode-ipc-*.sock
+    https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
+    https://github.com/microsoft/vscode-remote-release/issues/6362#issuecomment-1046458477
+
+    Sample Error message:
+
+    Unable to connect to VS Code server: Error in request.
+    Error: connect ENOENT /run/user/1677703415/vscode-ipc-df98ad2d-40c7-4415-af75-e304c3269b89.sock
+        at PipeConnectWrap.afterConnect [as oncomplete] (node:net:1611:16) {
+      errno: -2,
+      code: 'ENOENT',
+      syscall: 'connect',
+      address: '/run/user/1677703415/vscode-ipc-df98ad2d-40c7-4415-af75-e304c3269b89.sock'
+    }
+
+Options:
+    -h, --help                       Show this help message and exit
+    -d, --debug                      Enable debug mode (set -x)
+    -f, --force                      Force search for the code binary, ignoring $VSCODE_BIN_PATH,
+    -v, --version                    Show version information
+    -r, --remove                     Remove obsolete IPC sockets
+    -s, --status                     Print process usage and diagnostics information
+    --print                          Print core variables
+    --install-extension              Forcely install the specified extension from a .vsix file
+    --list-extensions                List the installed extensions with versions
+    --locate-shell-integration-path  Print the path to a terminal shell integration script
+
+Example: code --version
+         code -d
+         code --install-extension gitlens-13.0.2.vsix
+
 ```
 
 <a id="jdebug"></a>

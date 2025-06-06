@@ -449,6 +449,10 @@ runConfigure() {
                 send \"$ftntPasswd\r\"
                 exp_continue
             }
+            {Please select a region: van, ott, sjc:} {
+                send \"van\r\"
+                exp_continue
+            }
             \"\$config_bash_prompt\" {
                 # log_user 0
                 # send \"exit\r\"

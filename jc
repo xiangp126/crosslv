@@ -501,7 +501,7 @@ stopAndDisableDaemonService() {
 #   it attempts to stop and disable `networking.service` to prevent potential conflicts, assuming NetworkManager
 #   is the intended primary network manager.
 checkNetworkManagerStatus() {
-    echo -e "${COLOR}Checking NetworkManager.service status...${RESET}"
+    # echo -e "${COLOR}Checking NetworkManager.service status...${RESET}"
     local nmServiceStatus=$(systemctl is-active NetworkManager.service 2>&1)
     if [ "$nmServiceStatus" == "active" ]; then
         echo -e "${GREEN}✔${GREY} NetworkManager is active.${RESET}"
@@ -518,8 +518,8 @@ checkNetworkManagerStatus() {
 }
 
 stopUnnecessaryServices() {
-    checkNetworkManagerStatus
     echo -e "${COLOR}Stopping unnecessary services...${RESET}"
+    checkNetworkManagerStatus
     local services_to_manage=(
         "cups.service"          # CUPS (Common UNIX Printing System)
         "nmbd.service"          # NetBIOS Name Service
@@ -531,10 +531,11 @@ stopUnnecessaryServices() {
 }
 
 installTmuxPluginsManager() {
+    echo -e "${COLOR}Installing Tmux Plugins Manager${RESET}"
     if [ -d ~/.tmux/plugins/tpm ]; then
+        echo -e "${GREEN}✔${GREY} Tmux Plug Manager is already installed${RESET}"
         return
     fi
-    echo -e "${COLOR}Installing TPM${RESET}"
     git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
