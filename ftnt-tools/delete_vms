@@ -174,10 +174,10 @@ deleteVms() {
         fDeletedVms+=("$vm")
 
         read -r _ vmDiskImagePath <<< "$(virsh domblklist "$vm" | awk '/vda|hda/')"
-        sudo virsh snapshot-list "$vm" --name | while read -r snapshot; do
+        virsh snapshot-list "$vm" --name | while read -r snapshot; do
             if [ -n "$snapshot" ]; then
                 echo -e "${COLOR}Deleting snapshot: $snapshot${RESET}"
-                sudo virsh snapshot-delete "$vm" "$snapshot" --metadata
+                virsh snapshot-delete "$vm" "$snapshot" --metadata
             fi
         done
 
@@ -189,7 +189,8 @@ deleteVms() {
 
         if [ -n "$vmDiskImagePath" ] && [ -z "$fVmKeepDisk" ]; then
             echo -e "${COLOR}Deleting disk image: $vmDiskImagePath${RESET}"
-            sudo rm -f "$vmDiskImagePath"
+            echo -e "${COLOR}TODO: delete disk image(not yet implemented): $vmDiskImagePath${RESET}"
+            # sudo rm -f "$vmDiskImagePath"
         fi
     done
     COLOR=$MAGENTA
@@ -251,11 +252,11 @@ restoreVms() {
         echo -e "${GREEN}XML Config${RESET}: ${CYAN}$bkQemuXmlPath${RESET} => ${CYAN}/etc/libvirt/qemu/$vm.xml${RESET}"
 
         echo -e "${BOLD}Restoring disk image...${RESET}"
-        sudo rsync -av "$bkVmDiskImagePath" "$vmDiskImagePath"
+        sudo rsync -aPv "$bkVmDiskImagePath" "$vmDiskImagePath"
 
         # Define the VM
         echo -e "${BOLD}Defining VM from XML...${RESET}"
-        if sudo virsh define "$bkQemuXmlPath"; then
+        if virsh define "$bkQemuXmlPath"; then
             fRestoredVms+=("$vm")
 
             bkVmSnapshotDir="$bkVmDir/snapshots"
@@ -294,7 +295,7 @@ restoreVms() {
                     [ -z "$snapshotXml" ] && continue
                     snapshotName=$(basename "$snapshotXml" .xml)
                     echo -e "${GREEN}Creating snapshot: ${RESET}${BOLD}$snapshotName${RESET} ($(date -d @"${snapshot_times[$snapshotXml]}" "+%Y-%m-%d %H:%M:%S"))"
-                    sudo virsh snapshot-create "$vm" "$snapshotXml" --redefine
+                    virsh snapshot-create "$vm" "$snapshotXml" --redefine
                     ((snapshotCount++))
                 done
 
@@ -302,7 +303,7 @@ restoreVms() {
             fi
 
             echo -e "${BLUE}Starting VM $vm...${RESET}"
-            sudo virsh start "$vm"
+            virsh start "$vm"
 
             echo -e "${LIGHTYELLOW}VM restore completed for: $vm${RESET}"
         else

@@ -2,13 +2,11 @@
 
 # Constants
 SCRIPTNAME=$(basename $0)
-
 # Set the backup destination directory
 MAIN_BACKUP_DIR="/data/Backup/vms"
 fBackupCandidates=()
 fBackedUpVms=()
 fAllVms=
-
 # Color definitions
 MAGENTA='\033[35m'
 LIGHTYELLOW='\033[1;33m'
@@ -124,7 +122,10 @@ parseOptions() {
 backupVms() {
     if [ ! -d "$MAIN_BACKUP_DIR" ]; then
         echo -e "${COLOR}Creating backup directory: $MAIN_BACKUP_DIR${RESET}"
-        mkdir -p "$MAIN_BACKUP_DIR"
+        if ! mkdir -p "$MAIN_BACKUP_DIR"; then
+            echo -e "${LIGHTYELLOW}Error: Failed to create backup directory.\n${RESET}"
+            exit 1
+        fi
     fi
 
     # Loop through the VMs and create backups
@@ -138,7 +139,7 @@ backupVms() {
         fBackedUpVms+=("$vm")
 
         bkVmDir="$MAIN_BACKUP_DIR/$vm"
-        [ ! -d "$bkVmDir" ] && sudo mkdir -p "$bkVmDir"
+        [ ! -d "$bkVmDir" ] && mkdir -p "$bkVmDir"
 
         local vmDiskImagePath bkVmDiskImagePath qemuXmlPath bkQemuXmlPath vmImageName
         read -r _ vmDiskImagePath <<< "$(virsh domblklist "$vm" | awk '/vda|hda/')"
@@ -149,7 +150,7 @@ backupVms() {
             if [ -d "$vmSnapshotDir" ]; then
                 bkVmSnapshotDir="$bkVmDir/snapshots"
                 echo -e "${GREEN}VM snapshots: ${RESET}$vmSnapshotDir => $bkVmSnapshotDir"
-                sudo rsync -azPv "$vmSnapshotDir/" "$bkVmSnapshotDir" --delete
+                sudo rsync -aPv "$vmSnapshotDir/" "$bkVmSnapshotDir" --delete
             fi
 
             vmImageName="$(basename "$vmDiskImagePath")"
@@ -158,17 +159,12 @@ backupVms() {
             echo -e "${GREEN}Disk Image: ${RESET}$vmDiskImagePath => $bkVmDiskImagePath"
             echo -e "${GREEN}XML path:   ${RESET}$qemuXmlPath => $bkQemuXmlPath"
 
-            sudo rsync -azPv "$qemuXmlPath" "$bkQemuXmlPath"
-            sudo rsync -av "$vmDiskImagePath" "$bkVmDiskImagePath" &
-
-            echo -e "${LIGHTYELLOW}Backup jobs started for VM: $vm\n${RESET}"
+            sudo rsync -aPv "$qemuXmlPath" "$bkQemuXmlPath"
+            sudo rsync -aPv "$vmDiskImagePath" "$bkVmDiskImagePath"
         else
             echo -e "${LIGHTYELLOW}Error: Source path is empty for VM $vm\n${RESET}"
         fi
     done
-
-    # Wait for all background processes to finish
-    wait
 }
 
 summary() {
