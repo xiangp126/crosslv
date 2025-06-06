@@ -667,7 +667,7 @@ linkFiles() {
     local linkPath="$2"         # Destination directory
     local linknamePrefix="$3"   # Prefix for destination filename. Exp: . for hidden files
 
-    echo -e "${COLOR}Creating symlinks pointing from ${linkPath}/* to $(basename "$targetDir")/*${RESET}"
+    # echo -e "${COLOR}Creating symlinks pointing from ${linkPath}/* to $(basename "$targetDir")/*${RESET}"
     [ ! -d "$targetDir" ] && echo "Source directory $targetDir does not exist, abort!" && exit 1
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
 
@@ -825,13 +825,6 @@ changeTMOUTToWritable() {
     fi
 }
 
-createTKSymlinks() {
-    # The directories are guaranteed to exist when this function is called.
-    linkFiles "$fTKFilesDir" "$HOME" "."
-    linkFiles "$fTKCompDir" "$HOME/.bash_completion.d"
-    linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
-}
-
 linkNodeJsFromCodeServer() {
     [ -z $fLinkNodeJs ] && return
     local vscodeServerDir="$HOME/.vscode-server"
@@ -848,11 +841,28 @@ linkNodeJsFromCodeServer() {
     linkFile "$latestNodeJsPath" "$HOME/.usr/bin" "node"
 }
 
+createTKSymlinks() {
+    # The directories are guaranteed to exist when this function is called.
+    echo -e "${COLOR}Creating home directory symlinks${RESET}"
+    linkFiles "$fTKFilesDir" "$HOME" "."
+    echo -e "${COLOR}Creating completion symlinks${RESET}"
+    linkFiles "$fTKCompDir" "$HOME/.bash_completion.d"
+    echo -e "${COLOR}Creating Vim colorscheme symlinks${RESET}"
+    linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
+}
+
 createExtraSymlinks() {
     if [ -z "$fNoInstallTools" ]; then
+        echo -e "${COLOR}Creating tool symlinks${RESET}"
         linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
+        echo -e "${COLOR}Creating template symlinks${RESET}"
         linkFiles "$fTKtemplateDir" "$HOME/Templates"
     fi
+
+    echo -e "${COLOR}Relinking system commands${RESET}"
+    relinkCommand "/bin/batcat" "bat"
+    relinkCommand "/bin/fdfind" "fd"
+    relinkCommand "/bin/bash" "sh" "/bin/"
 
     echo -e "${COLOR}Creating extra symlinks${RESET}"
     # The directories are guaranteed to exist when this function is called.
@@ -861,14 +871,7 @@ createExtraSymlinks() {
     linkFile "$fzfBinPath" "$HOME/.usr/bin"
     linkFile "$fJCPath" "$HOME/.usr/bin"
     linkFile "$fMainDir"/assets/vscode/remote.settings.json "$HOME"/.vscode-server/data/Machine "settings.json"
-
-    echo -e "${COLOR}Relinking system commands${RESET}"
-    relinkCommand "/bin/batcat" "bat"
-    relinkCommand "/bin/fdfind" "fd"
-    relinkCommand "/bin/bash" "sh" "/bin/"
-
-    # Link Node.js from VSCode Server
-    linkNodeJsFromCodeServer
+    linkNodeJsFromCodeServer # Link Node.js from VSCode Server
 }
 
 setupCoreDirectories() {
@@ -1514,7 +1517,7 @@ restartOpenGrokContainer() {
 }
 
 addUserIntoLibvirtGrp() {
-    echo -e "${COLOR}Configuring Libvirt group membership for current user ($USER)...${RESET}"
+    echo -e "${COLOR}Configuring Libvirt group membership for current user...${RESET}"
 
     if ! getent group libvirt > /dev/null; then
         echo -e "${RED}Error: The 'libvirt' group does not exist.${RESET}"
