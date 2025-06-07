@@ -524,6 +524,7 @@ stopUnnecessaryServices() {
         "cups.service"          # CUPS (Common UNIX Printing System)
         "nmbd.service"          # NetBIOS Name Service
         "xrdp.service"          # Remote Desktop Protocol
+        "ufw.service"           # Uncomplicated Firewall
     )
     for service in "${services_to_manage[@]}"; do
         stopAndDisableDaemonService "$service"
