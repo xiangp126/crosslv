@@ -90,7 +90,7 @@ UsePAM yes
 #GatewayPorts no
 X11Forwarding yes
 X11DisplayOffset 10
-X11UseLocalhost no # Turning this off may solve some tough X11 issues
+X11UseLocalhost no # Though insecure, setting it to no may solve some tough X11 issues
 #PermitTTY yes
 PrintMotd no
 #PrintLastLog yes
@@ -117,10 +117,9 @@ Subsystem       sftp    /usr/lib/openssh/sftp-server
 
 # Example of overriding settings on a per-user basis
 #Match User anoncvs
-#       X11Forwarding no
-#       AllowTcpForwarding no
-#       PermitTTY no
-#       ForceCommand cvs server
+#    X11Forwarding yes
+#    X11DisplayOffset 10
+#    X11UseLocalhost yes # Setting it to no may solve some tough X11 issues
 # BEGIN ANSIBLE MANAGED BLOCK
 MaxAuthTries 4
 PermitRootLogin no
