@@ -52,9 +52,6 @@ Options:
     -n, --no-tools                  Don't install tools
     -d, --debug                     Enable debug mode
     --insecure                      Allow insecure TLS
-    --docker                        Update Docker
-    --clangd                        Update clangd to the latest released version
-    --firefox-deb                   Install deb version of Firefox
     --link-clang-format             Link clang-format to current path
     --link-nodejs                   Link nodejs from VsCode Server to current path
     --vnc-start                     Start VNC server
@@ -62,7 +59,6 @@ Options:
     --vnc,--vnc-restart             Restart VNC server
     --unlock-vnc                    Unlock VNC
     --lock-vnc                      Lock VNC
-    --chinese-pinyin                Install Rime Pinyin
     --opengrok-start                Start OpenGrok Docker container
     --opengrok-stop                 Stop OpenGrok Docker container
     --opengrok,--opengrok-restart   Restart OpenGrok Docker container
@@ -73,9 +69,13 @@ Options:
     --update                        Update all packages
     --upgrade                       Upgrade all packages
 
-Force options:
+The following options force updates or re-installation (installed by default):
     --prerequisite                  Force install prerequisites
-    --chinese-pinyin-force          Force install Rime Pinyin
+    --chinese-pinyin                Force Update Rime Pinyin
+    --docker                        Force update Docker from Docker PPA
+    --wireshark                     Force update wireshark from Wireshark PPA
+    --firefox                       Force install firefox from Mozilla PPA
+    --clangd                        Force update clangd from Github
 
 Examples:
     jc -h

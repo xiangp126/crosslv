@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2155 disable=SC2120
+# shellcheck disable=SC2155 disable=SC2120 disable=SC2024
 # set -x
 
 # Tracking directories
@@ -16,12 +16,6 @@ fTKToolsDir=$fMainDir/ftnt-tools
 fDownloads=$HOME/Downloads
 fJCPath=$fMainDir/jc
 fFirstTimeFile=$fMainDir/".has_been_invoked"
-fUpdateClangd=
-fUpdateDocker=
-fLinkClangFormatPath=
-fLinkNodeJs=
-fTlsInsecure=
-fRimePinyinInputMethod=
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -30,13 +24,14 @@ fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
 fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
 fArch=
+fTlsInsecure=
 fNoInstallTools=
 # VNC server
 fVncSimplePort=9
 fVncRealPort="590${fVncSimplePort}"
 fVncResolution=2060x1080
 fVncServer= # 1: start VNC server; 2: kill VNC server 3: restart VNC server
-# Docker container: OpenGrok
+# Docker Container: OpenGrok
 fOpenGrokContainer= # 1: start container; 2: stop container 3: restart container 4: start indexer
 OPENGROK_IMAGE_NAME="opengrok/docker:latest" # You can pin to a specific version, e.g., opengrok/docker:1.7.30
 OPENGROK_CONTAINER_NAME="opengrok"
@@ -45,13 +40,15 @@ OPENGROK_DATA_VOLUME="$HOME/.usr/local/opengrok/data" # Docker named volume for 
 OPENGROK_ETC_VOLUME="$HOME/.usr/local/opengrok/etc"   # Docker named volume for OpenGrok configuration
 OPENGROK_HOST_PORT="8080"
 OPENGROK_CONTAINER_PORT="8080"
-# Samba Server
-fSambaServer= # 1: Start samba server; 2: Start samba server without setting password
-# Deb Firefox
-fInstallDebFirefox=
-# Force options
-fForceInstallPrerequisites=
-fForceChinesePinyin=
+fLinkClangFormatPath= # Link clang-format to this path
+fLinkNodeJs= # Link Node.js from VSCode Server
+fClangdForce=
+fDockerForce=
+fWiresharkForce=
+fFirefoxForce=
+fChinesePinyinForce=
+fSambaServer= # Samba Server: 1: Start samba server; 2: Start samba server without setting password
+fPrerequisitesForce= # Force options
 # Constants
 SCRIPT_NAME=$(basename $0)
 # Colors
@@ -77,9 +74,6 @@ Options:
     -n, --no-tools                  Don't install tools
     -d, --debug                     Enable debug mode
     --insecure                      Allow insecure TLS
-    --docker                        Update Docker
-    --clangd                        Update clangd to the latest released version
-    --firefox-deb                   Install deb version of Firefox
     --link-clang-format             Link clang-format to current path
     --link-nodejs                   Link nodejs from VsCode Server to current path
     --vnc-start                     Start VNC server
@@ -87,7 +81,6 @@ Options:
     --vnc,--vnc-restart             Restart VNC server
     --unlock-vnc                    Unlock VNC
     --lock-vnc                      Lock VNC
-    --chinese-pinyin                Install Rime Pinyin
     --opengrok-start                Start OpenGrok Docker container
     --opengrok-stop                 Stop OpenGrok Docker container
     --opengrok,--opengrok-restart   Restart OpenGrok Docker container
@@ -98,9 +91,13 @@ Options:
     --update                        Update all packages
     --upgrade                       Upgrade all packages
 
-Force options:
+The following options force updates or re-installation (installed by default):
     --prerequisite                  Force install prerequisites
-    --chinese-pinyin-force          Force install Rime Pinyin
+    --chinese-pinyin                Force Update Rime Pinyin
+    --docker                        Force update Docker from Docker PPA
+    --wireshark                     Force update wireshark from Wireshark PPA
+    --firefox                       Force install firefox from Mozilla PPA
+    --clangd                        Force update clangd from Github
 
 Examples:
     $SCRIPT_NAME -h
@@ -112,9 +109,9 @@ exit 0
 
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
-          upgrade,insecure,chinese-pinyin,prerequisite,chinese-pinyin-force,vnc-restart,\
-          vnc-stop,unlock-vnc,lock-vnc,vnc-start,vnc,firefox-deb,update,opengrok,opengrok-start,\
-          opengrok-stop,opengrok-restart,opengrok-indexer,samba,samba-bypass-password"
+          upgrade,insecure,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,\
+          lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
+          opengrok-restart,opengrok-indexer,samba,samba-bypass-password,wireshark"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -132,23 +129,27 @@ while true; do
             shift
             ;;
         --prerequisite)
-            fForceInstallPrerequisites=true
-            shift
-            ;;
-        --docker)
-            fUpdateDocker=true
+            fPrerequisitesForce=true
             shift
             ;;
         --insecure)
             fTlsInsecure="--insecure"
             shift
             ;;
-        --clangd)
-            fUpdateClangd=true
+        --docker)
+            fDockerForce=true
             shift
             ;;
-        --firefox-deb)
-            fInstallDebFirefox=true
+        --wireshark)
+            fWiresharkForce=true
+            shift
+            ;;
+        --firefox)
+            fFirefoxForce=true
+            shift
+            ;;
+        --clangd)
+            fClangdForce=true
             shift
             ;;
         --opengrok-start)
@@ -198,12 +199,7 @@ while true; do
             exit 0
             ;;
         --chinese-pinyin)
-            fRimePinyinInputMethod=true
-            shift
-            ;;
-        --chinese-pinyin-force)
-            fRimePinyinInputMethod=true
-            fForceChinesePinyin=true
+            fChinesePinyinForce=true
             shift
             ;;
         --link-clang-format)
@@ -307,8 +303,8 @@ checkOSCategory() {
 }
 
 updatePrerequisitesForDebian() {
-    [ ! -f "$fFirstTimeFile" ] && fForceInstallPrerequisites=true
-    [ -z "$fForceInstallPrerequisites" ] && return
+    [ ! -f "$fFirstTimeFile" ] && fPrerequisitesForce=true
+    [ -z "$fPrerequisitesForce" ] && return
     echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
 
     checkSudoPrivilege
@@ -324,7 +320,6 @@ updatePrerequisitesForDebian() {
         gdb
         bat
         curl
-        firefox
         # Recommended Chinese fonts for good character display
         fonts-noto-cjk
         fonts-wqy-microhei
@@ -393,8 +388,9 @@ updatePrerequisitesForDebian() {
     sudo apt remove --purge -y thunderbird lightdm xrdp xorgxrdp
 
     echo "gdm3 shared/default-x-display-manager select gdm3" | sudo debconf-set-selections
+    # echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
     sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends "${prerequisitesForUbuntu[@]}"
-    sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure gdm3
+    # sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure gdm3
     sudo apt autoremove -y
 }
 
@@ -431,7 +427,6 @@ setTimeZone() {
 
 stopAndDisableDaemonService() {
     local targetServiceName="${1:-networking.service}"
-    # Check if the service exists
     if ! systemctl cat "$targetServiceName" >/dev/null 2>&1; then
         return 1
     fi
@@ -612,8 +607,8 @@ linkFile() {
     local newLinkName="$3" # New link name (optional, default: as is)
 
     if [ ! -d "$linkPath" ]; then
-        echo -e "${RED}Destination directory $linkPath does not exist, abort!${RESET}"
-        exit 1
+        echo -e "${RED}Destination directory $linkPath does not exist, bypass!${RESET}"
+        return 1
     fi
     local filename=$(basename "$target")
     local linkName=${newLinkName:-$filename}
@@ -852,19 +847,22 @@ createTKSymlinks() {
     linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
 }
 
-createExtraSymlinks() {
-    if [ -z "$fNoInstallTools" ]; then
-        echo -e "${COLOR}Creating tool symlinks${RESET}"
-        linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
-        echo -e "${COLOR}Creating template symlinks${RESET}"
-        linkFiles "$fTKtemplateDir" "$HOME/Templates"
-    fi
+createToolsSymlinks() {
+    [ -n "$fNoInstallTools" ] && return
+    echo -e "${COLOR}Creating tool symlinks${RESET}"
+    linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
+    echo -e "${COLOR}Creating template symlinks${RESET}"
+    linkFiles "$fTKtemplateDir" "$HOME/Templates"
+}
 
+relinkSysCmds() {
     echo -e "${COLOR}Relinking system commands${RESET}"
     relinkCommand "/bin/batcat" "bat"
     relinkCommand "/bin/fdfind" "fd"
     relinkCommand "/bin/bash" "sh" "/bin/"
+}
 
+createExtraSymlinks() {
     echo -e "${COLOR}Creating extra symlinks${RESET}"
     # The directories are guaranteed to exist when this function is called.
     linkFile "$fTKClangdConfig" "$HOME/.config/clangd"
@@ -903,9 +901,16 @@ setupCoreDirectories() {
     cd "$fMainDir" || exit
 }
 
-installUpdateClangd() {
-    echo -e "${COLOR}Updating Clangd${RESET}"
-    # Check if the current architecture is arm64
+installLatestGithubClangd() {
+    echo -e "${COLOR}Checking for Github Clangd (Github Release)${RESET}"
+    if [ -z "$fClangdForce" ] && command -v clangd &> /dev/null; then
+        echo -e "${GREEN}✔${GREY} Clangd is already installed.${RESET}"
+        printf "  "
+        clangd --version | head -n 1 | sed 's/ (.*//'
+        return 0
+    fi
+
+    # Github clangd is only available for x86_64
     if [ "$fArch" == "aarch64" ]; then
         sudo apt install clangd -y
         return
@@ -992,16 +997,14 @@ createFirstTimeFile() {
     touch "$fFirstTimeFile"
 }
 
-installDocker() {
-    echo -e "${COLOR}Checking Docker...${RESET}"
-    if command -v docker &> /dev/null && [ -z "$fUpdateDocker" ]; then
+installLatestPPaDocker() {
+    echo -e "${COLOR}Checking for Docker${RESET}"
+    if command -v docker &> /dev/null && [ -z "$fDockerForce" ]; then
         echo -e "${GREEN}✔${GREY} Docker is already installed.${RESET}"
         printf "  "
         docker --version
         return 0
     fi
-
-    echo -e "${COLOR}Installing Docker${RESET}"
 
     # 1. Uninstall old versions
     echo -e "${LIGHTYELLOW}Uninstalling old Docker versions (if any)...${RESET}"
@@ -1021,25 +1024,28 @@ installDocker() {
         exit 1
     fi
 
-    # Download Docker's official GPG key
+    # Step 2a: Add Docker's official GPG key
     local dockerGpgKey="/etc/apt/keyrings/docker.gpg"
     if [ -f "$dockerGpgKey" ]; then
-        echo -e "${GREY}Docker GPG key already exists at $dockerGpgKey. Verifying permissions...${RESET}"
+        echo -e "${GREEN}✔${GREY} Docker GPG key already exists.${RESET}"
     else
         echo -e "${LIGHTYELLOW}Downloading Docker's official GPG key...${RESET}"
-        if ! curl $fTlsInsecure -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o "$dockerGpgKey"; then
+        # Download Docker's official GPG key
+        if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o "$dockerGpgKey"; then
             echo -e "${RED}Failed to download or dearmor Docker GPG key.${RESET}"
             exit 1
         fi
-        echo -e "${GREEN}Docker GPG key downloaded and dearmored successfully.${RESET}"
-    fi
-    if ! sudo chmod a+r /etc/apt/keyrings/docker.gpg; then
+        if ! sudo chmod a+r "$dockerGpgKey"; then
         echo -e "${RED}Failed to set permissions for Docker GPG key.${RESET}"
         exit 1
     fi
+        echo -e "${GREEN}Docker GPG key downloaded and configured successfully.${RESET}"
+    fi
 
-    # Add Docker repository to Apt sources
-    # shellcheck disable=SC2024 # sudo tee is generally fine with output redirection here.
+    # Step 2b: Add the Docker repository to Apt sources.
+    # This command creates the repository source file and points to Docker's official repository.
+    # The `signed-by` option tells apt to verify packages from this repo using the key we just downloaded.
+    # This now uses the official recommended method from Docker's documentation.
     if ! echo \
       "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
       $(lsb_release -cs) stable" | \
@@ -1049,8 +1055,8 @@ installDocker() {
     fi
     echo -e "${GREEN}Docker repository set up successfully.${RESET}"
 
-    # 3. Install Docker Engine
-    echo -e "${LIGHTYELLOW}Installing Docker Engine...${RESET}"
+    # Step 3: Install Docker Engine.
+    echo -e "${LIGHTYELLOW}Updating package list and installing Docker Engine...${RESET}"
     if ! sudo apt-get update; then
         echo -e "${RED}Failed to update apt package list after adding Docker repo.${RESET}"
         exit 1
@@ -1061,7 +1067,7 @@ installDocker() {
     fi
     echo -e "${GREEN}Docker Engine installed successfully.${RESET}"
 
-    # 4. Verify installation
+    # Step 4: Verify installation by running the hello-world container.
     echo -e "${LIGHTYELLOW}Verifying Docker installation by running hello-world...${RESET}"
     if sudo docker run hello-world; then
         echo -e "${GREEN}Docker hello-world container ran successfully.${RESET}"
@@ -1069,8 +1075,9 @@ installDocker() {
         echo -e "${RED}Docker hello-world container failed to run. Docker might be installed but requires attention.${RESET}"
     fi
 
-    # 5. Post-installation steps
+    # Step 5: Post-installation steps (run Docker as a non-root user).
     echo -e "${LIGHTYELLOW}Configuring Docker to run without sudo for current user ($USER)...${RESET}"
+    # Create the 'docker' group if it doesn't exist.
     if ! getent group docker > /dev/null; then
         echo -e "${GREY}Docker group does not exist, creating it...${RESET}"
         if ! sudo groupadd docker; then
@@ -1082,9 +1089,11 @@ installDocker() {
         echo -e "${GREY}'docker' group already exists.${RESET}"
     fi
 
+    # Add the current user to the 'docker' group.
     if getent group docker > /dev/null; then
         if sudo usermod -aG docker "$USER"; then
-            echo -e "${LIGHTYELLOW}IMPORTANT: You must log out and log back in, or run 'newgrp docker' in your terminal, for this change to take full effect.${RESET}"
+            echo -e "${GREEN}User '$USER' added to the 'docker' group.${RESET}"
+            echo -e "${BOLD}${MAGENTA}IMPORTANT: You must log out and log back in, or run 'newgrp docker', for this change to take effect.${RESET}"
         else
             echo -e "${RED}Failed to add user $USER to the 'docker' group. You may need to do this manually (e.g., sudo usermod -aG docker \"\$USER\").${RESET}"
         fi
@@ -1095,14 +1104,17 @@ installDocker() {
     echo -e "${GREEN}Docker installation and basic configuration process completed.${RESET}"
 }
 
-installRimePinyinInputMethod() {
+installLatestRimePinyin() {
     echo -e "${COLOR}Checking Rime Pinyin input method...${RESET}"
-    if [ -z "$fForceChinesePinyin" ]; then
-        if command -v fcitx5-configtool &> /dev/null || \
-           command -v fcitx-configtool  &> /dev/null; then
+    if [ -z "$fChinesePinyinForce" ]; then
+        for cmd in fcitx5 fcitx; do
+            if command -v "${cmd}-configtool" &>/dev/null; then
                 echo -e "${GREEN}✔${GREY} Rime Pinyin input method is already installed.${RESET}"
+                printf "  "
+                "$cmd" --version
                 return 0
-        fi
+            fi
+        done
     fi
 
     echo -e "${COLOR}Installing Rime Pinyin input method${RESET}"
@@ -1216,19 +1228,21 @@ installRimePinyinInputMethod() {
     return 1
 }
 
-installDebFirefox() {
-    echo -e "${COLOR}Checking for DEB version of Firefox...${RESET}"
+installLatestPPaFirefox() {
+    echo -e "${COLOR}Checking for Firefox (Mozilla PPA)${RESET}"
     if ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
         return 0
     fi
+
     # Check if Firefox is installed and if it's the DEB version from Mozilla PPA
-    if command -v firefox &>/dev/null; then
+    if [ -z "$fFirefoxForce" ] && command -v firefox &>/dev/null; then
         firefoxPolicy=$(apt-cache policy firefox)
         if echo "$firefoxPolicy" | grep -q "mozillateam/ppa"; then
             installedVersion=$(echo "$firefoxPolicy" | grep "Installed:" | awk '{print $2}')
             candidateVersion=$(echo "$firefoxPolicy" | grep "Candidate:" | awk '{print $2}')
             if [ "$installedVersion" != "(none)" ] && [ "$installedVersion" == "$candidateVersion" ]; then
-                echo -e "${GREEN}✔${GREY} Firefox (DEB version from Mozilla PPA) is already installed and up-to-date (${installedVersion}).${RESET}"
+                echo -e "${GREEN}✔${GREY} Firefox (Mozilla PPA) is already installed and up-to-date.${RESET}"
+                echo "  $installedVersion"
                 return 0
             fi
         elif echo "$firefoxPolicy" | grep -q "snap"; then
@@ -1236,14 +1250,18 @@ installDebFirefox() {
         fi
     fi
 
-    echo -e "${COLOR}Installing Firefox (DEB version) from Mozilla PPA${RESET}"
     # 1. Add the Mozilla PPA
-    echo -e "${LIGHTYELLOW}Adding Mozilla PPA (ppa:mozillateam/ppa)...${RESET}"
-    if ! sudo add-apt-repository -y ppa:mozillateam/ppa; then
-        echo -e "${RED}Failed to add Mozilla PPA. Aborting Firefox DEB installation.${RESET}"
-        return 1
+    echo -e "${LIGHTYELLOW}Checking for Mozilla PPA (ppa:mozillateam/ppa)...${RESET}"
+    if grep -qr "mozillateam/ppa" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+        echo -e "${GREEN}✔${GREY} Mozilla PPA already configured.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Adding the Mozilla PPA...${RESET}"
+        if ! sudo add-apt-repository -y ppa:mozillateam/ppa; then
+            echo -e "${RED}Failed to add Mozilla PPA. Aborting Firefox DEB installation.${RESET}"
+            return 1
+        fi
+        echo -e "${GREEN}Mozilla PPA added successfully.${RESET}"
     fi
-    echo -e "${GREEN}Mozilla PPA added successfully.${RESET}"
 
     # 2. Create the preference file to prioritize PPA Firefox
     local preferenceFilePath="/etc/apt/preferences.d/mozilla-firefox-nosnap"
@@ -1289,13 +1307,13 @@ EOF
         return 1
     fi
 
-    echo -e "${LIGHTYELLOW}Installing Firefox (DEB version)...${RESET}"
+    echo -e "${LIGHTYELLOW}Installing Firefox from Mozilla PPA...${RESET}"
     if ! sudo apt install -y firefox; then
-        echo -e "${RED}Failed to install Firefox (DEB version).${RESET}"
+        echo -e "${RED}Failed to install Firefox from Mozilla PPA.${RESET}"
         echo -e "${LIGHTYELLOW}Attempting to install specific components that might be missing (e.g., language packs)...${RESET}"
         sudo apt install -y firefox-locale-en # Example for English, adjust if needed
         if ! sudo apt install -y firefox; then # Retry main installation
-             echo -e "${RED}Still failed to install Firefox (DEB version) after attempting component install.${RESET}"
+             echo -e "${RED}Still failed to install Firefox after attempting component install.${RESET}"
              return 1
         fi
     fi
@@ -1305,7 +1323,7 @@ EOF
         firefoxVersion=$(firefox --version)
         firefoxPolicyAfter=$(apt-cache policy firefox)
         if echo "$firefoxPolicyAfter" | grep -q "mozillateam/ppa"; then
-            echo -e "${GREEN}Firefox (DEB version) installed successfully! Version: $firefoxVersion${RESET}"
+            echo -e "${GREEN}Firefox installed successfully! Version: $firefoxVersion${RESET}"
             echo -e "${GREY}Policy check confirms it's from Mozilla PPA.${RESET}"
         else
             echo -e "${RED}Firefox installed, but it might not be the DEB version from Mozilla PPA. Please check 'apt-cache policy firefox'.${RESET}"
@@ -1709,22 +1727,176 @@ installSambaServer() {
     return 0
 }
 
+installLatestPPaWireshark() {
+    echo -e "${COLOR}Checking for Wireshark (Wireshark PPA)${RESET}"
+
+    if [ -z "$fWiresharkForce" ] && command -v wireshark &>/dev/null; then
+        local wiresharkPolicy
+        wiresharkPolicy=$(apt-cache policy wireshark)
+        if echo "$wiresharkPolicy" | grep -q "wireshark-dev/stable"; then
+            local installedVersion candidateVersion
+            installedVersion=$(echo "$wiresharkPolicy" | grep "Installed:" | awk '{print $2}')
+            candidateVersion=$(echo "$wiresharkPolicy" | grep "Candidate:" | awk '{print $2}')
+            if [ "$installedVersion" != "(none)" ] && [ "$installedVersion" == "$candidateVersion" ]; then
+                echo -e "${GREEN}✔${GREY} Wireshark (from PPA) is already installed and up-to-date.${RESET}"
+                printf "  "
+                wireshark --version | head -n 1
+                return 0
+            fi
+        fi
+    fi
+
+    echo -e "${LIGHTYELLOW}Proceeding with Wireshark installation/update from PPA...${RESET}"
+
+    # 1. Add the Wireshark PPA repository
+    echo -e "${LIGHTYELLOW}Checking for Wireshark PPA (ppa:wireshark-dev/stable)...${RESET}"
+    if grep -qr "wireshark-dev/stable" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+        echo -e "${GREEN}✔${GREY} Wireshark PPA already configured.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Adding the Wireshark PPA...${RESET}"
+        if ! sudo add-apt-repository -y ppa:wireshark-dev/stable; then
+            echo -e "${RED}Error: Failed to add Wireshark PPA. Aborting.${RESET}"
+            return 1
+        fi
+        echo -e "${GREEN}Wireshark PPA added successfully.${RESET}"
+    fi
+
+    # 2. Create the preference file to prioritize PPA Wireshark
+    local preferenceFilePath="/etc/apt/preferences.d/wireshark-ppa-priority"
+    # The 'o' value can be found with 'apt-cache policy wireshark' -> 'LP-PPA-wireshark-dev-stable'
+    local preferenceContent
+    preferenceContent=$(cat <<'EOF'
+Package: *
+Pin: release o=LP-PPA-wireshark-dev-stable
+Pin-Priority: 1001
+
+Package: wireshark*
+Pin: release o=Ubuntu*
+Pin-Priority: -1
+EOF
+)
+    echo -e "${LIGHTYELLOW}Setting up APT preferences to prioritize Wireshark PPA...${RESET}"
+    if [ -f "$preferenceFilePath" ] && cmp -s <(echo "$preferenceContent") "$preferenceFilePath"; then
+        echo -e "${GREY}APT preference file '$preferenceFilePath' already exists and is correctly configured.${RESET}"
+    else
+        echo "$preferenceContent" | sudo tee "$preferenceFilePath" > /dev/null
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}APT preference file '$preferenceFilePath' created/updated successfully.${RESET}"
+        else
+            echo -e "${RED}Failed to create/update APT preference file '$preferenceFilePath'. Aborting.${RESET}"
+            return 1
+        fi
+    fi
+
+    # 3. Update package list
+    echo -e "${LIGHTYELLOW}Updating package lists...${RESET}"
+    if ! sudo apt update; then
+        echo -e "${RED}Error: Failed to update apt package list. Aborting.${RESET}"
+        return 1
+    fi
+
+    # 4. Pre-configure wireshark-common to allow non-root users to capture packets.
+    # This avoids the interactive prompt during installation.
+    echo -e "${LIGHTYELLOW}Pre-configuring wireshark-common to allow non-root packet capture...${RESET}"
+    if ! echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections; then
+        echo -e "${RED}Warning: Failed to pre-configure wireshark-common via debconf. The installation might prompt for input.${RESET}"
+    fi
+
+    # 5. Install Wireshark
+    echo -e "${LIGHTYELLOW}Installing Wireshark...${RESET}"
+    if ! sudo DEBIAN_FRONTEND=noninteractive apt install -y wireshark; then
+        echo -e "${RED}Error: Failed to install Wireshark. Aborting.${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}Wireshark installed successfully.${RESET}"
+
+    # 6. Add user to the 'wireshark' group
+    if ! getent group wireshark > /dev/null; then
+        echo -e "${RED}Error: The 'wireshark' group was not created by the installation. Manual configuration may be needed.${RESET}"
+    elif id -nG "$USER" | grep -qw wireshark; then
+        echo -e "${GREEN}✔${GREY} User '$USER' is already a member of the 'wireshark' group.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Adding current user '$USER' to the 'wireshark' group...${RESET}"
+        if sudo usermod -aG wireshark "$USER"; then
+            echo -e "${GREEN}Successfully added user '$USER' to the 'wireshark' group.${RESET}"
+        else
+            echo -e "${RED}Error: Failed to add user '$USER' to the 'wireshark' group.${RESET}"
+            return 1
+        fi
+    fi
+
+    # 7. Final message
+    echo -e "\n${BOLD}${MAGENTA}IMPORTANT: You must run 'newgrp wireshark' or you have to log out and log back in, for group changes to take effect.${RESET}"
+    echo -e "${LIGHTYELLOW}This will allow you to capture network traffic as a non-root user.${RESET}"
+    wireshark --version
+    return 0
+}
+
+configureTcpdumpCaps() {
+    echo -e "${COLOR}Configuring tcpdump for non-root user packet capture...${RESET}"
+
+    # Check for required tools first
+    if ! command -v tcpdump &> /dev/null; then
+        echo -e "${LIGHTYELLOW}Warning: tcpdump command not found. Skipping configuration.${RESET}"
+        echo -e "${GREY}Please install it via 'sudo apt install tcpdump' and re-run.${RESET}"
+        return 1
+    fi
+    # `setcap` is a utility for setting file capabilities. By granting the 'cap_net_raw'
+    # and 'cap_net_admin' capabilities to the tcpdump binary, we allow non-root users
+    # to capture packets without needing full sudo privileges. This is more secure
+    # than making tcpdump setuid root. The `libcap2-bin` package provides `setcap`.
+    if ! command -v setcap &> /dev/null || ! command -v getcap &> /dev/null; then
+        echo -e "${RED}Error: 'setcap' or 'getcap' command not found.${RESET}"
+        echo -e "${LIGHTYELLOW}Please install the required package (e.g., 'sudo apt install libcap2-bin') and re-run.${RESET}"
+        return 1
+    fi
+
+    local tcpdumpPath
+    tcpdumpPath=$(command -v tcpdump)
+    local requiredCaps="cap_net_admin,cap_net_raw=eip"
+    local currentCaps
+    currentCaps=$(getcap "$tcpdumpPath" 2>/dev/null)
+
+    # Check if the capabilities are already set
+    if [[ "$currentCaps" == *"$requiredCaps"* ]]; then
+        echo -e "${GREEN}✔${GREY} tcpdump already has the required capabilities for non-root capture.${RESET}"
+        return 0
+    fi
+
+    echo -e "${LIGHTYELLOW}Attempting to set network capture capabilities on the tcpdump binary...${RESET}"
+    echo -e "${GREY}Executing: sudo setcap '$requiredCaps' '$tcpdumpPath'${RESET}"
+    if sudo setcap "$requiredCaps" "$tcpdumpPath"; then
+        echo -e "${GREEN}Successfully set capabilities on '$tcpdumpPath'.${RESET}"
+        echo -e "${LIGHTYELLOW}Normal users should now be able to run tcpdump for packet capture.${RESET}"
+    else
+        echo -e "${RED}Error: Failed to set capabilities on the tcpdump binary.${RESET}"
+        echo -e "${LIGHTYELLOW}This might be due to a security policy (e.g., AppArmor, SELinux).${RESET}"
+        return 1
+    fi
+
+    return 0
+}
+
 doCoreJobs() {
     updatePrerequisitesForDebian
     createTKSymlinks
     updateVimPlugins
     installTmuxPluginsManager
+    createToolsSymlinks
+    relinkSysCmds
     createExtraSymlinks
     addUserIntoLibvirtGrp
-    installDocker
+    installLatestRimePinyin # Install Rime Pinyin input method
+    installLatestPPaFirefox # Install Firefox (Mozilla PPA)
+    installLatestPPaDocker  # Install Docker
+    installLatestPPaWireshark # Install Wireshark (Mozilla PPA)
+    configureTcpdumpCaps # Configure tcpdump for non-root user packet capture
+    installLatestGithubClangd
     stopUnnecessaryServices
 }
 
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ]   && { linkClangFormat "$1"; exit 0; }
-    [ -n "$fInstallDebFirefox" ]     && { installDebFirefox; exit 0; }
-    [ -n "$fUpdateClangd" ]          && { installUpdateClangd; exit 0; }
-    [ -n "$fRimePinyinInputMethod" ] && { installRimePinyinInputMethod; exit 0; }
     [ -n "$fSambaServer" ]           && { installSambaServer; exit 0; }
     case "$fVncServer" in
         1) startVncServer;       exit 0 ;;

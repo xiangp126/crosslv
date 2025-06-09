@@ -80,7 +80,7 @@ set follow-fork-mode child
 
 # Initialize convenience variables
 set $_gdb_tools_sourced = 0
-set $_gdb_target_script = "~/target.sh"
+set $_gdb_target_script = "~/connect.sh"
 set $_gdb_tools_script = "~/Templates/gdb_tools.py"
 
 # Connect to the target defined in target.sh
