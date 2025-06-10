@@ -918,6 +918,8 @@ installLatestGithubClangd() {
 
     # Github clangd is only available for x86_64
     if [ "$fArch" == "aarch64" ]; then
+        echo -e "${LIGHTYELLOW}Github clangd is not available for $fArch architecture.${RESET}"
+        echo -e "${LIGHTYELLOW}Installing clangd from apt package manager.${RESET}"
         sudo apt install clangd -y
         return
     fi
