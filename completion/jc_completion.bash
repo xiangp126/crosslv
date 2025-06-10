@@ -11,7 +11,8 @@ _jc_complete() {
                --auto-remove --upgrade --insecure --docker --chinese-pinyin --prerequisite \
                --chinese-pinyin --vnc-start --vnc-stop --unlock-vnc --lock-vnc --vnc-restart \
                --vnc --firefox --update --opengrok-start --opengrok-stop --opengrok-restart \
-               --opengrok --opengrok-indexer --samba --samba-bypass-password --wireshark"
+               --opengrok --opengrok-indexer --samba --samba-bypass-password --wireshark \
+               --git-lfs"
 
     if [[ ${cur} == -* ]]; then
         # If it starts with --, only suggest long options
