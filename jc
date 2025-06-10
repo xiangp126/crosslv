@@ -274,24 +274,20 @@ checkSudoPrivilege() {
 checkOSCategory() {
     echo -e "${COLOR}Checking OS platform${RESET}"
     if [[ -f /etc/os-release ]]; then
-        local osName
-        osName=$(awk -F= '/^ID=/{print $2}' /etc/os-release)
+        local prettyName=$(awk -F= '/^PRETTY_NAME=/{print $2}' /etc/os-release)
+        local idLike=$(awk -F= '/^ID_LIKE=/{print $2}' /etc/os-release)
         fArch=$(uname -m)
 
-        case "$osName" in
-            "ubuntu")
-                fOSCategory=debian
-                echo -e "The current OS type is ${LIGHTYELLOW}Ubuntu${RESET}. Arch: ${LIGHTYELLOW}$fArch${RESET}"
+        case "$idLike" in
+            "debian")
+                fOSCategory=$idLike
+                echo -e "The current OS type is ${LIGHTYELLOW}$prettyName${RESET}. Arch: ${LIGHTYELLOW}$fArch${RESET}"
                 ;;
-            "centos")
-                fOSCategory=redhat
-                echo "The current OS type is CentOS. Arch: $fArch"
+            "readhat")
+                fOSCategory=$idLike
+                echo "The current OS type is RedHat. Arch: $fArch"
                 echo "We currently do not support CentOS."
                 exit
-                ;;
-            "raspbian")
-                fOSCategory=debian
-                echo "The current OS type is raspbian. Arch: $fArch"
                 ;;
             *)
                 echo "We currently do not support this OS type."
@@ -308,7 +304,7 @@ checkOSCategory() {
     fi
 }
 
-updatePrerequisitesForDebian() {
+aptInstallPrerequisites() {
     [ ! -f "$fFirstTimeFile" ] && fPrerequisitesForce=true
     [ -z "$fPrerequisitesForce" ] && return
     echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
@@ -416,12 +412,11 @@ updatePrequesitesForMac() {
 }
 
 setTimeZone() {
-    echo -e "${COLOR}Setting timezone to Vancouver${RESET}"
-    # check time zone if it is already vancouver
     if [ "$(timedatectl | grep "Time zone" | awk '{print $3}')" == "America/Vancouver" ]; then
-        echo -e "${GREEN}✔${GREY} Time zone is already vancouver${RESET}"
+        # echo -e "${GREEN}✔${GREY} Time zone is already vancouver${RESET}"
         return
     fi
+    echo -e "${COLOR}Setting timezone to Vancouver${RESET}"
     sudo timedatectl set-timezone America/Vancouver
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
@@ -547,7 +542,7 @@ installTmuxPluginsManager() {
     fi
 }
 
-updateVimPlugins (){
+installVimPluginsManager (){
     echo -e "${COLOR}Installing Vim Plugins Manager${RESET}"
 
     if [ ! -f ~/.vimrc ]; then
@@ -570,26 +565,6 @@ updateVimPlugins (){
     else
         echo -e "${RED}x Failed!${RESET}"
         exit 1
-    fi
-}
-
-tackleTheExceptions() {
-    if [ "$(hostname)" != "VAN-935558-PC0" ]; then
-        return
-    fi
-    echo -e "${COLOR}Tackling exceptions${RESET}"
-    # Copy back the privileged git config.
-    gitconfigCheckFile=$HOME/.gitconfig.fortinet
-    if [ -f "$gitconfigCheckFile"  ]; then
-        echo -e "${LIGHTYELLOW}The privileged file $gitconfigCheckFile exists.${RESET}"
-        echo -e "Relink $HOME/.gitconfig to $gitconfigCheckFile"
-        ln -sf "$gitconfigCheckFile" "$HOME"/.gitconfig
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}Success!${RESET}"
-        else
-            echo -e "${RED}Failed!${RESET}"
-            exit 1
-        fi
     fi
 }
 
@@ -879,7 +854,7 @@ createExtraSymlinks() {
     linkNodeJsFromCodeServer # Link Node.js from VSCode Server
 }
 
-setupCoreDirectories() {
+createEssentialPaths() {
     local dirsToCheck=(
         "$fBackupDir"
         "$HOME/Downloads"
@@ -1974,22 +1949,24 @@ configureTcpdumpCaps() {
 }
 
 doCoreJobs() {
-    updatePrerequisitesForDebian
-    createTKSymlinks
-    updateVimPlugins
-    installTmuxPluginsManager
-    createToolsSymlinks
-    relinkSysCmds
-    createExtraSymlinks
-    addUserIntoLibvirtGrp
-    installLatestGitLfs     # Install Git LFS (PackageCloud)
-    installLatestRimePinyin # Install Rime Pinyin input method
-    installLatestPPaFirefox # Install Firefox (Mozilla PPA)
-    installLatestPPaDocker  # Install Docker
-    installLatestPPaWireshark # Install Wireshark (Mozilla PPA)
-    configureTcpdumpCaps # Configure tcpdump for non-root user packet capture
-    installLatestGithubClangd
-    stopUnnecessaryServices
+    aptInstallPrerequisites    # Install prerequisites for Ubuntu
+    createTKSymlinks           # Create Tracked Files symlinks
+    installVimPluginsManager   # Install Vim Plugins Manager
+    installTmuxPluginsManager  # Install Tmux Plugins Manager
+    createToolsSymlinks        # Create tool symlinks
+    relinkSysCmds              # Relink system commands
+    createExtraSymlinks        # Create extra symlinks
+    buildBatTheme              # Build bat theme
+    buildExtraFonts            # Build extra fonts
+    addUserIntoLibvirtGrp      # Add user into libvirt group
+    installLatestGitLfs        # Install Git LFS (PackageCloud)
+    installLatestRimePinyin    # Install Rime Pinyin input method
+    installLatestPPaFirefox    # Install Firefox (Mozilla PPA)
+    installLatestPPaDocker     # Install Docker
+    installLatestPPaWireshark  # Install Wireshark (Mozilla PPA)
+    configureTcpdumpCaps       # Configure tcpdump for non-root user packet capture
+    installLatestGithubClangd  # Install Github Clangd
+    stopUnnecessaryServices    # Stop unnecessary services
 }
 
 doEarlyExitJobs() {
@@ -2027,19 +2004,16 @@ showUfwStatus() {
 main() {
     doEarlyExitJobs "$1"
     checkOSCategory
-    setupCoreDirectories
+    createEssentialPaths
     if [ "$fOSCategory" == "debian" ]; then
         doCoreJobs
-        buildBatTheme
-        buildExtraFonts
-        tackleTheExceptions
-        setTimeZone
         changeTMOUTToWritable
+        setTimeZone
         createFirstTimeFile
-    elif [ "$fOSCategory" == "mac" ]; then # Deprecated
+    elif [ "$fOSCategory" == "mac" ]; then
         createTKSymlinks
         installTmuxPluginsManager
-        updateVimPlugins
+        installVimPluginsManager
         createExtraSymlinks
         buildBatTheme
         buildExtraFonts
