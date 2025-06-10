@@ -23,9 +23,3 @@ start_all_vms
 # then
 #     callIndexer -s
 # fi
-
-# echo "Reset the DNS Server"
-# if command -v resetdns &> /dev/null
-# then
-#     resetdns
-# fi
