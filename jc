@@ -24,7 +24,6 @@ fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
 fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
 fArch=
-fTlsInsecure=
 fNoInstallTools=
 # VNC server
 fVncSimplePort=9
@@ -76,7 +75,6 @@ Common Options:
     -h, --help                      Print this help message
     -n, --no-tools                  Don't install tools
     -d, --debug                     Enable debug mode
-    --insecure                      Allow insecure TLS
     --link-clang-format             Link clang-format to current path
     --link-nodejs                   Link nodejs from VsCode Server to current path
     --auto-remove                   Remove unused packages
@@ -124,7 +122,7 @@ exit 0
 
 SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
-          upgrade,insecure,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,\
+          upgrade,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
           opengrok-restart,opengrok-indexer,samba,samba-bypass-password,wireshark,git-lfs\
           litellm-start,litellm-stop,litellm-restart,litellm"
@@ -146,10 +144,6 @@ while true; do
             ;;
         --prerequisite)
             fPrerequisitesForce=true
-            shift
-            ;;
-        --insecure)
-            fTlsInsecure="--insecure"
             shift
             ;;
         --git-lfs)
@@ -592,7 +586,7 @@ installVimPluginsManager (){
 
     if [ ! -f "$fVimPlugsManagerPath" ]; then
         # use the --insecure option to avoid certificate check
-        curl $fTlsInsecure -fLo "$fVimPlugsManagerPath" --create-dirs \
+        curl -fLo "$fVimPlugsManagerPath" --create-dirs \
         https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
     else
         echo -e "${GREEN}✔${GREY} Vim Plug Manager is already installed${RESET}"
@@ -655,7 +649,7 @@ linkFile() {
     local filename=$(basename "$src")
     local linkName=${newLinkName:-$filename}
     local dst="$linkPath/${linkName}"
-    [ ! -e "$src" ] && echo "Source $src does not exist, abort!" && exit 1
+    [ ! -e "$src" ] && echo -e "${RED}Error: $src does not exist${RESET}" && return 1
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
         [ ! -d "$fBackupDir" ] && mkdir -p "$fBackupDir"
         echo -e "${CYAN}Warning: $dst is not a link, backing it up into $fBackupDir${RESET}"
@@ -939,7 +933,7 @@ installLatestGithubClangd() {
     echo -e "${LIGHTYELLOW}Fetching latest Clangd binary information${RESET}"
     # 20.1.0
     # https://github.com/clangd/clangd/releases/download/20.1.0/clangd-linux-20.1.0.zip
-    local output=$(curl $fTlsInsecure -s https://api.github.com/repos/clangd/clangd/releases |
+    local output=$(curl -s https://api.github.com/repos/clangd/clangd/releases |
         jq -r '[.[] | select(.prerelease == false)] | .[0] |
                .name, (.assets[] | select(.name | contains("clangd-linux")) | .browser_download_url)')
     mapfile -t lines <<< "$output"
@@ -964,7 +958,7 @@ installLatestGithubClangd() {
     if [ -f "$downloadDst" ]; then
         echo -e "${GREY}File $fileName already exists in $fDownloads, skipping download.${RESET}"
     else
-        curl $fTlsInsecure -Lo "$downloadDst" "$downloadUrl"
+        curl -Lo "$downloadDst" "$downloadUrl"
         if [ $? -ne 0 ]; then
             echo -e "${RED}Error: Failed to download the latest version${RESET}"
             return 1
