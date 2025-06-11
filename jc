@@ -42,6 +42,7 @@ OPENGROK_HOST_PORT="8080"
 OPENGROK_CONTAINER_PORT="8080"
 fLinkClangFormatPath= # Link clang-format to this path
 fLinkNodeJs= # Link Node.js from VSCode Server
+fPrerequisitesForce=
 fGitLfsForce=
 fClangdForce=
 fDockerForce=
@@ -49,7 +50,8 @@ fWiresharkForce=
 fFirefoxForce=
 fChinesePinyinForce=
 fSambaServer= # Samba Server: 1: Start samba server; 2: Start samba server without setting password
-fPrerequisitesForce= # Force options
+fLiteLLMService= # LiteLLM: 1: Start LiteLLM 2: Stop LiteLLM 3: Restart LiteLLM
+LITELLM_DIR="$fDownloads/litellm"
 # Constants
 SCRIPT_NAME=$(basename $0)
 # Colors
@@ -70,27 +72,38 @@ Usage: $SCRIPT_NAME [OPTIONS]
 
 This script is used to set up the coding environment in my predefined way.
 
-Options:
+Common Options:
     -h, --help                      Print this help message
     -n, --no-tools                  Don't install tools
     -d, --debug                     Enable debug mode
     --insecure                      Allow insecure TLS
     --link-clang-format             Link clang-format to current path
     --link-nodejs                   Link nodejs from VsCode Server to current path
-    --vnc-start                     Start VNC server
-    --vnc-stop                      Stop VNC server
-    --vnc,--vnc-restart             Restart VNC server
-    --unlock-vnc                    Unlock VNC
-    --lock-vnc                      Lock VNC
-    --opengrok-start                Start OpenGrok Docker container
-    --opengrok-stop                 Stop OpenGrok Docker container
-    --opengrok,--opengrok-restart   Restart OpenGrok Docker container
-    --opengrok-indexer              Start OpenGrok indexer
-    --samba                         Install and configure Samba Server
-    --samba-bypass-password         Don't set password for Samba Server again
     --auto-remove                   Remove unused packages
     --update                        Update all packages
     --upgrade                       Upgrade all packages
+
+VNC Options:
+    --vnc,--vnc-start               Start VNC server
+    --vnc-stop                      Stop VNC server
+    --vnc-restart                   Restart VNC server
+    --lock-vnc                      Lock VNC
+    --unlock-vnc                    Unlock VNC
+
+LiteLLM Options:
+    --litellm,--litellm-start       Start LiteLLM Service
+    --litellm-stop                  Stop LiteLLM Service
+    --litellm-restart               Restart LiteLLM Service
+
+OpenGrok Options:
+    --opengrok,--opengrok-start     Start OpenGrok Docker container
+    --opengrok-stop                 Stop OpenGrok Docker container
+    --opengrok-restart              Restart OpenGrok Docker container
+    --opengrok-indexer              Start OpenGrok indexer
+
+Samba Options:
+    --samba                         Install and configure Samba Server
+    --samba-bypass-password         Don't set password for Samba Server again
 
 The following options force updates or re-installation (installed by default):
     --git-lfs                       Force update Git LFS from PackageCloud
@@ -113,7 +126,8 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,link-nodejs,auto-remove,\
           upgrade,insecure,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
-          opengrok-restart,opengrok-indexer,samba,samba-bypass-password,wireshark,git-lfs"
+          opengrok-restart,opengrok-indexer,samba,samba-bypass-password,wireshark,git-lfs\
+          litellm-start,litellm-stop,litellm-restart,litellm"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -158,7 +172,7 @@ while true; do
             fClangdForce=true
             shift
             ;;
-        --opengrok-start)
+        --opengrok|--opengrok-start)
             fOpenGrokContainer=1
             shift
             ;;
@@ -166,7 +180,7 @@ while true; do
             fOpenGrokContainer=2
             shift
             ;;
-        --opengrok|--opengrok-restart)
+        --opengrok-restart)
             fOpenGrokContainer=3
             shift
             ;;
@@ -182,7 +196,7 @@ while true; do
             fSambaServer=2
             shift
             ;;
-        --vnc-start)
+        --vnc|--vnc-start)
             fVncServer=1
             shift
             ;;
@@ -190,7 +204,7 @@ while true; do
             fVncServer=2
             shift
             ;;
-        --vnc|--vnc-restart)
+        --vnc-restart)
             fVncServer=3
             shift
             ;;
@@ -203,6 +217,18 @@ while true; do
             set -x
             loginctl lock-session
             exit 0
+            ;;
+        --litellm|--litellm-start)
+            fLiteLLMService=1
+            shift
+            ;;
+        --litellm-stop)
+            fLiteLLMService=2
+            shift
+            ;;
+        --litellm-restart)
+            fLiteLLMService=3
+            shift
             ;;
         --chinese-pinyin)
             fChinesePinyinForce=true
@@ -1948,6 +1974,96 @@ configureTcpdumpCaps() {
     return 0
 }
 
+# https://claudiuconstantinbogdan.me/articles/litellm-vertexai-continuedev
+startLiteLLMService() {
+    echo -e "${COLOR}Installing/Configuring LiteLLM Proxy Server via Docker Compose${RESET}"
+    if ! command -v docker &> /dev/null || ! docker compose version &> /dev/null; then
+        echo -e "${RED}Error: Docker and Docker Compose are required.${RESET}"; return 1;
+    fi
+
+    local liteLLMComposeFile="$LITELLM_DIR/docker-compose.yml"
+    if [ ! -d "$LITELLM_DIR/.git" ]; then
+        echo -e "${LIGHTYELLOW}Cloning the LiteLLM repository from GitHub...${RESET}"
+        # The directory may exist from a previous failed run or other reasons.
+        # Remove it to ensure a clean clone.
+        rm -rf "$LITELLM_DIR"
+        if ! git clone https://github.com/BerriAI/litellm "$LITELLM_DIR"; then
+            echo -e "${RED}Failed to clone the litellm repository from GitHub.${RESET}"
+            return 1
+        fi
+    else
+        echo -e "${GREEN}✔${GREY} LiteLLM repository already exists in $LITELLM_DIR.${RESET}"
+    fi
+    if [ ! -f "$liteLLMComposeFile" ]; then
+        echo -e "${RED}Error: docker-compose.yml not found in the cloned repository at $LITELLM_DIR.${RESET}"
+        return 1
+    fi
+
+    local envFile="$LITELLM_DIR/.env"
+    local masterKey
+    local saltKey
+    if [ ! -f "$envFile" ]; then
+        echo -e "${LIGHTYELLOW}Creating LiteLLM .env file for environment variables...${RESET}"
+        while true; do
+            read -r -s -p "Enter LiteLLM Master Key (e.g., sk-1234): " masterKey
+            if [ -z "$masterKey" ]; then
+                echo -e "${RED}Master Key cannot be empty. Please try again.${RESET}"
+            else
+                break
+            fi
+        done
+
+        # Auto-generate a random salt key
+        echo -e "${LIGHTYELLOW}Auto generating Salt Key...${RESET}"
+        saltKey=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
+        echo -e "${GREEN}Generated Salt Key: ${BOLD}$saltKey${RESET}"
+        {
+            echo "LITELLM_MASTER_KEY=$masterKey"
+            echo "LITELLM_SALT_KEY=$saltKey"
+        } > "$envFile"
+        echo -e "${GREEN}✔${GREY} LiteLLM .env file created at ${BLUE}$envFile${RESET}"
+    else
+        echo -e "${GREEN}✔${GREY} LiteLLM .env file already exists at ${BLUE}$envFile${GREY}, skipping creation.${RESET}"
+    fi
+
+    # Docker Compose will automatically read the .env file in this directory.
+    # As requested, sourcing it to make variables available to the current shell.
+    # set -a
+    # shellcheck source=/dev/null
+    # source "$envFile"
+    # set +a
+
+    echo -e "${LIGHTYELLOW}Starting LiteLLM proxy...${RESET}"
+    if ! (cd "$LITELLM_DIR" && docker compose up -d); then
+        echo -e "${RED}Failed to start LiteLLM. Check logs with: cd $LITELLM_DIR && docker compose logs${RESET}"
+        return 1
+    fi
+
+    echo -e "\n${GREEN}--- LiteLLM proxy started successfully! ---${RESET}"
+    echo -e "  - ${BOLD}Access:${RESET}   ${MAGENTA}http://localhost:4000/ui${RESET}"
+    echo -e "  - ${BOLD}Endpoint:${RESET} ${BLUE}http://localhost:4000${RESET}"
+    echo -e "  - ${BOLD}Manage:${RESET}   Run commands from ${BLUE}$LITELLM_DIR${RESET}"
+    echo -e "    - ${GREY}Start/Update: docker compose up -d${RESET}"
+    echo -e "    - ${GREY}Stop:         docker compose down${RESET}"
+    echo -e "    - ${GREY}Logs:         docker compose logs -f${RESET}"
+    return 0
+}
+
+stopLiteLLMService() {
+    echo -e "${LIGHTYELLOW}Stopping LiteLLM proxy...${RESET}"
+    if ! (cd "$LITELLM_DIR" && docker compose down); then
+        echo -e "${RED}Failed to stop LiteLLM. Check logs with: cd $LITELLM_DIR && docker compose logs${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} LiteLLM proxy stopped.${RESET}"
+    return 0
+}
+
+restartLiteLLMService() {
+    stopLiteLLMService
+    startLiteLLMService
+}
+
 doCoreJobs() {
     aptInstallPrerequisites    # Install prerequisites for Ubuntu
     createTKSymlinks           # Create Tracked Files symlinks
@@ -1970,8 +2086,8 @@ doCoreJobs() {
 }
 
 doEarlyExitJobs() {
-    [ -n "$fLinkClangFormatPath" ]   && { linkClangFormat "$1"; exit 0; }
-    [ -n "$fSambaServer" ]           && { installSambaServer; exit 0; }
+    [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
+    [ -n "$fSambaServer" ]         && { installSambaServer; exit 0; }
     case "$fVncServer" in
         1) startVncServer;       exit 0 ;;
         2) stopVncServer;        exit 0 ;;
@@ -1982,6 +2098,11 @@ doEarlyExitJobs() {
         2) stopOpenGrokContainer;    exit 0 ;;
         3) restartOpenGrokContainer; exit 0 ;;
         4) startOpenGrokIndexer;     exit 0 ;;
+    esac
+    case "$fLiteLLMService" in
+        1) startLiteLLMService;   exit 0 ;;
+        2) stopLiteLLMService;    exit 0 ;;
+        3) restartLiteLLMService; exit 0 ;;
     esac
 }
 

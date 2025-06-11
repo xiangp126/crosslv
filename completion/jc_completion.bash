@@ -12,7 +12,7 @@ _jc_complete() {
                --chinese-pinyin --vnc-start --vnc-stop --unlock-vnc --lock-vnc --vnc-restart \
                --vnc --firefox --update --opengrok-start --opengrok-stop --opengrok-restart \
                --opengrok --opengrok-indexer --samba --samba-bypass-password --wireshark \
-               --git-lfs"
+               --git-lfs --litellm-start --litellm-stop --litellm-restart --litellm"
 
     if [[ ${cur} == -* ]]; then
         # If it starts with --, only suggest long options
