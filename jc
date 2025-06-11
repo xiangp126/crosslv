@@ -614,7 +614,6 @@ linkFile() {
     local newLinkName="$3" # New link name (optional, default: as is)
 
     if [ ! -d "$linkPath" ]; then
-        echo -e "${RED}Destination directory $linkPath does not exist, bypass!${RESET}"
         return 1
     fi
     local filename=$(basename "$target")
