@@ -59,6 +59,7 @@ GREEN='\033[32m'
 MAGENTA='\033[35m'
 LIGHTYELLOW='\033[93m'
 BOLD='\033[1m'
+NORMAL='\033[0m'
 BLUE='\033[34m'
 GREY='\033[90m'
 CYAN='\033[36m'
@@ -296,7 +297,7 @@ checkTlsConnection() {
         exit 1
     fi
     local targetHost=${1:-"github.com"}
-    echo -e "${COLOR}Checking TLS Certificate Trust for: ${BLUE}${targetHost}${RESET}"
+    echo -e "${COLOR}Checking TLS Certificate Trust for: ${NORMAL}${targetHost}${RESET}"
 
     local curlOutput
     # -fsS = --fail --silent --show-error
@@ -326,25 +327,20 @@ checkOSAndArch() {
         case "$idLike" in
             "debian")
                 fOSCategory=$idLike
-                echo -e "The current OS type is ${LIGHTYELLOW}$prettyName${RESET}. Arch: ${LIGHTYELLOW}$fArch${RESET}"
-                ;;
-            "readhat")
-                fOSCategory=$idLike
-                echo "The current OS type is RedHat. Arch: $fArch"
-                echo "We currently do not support CentOS."
-                exit
+                echo -e "${GREEN}✔${GREY} The current OS type is ${LIGHTYELLOW}$prettyName${RESET}. ${GREY}The Arch is ${LIGHTYELLOW}$fArch${RESET}"
                 ;;
             *)
-                echo "We currently do not support this OS type."
+                fOSCategory=$idLike
+                echo -e "${GREEN}❌${GREY} The current OS type is ${LIGHTYELLOW}$prettyName${RESET}. ${GREY}The Arch is ${LIGHTYELLOW}$fArch${RESET}"
+                echo "  We currently do not support this OS type."
                 exit
                 ;;
         esac
     elif [[ $(uname) == "Darwin" ]]; then
         fOSCategory=mac
-        echo "The current OS type is macOS (Mac). Arch: $fArch"
+        echo -e "${GREEN}✔${GREY} The current OS type is ${LIGHTYELLOW}macOS${RESET}. ${GREY}The Arch is ${LIGHTYELLOW}$fArch${RESET}"
     else
-        echo "The OS type is not supported or could not be determined."
-        echo "We currently do not support this OS type."
+        echo -e "${GREEN}❌${GREY} The OS type is not supported or could not be determined."
         exit 1
     fi
 }
@@ -1970,7 +1966,7 @@ configureTcpdumpCaps() {
     if [[ "$currentCaps" == *"cap_net_admin,cap_net_raw"* ]]; then
         echo -e "${GREEN}✔${GREY} tcpdump already has the required capabilities for non-root capture.${RESET}"
         printf "  "
-        tcpdump --version | head -n 1
+        tcpdump --version 2>&1 | head -n 1
         return 0
     fi
 

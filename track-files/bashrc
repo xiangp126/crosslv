@@ -110,7 +110,7 @@ if ! declare -F __set_vscode_code_path &> /dev/null; then
 
         # Step 2: Set the VSCODE_BIN_PATH
         if [[ -z "$commitId" ]]; then
-            echo -e "${MAGENTA}Warning: No active VS Code server found with a valid pid.txt under $searchPath.${RESET}" >&2
+            echo -e "${MAGENTA}Warning: No active VS Code server found under $searchPath.${RESET}" >&2
             cd - &> /dev/null || exit
             return 1
         fi
