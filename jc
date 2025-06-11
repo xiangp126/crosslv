@@ -310,11 +310,11 @@ checkTlsConnection() {
     elif [ $curlExitCode -eq 60 ]; then
         echo -e "${RED}✗${GREY} TLS connection failed: Certificate validation error.${RESET}"
         echo -e "${LIGHTYELLOW}  This is often due to a corporate proxy (Man-in-the-Middle).${RESET}"
-        echo -e "${GREY}  Details: $(echo "$curlOutput" | sed 's/curl: (60) //')${RESET}"
+        echo -e "${GREY}☞ Details: \n$(echo "$curlOutput" | sed 's/curl: (60) //')${RESET}"
         exit 1
     else
         echo -e "${RED}✗${GREY} TLS connection failed for another reason (Exit Code: $curlExitCode).${RESET}"
-        echo -e "${GREY}  Details: $(echo "$curlOutput" | sed 's/curl: ([0-9]\+) //')${RESET}"
+        echo -e "${GREY}☞ Details: \n$(echo "$curlOutput" | sed 's/curl: ([0-9]\+) //')${RESET}"
     fi
 }
 
@@ -620,7 +620,7 @@ installVimPluginsManager (){
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✔ Success!${RESET}"
     else
-        echo -e "${RED}x Failed!${RESET}"
+        echo -e "${RED}✗ Failed!${RESET}"
         exit 1
     fi
 }
