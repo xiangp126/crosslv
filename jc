@@ -919,14 +919,11 @@ installLatestGithubClangd() {
         return 1
     fi
 
-    local currentVersion=""
+    local currentVersion="0.0.0"
     local clangdPath=$(command -v clangd 2>/dev/null)
     if [ -n "$clangdPath" ]; then
         currentVersion=$($clangdPath --version | head -n1 | grep -oP 'version \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
         echo -e "Current clangd version: ${BLUE}$currentVersion${RESET}"
-    else
-        echo -e "${LIGHTYELLOW}clangd is not currently installed${RESET}"
-        currentVersion="0.0.0"
     fi
 
     # Get the latest stable release version and download URL
@@ -1203,7 +1200,6 @@ installLatestRimePinyin() {
         done
     fi
 
-    echo -e "${COLOR}Installing Rime Pinyin input method${RESET}"
     echo -e "${LIGHTYELLOW}Updating package lists...${RESET}"
     if ! sudo apt update; then
         echo -e "${RED}Failed to update apt package list. Aborting Rime installation.${RESET}"
@@ -1317,6 +1313,7 @@ installLatestRimePinyin() {
 installLatestPPaFirefox() {
     echo -e "${COLOR}Checking for Firefox (Mozilla PPA)${RESET}"
     if ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
+        echo -e "${GREEN}✔${GREY} The current version of Firefox is acceptable.${RESET}"
         return 0
     fi
 
@@ -1832,10 +1829,7 @@ installLatestPPaWireshark() {
         fi
     fi
 
-    echo -e "${LIGHTYELLOW}Proceeding with Wireshark installation/update from PPA...${RESET}"
-
     # 1. Add the Wireshark PPA repository
-    echo -e "${LIGHTYELLOW}Checking for Wireshark PPA (ppa:wireshark-dev/stable)...${RESET}"
     if grep -qr "wireshark-dev/stable" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
         echo -e "${GREEN}✔${GREY} Wireshark PPA already configured.${RESET}"
     else
@@ -1939,12 +1933,12 @@ configureTcpdumpCaps() {
 
     local tcpdumpPath
     tcpdumpPath=$(command -v tcpdump)
-    local requiredCaps="cap_net_admin,cap_net_raw=eip"
+    local requiredCaps="cap_net_admin,cap_net_raw+eip"
     local currentCaps
     currentCaps=$(getcap "$tcpdumpPath" 2>/dev/null)
 
     # Check if the capabilities are already set
-    if [[ "$currentCaps" == *"$requiredCaps"* ]]; then
+    if [[ "$currentCaps" == *"cap_net_admin,cap_net_raw"* ]]; then
         echo -e "${GREEN}✔${GREY} tcpdump already has the required capabilities for non-root capture.${RESET}"
         return 0
     fi
