@@ -288,17 +288,16 @@ done
 
 checkSudoPrivilege() {
     echo -e "${COLOR}Checking sudo privilege${RESET}"
-    # Check if the user can run sudo without a password
     if sudo -n true 2>/dev/null; then
-        echo "User likely has passwordless sudo access."
+        echo -e "${GREEN}✔${GREY} User has passwordless sudo access.${RESET}"
     else
-        echo "User likely does not have passwordless sudo access or needs a password."
+        echo -e "${RED}✗${GREY} User does not have passwordless sudo access. Please run the script with sudo.${RESET}"
         exit 0
     fi
 }
 
 checkOSAndArch() {
-    echo -e "${COLOR}Checking OS platform${RESET}"
+    echo -e "${COLOR}Checking OS and architecture${RESET}"
     fArch=$(uname -m)
     if [[ -f /etc/os-release ]]; then
         local prettyName=$(awk -F= '/^PRETTY_NAME=/{print $2}' /etc/os-release)
@@ -329,15 +328,29 @@ checkOSAndArch() {
     fi
 }
 
+removeInstalledPackages() {
+        local packagesToCheck=("$@")
+        local packagesToRemove=()
+
+        for pkg in "${packagesToCheck[@]}"; do
+            if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+                packagesToRemove+=("$pkg")
+            fi
+        done
+
+        if [ ${#packagesToRemove[@]} -gt 0 ]; then
+            echo -e "${LIGHTYELLOW}Removing conflicting/unwanted packages: ${packagesToRemove[*]}${RESET}"
+            sudo apt remove --purge -y "${packagesToRemove[@]}"
+        fi
+}
+
 aptInstallPrerequisites() {
     [ ! -f "$fFirstTimeFile" ] && fPrerequisitesForce=true
     [ -z "$fPrerequisitesForce" ] && return
-    echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
-
     checkSudoPrivilege
-    prerequisitesForUbuntu=(
-        opencc # Simplified Chinese
+    local prerequisitesForUbuntu=(
         tmux # Basic tools
+        vim
         rsync
         fd-find # fd
         ripgrep # rg
@@ -410,10 +423,12 @@ aptInstallPrerequisites() {
         tigervnc-viewer
         remmina # remote desktop client
     )
-
+    echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
     sudo apt update
-    sudo apt remove --purge -y thunderbird lightdm xrdp xorgxrdp
-
+    if ! removeInstalledPackages thunderbird lightdm xrdp xorgxrdp; then
+        echo -e "${RED}Error: Failed to remove one or more conflicting packages. Aborting prerequisite installation.${RESET}"
+        return 1
+    fi
     echo "gdm3 shared/default-x-display-manager select gdm3" | sudo debconf-set-selections
     # echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
     sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends "${prerequisitesForUbuntu[@]}"
@@ -593,35 +608,54 @@ installVimPluginsManager (){
     fi
 }
 
-# linkFile: Creates a symbolic link for a file to a directory (destination).
+# linkFile: Creates a symbolic link for a file or command to a destination directory.
+#
+# It can link a source file by its path or a command from the system's PATH.
+# The function will back up any existing non-link file at the destination.
 #
 # Usage:
-#   linkFile /path/of/source/file /path/to/destination/dir
-#   e.g., linkFile ~/myfile.txt /data/backup
+#   linkFile <target_path_or_cmd> <destination_dir> [new_link_name] [type]
+#
+# Example (file):
+#   linkFile ~/myfile.txt /data/backup
+# Example (file with new name):
+#   linkFile ~/myfile.txt /data/backup my-renamed-file.txt
+# Example (command):
+#   linkFile batcat ~/.usr/bin bat command
 #
 # Arguments:
-#   $1 - Source file
-#   $2 - Destination directory path to link to
-#   $3 - New link name (optional, default: as is)
+#   $1 - The source file path or command name.
+#   $2 - The destination directory where the link will be created.
+#   $3 - New link name (optional, defaults to the basename of the source).
+#   $4 - Type of source: 'file' (default) or 'command' (optional).
 #
 # Returns:
-#   0 if successful, 1 if already linked, 2 if source file does not exist
-# ln [OPTION] TARGET LINK_NAME
+#   0 on successful link creation.
+#   1 if the link is already up to date.
+#   2 if the source command is not found.
+#   Exits the script if a source file does not exist.
+#
 linkFile() {
-    local target="$1"      # The target to link
+    local src="$1"         # Source file or command
     local linkPath="$2"    # Destination directory to link to
     local newLinkName="$3" # New link name (optional, default: as is)
+    local type=${4:-file}  # Type of source
 
-    if [ ! -d "$linkPath" ]; then
-        return 1
+    if [[ "$type" == "command" ]]; then
+        src=$(command -v "$src")
+        if [ -z "$src" ]; then
+            echo -e "${RED}${src} is not installed${RESET}"
+            return 2
+        fi
     fi
-    local filename=$(basename "$target")
-    local linkName=${newLinkName:-$filename}
-    local src="$target"
-    local dst="$linkPath/${linkName}"
-    local execPrefix=
+    if [ ! -d "$linkPath" ]; then
+        mkdir -p "$linkPath"
+    fi
 
-    [ ! -f "$target" ] && echo "Source file $target does not exist, abort!" && exit 1
+    local filename=$(basename "$src")
+    local linkName=${newLinkName:-$filename}
+    local dst="$linkPath/${linkName}"
+    [ ! -e "$src" ] && echo "Source $src does not exist, abort!" && exit 1
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
         [ ! -d "$fBackupDir" ] && mkdir -p "$fBackupDir"
         echo -e "${CYAN}Warning: $dst is not a link, backing it up into $fBackupDir${RESET}"
@@ -633,109 +667,72 @@ linkFile() {
         return 1
     fi
 
-    # echo -e "${LIGHTYELLOW}Creating symlink${RESET}: $linkName -> $src"
-    echo -e "${LIGHTYELLOW}Creating symlink${RESET}: $dst"
-    echo "               => $src"
+    echo -e "🔗 ${LIGHTYELLOW}Creating Symlink${RESET}"
+    echo -e "   ├─ ${GREY}Source:${RESET} ${CYAN}$src${RESET}"
+    echo -e "   └─ ${GREY}Target:${RESET} ${CYAN}$dst${RESET}"
+
+    local success=false
+    local execPrefix=
     for _ in {1..2}; do
-        $execPrefix ln -sf "$target" "$dst"
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}Success!${RESET}"
+        if $execPrefix ln -sf "$src" "$dst" &> /dev/null; then
+            success=true
             break
-        else
-            echo -e "${RED}Failed! Retrying with sudo...${RESET}"
+        fi
+        if [ -z "$execPrefix" ]; then
+            echo -e "   ├─ ${GREY}Info:${RESET}   ${RED}Failed! Retrying with sudo...${RESET}"
             execPrefix="sudo "
-            continue
+        else
+            break
         fi
     done
+    if [ "$success" = true ]; then
+        echo -e "   └─ ${GREY}Status:${RESET} ✔  ${GREEN}Success!${RESET}"
+    else
+        echo -e "   └─ ${GREY}Status:${RESET} ❌ ${RED}Failed!${RESET}"
+    fi
 }
 
-# linkFiles: Creates symbolic links for all files in a source directory to a specified destination directory.
+# linkFiles: Creates symbolic links for all files from a source directory to a destination directory.
+#
+# This function iterates through all files in a source directory and creates a
+# symbolic link for each in the destination directory. After linking, it also
+# removes any broken symbolic links found in the destination directory (this
+# cleanup is skipped if the destination is the user's home directory).
 #
 # Usage:
-#   linkFiles /path/to/source/dir /path/to/destination/dir [linknamePrefix]
-#   e.g., linkFiles ~/mydir /data/backup
+#   linkFiles <source_dir> <destination_dir> [link_name_prefix]
+#
+# Example:
+#   # Link files from a config folder to the home directory, creating dotfiles.
+#   linkFiles ~/dotfiles/config ~/. "."
 #
 # Arguments:
-#   $1 - Source directory
-#   $2 - Destination directory path to link to
-#   $3 - Prefix for destination filename (optional, Exp: . for hidden files)
+#   $1 - The source directory containing the files to be linked.
+#   $2 - The destination directory where the symbolic links will be created.
+#   $3 - An optional prefix to add to the created link names (e.g., ".").
 #
-# Returns:
-#   0 if successful, 1 if already linked, 2 if source directory does not exist
-# ln [OPTION] TARGET LINK_NAME
+# Exits:
+#   The script will exit if the source directory does not exist.
 linkFiles() {
-    local targetDir="$1"        # Source directory
+    local srcDir="$1"           # Source directory
     local linkPath="$2"         # Destination directory
     local linknamePrefix="$3"   # Prefix for destination filename. Exp: . for hidden files
 
-    # echo -e "${COLOR}Creating symlinks pointing from ${linkPath}/* to $(basename "$targetDir")/*${RESET}"
-    [ ! -d "$targetDir" ] && echo "Source directory $targetDir does not exist, abort!" && exit 1
+    [ ! -d "$srcDir" ] && echo "Source directory $srcDir does not exist, abort!" && exit 1
     [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
 
-    for file in "$targetDir"/*; do
+    for file in "$srcDir"/*; do
         linkFile "$file" "$linkPath" "${linknamePrefix}$(basename "$file")"
     done
 
     if [ "$linkPath" == "$HOME" ]; then
         return
     fi
-
-    COLOR=$GREEN
+    # Remove broken symlinks
     find "$linkPath" -type l ! \
             -exec test -e {} \; \
             -exec rm -f {} \; \
-            -exec echo -e "${COLOR}Deleting broken link: {}${RESET}" \;
-    COLOR=$MAGENTA
-}
-
-# relinkCommand: Creates a symbolic link for a system command with a new name in new path.
-#
-# Usage:
-#   relinkCommand <sysCmd> <linkName> [linkPath]
-#   e.g., relinkCommand batcat bat
-#
-#   ~/.usr/bin/bat -> /bin/batcat
-#
-# Arguments:
-#   $1 - System command to link
-#   $2 - Link name (new name)
-#   $3 - Optional destination directory path (new path, default: $HOME/.usr/bin)
-#
-# Returns:
-#   0 if successful, 1 if already linked, 2 if system command does not exist
-# ln [OPTION] TARGET LINK_NAME
-relinkCommand() {
-    local sysCmd=$1
-    local linkName=$2
-    local linkPath=$HOME/.usr/bin
-    [ -n "$3" ] && linkPath=$3
-    local dst=$linkPath/$linkName
-    local execPrefix=
-
-    [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
-    sysCmdPath=$(command -v "$sysCmd")
-    if [ -z "$sysCmdPath" ]; then
-        echo "${sysCmd} is not installed"
-        return 2
-    fi
-
-    if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$sysCmdPath" ]; then
-        echo -e "${GREEN}✔${GREY} Link ${BLUE}${linkName}${GREY} is already up to date.${RESET}"
-        return 1
-    fi
-
-    echo -e "${COLOR}Creating symlink: ${linkName} -> syscmd: ${sysCmdPath}${RESET}"
-    for _ in {1..2}; do
-        $execPrefix ln -sf "$sysCmdPath" "$dst"
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}Success!${RESET}"
-            break
-        else
-            echo -e "${RED}Failed! Retrying with sudo...${RESET}"
-            execPrefix="sudo "
-            continue
-        fi
-    done
+            -exec echo -e "${CYAN}Deleting broken link: {}${RESET}" \;
 }
 
 buildBatTheme() {
@@ -862,9 +859,9 @@ createToolsSymlinks() {
 
 relinkSysCmds() {
     echo -e "${COLOR}Relinking system commands${RESET}"
-    relinkCommand "/bin/batcat" "bat"
-    relinkCommand "/bin/fdfind" "fd"
-    relinkCommand "/bin/bash" "sh" "/bin/"
+    linkFile "batcat" "$HOME/.usr/bin" "bat" "command"
+    linkFile "fdfind" "$HOME/.usr/bin" "fd" "command"
+    linkFile "bash" "/bin" "sh" "command"
 }
 
 createExtraSymlinks() {

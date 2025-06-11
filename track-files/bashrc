@@ -110,7 +110,8 @@ if ! declare -F __set_vscode_code_path &> /dev/null; then
 
         # Step 2: Set the VSCODE_BIN_PATH
         if [[ -z "$commitId" ]]; then
-            echo -e "${MAGENTA}Error: No active VS Code server found with a valid pid.txt under $searchPath.${RESET}" >&2
+            echo -e "${MAGENTA}Warning: No active VS Code server found with a valid pid.txt under $searchPath.${RESET}" >&2
+            cd - &> /dev/null || exit
             return 1
         fi
         VSCODE_BIN_PATH="$searchPath/$commitId/server/bin/remote-cli/code"
@@ -132,18 +133,7 @@ if ! declare -F __set_vscode_code_path &> /dev/null; then
         export VSCODE_IPC_HOOK_CLI=$newIPCHook
         export VSCODE_BIN_PATH
 
-        # Step 4: Print the results
-        # local GREY='\033[0;90m'
-        # local BLUE='\033[0;34m'
-        # local GREEN='\033[0;32m'
-        # echo -e "${MAGENTA}VS Code Server Details${RESET}" >&2
-        # echo "======================"
-        # echo -e "${GREEN}✔${GREY} Active PID:${BLUE} $currentPid${RESET}"
-        # echo -e "${GREEN}✔${GREY} PID File:${BLUE} $searchPath/$commitId/pid.txt${RESET}"
-        # echo -e "${GREEN}✔${GREY} Active VS Code Binary Path:${BLUE} $VSCODE_BIN_PATH${RESET}"
-        # echo -e "${GREEN}✔${GREY} Active VS Code IPC Hook:${BLUE} $VSCODE_IPC_HOOK_CLI${RESET}"
-
-        # Step 5: Return to the original directory
+        # Step 4: Return to the original directory
         cd - &> /dev/null || exit
     }
     export -f __set_vscode_code_path
@@ -168,11 +158,8 @@ export PATH
 export PKG_CONFIG_PATH
 export LD_LIBRARY_PATH
 unset TMOUT
-# export FORTIPKG="$HOME/fortipkg"
 
-# Enable programmable completion features (you don't need to enable
-# this, if it's already enabled in /etc/bash.bashrc and /etc/profile
-# sources /etc/bash.bashrc).
+# load system bash completion
 if ! shopt -oq posix; then
   if [ -f /usr/share/bash-completion/bash_completion ]; then
     . /usr/share/bash-completion/bash_completion
@@ -180,24 +167,23 @@ if ! shopt -oq posix; then
     . /etc/bash_completion
   fi
 fi
-# Find bash completion for third-party tools | only for Mac
+# For MacOS only, load homebrew bash completion
 if [[ -d /usr/local/etc/bash_completion.d ]]; then
     for file in /usr/local/etc/bash_completion.d/*; do
         [[ -L $file ]] && . "$file"
+    done
+fi
+# Load custom bash completions
+TK_COMPLETION_SELF="$HOME/.bash_completion.d"
+if [ -d "$TK_COMPLETION_SELF" ]; then
+    for file in "$TK_COMPLETION_SELF"/*; do
+        [[ -f $file ]] && source "$file"
     done
 fi
 
 # Load xprofile - bash profile for X11
 if [ -f ~/.xprofile ]; then
     . ~/.xprofile
-fi
-
-# Find bash completion for self-defined tools
-TK_COMPLETION_SELF="$HOME/.bash_completion.d"
-if [ -d "$TK_COMPLETION_SELF" ]; then
-    for file in "$TK_COMPLETION_SELF"/*; do
-        [[ -f $file ]] && source "$file"
-    done
 fi
 
 # Settings for fzf -- the fuzzy finder
