@@ -281,7 +281,7 @@ while true; do
 done
 
 checkSudoPrivilege() {
-    echo -e "${COLOR}Checking sudo privilege${RESET}"
+    echo -e "${COLOR}Checking Sudo Privilege${RESET}"
     if sudo -n true 2>/dev/null; then
         echo -e "${GREEN}✔${GREY} User has passwordless sudo access.${RESET}"
     else
@@ -290,8 +290,35 @@ checkSudoPrivilege() {
     fi
 }
 
+checkTlsConnection() {
+    if ! command -v curl &> /dev/null; then
+        echo -e "${LIGHTYELLOW}curl is not installed. Aborting.${RESET}"
+        exit 1
+    fi
+    local targetHost=${1:-"github.com"}
+    echo -e "${COLOR}Checking TLS Certificate Trust for: ${BLUE}${targetHost}${RESET}"
+
+    local curlOutput
+    # -fsS = --fail --silent --show-error
+    curlOutput=$(curl --head -fsS --connect-timeout 5 "https://${targetHost}" 2>&1)
+    local curlExitCode=$?
+
+    # Exit code 60 is specifically for peer certificate verification failure.
+    if [ $curlExitCode -eq 0 ]; then
+        echo -e "${GREEN}✔${GREY} TLS connection successful. Certificate is trusted.${RESET}"
+    elif [ $curlExitCode -eq 60 ]; then
+        echo -e "${RED}✗${GREY} TLS connection failed: Certificate validation error.${RESET}"
+        echo -e "${LIGHTYELLOW}  This is often due to a corporate proxy (Man-in-the-Middle).${RESET}"
+        echo -e "${GREY}  Details: $(echo "$curlOutput" | sed 's/curl: (60) //')${RESET}"
+        exit 1
+    else
+        echo -e "${RED}✗${GREY} TLS connection failed for another reason (Exit Code: $curlExitCode).${RESET}"
+        echo -e "${GREY}  Details: $(echo "$curlOutput" | sed 's/curl: ([0-9]\+) //')${RESET}"
+    fi
+}
+
 checkOSAndArch() {
-    echo -e "${COLOR}Checking OS and architecture${RESET}"
+    echo -e "${COLOR}Checking OS and Architecture${RESET}"
     fArch=$(uname -m)
     if [[ -f /etc/os-release ]]; then
         local prettyName=$(awk -F= '/^PRETTY_NAME=/{print $2}' /etc/os-release)
@@ -417,7 +444,7 @@ aptInstallPrerequisites() {
         tigervnc-viewer
         remmina # remote desktop client
     )
-    echo -e "${COLOR}Updating prerequisites for Ubuntu${RESET}"
+    echo -e "${COLOR}Updating Prerequisites for Ubuntu${RESET}"
     sudo apt update
     if ! removeInstalledPackages thunderbird lightdm xrdp xorgxrdp; then
         echo -e "${RED}Error: Failed to remove one or more conflicting packages. Aborting prerequisite installation.${RESET}"
@@ -440,7 +467,7 @@ updatePrequesitesForMac() {
         vim
     )
 
-    echo -e "${COLOR}Updating prerequisites for macOS${RESET}"
+    echo -e "${COLOR}Updating Prerequisites for MacOS${RESET}"
     brew update
     brew install "${prerequisitesForMac[@]}"
 }
@@ -450,7 +477,7 @@ setTimeZone() {
         # echo -e "${GREEN}✔${GREY} Time zone is already vancouver${RESET}"
         return
     fi
-    echo -e "${COLOR}Setting timezone to Vancouver${RESET}"
+    echo -e "${COLOR}Setting Timezone to Vancouver${RESET}"
     sudo timedatectl set-timezone America/Vancouver
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
@@ -548,7 +575,7 @@ checkNetworkManagerStatus() {
 }
 
 stopUnnecessaryServices() {
-    echo -e "${COLOR}Stopping unnecessary services...${RESET}"
+    echo -e "${COLOR}Stopping Unnecessary Services${RESET}"
     checkNetworkManagerStatus
     local services_to_manage=(
         "cups.service"          # CUPS (Common UNIX Printing System)
@@ -731,7 +758,7 @@ linkFiles() {
 
 buildBatTheme() {
     # https://github.com/sharkdp/bat/tree/master/assets/themes
-    echo -e "${COLOR}Building bat theme${RESET}"
+    echo -e "${COLOR}Building Bat Themes${RESET}"
     local batThemeDir=$HOME/.config/bat/themes
     local needBuild=
     [ ! -d "$batThemeDir" ] && mkdir -p "$batThemeDir"
@@ -755,7 +782,7 @@ buildBatTheme() {
 }
 
 buildExtraFonts() {
-    echo -e "${COLOR}Building extra fonts${RESET}"
+    echo -e "${COLOR}Building Extra Fonts${RESET}"
     local needBuild=
     local fontConfigDir="$HOME/.config/fontconfig/conf.d"
     local fontDir=$HOME/.local/share/fonts
@@ -800,7 +827,7 @@ changeTMOUTToWritable() {
     if ! grep -q "TMOUT" /etc/profile; then
         return
     fi
-    echo -e "${COLOR}Changing TMOUT to writable${RESET}"
+    echo -e "${COLOR}Changing TMOUT to Writable${RESET}"
     if grep -q "^readonly TMOUT" /etc/profile; then
         echo -e "${GREY}TMOUT is readonly in /etc/profile, change it to writable${RESET}"
     else
@@ -835,7 +862,7 @@ linkNodeJsFromCodeServer() {
 
 createTKSymlinks() {
     # The directories are guaranteed to exist when this function is called.
-    echo -e "${COLOR}Creating home directory symlinks${RESET}"
+    echo -e "${COLOR}Creating Home Directory Symlinks${RESET}"
     linkFiles "$fTKFilesDir" "$HOME" "."
     echo -e "${COLOR}Creating completion symlinks${RESET}"
     linkFiles "$fTKCompDir" "$HOME/.bash_completion.d"
@@ -845,21 +872,21 @@ createTKSymlinks() {
 
 createToolsSymlinks() {
     [ -n "$fNoInstallTools" ] && return
-    echo -e "${COLOR}Creating tool symlinks${RESET}"
+    echo -e "${COLOR}Creating Tool Symlinks${RESET}"
     linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
     echo -e "${COLOR}Creating template symlinks${RESET}"
     linkFiles "$fTKtemplateDir" "$HOME/Templates"
 }
 
 relinkSysCmds() {
-    echo -e "${COLOR}Relinking system commands${RESET}"
+    echo -e "${COLOR}Relinking System Commands${RESET}"
     linkFile "batcat" "$HOME/.usr/bin" "bat" "command"
     linkFile "fdfind" "$HOME/.usr/bin" "fd" "command"
     linkFile "bash" "/bin" "sh" "command"
 }
 
 createExtraSymlinks() {
-    echo -e "${COLOR}Creating extra symlinks${RESET}"
+    echo -e "${COLOR}Creating Extra Symlinks${RESET}"
     # The directories are guaranteed to exist when this function is called.
     linkFile "$fTKClangdConfig" "$HOME/.config/clangd"
     linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
@@ -1188,7 +1215,7 @@ installLatestPPaDocker() {
 }
 
 installLatestRimePinyin() {
-    echo -e "${COLOR}Checking Rime Pinyin input method...${RESET}"
+    echo -e "${COLOR}Checking Rime Pinyin Input Method${RESET}"
     if [ -z "$fChinesePinyinForce" ]; then
         for cmd in fcitx5 fcitx; do
             if command -v "${cmd}-configtool" &>/dev/null; then
@@ -1619,7 +1646,7 @@ restartOpenGrokContainer() {
 }
 
 addUserIntoLibvirtGrp() {
-    echo -e "${COLOR}Configuring Libvirt group membership for current user...${RESET}"
+    echo -e "${COLOR}Configuring Libvirt Group Membership for Current User...${RESET}"
 
     if ! getent group libvirt > /dev/null; then
         echo -e "${RED}Error: The 'libvirt' group does not exist.${RESET}"
@@ -1913,7 +1940,7 @@ EOF
 }
 
 configureTcpdumpCaps() {
-    echo -e "${COLOR}Configuring tcpdump for non-root user packet capture...${RESET}"
+    echo -e "${COLOR}Configuring tcpdump for Non-root User Packet Capture${RESET}"
 
     # Check for required tools first
     if ! command -v tcpdump &> /dev/null; then
@@ -2028,7 +2055,7 @@ startLiteLLMService() {
 }
 
 stopLiteLLMService() {
-    echo -e "${LIGHTYELLOW}Stopping LiteLLM proxy...${RESET}"
+    echo -e "${LIGHTYELLOW}Stopping LiteLLM Proxy...${RESET}"
     if ! (cd "$LITELLM_DIR" && docker compose down); then
         echo -e "${RED}Failed to stop LiteLLM. Check logs with: cd $LITELLM_DIR && docker compose logs${RESET}"
         return 1
@@ -2103,6 +2130,7 @@ showUfwStatus() {
 main() {
     doEarlyExitJobs "$1"
     checkOSAndArch
+    checkTlsConnection
     createEssentialPaths
     if [ "$fOSCategory" == "debian" ]; then
         doCoreJobs
