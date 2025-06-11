@@ -864,9 +864,9 @@ createTKSymlinks() {
     # The directories are guaranteed to exist when this function is called.
     echo -e "${COLOR}Creating Home Directory Symlinks${RESET}"
     linkFiles "$fTKFilesDir" "$HOME" "."
-    echo -e "${COLOR}Creating completion symlinks${RESET}"
+    echo -e "${COLOR}Creating Completion Symlinks${RESET}"
     linkFiles "$fTKCompDir" "$HOME/.bash_completion.d"
-    echo -e "${COLOR}Creating Vim colorscheme symlinks${RESET}"
+    echo -e "${COLOR}Creating Vim Colorscheme Symlinks${RESET}"
     linkFiles "$fTKVimColorsDir" "$HOME/.vim/colors"
 }
 
@@ -1657,6 +1657,8 @@ addUserIntoLibvirtGrp() {
 
     if id -nG "$USER" | grep -qw libvirt; then
         echo -e "${GREEN}✔${GREY} User '$USER' is already a member of the 'libvirt' group.${RESET}"
+        printf "  "
+        libvirtd --version
         return 0
     fi
 
@@ -1967,6 +1969,8 @@ configureTcpdumpCaps() {
     # Check if the capabilities are already set
     if [[ "$currentCaps" == *"cap_net_admin,cap_net_raw"* ]]; then
         echo -e "${GREEN}✔${GREY} tcpdump already has the required capabilities for non-root capture.${RESET}"
+        printf "  "
+        tcpdump --version | head -n 1
         return 0
     fi
 
