@@ -297,13 +297,12 @@ checkSudoPrivilege() {
     fi
 }
 
-checkOSCategory() {
+checkOSAndArch() {
     echo -e "${COLOR}Checking OS platform${RESET}"
+    fArch=$(uname -m)
     if [[ -f /etc/os-release ]]; then
         local prettyName=$(awk -F= '/^PRETTY_NAME=/{print $2}' /etc/os-release)
         local idLike=$(awk -F= '/^ID_LIKE=/{print $2}' /etc/os-release)
-        fArch=$(uname -m)
-
         case "$idLike" in
             "debian")
                 fOSCategory=$idLike
@@ -322,7 +321,7 @@ checkOSCategory() {
         esac
     elif [[ $(uname) == "Darwin" ]]; then
         fOSCategory=mac
-        echo "The current OS type is macOS (Mac)."
+        echo "The current OS type is macOS (Mac). Arch: $fArch"
     else
         echo "The OS type is not supported or could not be determined."
         echo "We currently do not support this OS type."
@@ -2025,13 +2024,6 @@ startLiteLLMService() {
         echo -e "${GREEN}✔${GREY} LiteLLM .env file already exists at ${BLUE}$envFile${GREY}, skipping creation.${RESET}"
     fi
 
-    # Docker Compose will automatically read the .env file in this directory.
-    # As requested, sourcing it to make variables available to the current shell.
-    # set -a
-    # shellcheck source=/dev/null
-    # source "$envFile"
-    # set +a
-
     echo -e "${LIGHTYELLOW}Starting LiteLLM proxy...${RESET}"
     if ! (cd "$LITELLM_DIR" && docker compose up -d); then
         echo -e "${RED}Failed to start LiteLLM. Check logs with: cd $LITELLM_DIR && docker compose logs${RESET}"
@@ -2039,12 +2031,14 @@ startLiteLLMService() {
     fi
 
     echo -e "\n${GREEN}--- LiteLLM proxy started successfully! ---${RESET}"
-    echo -e "  - ${BOLD}Access:${RESET}   ${MAGENTA}http://localhost:4000/ui${RESET}"
-    echo -e "  - ${BOLD}Endpoint:${RESET} ${BLUE}http://localhost:4000${RESET}"
+    echo -e "  - ${BOLD}Access:${RESET}   ${MAGENTA}http://localhost:4000${RESET}"
     echo -e "  - ${BOLD}Manage:${RESET}   Run commands from ${BLUE}$LITELLM_DIR${RESET}"
     echo -e "    - ${GREY}Start/Update: docker compose up -d${RESET}"
     echo -e "    - ${GREY}Stop:         docker compose down${RESET}"
     echo -e "    - ${GREY}Logs:         docker compose logs -f${RESET}"
+    echo -e "  - ${BOLD}Investigate:${RESET}   Run commands from ${BLUE}Anywhere${RESET}"
+    echo -e "    - ${GREY}Network:      docker network ls${RESET}"
+    echo -e "    - ${GREY}Volumes:      docker volume ls${RESET}"
     return 0
 }
 
@@ -2123,7 +2117,7 @@ showUfwStatus() {
 
 main() {
     doEarlyExitJobs "$1"
-    checkOSCategory
+    checkOSAndArch
     createEssentialPaths
     if [ "$fOSCategory" == "debian" ]; then
         doCoreJobs
