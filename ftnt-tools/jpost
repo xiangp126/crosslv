@@ -80,7 +80,7 @@ echo -e "Spawned Command: ${COLOR}$spawnCmd${RESET}"
 
 expect -c "
     spawn -noecho $spawnCmd
-    set timeout 70
+    set timeout 30
     expect {
         {yes/no} {
             send \"yes\r\"
@@ -88,6 +88,10 @@ expect -c "
         }
         -re {[Uu]sername} {
             send \"$ftntUser\r\"
+            exp_continue
+        }
+        {There will be no update for a discarded REVIEW_REQUEST} {
+            send \"C\r\"
             exp_continue
         }
         -re {[Pp]assword} {

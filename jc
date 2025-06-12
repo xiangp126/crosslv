@@ -366,19 +366,19 @@ aptInstallPrerequisites() {
     [ -z "$fPrerequisitesForce" ] && return
     checkSudoPrivilege
     local prerequisitesForUbuntu=(
-        tmux # Basic tools
+        tmux # Terminal multiplexer
         vim
-        # rsync
+        # rsync # Remote file sync
         fd-find # fd
         ripgrep # rg
         universal-ctags
         openssl
         libssl-dev
-        gdb
         bat
         curl
-        # Recommended Chinese fonts for good character display
-        fonts-noto-cjk
+        netcat # nc
+        socat  # socat
+        fonts-noto-cjk # Recommended Chinese fonts
         fonts-wqy-microhei
         fonts-wqy-zenhei
         jq # JSON parser
@@ -400,6 +400,7 @@ aptInstallPrerequisites() {
         nodejs # Node.js
         npm
         build-essential # build essentials
+        gdb
         cmake
         libboost-all-dev
         gnupg
@@ -408,11 +409,11 @@ aptInstallPrerequisites() {
         sqlite3
         libsqlite3-dev
         libpcap-dev
+        qemu-kvm # QEMU and KVM
+        qemu-utils
         libvirt-daemon-system # libvirt
         libvirt-clients
         virt-manager
-        qemu-kvm
-        qemu-utils
         texinfo
         libisl-dev
         libgmp-dev

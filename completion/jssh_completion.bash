@@ -5,7 +5,7 @@ _jssh_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-t -l -u -p -P -d -h -c -C -J -L -R -v -S -T -X -m"
+    opts="-t -l -u -p -P -d -h -c -J -L -R -v -S -T -X -m"
 
     # List of all long options
     long_opts="--target --username --password --port --debug --help \
@@ -53,15 +53,7 @@ _jssh_complete() {
         # Mount options
         -m|--mount)
             # Directory completion
-            if [[ -d "$HOME/Media" ]]; then
-                local mountOpts
-                mountOpts=$(find "$HOME/Media" -mindepth 1 -maxdepth 1 -type d)
-                if [[ -z "$mountOpts" ]]; then
-                    mountOpts="$HOME/Media"
-                fi
-                local IFS=$'\n'
-                COMPREPLY=( $(compgen -W "${mountOpts}" -- "${cur}") )
-            fi
+            COMPREPLY=( $(compgen -W "$HOME/Media" -- "${cur}") )
             return 0
             ;;
 
@@ -74,10 +66,10 @@ _jssh_complete() {
             ;;
 
         # Command options with complex commands
-        -c|--command)
+        --command)
             local commands=(
                 # Capture all traffic except SSH, ARP, X11, and STP
-                "tcpdump -i any -s 0 -U -n -w - \'not port 22 and not arp and not port 6010 and not stp\'"
+                "tcpdump -i any -s 0 -l -U -n \'not port 22 and not arp and not port 6010 and not stp\'"
             )
             # The IFS variable is used to control how strings are split into fields. By default, it is set to whitespace.
             local IFS=$'\n'
@@ -87,9 +79,13 @@ _jssh_complete() {
 
         # TLS key log file options
         --tls-keylog-file)
-            # Directory completion
-            local params="$HOME/mmt/${SSLKEYLOGFILE##*/}"
-            COMPREPLY=( $(compgen -W "${params}" -- ${cur}) )
+            local mountPaths
+            mountPaths=$(find "$HOME/Media" -mindepth 1 -maxdepth 1 -type d)
+            if [[ -z "$mountPaths" ]]; then
+                mountPaths="$HOME/Media"
+            fi
+            local IFS=$'\n'
+            COMPREPLY=( $(compgen -W "${mountPaths}/${SSLKEYLOGFILE##*/}" -- "${cur}") )
             return 0
             ;;
 
