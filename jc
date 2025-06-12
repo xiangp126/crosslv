@@ -368,7 +368,7 @@ aptInstallPrerequisites() {
     local prerequisitesForUbuntu=(
         tmux # Basic tools
         vim
-        rsync
+        # rsync
         fd-find # fd
         ripgrep # rg
         universal-ctags
@@ -577,7 +577,7 @@ stopUnnecessaryServices() {
         "cups.service"          # CUPS (Common UNIX Printing System)
         "nmbd.service"          # NetBIOS Name Service
         "xrdp.service"          # Remote Desktop Protocol
-        "ufw.service"           # Uncomplicated Firewall
+        # "ufw.service"           # Uncomplicated Firewall
     )
     for service in "${services_to_manage[@]}"; do
         stopAndDisableDaemonService "$service"
@@ -897,6 +897,7 @@ createEssentialPaths() {
         "$fBackupDir"
         "$HOME/Downloads"
         "$HOME/Templates"
+        "$HOME/Media"
         "$HOME/.vnc"
         "$HOME/.bash_completion.d"
         "$HOME/.usr/bin"
@@ -908,10 +909,10 @@ createEssentialPaths() {
 
     for dir in "${dirsToCheck[@]}"; do
         if [ ! -d "$dir" ]; then
-            echo -e "${LIGHTYELLOW}Creating directory: ${BLUE}$dir${RESET}"
+            echo -e "${LIGHTYELLOW}  Creating directory: ${BLUE}$dir${RESET}"
             mkdir -p "$dir"
             if [ $? -ne 0 ]; then
-                echo -e "${RED}Error: Failed to create directory $dir${RESET}"
+                echo -e "${RED}  Error: Failed to create directory $dir${RESET}"
                 exit 1
             fi
         fi
@@ -2115,8 +2116,7 @@ showUfwStatus() {
     if ! command -v ufw &> /dev/null || sudo ufw status | grep -qw "Status: inactive"; then
         return
     fi
-    echo -e "${COLOR}Checking UFW Firewall Status...${RESET}"
-    # echo -e "${BOLD}${LIGHTYELLOW}UFW Firewall Status:${RESET}"
+    echo -e "${COLOR}Checking UFW Firewall Status${RESET}"
     sudo ufw status verbose
     echo -e "${LIGHTYELLOW}Tip: Common UFW commands:${RESET}"
     echo -e "  ${GREY}- sudo ufw status        : Check if the firewall is active.${RESET}"

@@ -66,13 +66,12 @@ fmountWithSSHfs=
 fFSOptions=
 fFSMountPoint=
 fFSRemoteDir=
-fFSDemoMountPoint="$HOME/mmt"
+fFSDemoMountPoint="$HOME/Media/mmt"
 fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o auto_cache -o uid=$(id -u) -o gid=$(id -g)"
 # COLORS
 RED='\033[31m'
 LIGHTRED='\033[91m'
 MAGENTA='\033[35m'
-LIGHTCYAN='\033[96m'
 PURPLE='\033[35m'
 LIGHTYELLOW='\033[93m'
 GREEN='\033[32m'
@@ -431,7 +430,10 @@ parseVars() {
         fi
 
         fFSMountPoint=$mpoint
-        if [ ! -d "$fFSMountPoint" ]; then
+        if [ "$fFSMountPoint" == "$HOME/Media" ]; then
+            [ ! -d "$HOME/Media/$fTarget" ] && mkdir -p "$HOME/Media/$fTarget"
+            fFSMountPoint="$HOME/Media/$fTarget"
+        elif [ ! -d "$fFSMountPoint" ]; then
             echo -e "$USER_NOTATION ${COLOR}Mountpoint $fFSMountPoint does not exist.${RESET}" 2>&1
             exit 1
         fi
@@ -617,7 +619,8 @@ makeSpawnCmd() {
 
         "$SSHFS_MODE")
             # Do not use expect to spawn sshfs session, as it will not work as expected
-            param="$fFSBasicMountParams -o StrictHostKeyChecking=no -o sshfs_debug -o password_stdin"
+            # Add -o sshfs_debug for debugging
+            param="$fFSBasicMountParams -o StrictHostKeyChecking=no -o password_stdin"
 
             # Case: with Jump Server
             if [ -n "$fNeedJumpServer" ]; then

@@ -53,8 +53,15 @@ _jssh_complete() {
         # Mount options
         -m|--mount)
             # Directory completion
-            local params=":$HOME/mmt"
-            COMPREPLY=( $(compgen -W "${params}" -- ${cur}) )
+            if [[ -d "$HOME/Media" ]]; then
+                local mountOpts
+                mountOpts=$(find "$HOME/Media" -mindepth 1 -maxdepth 1 -type d)
+                if [[ -z "$mountOpts" ]]; then
+                    mountOpts="$HOME/Media"
+                fi
+                local IFS=$'\n'
+                COMPREPLY=( $(compgen -W "${mountOpts}" -- "${cur}") )
+            fi
             return 0
             ;;
 
