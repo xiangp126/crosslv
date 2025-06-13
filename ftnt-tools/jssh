@@ -37,6 +37,7 @@ fSSHpassInstalled=
 fUseWireshark=
 [ -n "$SSLKEYLOGFILE" ] && fTlsKeyFileName=${SSLKEYLOGFILE##*/} || fTlsKeyFileName=".ssl-keys.log"
 fTlsKeyLogFile= # Set the path to the TLS key log file for Wireshark
+fSocatListenPort="5555"
 # Jump Server
 fNeedJumpServer=
 fJumpOptions=
@@ -568,6 +569,19 @@ makeSpawnCmd() {
                         fTlsKeyLogFile="$HOME/${fTlsKeyFileName}"
                     fi
                 fi
+                # Help message to use socat on the remote device
+                echo -e "${GREEN}☞${GREY} You can use the following command on the remote device to forward traffic:${RESET}"
+                echo -e "socat TCP-L:$fSocatListenPort,fork,reuseaddr EXEC:\"tcpdump -i any -s 0 -U -n -w - 'not port 22 and not arp and not port 6010 and not stp'\""
+                echo -e "${GREEN}☞${GREY} You can use the following command on the remote device to stop traffic capture:${RESET}"
+                echo -e "pkill socat"
+                echo -e "${GREEN}☞${GREY} On Local Machine, you can use the following command to receive traffic:${RESET}"
+                echo -e "nc $fTarget $fSocatListenPort | wireshark -o \"tls.keylog_file:${fTlsKeyLogFile}\" -k -i -"
+                echo -e "${GREEN}☞${GREY} Sometimes the TLS traffic is not decrypted immediately.${RESET}"
+                echo -e "${GREEN}☞${GREY} You can use the following steps to decrypt the traffic:${RESET}"
+                echo -e "1. Select one TLS traffic packet${RESET}"
+                echo -e "2. Right Click 'Decode As'${RESET}"
+                echo -e "3. Remove all existing rules (Optional)${RESET}"
+                echo -e "4. Click 'OK'${RESET}"
                 fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\" | wireshark -o \"tls.keylog_file:${fTlsKeyLogFile}\" -k -i -"
             else
                 # fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\""

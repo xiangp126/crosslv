@@ -376,7 +376,7 @@ aptInstallPrerequisites() {
         libssl-dev
         bat
         curl
-        netcat # nc
+        netcat-openbsd # netcat
         socat  # socat
         fonts-noto-cjk # Recommended Chinese fonts
         fonts-wqy-microhei

@@ -73,7 +73,7 @@ _jssh_complete() {
             )
             # The IFS variable is used to control how strings are split into fields. By default, it is set to whitespace.
             local IFS=$'\n'
-            COMPREPLY=( \"$(compgen -W "${commands[@]}" -- "$cur")\" )
+            COMPREPLY=( \"$(compgen -W "${commands[*]}" -- "$cur")\" )
             return 0
             ;;
 
