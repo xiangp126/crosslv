@@ -8,10 +8,9 @@ _jssh_complete() {
     opts="-t -l -u -p -P -d -h -c -J -L -R -v -S -T -X -m"
 
     # List of all long options
-    long_opts="--target --username --password --port --debug --help \
-               --command --wireshark --jump --jump-password \
-               --local-forward --reverse-forward --vdom --sftp --telnet \
-               --x11 --mount --get-system-status --tls-keylog-file"
+    long_opts="--target --username --password --port --debug --help --command --wireshark \
+               --jump --jump-password --local-forward --reverse-forward --vdom --sftp --telnet \
+               --x11 --mount --get-system-status --tls-keylog-file --spawned-cmd-only --identity-file"
 
     # Function to get hosts from /etc/hosts
     _get_hosts() {
@@ -60,8 +59,9 @@ _jssh_complete() {
         # Port forwarding options
         -L|--local-forward|-R|--reverse-forward)
             # Common port forwarding patterns
-            local forwards="127.0.0.1:8880:172.18.52.37:22"
-            COMPREPLY=( $(compgen -W "${forwards}" -- ${cur}) )
+            local forwards=("127.0.0.1:8880:172.18.52.37:22 -J corsair@172.16.67.180:22")
+            local IFS=$'\n'
+            COMPREPLY=( $(compgen -W "${forwards[*]}" -- "${cur}") )
             return 0
             ;;
 
@@ -74,6 +74,11 @@ _jssh_complete() {
             # The IFS variable is used to control how strings are split into fields. By default, it is set to whitespace.
             local IFS=$'\n'
             COMPREPLY=( \"$(compgen -W "${commands[*]}" -- "$cur")\" )
+            return 0
+            ;;
+
+        -i|--identity-file)
+            COMPREPLY=( $(compgen -W "$(find $HOME/.ssh -type f -printf '%p\n')" -- "${cur}") )
             return 0
             ;;
 

@@ -12,6 +12,8 @@ LOCAL_FORWARD="LOCAL_FORWARD"
 REVERSE_FORWARD="REVERSE_FORWARD"
 # SHARED VARIABLES
 fMode=$SSH_MODE
+fIdentityFile=
+fSpawnCmdOnly=
 # Match "$ ", "# " or "sftp> " at the end of the line
 fGroupPattern='(\$|#|sftp>)\s*$' # For Literal Interpretation, use single quotes
 fDollarPattern='\$\s*$'
@@ -52,10 +54,10 @@ fForwardTarget=
 fForwardTargetPort=
 # Local Forward
 fLFLocalLisAddr="127.0.0.1"
-fLFLocalLisPort="8881"
+fLFLocalLisPort=("8880")
 # Reverse Forward
 fRFRemoteLisAddr="127.0.0.1"
-fRFRemoteLisPort="1080"
+fRFRemoteLisPort=("8881")
 # SSHFS Variables
 fmountWithSSHfs=
 fFSOptions=
@@ -85,11 +87,13 @@ Basic Options:
     -l/-u, --username       Username for login (default: $fTargetUser)
     -p, --password          Password for login (default: $fTargetPwd)
     -P, --port              SSH Port to connect to (default: $fTargetPort)
+    -i, --identity-file     SSH identity file
     -d, --debug             Enable debug mode (-vvv)
     -c, --command           Execute commands remotely without opening an interactive login session
     --wireshark             Live capture packets from the remote device
     --tls-keylog-file       Set the path to the TLS key log file
     --get-system-status     Get the system status of the target device
+    --spawned-cmd-only      Only show the spawned command
 
 Forward Options:
     -L, --local-forward     Format: [local_listen_addr:]local_listen_port:target_listen_addr:target_listen_port
@@ -155,9 +159,10 @@ parseOptions() {
     [[ $# -eq 0 ]] && help
     fInputCmd="$SCRIPT_NAME $*"
 
-    SHORTOPTS="t:l:u:p:P:dc:J:L:R:v:TSm:Xh"
+    SHORTOPTS="ht:l:u:p:P:dc:J:L:R:v:TSm:Xi:"
     LONGOPTS="help,target:,username:,password:,port:,debug,command:,wireshark,jump:,jump-password:,\
-    local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status,tls-keylog-file:"
+    local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status,tls-keylog-file:,\
+    spawned-cmd-only,identity-file:"
     # Use getopt to parse command-line options
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
         echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -189,6 +194,10 @@ parseOptions() {
                 fTargetPort="$2"
                 shift 2
                 ;;
+            -i|--identity-file)
+                fIdentityFile="$2"
+                shift 2
+                ;;
             -c|--command)
                 fSSHCmd="$2"
                 if [ -n "$fSSHCmd" ]; then
@@ -203,6 +212,10 @@ parseOptions() {
             --tls-keylog-file)
                 fTlsKeyLogFile="$2"
                 shift 2
+                ;;
+            --spawned-cmd-only)
+                fSpawnCmdOnly=true
+                shift
                 ;;
             -L|--local-forward)
                 fForwardMode=$LOCAL_FORWARD
@@ -463,14 +476,14 @@ sanityCheck() {
     if [ -n "$fForwardMode" ]; then
         if [ -z "$fNeedJumpServer" ]; then
             COLOR=$MAGENTA
-            echo -e "${COLOR}Local Forward requires a Jump Server to be set as well.${RESET}"
+            echo -e "${COLOR}Local/Remote Forward requires a Jump Server to be set as well.${RESET}"
             exit 1
         fi
 
         # Local Forward and Reverse Forward are mutually exclusive
         if [ -n "$fLocalForward" ] && [ -n "$fReverseForward" ]; then
             COLOR=$MAGENTA
-            echo -e "${COLOR}Local Forward and Reverse Forward cannot be set at the same time.${RESET}"
+            echo -e "${COLOR}Local/Remote Forward cannot be set at the same time.${RESET}"
             exit 1
         fi
         fVdom=""
@@ -534,7 +547,11 @@ makeSpawnCmd() {
             ;;
         esac
         param="${param%"${param##*[![:space:]]}"}"
-        cmd="ssh -N $param $fJumpUser@$fJumpServer"
+        if [ -n "$fIdentityFile" ]; then
+            cmd="ssh -N $param -i $fIdentityFile $fJumpUser@$fJumpServer"
+        else
+            cmd="ssh -N $param $fJumpUser@$fJumpServer"
+        fi
         fSpawnCmd="$cmd $keepAlive"
         return
     fi
@@ -656,8 +673,12 @@ displayInfo() {
         ;;
     *)
         echo -e "${BOLD}Target Options:${RESET}" >&2
-        echo -e "[l] Username: ${COLOR}$fTargetUser${RESET}" >&2
-        echo -e "[p] Password: ${COLOR}$fTargetPwd${RESET}" >&2
+        if [ -n "$fIdentityFile" ]; then
+            echo -e "[i] Identity File: ${COLOR}$fIdentityFile${RESET}" >&2
+        else
+            echo -e "[l] Username: ${COLOR}$fTargetUser${RESET}" >&2
+            echo -e "[p] Password: ${COLOR}$fTargetPwd${RESET}" >&2
+        fi
         echo -e "[P] ConnPort: ${COLOR}$fTargetPort${RESET}" >&2
         echo -e "[t] TargetDev: ${COLOR}$fTarget${RESET}" >&2
         if [ -n "$fVdom" ]; then
@@ -680,8 +701,12 @@ displayInfo() {
         echo -e "${BOLD}Jump Server Options:${RESET}" >&2
         echo -e "[J] Jump Server:  ${COLOR}$fJumpServer${RESET}" >&2
         echo -e "[-] Jump SrvPort: ${COLOR}$fJumpPort${RESET}" >&2
-        echo -e "[-] Jump Username: ${COLOR}$fJumpUser${RESET}" >&2
-        echo -e "[-] Jump Password: ${COLOR}$fJumpPwd${RESET}" >&2
+        if [ -n "$fIdentityFile" ]; then
+            echo -e "[-] Jump Identity File: ${COLOR}$fIdentityFile${RESET}" >&2
+        else
+            echo -e "[-] Jump Username: ${COLOR}$fJumpUser${RESET}" >&2
+            echo -e "[-] Jump Password: ${COLOR}$fJumpPwd${RESET}" >&2
+        fi
         if [ -z "$fJumpServer" ] || [ -z "$fJumpUser" ]; then
             echo -e "${MAGENTA}Jump Server and its credentials are not set properly.${RESET}" >&2
             exit 1
@@ -698,6 +723,7 @@ displayInfo() {
     spawnedCmdDisplay=$(echo "$spawnedCmdDisplay" | tr -s ' ')
     echo -e "${BOLD}Spawned Command:${RESET}" >&2
     echo -e "${COLOR}$spawnedCmdDisplay${RESET}" >&2
+    [ -n "$fSpawnCmdOnly" ] && exit 0 # Only print the spawned command
 
     echo "$SEPARATOR" >&2
     if [ -n "$fForwardMode" ]; then
@@ -837,6 +863,7 @@ loginViaExpect() {
             }
 
             # Main expect block
+            set timeout 20
             expect {
                 {yes/no} {
                     send \"yes\r\"

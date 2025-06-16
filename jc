@@ -314,7 +314,7 @@ checkTlsConnection() {
         exit 1
     else
         echo -e "${RED}✗${GREY} TLS connection failed for another reason (Exit Code: $curlExitCode).${RESET}"
-        echo -e "${LIGHTYELLOW}☞ ${GREY}Details: \n$(echo "$curlOutput" | sed 's/curl: ([0-9]\+) //')${RESET}"
+        echo -e "${GREY}☞ Details: \n$(echo "$curlOutput" | sed 's/curl: ([0-9]\+) //')${RESET}"
     fi
 }
 
@@ -2093,6 +2093,7 @@ doCoreJobs() {
 }
 
 doEarlyExitJobs() {
+    checkTlsConnection
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fSambaServer" ]         && { installSambaServer; exit 0; }
     case "$fVncServer" in
