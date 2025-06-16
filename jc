@@ -309,12 +309,12 @@ checkTlsConnection() {
         echo -e "${GREEN}✔${GREY} TLS connection successful. Certificate is trusted.${RESET}"
     elif [ $curlExitCode -eq 60 ]; then
         echo -e "${RED}✗${GREY} TLS connection failed: Certificate validation error.${RESET}"
-        echo -e "${LIGHTYELLOW}  This is often due to a corporate proxy (Man-in-the-Middle).${RESET}"
+        echo -e "${RED}  This is often due to a corporate proxy (Man-in-the-Middle).${RESET}"
         echo -e "${GREY}☞ Details: \n$(echo "$curlOutput" | sed 's/curl: (60) //')${RESET}"
         exit 1
     else
         echo -e "${RED}✗${GREY} TLS connection failed for another reason (Exit Code: $curlExitCode).${RESET}"
-        echo -e "${GREY}☞ Details: \n$(echo "$curlOutput" | sed 's/curl: ([0-9]\+) //')${RESET}"
+        echo -e "${LIGHTYELLOW}☞ ${GREY}Details: \n$(echo "$curlOutput" | sed 's/curl: ([0-9]\+) //')${RESET}"
     fi
 }
 
@@ -368,7 +368,7 @@ aptInstallPrerequisites() {
     local prerequisitesForUbuntu=(
         tmux # Terminal multiplexer
         vim
-        # rsync # Remote file sync
+        rsync # Remote file sync
         fd-find # fd
         ripgrep # rg
         universal-ctags
