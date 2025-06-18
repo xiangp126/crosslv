@@ -166,7 +166,7 @@ checkDepends() {
 #    - Rarely used, mainly for legacy applications
 GetClipboardContent() {
     if [ -z "$fQuery" ] && [ -n "$DISPLAY" ]; then
-        fQuery=$(xsel -o -p 2> /dev/null)
+        fQuery=$(timeout 1 xsel -o -p 2> /dev/null)
         if [[ $? -ne 0 ]]; then
             echo -e "${COLOR}Error: Failed to get PRIMARY clipboard content.${RESET}"
             echo -e "${COLOR}Please check the status of the X server (XLaunch/VcXsrv on Windows).${RESET}"
@@ -178,7 +178,7 @@ GetClipboardContent() {
 
 ClearClipboard() {
     if [ -n "$fQueryFromClipboard" ]; then
-        xsel -c -p 2> /dev/null
+        timeout 1 xsel -c -p 2> /dev/null
         if [[ $? -ne 0 ]]; then
             echo -e "${COLOR}Error: Failed to clear PRIMARY clipboard content${RESET}"
             exit 1

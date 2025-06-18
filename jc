@@ -257,6 +257,8 @@ while true; do
             exit 0
             ;;
         --upgrade)
+            echo -e "${COLOR}Updating all packages${RESET}"
+            sudo apt update -y
             echo -e "${COLOR}Upgrading all packages${RESET}"
             sudo apt upgrade -y
             shift
@@ -393,6 +395,7 @@ aptInstallPrerequisites() {
         shellcheck
         net-tools
         nftables
+        inetutils-traceroute
         bash-completion
         openssh-server
         python3-dev

@@ -20,8 +20,15 @@ _jssh_complete() {
     # Handle option arguments
     case $prev in
         # Target and Jump server options
-        -t|--target|-J|--jump)
+        -t|--target)
             COMPREPLY=( $(compgen -W "$(_get_hosts)" -- ${cur}) )
+            return 0
+            ;;
+
+        -J|--jump)
+            local jump=("corsair@172.16.67.180:22")
+            local IFS=$'\n'
+            COMPREPLY=( $(compgen -W "${jump[*]}" -- "${cur}") )
             return 0
             ;;
 
