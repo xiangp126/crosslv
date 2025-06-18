@@ -2093,7 +2093,6 @@ doCoreJobs() {
 }
 
 doEarlyExitJobs() {
-    checkTlsConnection
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fSambaServer" ]         && { installSambaServer; exit 0; }
     case "$fVncServer" in
