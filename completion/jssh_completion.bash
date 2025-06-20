@@ -76,7 +76,7 @@ _jssh_complete() {
         --command)
             local commands=(
                 # Capture all traffic except SSH, ARP, X11, and STP
-                "tcpdump -i any -s 0 -l -U -n \'not port 22 and not arp and not port 6010 and not stp\'"
+                "tcpdump -i any -s 0 -l -U -n -w - \'not port 22 and not arp and not port 6010 and not stp\'"
             )
             # The IFS variable is used to control how strings are split into fields. By default, it is set to whitespace.
             local IFS=$'\n'

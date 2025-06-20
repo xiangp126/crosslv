@@ -70,7 +70,7 @@ set prompt (gdb)
 set confirm off
 set print pretty on
 set pagination off
-# Set the limit for string/array elements (Default: 250)
+# Set the limit for string/array elements (Default: 250, 0 for unlimit)
 set print elements 350
 
 # Debugging settings

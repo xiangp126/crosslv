@@ -579,6 +579,7 @@ stopUnnecessaryServices() {
     checkNetworkManagerStatus
     local services_to_manage=(
         "cups.service"          # CUPS (Common UNIX Printing System)
+        "cups-browsed.service"  # CUPS Browser Support
         "nmbd.service"          # NetBIOS Name Service
         "xrdp.service"          # Remote Desktop Protocol
         # "ufw.service"           # Uncomplicated Firewall

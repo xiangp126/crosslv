@@ -198,18 +198,13 @@ displayInfo() {
     if [ "$fWADWorkerCnt" -ge 0 ]; then
         echo -e "[N] Set WAD Worker Count to: ${COLOR}$fWADWorkerCnt${RESET}"
     fi
-    echo -e "${GREY}Connecting to $fTarget ...${RESET}"
+    echo -e "${GREY}Connecting to $fTarget...${RESET}"
     echo $SEPARATOR_RT
 }
 
 attachDGBServer() {
     # expect -d -c "
     expect -c "
-        # Set your SSH credentials
-        set i 1
-        set timeout 6
-        set has_vdom 0
-
         # Define ANSI color codes with capitalized names
         # Full list can be found here: http://en.wikipedia.org/wiki/ANSI_escape_code
         # https://stackoverflow.com/questions/12879483/color-texts-at-expect-shell
@@ -225,6 +220,10 @@ attachDGBServer() {
         set LIGHTGREEN \"\033\[92m\"
         set LIGHTYELLOW \"\033\[93m\"
 
+        # Set your SSH credentials
+        set i 1
+        set timeout 30
+        set has_vdom 0
         while {\$i <= $fMaxAttempts} {
             if {\$i > 1} {
                 puts stderr \"$USER_NOTATION Login attempt \$i/$fMaxAttempts\"

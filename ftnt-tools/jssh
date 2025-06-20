@@ -795,7 +795,7 @@ loginViaExpect() {
         proc tcpdump_set_setuid  {} {
             global LIGHTYELLOW MAGENTA RESET
             set COLOR \$LIGHTYELLOW
-            set remote_cmd {sudo chmod u+s \`which tcpdump\` && ls -l \`which tcpdump\`}
+            set remote_cmd {echo '$fTargetPwd' | sudo -S chmod u+s \`which tcpdump\` && ls -l \`which tcpdump\`}
 
             puts stderr \"\${COLOR}Set the setuid bit for tcpdump on $fTarget\n\${RESET}\"
             if {\"$fNeedJumpServer\" != \"\"} {
