@@ -171,7 +171,7 @@ class PrintMemory(gdb.Command):
         super(PrintMemory, self).__init__(name, gdb.COMMAND_USER)
         self.parser = self.create_parser()
         self.max_size_to_calc_decimal = 8
-        self.max_print_size = 120
+        self.max_print_size = 1000
         self.ojb_size = 0
         self.wad_addr_type = "wad_addr"
         self.ip_addr_t_type = "ip_addr_t"

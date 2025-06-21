@@ -127,6 +127,8 @@ document ftnt
     If sysroot_path is not specified, current directory is used.
     Use 'info sharedlibrary' to check the shared library status.
 end
+# Execute it immediately
+ftnt
 
 # Reload the binary and source code after the binary is updated
 define reload
@@ -148,5 +150,38 @@ document undefine-hook-stop
     Example: undefine-hook-stop
 end
 
-# Initialize shared library paths
-ftnt
+define ps
+    if $argc != 2
+        printf "Usage: ps <address> <size>\n"
+    else
+        eval "p *((char[%d] *)($arg0))", $arg1
+    end
+end
+document ps
+    Prints a char array of a specific size from a given memory address.
+    Usage: ps <address> <size>
+    Example: ps 0x7fb6fbc31c48 4
+end
+
+define find_non_empty_buckets
+  if $argc != 1
+    printf "Usage: find_non_empty_buckets <address_of_wad_hash_map>\n"
+  else
+    set $map = (struct wad_hash_map *)$arg0
+    set $buckets_addr = $map->buckets
+    set $num_buckets = $map->n_buckets
+    set $i = 0
+    printf "Scanning %d buckets in hash map at %p...\n", $num_buckets, $map
+    while $i < $num_buckets
+      set $head = $buckets_addr + $i
+      if $head->next != $head
+        printf "  -> Bucket %d is NOT EMPTY. next -> %p\n", $i, $head->next
+      end
+      set $i = $i + 1
+    end
+  end
+end
+document find_non_empty_buckets
+  Finds and prints the indices of non-empty buckets in a wad_hash_map.
+  Usage: find_non_empty_buckets <address_of_wad_hash_map>
+end
