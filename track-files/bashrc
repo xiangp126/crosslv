@@ -235,11 +235,11 @@ FZF_DEFAULT_OPTS="--layout=reverse \
 FZF_DEFAULT_OPTS=${FZF_DEFAULT_OPTS//+([[:space:]])/ }
 export FZF_DEFAULT_OPTS
 # Use \ as the trigger sequence instead of the default **. Followed by a TAB
-export FZF_COMPLETION_TRIGGER='\'
+export FZF_COMPLETION_TRIGGER='*'
 # Options to fzf command
 export FZF_COMPLETION_OPTS='+c -x'
 
 # For fzf-tab-completion vim plugin
-bind -r "*\t"
-bind -x '"*\t": fzf_bash_completion'
+bind -r "\\\t"
+bind -x '"\\\t": fzf_bash_completion'
 [ -d "$HOME/.vscode-server" ] && __set_vscode_code_path
