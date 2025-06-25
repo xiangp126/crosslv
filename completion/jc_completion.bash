@@ -7,12 +7,12 @@ _jc_complete() {
 
     # Define command options
     opts="-h -n -d -f"
-    long_opts="--help --no-tools --debug --clangd --link-clang-format --link-nodejs \
+    long_opts="--help --no-tools --debug --clangd --link-clang-format --nvm --wireshark \
                --auto-remove --upgrade --docker --prerequisite --chinese-pinyin \
                --vnc-start --vnc-stop --unlock-vnc --lock-vnc --vnc-restart --vnc \
                --firefox --update --opengrok-start --opengrok-stop --opengrok-restart \
-               --opengrok --opengrok-indexer --samba --samba-bypass-password --wireshark \
-               --git-lfs --litellm-start --litellm-stop --litellm-restart --litellm"
+               --opengrok --opengrok-indexer --samba --samba-bypass-password --git-lfs \
+               --litellm-start --litellm-stop --litellm-restart --litellm"
 
     if [[ ${cur} == -* ]]; then
         # If it starts with --, only suggest long options

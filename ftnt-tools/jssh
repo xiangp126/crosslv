@@ -588,7 +588,7 @@ makeSpawnCmd() {
                 fi
                 # Help message to use socat on the remote device
                 echo -e "${GREEN}☞${GREY} You can use the following command on the remote device to forward traffic:${RESET}"
-                echo -e "socat TCP-L:$fSocatListenPort,fork,reuseaddr EXEC:\"tcpdump -i any -s 0 -U -n -w - 'not port 22 and not arp and not port 6010 and not stp'\""
+                echo -e "socat TCP-LISTEN:$fSocatListenPort,fork,reuseaddr EXEC:\"tcpdump -i any -s 0 -U -n -w - 'not port 22 and not arp and not port 6010 and not stp'\""
                 echo -e "${GREEN}☞${GREY} You can use the following command on the remote device to stop traffic capture:${RESET}"
                 echo -e "pkill socat"
                 echo -e "${GREEN}☞${GREY} On Local Machine, you can use the following command to receive traffic:${RESET}"

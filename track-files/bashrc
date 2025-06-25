@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2155 disable=SC1090
+# shellcheck disable=SC2155 disable=SC1090 disable=SC1091
 
 # If not running interactively, don't do anything
 [ -z "$PS1" ] && return
@@ -163,15 +163,15 @@ unset TMOUT
 # load system bash completion
 if ! shopt -oq posix; then
   if [ -f /usr/share/bash-completion/bash_completion ]; then
-    . /usr/share/bash-completion/bash_completion
+    source /usr/share/bash-completion/bash_completion
   elif [ -f /etc/bash_completion ]; then
-    . /etc/bash_completion
+    source /etc/bash_completion
   fi
 fi
 # For MacOS only, load homebrew bash completion
 if [[ -d /usr/local/etc/bash_completion.d ]]; then
     for file in /usr/local/etc/bash_completion.d/*; do
-        [[ -L $file ]] && . "$file"
+        [[ -L $file ]] && source "$file"
     done
 fi
 # Load custom bash completions
@@ -181,11 +181,14 @@ if [ -d "$TK_COMPLETION_SELF" ]; then
         [[ -f $file ]] && source "$file"
     done
 fi
-
 # Load xprofile - bash profile for X11
 if [ -f ~/.xprofile ]; then
-    . ~/.xprofile
+    source ~/.xprofile
 fi
+# Load nvm and nvm bash completion
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && source "$NVM_DIR/bash_completion"
 
 # Settings for fzf -- the fuzzy finder
 # Use fd (https://github.com/sharkdp/fd) instead of the default find
