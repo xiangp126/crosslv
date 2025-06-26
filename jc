@@ -1982,7 +1982,6 @@ installNvmAndNodeJs() {
         printf "  " && nvm --version
         # Link current Node.js version
         [ -n "$(nvm which current 2>/dev/null)" ] && linkFile "$(nvm which current)" "$HOME/.usr/bin" "node"
-        linkNvmCurrNodeJs
         return 0
     else
         local nvmVersion="v0.40.3"
