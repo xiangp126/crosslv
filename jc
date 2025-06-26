@@ -26,10 +26,11 @@ fOSCategory=debian # ubuntu/debian is the default OS type
 fArch=
 fNoInstallTools=
 # VNC server
-fVncSimplePort=9
-fVncRealPort="590${fVncSimplePort}"
+fVncAbbrePort=9
+fVncFullPort="590${fVncAbbrePort}"
 fVncResolution=2060x1080
 fVncServer= # 1: start VNC server; 2: kill VNC server 3: restart VNC server
+fVncLockAction=
 # Docker Container: OpenGrok
 fOpenGrokContainer= # 1: start container; 2: stop container 3: restart container 4: start indexer
 OPENGROK_IMAGE_NAME="opengrok/docker:latest" # You can pin to a specific version, e.g., opengrok/docker:1.7.30
@@ -81,12 +82,15 @@ Common Options:
     --update                        Update all packages
     --upgrade                       Upgrade all packages
 
-VNC Options:
+Vnc Server Options:
     --vnc,--vnc-start               Start VNC server
     --vnc-stop                      Stop VNC server
     --vnc-restart                   Restart VNC server
-    --lock-vnc                      Lock VNC
-    --unlock-vnc                    Unlock VNC
+
+Vnc Lock Options:
+    --vnclock                       Effect options: [unlock|lock|status]
+    --unlock-vnc                    Unlock VNC, equivalent to --vnclock unlock
+    --lock-vnc                      Lock VNC, equivalent to --vnclock lock
 
 LiteLLM Options:
     --litellm,--litellm-start       Start LiteLLM Service
@@ -122,8 +126,9 @@ exit 0
 }
 
 SHORTOPTS="hdnf"
+# Two colons: The option takes an optional argument
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
-          upgrade,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,\
+          upgrade,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
           opengrok-restart,opengrok-indexer,samba,samba-bypass-password,wireshark,git-lfs\
           litellm-start,litellm-stop,litellm-restart,litellm"
@@ -207,15 +212,17 @@ while true; do
             fVncServer=3
             shift
             ;;
+        --vnclock)
+            fVncLockAction="$2"
+            shift 2
+            ;;
         --unlock-vnc)
-            set -x
-            loginctl unlock-session
-            exit 0
+            fVncLockAction="unlock"
+            shift
             ;;
         --lock-vnc)
-            set -x
-            loginctl lock-session
-            exit 0
+            fVncLockAction="lock"
+            shift
             ;;
         --litellm|--litellm-start)
             fLiteLLMService=1
@@ -237,8 +244,8 @@ while true; do
             # $1 is '--link-clang-format'
             # $2 is an empty string '' no matter whether it has an argument
             # The argument if provided will be put in sequence in the positional parameters
-            # Exp: $ jc huhu --link-clang-format ~/ he
-            #          --link-clang-format '' -- 'huhu' '/home/user1/' 'he'
+            # Exp: $ jc huhu --link-clang-format ~/ leetcode
+            #          --link-clang-format '' -- 'huhu' '/home/user1/' 'leetcode'
             # CRITICAL: Always shift 2 to consume both the option token ($1)
             # and its argument/empty placeholder token ($2).
             fLinkClangFormatPath="$PWD"
@@ -1443,12 +1450,48 @@ linkClangFormat() {
     linkFile "$realClangFormatPath" "$fLinkClangFormatPath" .clang-format
 }
 
+vncLock() {
+    if ! command -v xfce4-screensaver-command &> /dev/null; then
+        echo -e "${RED}Error: xfce4-screensaver-command is not installed.${RESET}" >&2
+        exit 1
+    fi
+    if [ $# -lt 1 ]; then
+        echo -e "${RED}Error: Missing action argument.${RESET}" >&2
+        exit 1
+    fi
+
+    local DISPLAY_NUM=":$fVncAbbrePort"
+    local ACTION="$1"
+    set -x
+    case "$ACTION" in
+        lock)
+            DISPLAY="$DISPLAY_NUM" xfce4-screensaver-command --lock
+            ;;
+        unlock)
+            DISPLAY="$DISPLAY_NUM" xfce4-screensaver-command --deactivate || {
+                echo "Unlock failed. Please check:"
+                echo "1. Correct DISPLAY setting (currently using $DISPLAY_NUM)"
+                echo "2. Screen may require manual password entry"
+                echo "3. Try restarting screensaver: pkill -f xfce4-screensaver"
+                return 1
+            }
+            ;;
+        status)
+            DISPLAY="$DISPLAY_NUM" xfce4-screensaver-command --query
+            ;;
+        *)
+            echo "Usage: $SCRIPT_NAME --vnclock [lock|unlock|status]"
+            return 1
+            ;;
+    esac
+}
+
 isVncServerRunning() {
     if ! command -v tigervncserver &> /dev/null; then
         echo -e "${RED}Error: vncserver is not installed.${RESET}" >&2
         exit 1
     fi
-    if lsof -i :$fVncRealPort | grep --quiet LISTEN; then
+    if lsof -i :$fVncFullPort | grep --quiet LISTEN; then
         return 0
     else
         return 1
@@ -1457,16 +1500,16 @@ isVncServerRunning() {
 
 stopVncServer() {
     if isVncServerRunning; then
-        echo -e "${LIGHTYELLOW}Stopping VNC server on port $fVncRealPort...${RESET}"
-        tigervncserver -kill :$fVncSimplePort
+        echo -e "${LIGHTYELLOW}Stopping VNC server on port $fVncFullPort...${RESET}"
+        tigervncserver -kill :$fVncAbbrePort
     else
-        echo -e "${LIGHTYELLOW}VNC server on port $fVncRealPort is not running.${RESET}"
+        echo -e "${LIGHTYELLOW}VNC server on port $fVncFullPort is not running.${RESET}"
     fi
 }
 
 startVncServer() {
     if isVncServerRunning; then
-        echo -e "${LIGHTYELLOW}VNC server on port $fVncRealPort is already running.${RESET}"
+        echo -e "${LIGHTYELLOW}VNC server on port $fVncFullPort is already running.${RESET}"
         return 0
     fi
     local hostIpAddress=$(hostname -I | awk '{print $1}')
@@ -1478,7 +1521,7 @@ startVncServer() {
     linkFile "$xstartupPath" "$HOME/.vnc" xstartup
     linkFile "$fMainDir/assets/gdm3/custom.conf" "/etc/gdm3" custom.conf
     echo -e "${GREEN}Starting VNC server...${RESET}"
-    local startCmd="tigervncserver :$fVncSimplePort -geometry $fVncResolution -SecurityTypes None -localhost yes -xstartup $xstartupDest"
+    local startCmd="tigervncserver :$fVncAbbrePort -geometry $fVncResolution -SecurityTypes None -localhost yes -xstartup $xstartupDest"
     echo -e "${MAGENTA}$startCmd${RESET}"
     $startCmd
     if [ $? -ne 0 ]; then
@@ -1489,12 +1532,12 @@ startVncServer() {
     sudo lsof -i :5909
     echo -e "${CYAN}===================================================${RESET}"
     echo -e "${BOLD}${LIGHTYELLOW}- On your local machine, setup the SSH tunnel as follows:${RESET}"
-    echo -e "  ${GREEN}Option 1.${RESET} Use Vs Code Port Forward feature to forward the port ${MAGENTA}$fVncRealPort${RESET}"
+    echo -e "  ${GREEN}Option 1.${RESET} Use Vs Code Port Forward feature to forward the port ${MAGENTA}$fVncFullPort${RESET}"
     echo -e "  ${GREEN}Option 2.${RESET} Open a terminal and run the following command:"
-    echo -e "    ${BLUE}ssh -NL ${MAGENTA}$fVncRealPort${BLUE}:localhost:${MAGENTA}$fVncRealPort ${MAGENTA}$hostUsername@$hostIpAddress${RESET}"
-    echo -e "    ${GREY}or simply:${RESET} ${BLUE}ssh -NL ${MAGENTA}$fVncRealPort${BLUE}:localhost:${MAGENTA}$fVncRealPort ${MAGENTA}droplet1${RESET}"
+    echo -e "    ${BLUE}ssh -NL ${MAGENTA}$fVncFullPort${BLUE}:localhost:${MAGENTA}$fVncFullPort ${MAGENTA}$hostUsername@$hostIpAddress${RESET}"
+    echo -e "    ${GREY}or simply:${RESET} ${BLUE}ssh -NL ${MAGENTA}$fVncFullPort${BLUE}:localhost:${MAGENTA}$fVncFullPort ${MAGENTA}droplet1${RESET}"
     echo -e "${BOLD}${LIGHTYELLOW}- Connect to the VNC server using a VNC viewer:${RESET}"
-    echo -e "  ${BLUE}vncviewer localhost:${MAGENTA}$fVncRealPort${RESET}"
+    echo -e "  ${BLUE}vncviewer localhost:${MAGENTA}$fVncFullPort${RESET}"
     echo -e "${CYAN}===================================================${RESET}"
 }
 
@@ -2138,6 +2181,7 @@ doCoreJobs() {
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fSambaServer" ]         && { installSambaServer; exit 0; }
+    [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
     case "$fVncServer" in
         1) startVncServer;       exit 0 ;;
         2) stopVncServer;        exit 0 ;;
