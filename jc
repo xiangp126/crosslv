@@ -713,7 +713,7 @@ linkFile() {
         fi
     done
     if [ "$success" = true ]; then
-        echo -e "   └─ ${GREY}Status:${RESET} ✔  ${GREEN}Success!${RESET}"
+        echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Success!${RESET}"
     else
         echo -e "   └─ ${GREY}Status:${RESET} ❌ ${RED}Failed!${RESET}"
     fi
@@ -882,7 +882,9 @@ createExtraSymlinks() {
     linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
     linkFile "$fzfBinPath" "$HOME/.usr/bin"
     linkFile "$fJCPath" "$HOME/.usr/bin"
-    linkFile "$fMainDir"/assets/vscode/remote.settings.json "$HOME"/.vscode-server/data/Machine "settings.json"
+    if [ -d "$HOME"/.vscode-server/data/Machine ]; then
+        linkFile "$fMainDir"/assets/vscode/remote.settings.json "$HOME"/.vscode-server/data/Machine "settings.json"
+    fi
 }
 
 createEssentialPaths() {
@@ -2014,7 +2016,7 @@ configureTcpdumpCaps() {
     return 0
 }
 
-installNvmAndNodeJs() {
+installNvmNodeJs() {
     echo -e "${COLOR}Installing NVM (Node Version Manager) and Node.js via official script${RESET}"
     local nvmDir="$HOME/.nvm"
     local nvmSh="$nvmDir/nvm.sh"
@@ -2167,7 +2169,7 @@ doCoreJobs() {
     buildBatTheme              # Build bat theme
     buildExtraFonts            # Build extra fonts
     addUserIntoLibvirtGrp      # Add user into libvirt group
-    installNvmAndNodeJs        # Install NVM and Node.js
+    installNvmNodeJs           # Install NVM and Node.js
     installLatestGitLfs        # Install Git LFS (PackageCloud)
     installLatestRimePinyin    # Install Rime Pinyin input method
     installLatestPPaFirefox    # Install Firefox (Mozilla PPA)
