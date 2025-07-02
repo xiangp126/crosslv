@@ -1093,8 +1093,7 @@ EOF
     else
         echo -e "${RED}Warning: 'git lfs install' command failed. You may need to run it manually.${RESET}"
     fi
-
-    echo -e "\n${GREEN}--- Git LFS Installation Process Completed ---${RESET}"
+    echo -e "${GREEN}--- Git LFS Installation Process Completed ---${RESET}"
     git-lfs --version
     return 0
 }
