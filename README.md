@@ -6,23 +6,14 @@
 
 | Tool | Description |
 |:------|-------------|
-| [jc](#jc) | Setting up working environment |
-| [jr](#jr) | Powerful search tool for searching code in large projects |
-| [jt](#jt) | Log file viewer with syntax highlighting |
-
-| Tool | Description |
-|:------|-------------|
-| [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up live packet capture |
-| [jrun](#jrun) | Command Runner by sending commands to a tmux pane running an SSH session |
-| [code](#code) | Wrapper for the `code` command provided by VSCode |
-
-| Tool | Description |
-|:------|-------------|
+| [jc](#jc) | Setting up working environment and links all the following tools |
 | [jmake](#jmake) | Building tool for large C projects |
+| [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up Wireshark live packet capture |
+| [code](#code) | Wrapper for the `code` command provided by VSCode |
+| [jr](#jr) | Powerful search tool for searching code in large projects |
+| [jrun](#jrun) | Command Runner by sending commands to a tmux pane running an SSH session |
+| [jt](#jt) | Log file viewer with syntax highlighting |
 | [jroute](#jroute) | Simple script to switch the default route between available gateways |
-
-| Tool | Description |
-|:------|-------------|
 | [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
 
 ### Other Tools
