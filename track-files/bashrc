@@ -95,7 +95,7 @@ if ! declare -F __set_vscode_code_path &> /dev/null; then
         # Use process substitution to ensure `commitId` is set in the current shell scope, not a subshell.
         # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
         local pidFile currentPid commitId=
-        cd "$searchPath" || exit
+        cd "$searchPath" || return
         while IFS= read -r -d $'\0' pidFile; do
             if [ -f "$pidFile" ]; then
                 currentPid=$(cat "$pidFile" 2>/dev/null)
@@ -112,7 +112,7 @@ if ! declare -F __set_vscode_code_path &> /dev/null; then
         # Step 2: Set the VSCODE_BIN_PATH
         if [[ -z "$commitId" ]]; then
             echo -e "${MAGENTA}Warning: No active VS Code server found under $searchPath.${RESET}" >&2
-            cd - &> /dev/null || exit
+            cd - &> /dev/null || return
             return 1
         fi
         VSCODE_BIN_PATH="$searchPath/$commitId/server/bin/remote-cli/code"
@@ -135,7 +135,7 @@ if ! declare -F __set_vscode_code_path &> /dev/null; then
         export VSCODE_BIN_PATH
 
         # Step 4: Return to the original directory
-        cd - &> /dev/null || exit
+        cd - &> /dev/null || return
     }
     export -f __set_vscode_code_path
 fi
@@ -245,4 +245,4 @@ export FZF_COMPLETION_OPTS='+c -x'
 # For fzf-tab-completion vim plugin
 bind -r "\\\t"
 bind -x '"\\\t": fzf_bash_completion'
-[ -d "$HOME/.vscode-server" ] && __set_vscode_code_path
+[ -d "$HOME/.vscode-server/cli/servers" ] && __set_vscode_code_path

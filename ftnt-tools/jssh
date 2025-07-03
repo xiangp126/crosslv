@@ -766,10 +766,10 @@ doEarlyExitJobs() {
         COLOR=$MAGENTA
         eval "$fSpawnCmd"
         if [ $? -ne 0 ]; then
-            echo -e "${COLOR}Failed to capture packets from $fTarget.${RESET}"
+            echo -e "${COLOR}Failed to capture packets from $fTarget!${RESET}"
             exit 1
         fi
-        echo -e "${COLOR}Live capture from $fTarget completed.${RESET}"
+        echo -e "${COLOR}Live capture from $fTarget completed!${RESET}"
         exit 0
     fi
 }
