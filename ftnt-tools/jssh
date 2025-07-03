@@ -320,32 +320,56 @@ setCredentials() {
     fi
 }
 
+# Function to print BASH_REMATCH array
+printBashRematch() {
+    local COLOR=$MAGENTA
+    if [ ${#BASH_REMATCH[@]} -eq 0 ]; then
+        echo -e "${COLOR}BASH_REMATCH array is empty.${RESET}"
+        return
+    fi
+    for i in "${!BASH_REMATCH[@]}"; do
+        echo -e "${COLOR}BASH_REMATCH[$i]: ${BASH_REMATCH[$i]}${RESET}"
+    done
+}
+
 parseVars() {
     COLOR=$MAGENTA
-    # !! Parse fJumpOptions in the format of user@jumpserver[:port]
+    # !! Parse fJumpOptions in the format of [user@]jumpserver[:port]
     if [ "$fNeedJumpServer" = true ]; then
         # Exp: -J auto@172.18.20.84:2121 or -J auto@172.18.20.84
-        pattern='^([a-zA-Z0-9._%+-]+)@(([0-9]{1,3}\.){3}[0-9]{1,3})(:([0-9]+))?$'
+        # pattern='^([a-zA-Z0-9._%+-]+)@(([0-9]{1,3}\.){3}[0-9]{1,3})(:([0-9]+))?$'
+        # (?: ... )?: This is a non-capturing optional group.
+        pattern='^(([a-zA-Z0-9._%+-]+)@)?([a-zA-Z0-9.-]+)(:([0-9]+))?$'
         fJumpOptions=$(echo "$fJumpOptions" | xargs)
         param=$fJumpOptions
         if [[ $param =~ $pattern ]]; then
-            fJumpUser="${BASH_REMATCH[1]}"
-            fJumpServer="${BASH_REMATCH[2]}"
-            [ -n "${BASH_REMATCH[5]}" ] && fJumpPort="${BASH_REMATCH[5]}"
+            # printBashRematch
+            fJumpServer="${BASH_REMATCH[3]}"
+            if [ -n "${BASH_REMATCH[2]}" ]; then
+                fJumpUser="${BASH_REMATCH[2]}"
+                fJumpPort="${BASH_REMATCH[5]:-22}"
+            else
+                # The default IFS splits on space, tab, or newline
+                # $ printf '%q\n' "$IFS"
+                # $' \t\n'
+                while read -r key value; do
+                    case "$key" in
+                        user) fJumpUser=$value ;;
+                        port) fJumpPort=$value ;;
+                    esac
+                done < <(ssh -G "$fJumpServer" 2>/dev/null)
+            fi
         else
-            echo -e "${COLOR}-J has to be in the format of user@jumpserver[:port]${RESET}" 2>&1
+            echo -e "${COLOR}-J has to be in the format of [user@]jumpserver[:port]${RESET}" 2>&1
             exit 1
         fi
-
-        # # Print the BASH_REMATCH array
-        # for i in "${!BASH_REMATCH[@]}"; do
-        #     echo -e "${COLOR}BASH_REMATCH[$i]: ${BASH_REMATCH[$i]}${RESET}"
-        # done
     fi
 
     # !! Parse $fForwarderOptions in the format of -L [local_listen_address:]local_listen_port:target_addr:target_port
     # Exp: -L 127.0.0.1:8881:10.40.1.101:22 or -L 8881:10.40.1.101:22
     if [ -n "$fForwardMode" ]; then
+        # Replace localhost with 127.0.0.1
+        fForwardOptions=("${fForwardOptions[@]/localhost/127.0.0.1}")
         pattern='^((([0-9]{1,3}\.){3}[0-9]{1,3}):)?([0-9]+):(([0-9]{1,3}\.){3}[0-9]{1,3}):([0-9]+)$'
         for options in "${fForwardOptions[@]:1}"; do
             options=$(echo "$options" | xargs)
@@ -355,20 +379,14 @@ parseVars() {
                 # BASH_REMATCH[1], BASH_REMATCH[2], etc.: Contain the results of any capturing groups in the regex.
                 case $fForwardMode in
                 "$LOCAL_FORWARD")
-                    # [ -n "${BASH_REMATCH[2]}" ] && fLFLocalAddr="${BASH_REMATCH[2]}"
-                    # fLFLocalPort="${BASH_REMATCH[4]}"
                     [ -n "${BASH_REMATCH[2]}" ] && fLFLocalLisAddr+=("${BASH_REMATCH[2]}")
                     fLFLocalLisPort+=("${BASH_REMATCH[4]}")
                     ;;
                 "$REVERSE_FORWARD")
-                    # [ -n "${BASH_REMATCH[2]}" ] && fRFRemoteAddr="${BASH_REMATCH[2]}"
-                    # fRFRemotePort="${BASH_REMATCH[4]}"
                     [ -n "${BASH_REMATCH[2]}" ] && fRFRemoteLisAddr+=("${BASH_REMATCH[2]}")
                     fRFRemoteLisPort+=("${BASH_REMATCH[4]}")
                     ;;
                 esac
-                # fTarget="${BASH_REMATCH[5]}"
-                # fTargetPort="${BASH_REMATCH[7]}"
                 fForwardTarget+=("${BASH_REMATCH[5]}")
                 fForwardTargetPort+=("${BASH_REMATCH[7]}")
             else
@@ -376,11 +394,6 @@ parseVars() {
                 exit 1
             fi
         done
-
-        # # Print the BASH_REMATCH array
-        # for i in "${!BASH_REMATCH[@]}"; do
-        #     echo -e "${COLOR}BASH_REMATCH[$i]: ${BASH_REMATCH[$i]}${RESET}"
-        # done
 
         if [ "$fForwardMode" == "$LOCAL_FORWARD" ]; then
             for port in "${fLFLocalLisPort[@]:1}"; do
@@ -391,8 +404,7 @@ parseVars() {
                 fi
             done
         fi
-        # Skip the rest of the parsing
-        return
+        return # Skip the rest of the parsing
     fi
 
     # !! Parse fTarget in the format of [user@]sshtarget[:port]
@@ -400,19 +412,24 @@ parseVars() {
     pattern='^(([a-zA-Z0-9._%+-]+)@)?([a-zA-Z0-9._%+-]+)(:([0-9]+))?$'
     fTarget=$(echo "$fTarget" | xargs)
     param=$fTarget
-    if [[ $fTarget =~ $pattern ]]; then
-        [ -n "${BASH_REMATCH[2]}" ] && fTargetUser="${BASH_REMATCH[2]}"
+    if [[ $param =~ $pattern ]]; then
+        # printBashRematch
         fTarget="${BASH_REMATCH[3]}"
-        [ -n "${BASH_REMATCH[5]}" ] && fTargetPort="${BASH_REMATCH[5]}"
+        if [ -n "${BASH_REMATCH[2]}" ]; then
+            fTargetUser="${BASH_REMATCH[2]}"
+            fTargetPort="${BASH_REMATCH[5]:-22}"
+        else
+            while read -r key value; do
+                case "$key" in
+                    user) fTargetUser=$value ;;
+                    port) fTargetPort=$value ;;
+                esac
+            done < <(ssh -G "$fTarget" 2>/dev/null)
+        fi
     else
-        echo -e "${COLOR}Target has to be set and in the format of [user@]sshtarget${RESET}"
+        echo -e "${COLOR}Target has to be set and in the format of [user@]sshtarget[:port]${RESET}"
         exit 1
     fi
-
-    # # Print the BASH_REMATCH array
-    # for i in "${!BASH_REMATCH[@]}"; do
-    #     echo -e "${COLOR}BASH_REMATCH[$i]: ${BASH_REMATCH[$i]}${RESET}"
-    # done
 
     # !! Parse fFSOptions in the format of [remote_dir:]mountpoint
     if [ -n "$fmountWithSSHfs" ]; then
@@ -862,8 +879,8 @@ loginViaExpect() {
                 }
             }
 
-            # Main expect block
-            set timeout 20
+            # The Main expect block
+            set timeout [expr {\"$fNeedJumpServer\" != \"\" ? -1 : 20}]
             expect {
                 {yes/no} {
                     send \"yes\r\"

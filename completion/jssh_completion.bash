@@ -66,7 +66,9 @@ _jssh_complete() {
         # Port forwarding options
         -L|--local-forward|-R|--reverse-forward)
             # Common port forwarding patterns
-            local forwards=("127.0.0.1:8880:172.18.52.37:22 -J corsair@172.16.67.180:22")
+            local forwards=(
+                "127.0.0.1:8880:172.16.67.188:22 -J corsair@172.16.67.180:22"
+            )
             local IFS=$'\n'
             COMPREPLY=( $(compgen -W "${forwards[*]}" -- "${cur}") )
             return 0
