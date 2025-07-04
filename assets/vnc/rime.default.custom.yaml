@@ -1,8 +1,0 @@
-patch:
-  switcher:
-    hotkeys:
-      - F4
-  "engine/filters":
-    - simplifier@zh_simp  # 启用简体转换
-  zh_simp:
-    opencc_config: t2s.json  # 使用繁体转简体的 OpenCC 配置

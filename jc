@@ -1224,7 +1224,7 @@ installLatestRimePinyin() {
         return 1
     fi
 
-    local fcitxXProfilePath=$fMainDir/assets/vnc/fcitx5.xprofile
+    local fcitxXProfilePath=$fMainDir/assets/rime/fcitx5.xprofile
     # --- Attempt Fcitx5-Rime first ---
     echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
     if apt-cache show fcitx5-rime > /dev/null 2>&1; then
@@ -1288,7 +1288,7 @@ installLatestRimePinyin() {
         )
 
         # Link .xprofile to ~/.xprofile
-        fcitxXProfilePath=$fMainDir/assets/vnc/fcitx.xprofile
+        fcitxXProfilePath=$fMainDir/assets/rime/fcitx.xprofile
         linkFile "$fcitxXProfilePath" "$HOME" .xprofile
         echo -e "${LIGHTYELLOW}Installing Fcitx4 packages: ${packagesToInstallFcitx4[*]}${RESET}"
         if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx4[@]}"; then

@@ -1,0 +1,17 @@
+patch:
+  schema_list:
+    - {schema: luna_pinyin_simp}  # Default schema: Luna Pinyin Simplified
+  switcher:
+    hotkeys:
+      - F4
+  app_options:
+    Code.exe:
+      ascii_mode: true
+    conhost.exe:
+      ascii_mode: true
+    cmd.exe:
+      ascii_mode: true
+    powershell.exe:
+      ascii_mode: true
+    wsl.exe:
+      ascii_mode: true
