@@ -1,9 +1,17 @@
+# default.custom.yaml
 patch:
   schema_list:
     - {schema: luna_pinyin_simp}  # Default schema: Luna Pinyin Simplified
   switcher:
     hotkeys:
       - F4
+  key_binder:
+    bindings:
+      - { when: empty, accept: Shift_L, toggle: ascii_mode }
+      - { when: empty, accept: Shift_R, toggle: ascii_mode }
+      - { when: always, accept: Shift+space, toggle: full_shape }
+      - { when: has_menu, accept: minus, send: Page_Up }
+      - { when: has_menu, accept: equal, send: Page_Down }
   app_options:
     Code.exe:
       ascii_mode: true

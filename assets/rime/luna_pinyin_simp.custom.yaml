@@ -6,10 +6,3 @@ patch:
   style/font_point: 12             # Font size for candidates
   style/corner_radius: 5           # Rounded corners for candidate window
   menu/page_size: 10               # 10 candidates per page
-  key_binder:
-    bindings:
-      - { when: always, accept: Shift_L, toggle: ascii_mode }
-      - { when: always, accept: Shift_R, toggle: ascii_mode }
-      - { when: always, accept: Shift+space, toggle: full_shape }
-      - { when: has_menu, accept: minus, send: Page_Up }
-      - { when: has_menu, accept: equal, send: Page_Down }

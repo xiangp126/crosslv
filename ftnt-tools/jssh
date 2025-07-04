@@ -418,7 +418,7 @@ parseVars() {
         if [ -n "${BASH_REMATCH[2]}" ]; then
             fTargetUser="${BASH_REMATCH[2]}"
             fTargetPort="${BASH_REMATCH[5]:-22}"
-        else
+        elif [[ -f "$HOME/.ssh/config" ]] && grep -qE "^\s*Host\s+${fTarget}\s*$" "$HOME/.ssh/config"; then
             while read -r key value; do
                 case "$key" in
                     user) fTargetUser=$value ;;
@@ -426,6 +426,7 @@ parseVars() {
                 esac
             done < <(ssh -G "$fTarget" 2>/dev/null)
         fi
+        # fTargetUser and fTargetPort have default values if not set
     else
         echo -e "${COLOR}Target has to be set and in the format of [user@]sshtarget[:port]${RESET}"
         exit 1
