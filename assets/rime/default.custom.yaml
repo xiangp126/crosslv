@@ -1,21 +1,33 @@
 # default.custom.yaml
+# encoding: utf-8
 patch:
   schema_list:
-    - {schema: luna_pinyin_simp}  # Default schema: Luna Pinyin Simplified
+    - schema: luna_pinyin_simp
+  menu:
+    page_size: 10
   switcher:
+    caption: [Schemes]
     hotkeys:
       - F4
+  ascii_composer:
+    good_old_caps_lock: true
+    switch_key:
+      Shift_L: commit_code
+      Shift_R: commit_code
+      Control_L: noop
+      Control_R: noop
+      Caps_Lock: noop
   key_binder:
     bindings:
-      - { when: empty, accept: Shift_L, toggle: ascii_mode }
-      - { when: empty, accept: Shift_R, toggle: ascii_mode }
-      - { when: always, accept: Shift+space, toggle: full_shape }
+      # see ori_default.yaml for more hotkey binding
       - { when: has_menu, accept: minus, send: Page_Up }
       - { when: has_menu, accept: equal, send: Page_Down }
   app_options:
     Code.exe:
       ascii_mode: true
     conhost.exe:
+      ascii_mode: true
+    ssh.exe:
       ascii_mode: true
     cmd.exe:
       ascii_mode: true

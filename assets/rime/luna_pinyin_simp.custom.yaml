@@ -1,8 +1,11 @@
 # luna_pinyin_simp.custom.yaml, create it if it doesn't exist
+# Note: Use spaces for indentation (no tabs), and include space after colons
 patch:
-  style/color_scheme: google       # Use Google-like theme
-  style/horizontal: true           # Horizontal candidate list
-  style/inline_preedit: true       # Show input code inline
-  style/font_point: 12             # Font size for candidates
-  style/corner_radius: 5           # Rounded corners for candidate window
-  menu/page_size: 10               # 10 candidates per page
+  style:
+    color_scheme: google     # Use Google-style color theme
+    horizontal: true         # Display candidates horizontally (false for vertical)
+    inline_preedit: true     # Show raw input (pinyin) at cursor position
+    font_point: 12           # Candidate font size (in points)
+    corner_radius: 5         # Candidate panel corner radius (in pixels)
+  menu:
+    page_size: 10            # Number of candidates per page
