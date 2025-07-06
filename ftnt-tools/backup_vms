@@ -23,6 +23,7 @@ Arguments:
                          Use -a to backup all VMs
 
 Options:
+    -a, --all            Backup all VMs
     -h, --help           Display this help message and exit
     -d, --debug          Enable debug output
     -b, --backup DIR     Set custom backup directory (default: $MAIN_BACKUP_DIR)
@@ -31,9 +32,9 @@ Description:
     This script creates backups of virtual machine disk images and configuration files
 
 Example:
-    $SCRIPTNAME                   Backup all VMs
     $SCRIPTNAME client1           Backup only the VM named 'client1'
     $SCRIPTNAME client1 fpx1      Backup only the VM named 'client1' and 'fpx1'
+    $SCRIPTNAME -a                Backup all VMs
     $SCRIPTNAME -b /tmp/backup    Backup all VMs to /tmp/backup
 
 _EOF

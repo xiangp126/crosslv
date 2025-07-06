@@ -1030,7 +1030,7 @@ class SuperTraverse(gdb.Command):
         right_field = self.right_field
 
         # Perform an iterative in-order traversal using a classical algorithm.
-        while stack or current:
+        while current or stack:
             if total_nodes > self.max_search_nodes:
                 break
 
