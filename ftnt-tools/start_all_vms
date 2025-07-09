@@ -7,7 +7,7 @@ vm_list=$(sudo virsh list --all --name)
 for vm in $vm_list; do
     # fgt3: fips-cc special
     # fpx2: fips-cc special
-    if [[ "$vm" == "fgt3" || "$vm" == "fpx2" || "$vm" == "client1" || "$vm" == "client4" ]]; then
+    if [[ "$vm" == "fgt3" || "$vm" == "fpx2" || "$vm" == "client1" || "$vm" == "client4" || "$vm" == "fpx3" ]]; then
         continue
     fi
     # Check if the VM is running
