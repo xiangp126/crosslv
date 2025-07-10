@@ -555,6 +555,9 @@ class PrintData(gdb.Command):
             elif unqualified_type == self.unsigned_char_type:
                 # (unsigned char *) 0x7f80fce8d408 "172.16.67.182"
                 # addr = re.sub(r'(?:<[^>]+>|"[^"]+")', '', str(addr)).strip()
+                match = re.search(r'0x[0-9a-fA-F]+', addr)
+                if match:
+                    addr = match.group(0)
                 gdb.execute(f"p/s (({type} *){addr})")
                 return
             elif unqualified_type in [self.fts_fstr_type, self.wad_str_type] and args.start is not None:
