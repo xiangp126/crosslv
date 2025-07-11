@@ -301,6 +301,60 @@ checkSudoPrivilege() {
 }
 
 checkTlsConnection() {
+    if ! command -v openssl &> /dev/null; then
+        echo -e "${LIGHTYELLOW}openssl is not installed. Aborting.${RESET}"
+        exit 1
+    fi
+    local targetHost=${1:-"github.com"}
+    echo -e "${COLOR}Verifying server certificate against CA list for: ${NORMAL}${targetHost}${RESET}"
+
+    # Use openssl s_client to connect and verify the certificate.
+    # -connect <host>:<port>
+    # -servername <host> for SNI
+    # -showcerts (optional, but useful if debugging; we'll focus on the verify return code)
+    # -verify_return_error: Crucial for getting a meaningful exit code on verification failure.
+    # </dev/null: Prevents blocking on stdin.
+    # 2>&1: Captures both stdout and stderr.
+    local opensslOutput
+    opensslOutput=$(openssl s_client -connect "${targetHost}:443" -servername "${targetHost}" -verify_return_error </dev/null 2>&1)
+    local opensslExitCode=$?
+
+    # openssl s_client returns non-zero for many errors, including verification failures.
+    # A successful verification usually results in 'verify return:1'.
+    # We need to check the exit code *and* the output for 'verify return:1'.
+
+    # Grep for the specific success indicator and check the exit code.
+    # The 'verify return:1' is the most direct confirmation of CA trust.
+    if echo "$opensslOutput" | grep -q 'verify return:1' && [ $opensslExitCode -eq 0 ]; then
+        echo -e "${GREEN}✔${GREY} Server certificate is trusted (legally issued and verifiable against CA list).${RESET}"
+        # Optionally display specific certificate details if needed for context:
+        local certDetails=$(echo "$opensslOutput" | openssl x509 -noout -subject -issuer -dates)
+        if [ -n "$certDetails" ]; then
+            echo -e "${COLOR}--- Certificate Details ---${RESET}"
+            echo "$certDetails"
+            echo -e "${COLOR}---------------------------${RESET}"
+        fi
+    else
+        # Handle failures
+        echo -e "${RED}✗${GREY} Server certificate is NOT trusted or an error occurred.${RESET}"
+        if echo "$opensslOutput" | grep -q 'verify return:.*error'; then
+            echo -e "${RED}  Reason: Certificate validation failed.${RESET}"
+        elif echo "$opensslOutput" | grep -q 'connect:errno='; then
+            echo -e "${RED}  Reason: Could not connect to the server.${RESET}"
+        elif echo "$opensslOutput" | grep -q 'certificate verify failed'; then
+            echo -e "${RED}  Reason: OpenSSL reported a certificate verification failure.${RESET}"
+        else
+            echo -e "${RED}  Reason: Unknown error or non-verified certificate.${RESET}"
+        fi
+        # Show a snippet of the output for debugging
+        echo -e "${GREY}☞ openssl output snippet:${RESET}"
+        echo "$opensslOutput" | head -n 10
+        exit 1 # Exit on any failure
+    fi
+    exit
+}
+
+checkTlsConnection2() {
     if ! command -v curl &> /dev/null; then
         echo -e "${LIGHTYELLOW}curl is not installed. Aborting.${RESET}"
         exit 1
