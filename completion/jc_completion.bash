@@ -13,12 +13,17 @@ _jc_complete() {
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --opengrok-start --opengrok-stop --opengrok-restart \
                --opengrok --opengrok-indexer --samba --samba-reset-password --git-lfs \
-               --litellm-start --litellm-stop --litellm-restart --litellm"
+               --litellm-start --litellm-stop --litellm-restart --litellm --check-tls"
 
     case "${prev}" in
         --vnclock)
             local vnclock_options="unlock lock status"
             COMPREPLY=( $(compgen -W "${vnclock_options}" -- ${cur}) )
+            return 0
+            ;;
+        --check-tls)
+            local hosts="google.com deepseek.com claude.ai"
+            COMPREPLY=( $(compgen -W "${hosts}" -- ${cur}) )
             return 0
             ;;
     esac

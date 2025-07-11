@@ -19,12 +19,12 @@ fFirstTimeFile=$fMainDir/".has_been_invoked"
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
-# A fzf plugin: fzf-tab-completion
-fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh
+fzfTabCompPath=$HOME/.vim/bundle/fzf-tab-completion/bash/fzf-bash-completion.sh # A fzf plugin: fzf-tab-completion
 fBackupDir="$HOME/Public/env.bak"
 fOSCategory=debian # ubuntu/debian is the default OS type
 fArch=
 fNoInstallTools=
+fCheckTlsConn=
 # VNC server
 fVncAbbrePort=9
 fVncFullPort="590${fVncAbbrePort}"
@@ -41,6 +41,7 @@ OPENGROK_ETC_VOLUME="$HOME/.usr/local/opengrok/etc"   # Docker named volume for 
 OPENGROK_HOST_PORT="8080"
 OPENGROK_CONTAINER_PORT="8080"
 fLinkClangFormatPath= # Link clang-format to this path
+# Force Options
 fPrerequisitesForce=
 fNVMForce=
 fGitLfsForce=
@@ -49,8 +50,10 @@ fDockerForce=
 fWiresharkForce=
 fFirefoxForce=
 fChinesePinyinForce=
-fSambaServerFlag= # 1: Start samba server; 2: Start samba server and reset password
-fLiteLLMService= # LiteLLM: 1: Start LiteLLM 2: Stop LiteLLM 3: Restart LiteLLM
+# Samba Server | 1: Start samba server 2: Start samba server and reset password
+fSambaServerFlag=
+# LiteLLM | 1: Start LiteLLM 2: Stop LiteLLM 3: Restart LiteLLM
+fLiteLLMService=
 LITELLM_DIR="$fDownloads/litellm"
 # Constants
 SCRIPT_NAME=$(basename $0)
@@ -77,6 +80,7 @@ Common Options:
     -h, --help                      Print this help message
     -n, --no-tools                  Don't install tools
     -d, --debug                     Enable debug mode
+    --check-tls                     Check TLS connection
     --link-clang-format             Link clang-format to current path
     --auto-remove                   Remove unused packages
     --update                        Update all packages
@@ -131,7 +135,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
           opengrok-restart,opengrok-indexer,samba,samba-reset-password,wireshark,git-lfs\
-          litellm-start,litellm-stop,litellm-restart,litellm"
+          litellm-start,litellm-stop,litellm-restart,litellm,check-tls::"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -244,11 +248,15 @@ while true; do
             # $1 is '--link-clang-format'
             # $2 is an empty string '' no matter whether it has an argument
             # The argument if provided will be put in sequence in the positional parameters
-            # Exp: $ jc huhu --link-clang-format ~/ leetcode
-            #          --link-clang-format '' -- 'huhu' '/home/user1/' 'leetcode'
+            # Exp: $ jc huhu --link-clang-format /home/user1/ leetcode
+            #     => jc --link-clang-format '' -- 'huhu' '/home/user1/' 'leetcode'
             # CRITICAL: Always shift 2 to consume both the option token ($1)
             # and its argument/empty placeholder token ($2).
             fLinkClangFormatPath="$PWD"
+            shift 2
+            ;;
+        --check-tls)
+            fCheckTlsConn=true
             shift 2
             ;;
         --auto-remove)
@@ -301,10 +309,18 @@ checkSudoPrivilege() {
 }
 
 checkTlsConnection() {
-    if ! command -v openssl &> /dev/null; then
-        echo -e "${LIGHTYELLOW}openssl is not installed. Aborting.${RESET}"
+    local targetHost=${1:-"github.com"}
+    if command -v openssl &> /dev/null; then
+        checkTlsConnWithOpenssl "$targetHost"
+    elif command -v curl &> /dev/null; then
+        checkTlsConnWithCurl "$targetHost"
+    else
+        echo -e "${LIGHTYELLOW}curl and openssl are not installed. Aborting.${RESET}"
         exit 1
     fi
+}
+
+checkTlsConnWithOpenssl() {
     local targetHost=${1:-"github.com"}
     echo -e "${COLOR}Verifying server certificate against CA list for: ${NORMAL}${targetHost}${RESET}"
 
@@ -330,9 +346,9 @@ checkTlsConnection() {
         # Optionally display specific certificate details if needed for context:
         local certDetails=$(echo "$opensslOutput" | openssl x509 -noout -subject -issuer -dates)
         if [ -n "$certDetails" ]; then
-            echo -e "${COLOR}--- Certificate Details ---${RESET}"
+            echo -e "${CYAN}--- Certificate Details ---${RESET}"
             echo "$certDetails"
-            echo -e "${COLOR}---------------------------${RESET}"
+            echo -e "${CYAN}---------------------------${RESET}"
         fi
     else
         # Handle failures
@@ -347,18 +363,13 @@ checkTlsConnection() {
             echo -e "${RED}  Reason: Unknown error or non-verified certificate.${RESET}"
         fi
         # Show a snippet of the output for debugging
-        echo -e "${GREY}☞ openssl output snippet:${RESET}"
+        echo -e "${CYAN}☞ ${GREY}openssl output snippet:${RESET}"
         echo "$opensslOutput" | head -n 10
         exit 1 # Exit on any failure
     fi
-    exit
 }
 
-checkTlsConnection2() {
-    if ! command -v curl &> /dev/null; then
-        echo -e "${LIGHTYELLOW}curl is not installed. Aborting.${RESET}"
-        exit 1
-    fi
+checkTlsConnWithCurl() {
     local targetHost=${1:-"github.com"}
     echo -e "${COLOR}Checking TLS Certificate Trust for: ${NORMAL}${targetHost}${RESET}"
 
@@ -2236,6 +2247,7 @@ doCoreJobs() {
 
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
+    [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
     case "$fVncServer" in
