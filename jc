@@ -49,7 +49,7 @@ fDockerForce=
 fWiresharkForce=
 fFirefoxForce=
 fChinesePinyinForce=
-fSambaServer= # Samba Server: 1: Start samba server; 2: Start samba server without setting password
+fSambaServerFlag= # 1: Start samba server; 2: Start samba server and reset password
 fLiteLLMService= # LiteLLM: 1: Start LiteLLM 2: Stop LiteLLM 3: Restart LiteLLM
 LITELLM_DIR="$fDownloads/litellm"
 # Constants
@@ -105,7 +105,7 @@ OpenGrok Options:
 
 Samba Options:
     --samba                         Install and configure Samba Server
-    --samba-bypass-password         Don't set password for Samba Server again
+    --samba-reset-password          Reset Samba Server password
 
 The following options force updates or re-installation (installed by default):
     --nvm                           Force update NVM
@@ -130,7 +130,7 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
-          opengrok-restart,opengrok-indexer,samba,samba-bypass-password,wireshark,git-lfs\
+          opengrok-restart,opengrok-indexer,samba,samba-reset-password,wireshark,git-lfs\
           litellm-start,litellm-stop,litellm-restart,litellm"
 
 # Use getopt to parse command-line options
@@ -193,11 +193,11 @@ while true; do
             shift
             ;;
         --samba)
-            fSambaServer=1
+            fSambaServerFlag=1
             shift
             ;;
-        --samba-bypass-password)
-            fSambaServer=2
+        --samba-reset-password)
+            fSambaServerFlag=2
             shift
             ;;
         --vnc|--vnc-start)
@@ -1754,7 +1754,8 @@ installSambaServer() {
     echo -e "${LIGHTYELLOW}Setting Samba password for user '${BOLD}$smbUser${LIGHTYELLOW}'...${RESET}"
     local sambaPassword=""
     local sambaPasswordConfirm=""
-    if [[ "$fSambaServer" != "2" ]]; then # Do not set password again
+    local sambaPasswordFile="/etc/samba/smbpasswd"
+    if [ ! -f "$sambaPasswordFile" ] || [ ! -s "$sambaPasswordFile" ] || [ "$fSambaServerFlag" == "2" ]; then # Reset password
         while true; do
             echo -en "${GREY}Enter new Samba password for user ${BOLD}$smbUser${LIGHTYELLOW} (must not be empty): ${RESET}"
             read -r -s sambaPassword
@@ -2181,7 +2182,7 @@ doCoreJobs() {
 
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
-    [ -n "$fSambaServer" ]         && { installSambaServer; exit 0; }
+    [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
     case "$fVncServer" in
         1) startVncServer;       exit 0 ;;

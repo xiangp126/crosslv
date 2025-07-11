@@ -35,3 +35,7 @@ patch:
       ascii_mode: true
     wsl.exe:
       ascii_mode: true
+    OUTLOOK.EXE:
+      ascii_mode: true
+    ms-teams.exe:
+      ascii_mode: true

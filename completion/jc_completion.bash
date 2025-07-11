@@ -12,7 +12,7 @@ _jc_complete() {
                --auto-remove --upgrade --docker --prerequisite --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --opengrok-start --opengrok-stop --opengrok-restart \
-               --opengrok --opengrok-indexer --samba --samba-bypass-password --git-lfs \
+               --opengrok --opengrok-indexer --samba --samba-reset-password --git-lfs \
                --litellm-start --litellm-stop --litellm-restart --litellm"
 
     case "${prev}" in
