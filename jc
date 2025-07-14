@@ -1573,26 +1573,26 @@ stopVncServer() {
     fi
 }
 
-genChineseLocale() {
-    if ! command -v locale-gen &> /dev/null; then
-        echo -e "${RED}Error: locale-gen is not installed.${RESET}" >&2
-        exit 1
-    fi
+# genChineseLocale() {
+#     if ! command -v locale-gen &> /dev/null; then
+#         echo -e "${RED}Error: locale-gen is not installed.${RESET}" >&2
+#         exit 1
+#     fi
 
-    if locale -a | grep -iq '^zh_CN\.utf8$'; then
-        return 0
-    fi
+#     if locale -a | grep -iq '^zh_CN\.utf8$'; then
+#         return 0
+#     fi
 
-    echo -e "${GREEN}Generating Chinese locale (zh_CN.UTF-8)...${RESET}"
-    sudo locale-gen zh_CN.UTF-8
-    sudo update-locale LANG=en_US.UTF-8 LC_CTYPE=zh_CN.UTF-8
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✔${GREY} Chinese locale generated successfully.${RESET}"
-    else
-        echo -e "${RED}Error: Failed to generate Chinese locale.${RESET}"
-        return 1
-    fi
-}
+#     echo -e "${GREEN}Generating Chinese locale (zh_CN.UTF-8)...${RESET}"
+#     sudo locale-gen zh_CN.UTF-8
+#     sudo update-locale LANG=en_US.UTF-8 LC_CTYPE=zh_CN.UTF-8 # Update /etc/default/locale
+#     if [ $? -eq 0 ]; then
+#         echo -e "${GREEN}✔${GREY} Chinese locale generated successfully.${RESET}"
+#     else
+#         echo -e "${RED}Error: Failed to generate Chinese locale.${RESET}"
+#         return 1
+#     fi
+# }
 
 startVncServer() {
     if isVncServerRunning; then
@@ -1607,7 +1607,6 @@ startVncServer() {
     cd "$HOME"/.vnc || exit
     linkFile "$xstartupPath" "$HOME/.vnc" xstartup
     linkFile "$fMainDir/assets/gdm3/custom.conf" "/etc/gdm3" custom.conf
-    genChineseLocale
     echo -e "${GREEN}Starting VNC server...${RESET}"
     local startCmd="tigervncserver :$fVncAbbrePort -geometry $fVncResolution -SecurityTypes None -localhost yes -xstartup $xstartupDest"
     echo -e "${MAGENTA}$startCmd${RESET}"
