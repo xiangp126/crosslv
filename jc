@@ -28,7 +28,7 @@ fCheckTlsConn=
 # VNC server
 fVncAbbrePort=9
 fVncFullPort="590${fVncAbbrePort}"
-fVncResolution=2060x1080
+fVncResolution=1920x1080
 fVncServer= # 1: start VNC server; 2: kill VNC server 3: restart VNC server
 fVncLockAction=
 # Docker Container: OpenGrok
@@ -1608,7 +1608,7 @@ startVncServer() {
     linkFile "$xstartupPath" "$HOME/.vnc" xstartup
     linkFile "$fMainDir/assets/gdm3/custom.conf" "/etc/gdm3" custom.conf
     echo -e "${GREEN}Starting VNC server...${RESET}"
-    local startCmd="tigervncserver :$fVncAbbrePort -geometry $fVncResolution -SecurityTypes None -localhost yes -xstartup $xstartupDest"
+    local startCmd="tigervncserver :$fVncAbbrePort -geometry $fVncResolution -SecurityTypes None -localhost yes -depth 24 -xstartup $xstartupDest"
     echo -e "${MAGENTA}$startCmd${RESET}"
     $startCmd
     if [ $? -ne 0 ]; then
