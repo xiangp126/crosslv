@@ -28,7 +28,7 @@ fCheckTlsConn=
 # VNC server
 fVncAbbrePort=9
 fVncFullPort="590${fVncAbbrePort}"
-fVncResolution=1920x1080
+fVncResolution=2060x1080
 fVncServer= # 1: start VNC server; 2: kill VNC server 3: restart VNC server
 fVncLockAction=
 # Docker Container: OpenGrok
