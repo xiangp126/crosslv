@@ -5,7 +5,7 @@
 ### Key Tools
 
 | Tool | Description |
-|:------|-------------|
+|:------:|-------------|
 | [jc](#jc) | Setting up working environment and links all the following tools |
 | [jmake](#jmake) | Building tool for large C projects |
 | [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up Wireshark live packet capture |
@@ -19,7 +19,7 @@
 ### Other Tools
 
 | Tool | Description |
-|:------|-------------|
+|:------:|-------------|
 | [gdb_tools](#gdb_tools) | Python tools for visualizing data structures in memory while debugging with GDB |
 | [completion](#completion) | Bash completion scripts for all the above tools |
 
