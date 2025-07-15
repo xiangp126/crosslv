@@ -458,6 +458,10 @@ runConfigure() {
                 # send \"exit\r\"
                 send \"\x04\r\"
             }
+            {\[Yn\]:} {
+                send \"y\r\"
+                exp_continue
+            }
             {yes/no} {
                 send \"yes\r\"
                 exp_continue

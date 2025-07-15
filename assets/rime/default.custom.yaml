@@ -13,7 +13,7 @@ patch:
     good_old_caps_lock: true
     switch_key:
       Shift_L: noop # Left shift is easy to hit by mistake
-      Shift_R: commit_code
+      Shift_R: noop # Right shift is easy to hit by mistake
       Control_L: noop
       Control_R: noop
       Caps_Lock: noop
