@@ -7,6 +7,7 @@ fArgs=()
 fForce=
 fPrint=
 fSysPath="/run/user/$UID"
+fSearchPath="$HOME/.vscode-server/cli/servers"
 SCRIPTNAME=$(basename $0)
 # Colors
 MAGENTA='\033[0;35m'
@@ -127,14 +128,11 @@ checkFunctionDefinition() {
         return
     fi
     __set_vscode_code_path() {
-        local syspath="/run/user/$UID"
-        local searchPath="$HOME/.vscode-server/cli/servers"
-
         # Step 1: Find the commit ID of the active VS Code server
         # Use process substitution to ensure `commitId` is set in the current shell scope, not a subshell.
         # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
         local pidFile currentPid commitId=
-        cd "$searchPath" || exit
+        cd "$fSearchPath" || exit
         while IFS= read -r -d $'\0' pidFile; do
             if [ -f "$pidFile" ]; then
                 currentPid=$(cat "$pidFile" 2>/dev/null)
@@ -150,10 +148,10 @@ checkFunctionDefinition() {
 
         # Step 2: Set the VSCODE_BIN_PATH
         if [[ -z "$commitId" ]]; then
-            echo -e "${MAGENTA}Error: No active VS Code server found with a valid pid.txt under $searchPath.${RESET}" >&2
+            echo -e "${MAGENTA}Error: No active VS Code server found with a valid pid.txt under $fSearchPath.${RESET}" >&2
             return 1
         fi
-        VSCODE_BIN_PATH="$searchPath/$commitId/server/bin/remote-cli/code"
+        VSCODE_BIN_PATH="$fSearchPath/$commitId/server/bin/remote-cli/code"
         if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
             echo -e "${MAGENTA}Error: VS Code binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
             return 1
@@ -161,9 +159,9 @@ checkFunctionDefinition() {
 
         # Step 3: Set the VSCODE_IPC_HOOK_CLI
         # Get the most recenely created vscode-ipc-*.sock file
-        local newIPCHook=$(ls -t "$syspath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+        local newIPCHook=$(ls -t "$fSysPath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
         if [ -z "$newIPCHook" ]; then
-            echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $syspath${RESET}" >&2
+            echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $fSysPath${RESET}" >&2
             return 1
         fi
         # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
@@ -217,7 +215,16 @@ removeObsoleteIPCSocks() {
     done
 }
 
+preCheck() {
+    if [ ! -d "$fSearchPath" ]; then
+        local codeBinPath="/usr/local/bin/code"
+        [ -x "$codeBinPath" ] && "$codeBinPath" "$@"
+        exit 0
+    fi
+}
+
 main() {
+    preCheck "$@"
     parseOptions "$@"
     if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForce" ]; then
         checkFunctionDefinition
