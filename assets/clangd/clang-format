@@ -1,6 +1,3 @@
-# Link clang-format to current path
-# jc --link-clang-format [PATH]
-# If PATH is not provided, it will be set to current path
 ---
 BasedOnStyle: LLVM
 IndentWidth: 8
