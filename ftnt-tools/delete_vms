@@ -256,7 +256,7 @@ restoreVms() {
 
         # Define the VM
         echo -e "${BOLD}Defining VM from XML...${RESET}"
-        if virsh define "$bkQemuXmlPath"; then
+        if sudo virsh define "$bkQemuXmlPath"; then
             fRestoredVms+=("$vm")
 
             bkVmSnapshotDir="$bkVmDir/snapshots"
