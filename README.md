@@ -1,27 +1,29 @@
 ### Introduction
-- I wrote some tools to help me work more efficiently. These tools are mainly used for building, debugging, searching, connecting, and setting up working environments.
+- I wrote some tools to help me work more efficiently. These tools are mainly used for building, debugging, searching, connecting, and setting up working environments in the easiest way possible.
 - The tools are versatile, though they are primarily written for use in the Fortinet environment. However, they can be easily modified to support other devices.
 
 ### Key Tools
 
-| Tool | Description |
-|:------:|-------------|
-| [jc](#jc) | Setting up working environment and links all the following tools |
-| [jmake](#jmake) | Building tool for large C projects |
-| [jssh](#jssh) | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up Wireshark live packet capture |
-| [code](#code) | Wrapper for the `code` command provided by VSCode |
-| [jr](#jr) | Powerful search tool for searching code in large projects |
-| [jrun](#jrun) | Command Runner by sending commands to a tmux pane running an SSH session |
-| [jt](#jt) | Log file viewer with syntax highlighting |
-| [jroute](#jroute) | Simple script to switch the default route between available gateways |
-| [jdebug](#jdebug) | Debugging tool for devices running gdbserver |
+| Category   | Tool | Description |
+|:----------:|:---------:|:-----------------|
+| Construct  | [jc](#jc)                   | Setting up working environment and links all the following tools                                     |
+| Search     | [jr](#jr)                   | Powerful search tool for searching code in large projects                                            |
+| Search     | [code](#code)               | Wrapper for the `code` command provided by VSCode, designed to bypass a long-standing and overlooked bug |
+| Compile    | [jmake](#jmake)             | Building tool for large C projects                                                                   |
+| Connect    | [jssh](#jssh)               | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up Wireshark live packet capture |
+| Debug      | [gdb_tools](#gdb_tools)     | Python tools for visualizing data structures in memory while debugging with GDB                      |
+| Debug      | [jdebug](#jdebug)           | Debugging tool for devices running gdbserver                                                         |
+| Debug      | [jrun](#jrun)               | Command Runner by sending commands to a tmux pane running an SSH session                             |
+| Debug      | [jroute](#jroute)           | Simple script to switch the default route between available gateways                                 |
+| Debug      | [jt](#jt)                   | Log file viewer with syntax highlighting                                                             |
+| VM         | [backup_vms](#backup_vms)   | Backup vms and config files                                                                         |
+| VM         | [delete_vms](#delete_vms)   | Delete VMs or restore VMs from backups                                                              |
 
 ### Other Tools
 
-| Tool | Description |
-|:------:|-------------|
-| [gdb_tools](#gdb_tools) | Python tools for visualizing data structures in memory while debugging with GDB |
-| [completion](#completion) | Bash completion scripts for all the above tools |
+| Tool               | Description                                                                                         |
+|:------------------:|:--------------------------------------------------------------------------------------------------|
+| [completion](#completion) | Bash completion scripts for all the above tools                                             |
 
 <a id="jc"></a>
 #### [jc](./jc)
