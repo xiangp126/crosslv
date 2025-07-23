@@ -418,7 +418,7 @@ parseVars() {
         if [ -n "${BASH_REMATCH[2]}" ]; then
             fTargetUser="${BASH_REMATCH[2]}"
             fTargetPort="${BASH_REMATCH[5]:-22}"
-        elif [[ -f "$HOME/.ssh/config" ]] && grep -qE "^\s*Host\s+${fTarget}\s*$" "$HOME/.ssh/config"; then
+        elif [[ -f "$HOME/.ssh/config" ]] && grep -qiE "^\s*Host\s+${fTarget}\s*$" "$HOME/.ssh/config"; then
             while read -r key value; do
                 case "$key" in
                     user) fTargetUser=$value ;;
