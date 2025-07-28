@@ -28,7 +28,7 @@
 <a id="jc"></a>
 #### [jc](./jc)
 - Do not use `sh` to run the script on a freshly installed ubuntu.
-- Use `bash` cos `sh` is not linked to `bash` on a freshly installed ubuntu.
+- Use `bash` cuz `sh` is not linked to `bash` on a freshly installed ubuntu.
 ```bash
 $ git clone https://github.com/crosslv/crosslv.git
 $ cd crosslv
