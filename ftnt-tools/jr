@@ -9,7 +9,7 @@ fCheckDepends=
 fzfSelected=
 fREMatching=
 fNoClipboard=
-fXselTimeout=3
+fXselTimeout=2
 fQueryFromClipboard=
 fKernelIncluded=  # Include the linux kernel source code in the search
 # Constants
