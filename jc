@@ -482,6 +482,7 @@ aptInstallPrerequisites() {
         sqlite3
         libsqlite3-dev
         libpcap-dev
+        libbpf-dev # libbpf | eBPF
         qemu-kvm # QEMU and KVM
         qemu-utils
         libvirt-daemon-system # libvirt
