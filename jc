@@ -465,7 +465,8 @@ aptInstallPrerequisites() {
         sshfs
         sshpass
         shellcheck
-        net-tools
+        net-tools # netstat, ifconfig
+        iproute2 # ip, tc, ss, bridge
         nftables
         inetutils-traceroute
         bash-completion
