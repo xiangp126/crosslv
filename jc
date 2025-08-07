@@ -467,6 +467,7 @@ aptInstallPrerequisites() {
         shellcheck
         net-tools # netstat, ifconfig
         iproute2 # ip, tc, ss, bridge
+        conntrack
         nftables
         inetutils-traceroute
         bash-completion
