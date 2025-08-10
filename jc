@@ -42,7 +42,7 @@ OPENGROK_HOST_PORT="8080"
 OPENGROK_CONTAINER_PORT="8080"
 fLinkClangFormatPath= # Link clang-format to this path
 # Force Options
-fPrerequisitesForce=
+appInstallForce= # 1: install apps and continue; 2: install apps and exit
 fNVMForce=
 fGitLfsForce=
 fClangdForce=
@@ -114,7 +114,7 @@ Samba Options:
 The following options force updates or re-installation (installed by default):
     --nvm                           Force update NVM
     --git-lfs                       Force update Git LFS from PackageCloud
-    --prerequisite                  Force update prerequisites
+    --apps                          Force update Apps
     --chinese-pinyin                Force Update Rime Pinyin
     --docker                        Force update Docker from Docker PPA
     --wireshark                     Force update wireshark from Wireshark PPA
@@ -132,7 +132,7 @@ exit 0
 SHORTOPTS="hdnf"
 # Two colons: The option takes an optional argument
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
-          upgrade,chinese-pinyin,prerequisite,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
+          upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
           opengrok-restart,opengrok-indexer,samba,samba-reset-password,wireshark,git-lfs\
           litellm-start,litellm-stop,litellm-restart,litellm,check-tls::"
@@ -152,8 +152,12 @@ while true; do
             fNoInstallTools=true
             shift
             ;;
-        --prerequisite)
-            fPrerequisitesForce=true
+        --apps)
+            appInstallForce=1
+            shift
+            ;;
+        --apps-only)
+            appInstallForce=2
             shift
             ;;
         --nvm)
@@ -435,11 +439,11 @@ removeInstalledPackages() {
         fi
 }
 
-aptInstallPrerequisites() {
-    [ ! -f "$fFirstTimeFile" ] && fPrerequisitesForce=true
-    [ -z "$fPrerequisitesForce" ] && return
+ubuntuInstallApps() {
+    [ ! -f "$fFirstTimeFile" ] && appInstallForce=1
+    [ -z "$appInstallForce" ] && return
     checkSudoPrivilege
-    local prerequisitesForUbuntu=(
+    local appsForUbuntu=(
         tmux # Terminal multiplexer
         vim
         rsync # Remote file sync
@@ -517,22 +521,31 @@ aptInstallPrerequisites() {
         tigervnc-viewer
         remmina # remote desktop client
     )
-    echo -e "${COLOR}Updating Prerequisites for Ubuntu${RESET}"
+    echo -e "${COLOR}Updating Apps for Ubuntu${RESET}"
     sudo apt update
     if ! removeInstalledPackages thunderbird lightdm xrdp xorgxrdp; then
-        echo -e "${RED}Error: Failed to remove one or more conflicting packages. Aborting prerequisite installation.${RESET}"
+        echo -e "${RED}Error: Failed to remove one or more conflicting packages. Aborting Apps installation.${RESET}"
         return 1
     fi
     echo "gdm3 shared/default-x-display-manager select gdm3" | sudo debconf-set-selections
     # echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends "${prerequisitesForUbuntu[@]}"
+    sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends "${appsForUbuntu[@]}"
     # sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure gdm3
     sudo apt autoremove -y
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Success!${RESET}"
+        if [ "$appInstallForce" -eq 2 ]; then
+            exit 0
+        fi
+    else
+        echo -e "${RED}Failed!${RESET}"
+        exit 1
+    fi
 }
 
-updatePrequesitesForMac() {
+macInstallApps() {
     checkSudoPrivilege
-    prerequisitesForMac=(
+    appsForMac=(
         yt-dlp
         fzf
         fd
@@ -540,9 +553,9 @@ updatePrequesitesForMac() {
         vim
     )
 
-    echo -e "${COLOR}Updating Prerequisites for MacOS${RESET}"
+    echo -e "${COLOR}Updating Apps for MacOS${RESET}"
     brew update
-    brew install "${prerequisitesForMac[@]}"
+    brew install "${appsForMac[@]}"
 }
 
 setTimeZone() {
@@ -2248,7 +2261,7 @@ restartLiteLLMService() {
 }
 
 doCoreJobs() {
-    aptInstallPrerequisites    # Install prerequisites for Ubuntu
+    ubuntuInstallApps          # Install apps for Ubuntu
     createTKSymlinks           # Create Tracked Files symlinks
     installVimPluginsManager   # Install Vim Plugins Manager
     installTmuxPluginsManager  # Install Tmux Plugins Manager
