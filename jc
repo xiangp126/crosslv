@@ -1342,8 +1342,8 @@ installLatestRimePinyin() {
             echo -e "${LIGHTYELLOW}After rebooting/re-logging in:${RESET}"
             echo -e "${LIGHTYELLOW}1. Fcitx5 should start automatically. If not, add 'fcitx5' to your session's startup applications.${RESET}"
             echo -e "${LIGHTYELLOW}2. Open 'Fcitx 5 Configuration' (command: ${BLUE}fcitx5-configtool${RESET}).${RESET}"
-            echo -e "${LIGHTYELLOW}3. In the 'Input Method' tab, ensure 'Pinyin' (from Rime) is in the list of active input methods. ${RESET}"
-            echo -e "${LIGHTYELLOW}   If not, click the '+' button, uncheck 'Only Show Current Language' if needed, find 'Pinyin' (Rime), and add it.${RESET}"
+            echo -e "${LIGHTYELLOW}3. In the 'Input Method' tab, ensure 'Rime' is in the list of active input methods. ${RESET}"
+            echo -e "${LIGHTYELLOW}   If not, click the '+' button, uncheck 'Only Show Current Language' if needed, find 'Rime', and add it.${RESET}"
             echo -e "${LIGHTYELLOW}4. You can switch input methods using the configured hotkey (often Ctrl+Space or Super+Space). Check 'Global Options' tab in fcitx5-configtool for 'Trigger Input Method'.${RESET}"
             echo -e "${LIGHTYELLOW}5. For Rime specific settings (e.g., traditional Chinese, fuzzy pinyin), create/edit files in ${BLUE}~/.local/share/fcitx5/rime/${RESET} (e.g., default.custom.yaml). Refer to Rime documentation.${RESET}"
             return 0
