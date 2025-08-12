@@ -1307,7 +1307,7 @@ installLatestRimePinyin() {
 
     local fcitxXProfilePath=$fMainDir/assets/rime/fcitx5.xprofile
     local rimeDefaultCustomYaml=$fMainDir/assets/rime/default.custom.yaml
-    local localRimePath="$HOME/.config/fcitx5/rime"
+    local localRimePath="$HOME/.local/share/fcitx5/rime"
     # --- Attempt Fcitx5-Rime first ---
     echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
     if apt-cache show fcitx5-rime > /dev/null 2>&1; then
