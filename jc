@@ -1306,6 +1306,8 @@ installLatestRimePinyin() {
     fi
 
     local fcitxXProfilePath=$fMainDir/assets/rime/fcitx5.xprofile
+    local rimeDefaultCustomYaml=$fMainDir/assets/rime/default.custom.yaml
+    local localRimePath="$HOME/.config/fcitx5/rime"
     # --- Attempt Fcitx5-Rime first ---
     echo -e "${COLOR}Checking for Fcitx5-Rime availability...${RESET}"
     if apt-cache show fcitx5-rime > /dev/null 2>&1; then
@@ -1321,6 +1323,7 @@ installLatestRimePinyin() {
 
         # Link the xprofile file
         linkFile "$fcitxXProfilePath" "$HOME" .xprofile
+        [ -d "$localRimePath" ] && linkFile "$rimeDefaultCustomYaml" "$localRimePath" default.custom.yaml
         echo -e "${LIGHTYELLOW}Installing Fcitx5 packages: ${packagesToInstallFcitx5[*]}${RESET}"
         if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx5[@]}"; then
             echo -e "${GREEN}Successfully installed Fcitx5 and Rime packages.${RESET}"
@@ -1371,6 +1374,8 @@ installLatestRimePinyin() {
         # Link .xprofile to ~/.xprofile
         fcitxXProfilePath=$fMainDir/assets/rime/fcitx.xprofile
         linkFile "$fcitxXProfilePath" "$HOME" .xprofile
+        localRimePath="$HOME/.config/fcitx/rime"
+        [ -d "$localRimePath" ] && linkFile "$rimeDefaultCustomYaml" "$localRimePath" default.custom.yaml
         echo -e "${LIGHTYELLOW}Installing Fcitx4 packages: ${packagesToInstallFcitx4[*]}${RESET}"
         if sudo DEBIAN_FRONTEND=noninteractive apt install -y "${packagesToInstallFcitx4[@]}"; then
             echo -e "${GREEN}Successfully installed Fcitx4 and Rime packages.${RESET}"
