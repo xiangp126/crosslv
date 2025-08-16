@@ -447,6 +447,8 @@ ubuntuInstallApps() {
         tmux # Terminal multiplexer
         vim
         rsync # Remote file sync
+        linux-tools-common # Linux tools
+        linux-tools-"$(uname -r)" # Linux tools
         fd-find # fd
         ripgrep # rg
         universal-ctags
