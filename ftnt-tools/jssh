@@ -754,7 +754,7 @@ displayInfo() {
             echo -ne " via Jump Server: $fJumpServer" >&2
         fi
     fi
-    echo -e "...${RESET}" >&2
+    echo -e " ...${RESET}" >&2
 }
 
 doEarlyExitJobs() {

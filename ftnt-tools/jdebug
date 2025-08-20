@@ -198,7 +198,7 @@ displayInfo() {
     if [ "$fWADWorkerCnt" -ge 0 ]; then
         echo -e "[N] Set WAD Worker Count to: ${COLOR}$fWADWorkerCnt${RESET}"
     fi
-    echo -e "${GREY}Connecting to $fTarget...${RESET}"
+    echo -e "${GREY}Connecting to $fTarget ...${RESET}"
     echo $SEPARATOR_RT
 }
 
