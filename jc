@@ -453,10 +453,10 @@ ubuntuInstallApps() {
         fd-find # fd
         ripgrep # rg
         universal-ctags
-        openssl
-        libssl-dev
-        bat
-        curl
+        openssl # openssl
+        libssl-dev # libssl-dev
+        bat # bat
+        curl # curl
         netcat-openbsd # netcat
         socat  # socat
         fonts-noto-cjk # Recommended Chinese fonts
@@ -467,17 +467,17 @@ ubuntuInstallApps() {
         xclip
         libcurl4
         libcurl4-openssl-dev
-        dos2unix
+        dos2unix # dos2unix
         expect
         sshfs
         sshpass
         shellcheck
         net-tools # netstat, ifconfig
         iproute2 # ip, tc, ss, bridge
-        conntrack
-        nftables
+        conntrack # conntrack
+        nftables # nftables
         inetutils-traceroute
-        bash-completion
+        bash-completion # bash completion
         openssh-server
         python3-dev
         ffmpeg
@@ -496,12 +496,12 @@ ubuntuInstallApps() {
         qemu-utils
         libvirt-daemon-system # libvirt
         libvirt-clients
-        virt-manager
+        virt-manager # virt-manager
         texinfo
         libisl-dev
         libgmp-dev
         libncurses-dev
-        source-highlight
+        source-highlight # syntax highlighting
         libsource-highlight-dev
         libmpfr-dev
         libtool
@@ -513,12 +513,13 @@ ubuntuInstallApps() {
         bear # llvm & clangd
         libear
         gdm3 # gnome display manager
-        ubuntu-desktop
-        gnome-keyring
-        network-manager-gnome
+        ubuntu-desktop # Ubuntu desktop
+        yaru-theme-icon # Yaru theme
+        gnome-keyring # Gnome keyring
+        network-manager-gnome # Network manager
         xfce4 # xfce
         xfce4-goodies
-        xfce4-screensaver
+        xfce4-screensaver # xfce screensaver
         tigervnc-standalone-server # TigerVNC
         tigervnc-xorg-extension
         tigervnc-viewer
