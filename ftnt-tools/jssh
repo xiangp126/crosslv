@@ -909,7 +909,7 @@ loginViaExpect() {
                 -re {$fGroupPattern} {
                     break
                 }
-                -re {host key for (.+?) has changed} {
+                -re {[hH]ost key for (.+?) has changed} {
                     # Get the matched variable from the first capturing group
                     set host \$expect_out(1,string)
                     set COLOR \$LIGHTYELLOW
