@@ -634,6 +634,13 @@
 		}
 	},
 	{
+		"key": "ctrl+shift+k",
+		"command": "command-runner.run",
+		"args": {
+			"command": "jk",
+		}
+	},
+	{
 		"key": "ctrl+shift+n",
 		"command": "-workbench.action.newWindow"
 	},

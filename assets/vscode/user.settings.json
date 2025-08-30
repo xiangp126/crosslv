@@ -318,6 +318,14 @@
                 },
             },
             {
+                "scope": "support.variable",
+                "settings": {
+                    // "foreground": "#9CDCFE",
+                    "foreground": "#89bddc",
+                    // "foreground": "#82bada",
+                },
+            },
+            {
                 "scope": "support.variable.property",
                 "settings": {
                     // "foreground": "#9CDCFE",
@@ -529,8 +537,8 @@
     "gitlens.hovers.autolinks.enabled": false,
     "gitlens.ai.model": "vscode",
     "gitlens.ai.vscode.model": "copilot:gpt-4",
-	"window.confirmBeforeClose": "always",
-	"window.zoomLevel": 0,
+    "window.confirmBeforeClose": "always",
+    "window.zoomLevel": 0,
     "remote.autoForwardPorts": false,
     "C_Cpp.intelliSenseEngine": "disabled",
     "files.autoGuessEncoding": true,
@@ -564,7 +572,8 @@
     "command-runner.terminal.autoFocus": true,
     "command-runner.commands": {
         "jr": "cd ${workspaceFolder}; jr '${selectedText}'",
-        "jn": "cd ${workspaceFolder}; jn '${selectedText}'",
+        "jk": "cd ${workspaceFolder}; jr --kernel '${selectedText}'",
+        "jn": "cd ${workspaceFolder}; jn '${selectedText}'"
     },
     "leetcode.workspaceFolder": "/home/xiangp/myGit/leetcode",
     "files.eol": "\n",
@@ -600,5 +609,17 @@
     "github.copilot.nextEditSuggestions.enabled": false,
     "codeium.snoozeTime": 120,
     "gitlens.views.repositories.autoRefresh": false,
-    "vim.useSystemClipboard": true
+    "vim.useSystemClipboard": true,
+    "vim.overrideCopy": false,
+    "vim.visualModeKeyBindingsNonRecursive": [
+        {
+            "before": [
+                "<C-c>"
+            ],
+            "after": [
+                "y"
+            ]
+        }
+    ],
+    "security.workspace.trust.untrustedFiles": "open"
 }
