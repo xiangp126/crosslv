@@ -239,7 +239,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "${USER_NOTATION} ${MAGENTA}GDB $GDB_TARG_VERSION with the patch applied has been installed to $INSTALL_DIR${RESET}"
+echo -e "${USER_NOTATION} ${MAGENTA}GDB $GDB_TARG_VERSION with the patch applied has been installed to $INSTALL_DIR${RESET}"
 
 cd "$INSTALL_DIR"/bin || exit
 ./gdb --version
