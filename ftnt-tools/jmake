@@ -13,7 +13,7 @@ fBuildModel=
 fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
 fMaxBuildAttempt=1
-fUseBear=
+fGenerateCompileCmds=
 fRunConfigure=
 fNeedBuild=
 fPrintBuildFlags= # Print build flags
@@ -67,8 +67,8 @@ Build Flags:
     -c, --clean                 Clean the repo (default: ${fGitClean:-false})
     -C, --configure             Run Configure intelligently (default: ${fRunConfigure:-false})
     -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
-    -b, --bear                  Use Bear to generate $fCompileCommandsJson (default: ${fUseBear:-false})
-    --bear-remove               Remove $fCompileCommandsJson (default: ${fRMCompileCommandsJson:-false})
+    -g, --generate              Generate $fCompileCommandsJson (default: ${fGenerateCompileCmds:-false})
+    --clean-removal             Remove $fCompileCommandsJson (default: ${fRMCompileCommandsJson:-false})
     -O, --optimization          Enable optimization (default: ${fEnableOptimization:-false})
 
 Build Options:
@@ -103,7 +103,7 @@ _EOF
 fInputCmd="$SCRIPT_NAME $*"
 
 SHORTOPTS="hcCobOm:j:w:kB:s:t:P:u:l:p:"
-LONGOPTS="help,clean,configure,build,optimization,bear,bear-remove,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
+LONGOPTS="help,clean,configure,build,optimization,generate,clean-removal,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
 sync-file:,sync_port:,target:,username:,password:"
 # getopt is a command that standardizes and validates command-line arguments.
 # It takes the messy input arguments and converts them into a standardized format.
@@ -185,13 +185,13 @@ while true; do
             fSyncTarget="$2"
             shift 2
             ;;
-        -b|--bear)
-            fUseBear=true
+        -g|--generate)
+            fGenerateCompileCmds=true
             fRMCompileCommandsJson=true
             fNeedBuild=true
             shift
             ;;
-        --bear-remove)
+        --clean-removal)
             fRMCompileCommandsJson=true
             shift
             ;;
@@ -279,7 +279,7 @@ searchBuildModel() {
 preConfigure() {
     # Set fRunConfigure to true if $fNeedBuild is true
     [ -n "$fNeedBuild" ] && fRunConfigure=true
-    [ -n "$fGitClean" ] || [ -n "$fRunConfigure" ] || [ -n "$fNeedBuild" ] || [ -n "$fUseBear" ] || [ -n "$fRMCompileCommandsJson" ] && fPrintBuildFlags=true
+    [ -n "$fGitClean" ] || [ -n "$fRunConfigure" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] && fPrintBuildFlags=true
     [ -z "$fPrintBuildFlags" ] && return
 
     fWorkingDir=$(realpath "$fWorkingDir")
@@ -325,7 +325,7 @@ printBuildFlags() {
         [ -n "$fRunConfigure" ]          && echo -e "[C] ${COLOR}Configure${RESET} the project"
         [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
         [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} rebuild"
-        [ -n "$fUseBear" ]               && echo -e "[b] ${COLOR}Bear${RESET} to generate compile_commands.json"
+        [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} compile_commands.json"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} the existing $fCompileCommandsJson"
         [ -n "$fEnableOptimization" ]    && echo -e "[O] ${COLOR}Optimization${RESET} enabled" \
                                          || echo -e "[O] ${COLOR}Optimization${RESET} disabled"
@@ -491,27 +491,27 @@ runBuildCommands() {
         makeCommand="make kernel_only && $makeCommand"
     fi
 
-    # Use Bear to generate compile_commands.json
-    if [ -n "$fUseBear" ]; then
-        bearPath=$(command -v bear)
-        if [[ -z "$bearPath" ]]; then
-            echo "$USER_NOTATION Command bear not found, please install it first"
-            echo "$USER_NOTATION sudo apt install bear libear -y"
+    if [ -n "$fGenerateCompileCmds" ]; then
+        local buildWrapper=
+        local commandPrefix=(
+            "intercept-build"
+            "intercept"
+        )
+        for prefix in "${commandPrefix[@]}"; do
+            for cmdName in $(compgen -c "$prefix" | sort -r); do
+                if command -v "$cmdName" >/dev/null 2>&1; then
+                    buildWrapper="$cmdName"
+                    echo -e "$USER_NOTATION Build wrapper found: ${BLUE}$buildWrapper${RESET}"
+                    break 2
+                fi
+            done
+        done
+        if [[ -z "$buildWrapper" ]]; then
+            echo "$USER_NOTATION Build wrapper not found, please install it first"
+            echo "$USER_NOTATION sudo apt install clang-tools -y to install intercept-build"
             exit 1
         fi
-        pathOfLibear=$(locate libear.so | grep -m 1 libear.so)
-        if [[ "$pathOfLibear" != "" ]]; then
-            bear="bear -l $pathOfLibear"
-        else
-            defaultLiBearPath="/usr/lib/x86_64-linux-gnu/bear/libear.so"
-            if [[ ! -f "$defaultLiBearPath" ]]; then
-                echo "$USER_NOTATION libear.so not found, please install it first"
-                echo "$USER_NOTATION sudo apt install libear -y"
-                exit 1
-            fi
-            bear="bear -l $defaultLiBearPath"
-        fi
-        makeCommand="$bear $makeCommand"
+        makeCommand="$buildWrapper --cdb compile_commands.json $makeCommand"
     fi
 
     local attempt=1
@@ -581,8 +581,8 @@ rmWriteFromJson() {
         fi
     else
         echo -e "$USER_NOTATION ${COLOR}No $jsonFile found in $fWorkingDir${RESET}"
-        if [ -n "$fUseBear" ]; then
-            echo -e "$USER_NOTATION ${COLOR}Please check the bear command${RESET}"
+        if [ -n "$fGenerateCompileCmds" ]; then
+            echo -e "$USER_NOTATION ${COLOR}Please check the generate compile command${RESET}"
             exit 1
         fi
     fi

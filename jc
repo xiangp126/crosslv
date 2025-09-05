@@ -463,15 +463,13 @@ ubuntuInstallApps() {
         jq                      # JSON processor
         bat                     # A cat clone with syntax highlighting
 
-        # --- Development Tools ---
-        gdb                     # The GNU Debugger
-        bear                    # Tool for generating compile_commands.json
-        universal-ctags         # Ctags for code navigation
-        ragel                   # State machine compiler
-
         # --- Build System & Toolchains ---
         build-essential         # Compiler toolchain (gcc, make, etc.)
         pkg-config              # Manage compile/link flags for libraries
+        gdb                     # The GNU Debugger
+        universal-ctags         # Ctags for code navigation
+        ragel                   # State machine compiler
+        clang-tools             # Clang compiler tools
         cmake                   # Cross-platform build system generator
         libtool                 # Generic library support script
         autoconf                # Generates configuration scripts
