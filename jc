@@ -482,6 +482,7 @@ ubuntuInstallApps() {
         python3-dev
         ffmpeg
         build-essential # build essentials
+        pkg-config
         gdb
         cmake
         libboost-all-dev

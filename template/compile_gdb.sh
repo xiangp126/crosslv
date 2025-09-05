@@ -114,6 +114,12 @@ _EOF_
     fi
 fi
 
+# In case you have to install some of the packages manually
+# wget https://jfrog.corp.fortinet.com/artifactory/apt-proxy/pool/main/libz/libzstd/libzstd-dev_1.4.8+dfsg-3build1_amd64.deb
+# sudo dpkg -i libzstd-dev_1.4.8+dfsg-3build1_amd64.deb
+# wget http://archive.ubuntu.com/ubuntu/pool/main/x/xz-utils/liblzma-dev_5.2.5-2ubuntu1_amd64.deb
+# sudo dpkg -i liblzma-dev_5.2.5-2ubuntu1_amd64.deb
+
 # Only install build tools if not skipped
 if [ $SKIP_BUILD_TOOLS -eq 0 ]; then
     echo -e "${USER_NOTATION} ${MAGENTA}Installing necessary build tools${RESET}"
@@ -124,10 +130,16 @@ if [ $SKIP_BUILD_TOOLS -eq 0 ]; then
                         libisl-dev \
                         libgmp-dev \
                         libncurses-dev \
+                        python3 \
                         python3-dev \
+                        python3-distutils \
                         source-highlight \
                         libsource-highlight-dev \
-                        libmpfr-dev
+                        libxxhash-dev \
+                        liblzma-dev \
+                        libmpfr-dev \
+                        libzstd-dev \
+                        pkg-config
 fi
 
 # Navigate to the download directory
@@ -138,7 +150,17 @@ if [ ! -f "gdb-$GDB_TARG_VERSION.tar.gz" ]; then
     wget "$GDB_SOURCE_URL"
 fi
 
-if [ ! -d "gdb-$GDB_TARG_VERSION" ]; then
+extractFlag=1
+if [ -d "gdb-$GDB_TARG_VERSION" ]; then
+    if [ -n "$CLEAN_INSTALL" ]; then
+        echo -e "${USER_NOTATION} ${MAGENTA}Removing gdb-$GDB_TARG_VERSION from the current directory${RESET}"
+        rm -rf "gdb-$GDB_TARG_VERSION"
+    else
+        extractFlag=
+    fi
+fi
+
+if [ -n "$extractFlag" ]; then
     echo -e "${USER_NOTATION} ${MAGENTA}Extracting GDB source code${RESET}"
     tar -xzvf "gdb-$GDB_TARG_VERSION.tar.gz"
 fi
@@ -162,12 +184,6 @@ if [ ! -f "$PATCH_NAME" ]; then
     fi
 fi
 
-# Update force clean check to use CLEAN_INSTALL variable
-if [ -n "$CLEAN_INSTALL" ]; then
-    echo -e "${USER_NOTATION} ${MAGENTA}Cleaning up the build directory${RESET}"
-    make distclean
-fi
-
 # Configure the build
 # https://sourceware.org/gdb/wiki/BuildingNatively
 python3_path=$(which python3)
@@ -184,7 +200,13 @@ python3_path=$(which python3)
   --enable-gdb-stub \
   --enable-tui \
   --with-curses \
+  --with-zstd \
   --enable-x86-64 \
+  --with-system-zlib \
+  --with-lzma=/usr \
+  --with-xxhash=/usr \
+  --with-gmp=/usr \
+  --with-mpfr=/usr \
   CXXFLAGS='-g3 -O0' \
   CFLAGS='-g3 -O0 -DCURSES_LIBRARY'
 

@@ -59,6 +59,7 @@ alias yt-dlp='yt-dlp --verbose'
 alias youtube-dl='yt-dlp --external-downloader aria2c --external-downloader-args "-x 16 -s 16" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --write-auto-subs --sub-langs zh-Hans'
 alias rsync='rsync -azPv'
 alias jn='jr --no-clipboard'
+alias jk='jr --kernel'
 
 function __cd () {
     if [ -d "$1" ]; then
