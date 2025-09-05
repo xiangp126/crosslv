@@ -18,7 +18,7 @@ INSTALL_DIR="$HOME/.usr/"
 DOWNLOAD_DIR="$HOME/Downloads"
 PATCH_NAME="gdb-12.1-archswitch.patch"
 PATCH_URL="https://github.com/mduft/tachyon3/raw/master/tools/patches/$PATCH_NAME"
-MAGENTA='\033[0;35m'
+MAGENTA='\033[35m'
 RESET='\033[0m'
 USER_NOTATION="@@@@"
 
