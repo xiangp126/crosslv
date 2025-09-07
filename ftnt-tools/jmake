@@ -68,11 +68,11 @@ Build Flags:
     -C, --configure             Run Configure intelligently (default: ${fRunConfigure:-false})
     -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
     -g, --generate              Generate $fCompileCommandsJson (default: ${fGenerateCompileCmds:-false})
-    --clean-removal             Remove $fCompileCommandsJson (default: ${fRMCompileCommandsJson:-false})
+    --clean-removal             Remove $fCompileCommandsJson in clean command (default: ${fRMCompileCommandsJson:-false})
     -O, --optimization          Enable optimization (default: ${fEnableOptimization:-false})
 
 Build Options:
-    -m, --model                 Set the build model  (default: ${fBuildModel:-KVM})
+    -m, --model                 Set the build model (default: ${fBuildModel:-KVM})
     -j, --jobs                  Set the number of jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory  (default: $fWorkingDir)
     -k, --kernel                Rebuild the kernel (default: ${fRebuildKernel:-false})
