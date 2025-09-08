@@ -2,6 +2,11 @@
 # shellcheck disable=SC2012 disable=SC2155
 # set -x
 
+# To be combined with templates/code-function.sh
+# Currently jr executed by vscode plugin will never see the helper functions defined in templates/code-function.sh
+# even though loading this script explicitly in jr
+# As a walkaround, keep both jrcode and code-function.sh at the moment
+
 # Variables
 fArgs=()
 fForce=

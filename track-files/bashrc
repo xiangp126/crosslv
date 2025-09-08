@@ -85,61 +85,61 @@ alias cds='__cd /opt/src'
 # Print entry names without quotation marks
 export QUOTING_STYLE=literal
 export BAT_THEME=TwoDark
-if ! declare -F __set_vscode_code_path &> /dev/null; then
-    __set_vscode_code_path() {
-        local MAGENTA='\033[0;35m'
-        local RESET='\033[0m'
-        local syspath="/run/user/$UID"
-        local searchPath="$HOME/.vscode-server/cli/servers"
+# if ! declare -F __set_vscode_code_path &> /dev/null; then
+#     __set_vscode_code_path() {
+#         local MAGENTA='\033[0;35m'
+#         local RESET='\033[0m'
+#         local syspath="/run/user/$UID"
+#         local searchPath="$HOME/.vscode-server/cli/servers"
 
-        # Step 1: Find the commit ID of the active VS Code server
-        # Use process substitution to ensure `commitId` is set in the current shell scope, not a subshell.
-        # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
-        local pidFile currentPid commitId=
-        cd "$searchPath" || return
-        while IFS= read -r -d $'\0' pidFile; do
-            if [ -f "$pidFile" ]; then
-                currentPid=$(cat "$pidFile" 2>/dev/null)
-                if [ -n "$currentPid" ] && [[ "$currentPid" =~ ^[0-9]+$ ]]; then
-                    # Check if the process is actually running
-                    if ps -p "$currentPid" -o pid= > /dev/null 2>&1; then
-                        commitId=$(basename "$(dirname "$pidFile")")
-                        break
-                    fi
-                fi
-            fi
-        done < <(find . -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
+#         # Step 1: Find the commit ID of the active VS Code server
+#         # Use process substitution to ensure `commitId` is set in the current shell scope, not a subshell.
+#         # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
+#         local pidFile currentPid commitId=
+#         cd "$searchPath" || return
+#         while IFS= read -r -d $'\0' pidFile; do
+#             if [ -f "$pidFile" ]; then
+#                 currentPid=$(cat "$pidFile" 2>/dev/null)
+#                 if [ -n "$currentPid" ] && [[ "$currentPid" =~ ^[0-9]+$ ]]; then
+#                     # Check if the process is actually running
+#                     if ps -p "$currentPid" -o pid= > /dev/null 2>&1; then
+#                         commitId=$(basename "$(dirname "$pidFile")")
+#                         break
+#                     fi
+#                 fi
+#             fi
+#         done < <(find . -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
 
-        # Step 2: Set the VSCODE_BIN_PATH
-        if [[ -z "$commitId" ]]; then
-            echo -e "${MAGENTA}Warning: No active VS Code server found under $searchPath.${RESET}" >&2
-            cd - &> /dev/null || return
-            return 1
-        fi
-        VSCODE_BIN_PATH="$searchPath/$commitId/server/bin/remote-cli/code"
-        if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
-            echo -e "${MAGENTA}Error: VS Code binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
-            return 1
-        fi
+#         # Step 2: Set the VSCODE_BIN_PATH
+#         if [[ -z "$commitId" ]]; then
+#             echo -e "${MAGENTA}Warning: No active VS Code server found under $searchPath.${RESET}" >&2
+#             cd - &> /dev/null || return
+#             return 1
+#         fi
+#         VSCODE_BIN_PATH="$searchPath/$commitId/server/bin/remote-cli/code"
+#         if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
+#             echo -e "${MAGENTA}Error: VS Code binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
+#             return 1
+#         fi
 
-        # Step 3: Set the VSCODE_IPC_HOOK_CLI
-        # Get the most recenely created vscode-ipc-*.sock file
-        # shellcheck disable=SC2012
-        local newIPCHook=$(ls -t "$syspath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
-        if [ -z "$newIPCHook" ]; then
-            echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $syspath${RESET}" >&2
-            return 1
-        fi
-        # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
-        # But you have to remember that only the sub shell can see the new value.
-        export VSCODE_IPC_HOOK_CLI=$newIPCHook
-        export VSCODE_BIN_PATH
+#         # Step 3: Set the VSCODE_IPC_HOOK_CLI
+#         # Get the most recenely created vscode-ipc-*.sock file
+#         # shellcheck disable=SC2012
+#         local newIPCHook=$(ls -t "$syspath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+#         if [ -z "$newIPCHook" ]; then
+#             echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $syspath${RESET}" >&2
+#             return 1
+#         fi
+#         # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
+#         # But you have to remember that only the sub shell can see the new value.
+#         export VSCODE_IPC_HOOK_CLI=$newIPCHook
+#         export VSCODE_BIN_PATH
 
-        # Step 4: Return to the original directory
-        cd - &> /dev/null || return
-    }
-    export -f __set_vscode_code_path
-fi
+#         # Step 4: Return to the original directory
+#         cd - &> /dev/null || return
+#     }
+#     export -f __set_vscode_code_path
+# fi
 
 # Useful local variables.
 export LC_ALL=en_US.UTF-8
@@ -246,4 +246,4 @@ export FZF_COMPLETION_OPTS='+c -x'
 # For fzf-tab-completion vim plugin
 bind -r "\\\t"
 bind -x '"\\\t": fzf_bash_completion'
-[ -d "$HOME/.vscode-server/cli/servers" ] && __set_vscode_code_path
+[ -d "$HOME/.vscode-server/cli/servers" ] && source ~/Templates/code-function.sh

@@ -4,7 +4,7 @@
 # Global Variables
 fQuery=
 fRgOnly=
-fEditor="code"
+fEditor="jrcode"
 fCheckDepends=
 fzfSelected=
 fREMatching=
