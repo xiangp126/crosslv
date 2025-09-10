@@ -12,7 +12,7 @@ fBuildTarget="$FTNTBUILDTARGET"
 fBuildModel=
 fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
-fMaxBuildAttempt=1
+fMaxBuildAttempt=2
 fGenerateCompileCmds=
 fRunConfigure=
 fNeedBuild=
@@ -64,15 +64,16 @@ usage() {
 Usage: $SCRIPT_NAME [OPTIONS]
 
 Build Flags:
-    --debug                     Print debug information
     -c, --clean                 Clean the repo (default: ${fGitClean:-false})
+    --clean-removal             Remove $fCompileCommandsJson in clean command (default: ${fRMCompileCommandsJson:-false})
     -C, --configure             Run Configure intelligently (default: ${fRunConfigure:-false})
     -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
-    -g, --generate              Generate $fCompileCommandsJson (default: ${fGenerateCompileCmds:-false})
-    --clean-removal             Remove $fCompileCommandsJson in clean command (default: ${fRMCompileCommandsJson:-false})
+    --debug                     Print debug information
     -O, --optimization          Enable optimization (default: ${fEnableOptimization:-false})
 
 Build Options:
+    -g, --generate              Generate $fCompileCommandsJson (default: ${fGenerateCompileCmds:-false})
+    --bear                      Use Bear to generate compile_commands.json
     -m, --model                 Set the build model (default: ${fBuildModel:-KVM})
     -j, --jobs                  Set the number of jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory  (default: $fWorkingDir)
@@ -103,8 +104,8 @@ _EOF
 [[ $# -eq 0 ]] && usage
 fInputCmd="$SCRIPT_NAME $*"
 
-SHORTOPTS="hcCobOm:j:w:kB:s:t:P:u:l:p:"
-LONGOPTS="help,clean,debug,configure,build,optimization,generate,clean-removal,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
+SHORTOPTS="hcCoOm:j:w:kB:s:t:P:u:l:p:"
+LONGOPTS="help,clean,debug,bear,configure,build,optimization,clean-removal,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
 sync-file:,sync_port:,target:,username:,password:"
 # getopt is a command that standardizes and validates command-line arguments.
 # It takes the messy input arguments and converts them into a standardized format.
@@ -190,10 +191,12 @@ while true; do
             fSyncTarget="$2"
             shift 2
             ;;
-        -g|--generate)
+        --bear)
             fGenerateCompileCmds=true
             fRMCompileCommandsJson=true
+            fGitClean=true
             fNeedBuild=true
+            fUseBear=true
             shift
             ;;
         --clean-removal)
@@ -492,43 +495,43 @@ runBuildCommands() {
     [ -z $fNeedBuild ] && return
     cd "$fWorkingDir" || exit
 
-    makeCommand="make -j$fNumOfJobs $fBuildTarget"
+    local plainMakeCommand="make -j$fNumOfJobs $fBuildTarget"
     if [ -n "$fRebuildKernel" ]; then
-        makeCommand="make kernel_only && $makeCommand"
+        plainMakeCommand="make kernel_only && $plainMakeCommand"
     fi
+    local makeCommand="$plainMakeCommand"
 
-    if [ -n "$fGenerateCompileCmds" ]; then
-        local buildWrapper=
-        local commandPrefix=(
-            "intercept-build"
-            "intercept"
-        )
-        for prefix in "${commandPrefix[@]}"; do
-            for cmdName in $(compgen -c "$prefix" | sort -r); do
-                if command -v "$cmdName" >/dev/null 2>&1; then
-                    buildWrapper="$cmdName"
-                    echo -e "$USER_NOTATION Build wrapper found: ${BLUE}$buildWrapper${RESET}"
-                    break 2
-                fi
-            done
-        done
-        if [[ -z "$buildWrapper" ]]; then
-            echo "$USER_NOTATION Build wrapper not found, please install it first"
-            echo "$USER_NOTATION sudo apt install clang-tools -y to install intercept-build"
-            exit 1
-        fi
-        makeCommand="$buildWrapper --cdb compile_commands.json $makeCommand"
-    fi
-
-    local attempt=1
+    local currAttempt=1
     local maxAttempt=$fMaxBuildAttempt
     local buildStartTime buildEndTime
-    buildStartTime=$(date +%s)
-    # Loop to build the projects
-    while [[ $attempt -le $maxAttempt ]]; do
+    while [[ $currAttempt -le $maxAttempt ]]; do
+        # Prepare the make command
+        if [ -n "$fGenerateCompileCmds" ]; then
+            # Use Bear to generate compile_commands.json
+            local pathOfLibExec=
+            local wrapperCmd=
+            if [ -n "$fUseBear" ]; then
+                if ! command -v "bear" >/dev/null 2>&1; then
+                    echo -e "$USER_NOTATION ${CYAN}Installing Bear...${RESET}"
+                    sudo DEBIAN_FRONTEND=noninteractive apt install bear -y
+                fi
+                wrapperCmd="bear"
+                pathOfLibExec=$(find /usr/lib/ -name libexec.so | head -n 1)
+                if [ -n "$pathOfLibExec" ] && [[ "$currAttempt" -eq 1 ]]; then
+                    wrapperCmd="$wrapperCmd --library $pathOfLibExec --"
+                else
+                    echo -e "$USER_NOTATION ${CYAN}Trying to force the use of the compile wrappers...${RESET}"
+                    wrapperCmd="$wrapperCmd --force-wrapper --"
+                fi
+            fi
+            makeCommand="$wrapperCmd $plainMakeCommand"
+        fi
+
+        # Loop to build the projects
+        buildStartTime=$(date +%s)
         COLOR="$GREEN"
         echo -e "$USER_NOTATION Running build commands: ${LIGHTYELLOW}$makeCommand${RESET}"
-        echo -e "$USER_NOTATION ${COLOR}Build attempt $attempt/$maxAttempt${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Build attempt $currAttempt/$maxAttempt${RESET}"
         sleep 2
 
         eval "$makeCommand"
@@ -537,7 +540,7 @@ runBuildCommands() {
         if [[ $eval_status -eq 0 ]]; then
             break
         else
-            attempt=$((attempt + 1))
+            currAttempt=$((currAttempt + 1))
         fi
     done
     buildEndTime=$(date +%s)

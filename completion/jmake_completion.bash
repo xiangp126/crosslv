@@ -17,10 +17,10 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -m -d -w -j -c -C -g -B -o -t -s -P -p -u -l -k -O"
+    opts="-h -m -d -w -j -c -C -B -o -t -s -P -p -u -l -k -O"
 
     # List of all long options
-    long_opts="--help --model --debug --working-dir --jobs --clean --configure --generate \
+    long_opts="--help --model --debug --bear --working-dir --jobs --clean --configure \
                --build-target --build --clean-removal --max-build-attempt \
                --target --sync-file --sync-port --username --password --kernel \
                --disable-optimization"
