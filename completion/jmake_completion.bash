@@ -17,10 +17,10 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -m -w -j -c -C -g -B -o -t -s -P -p -u -l -k -O"
+    opts="-h -m -d -w -j -c -C -g -B -o -t -s -P -p -u -l -k -O"
 
     # List of all long options
-    long_opts="--help --model --working-dir --jobs --clean --configure --generate \
+    long_opts="--help --model --debug --working-dir --jobs --clean --configure --generate \
                --build-target --build --clean-removal --max-build-attempt \
                --target --sync-file --sync-port --username --password --kernel \
                --disable-optimization"
@@ -35,7 +35,7 @@ _jmake_complete() {
         # Build options
         -m|--model)
             # You can customize this list based on your available models
-            local models="FGT_VM64_KVM VMWARE"
+            local models="vmware FGT_VM64_KVM VMWARE"
             COMPREPLY=( $(compgen -W "${models}" -- ${cur}) )
             return 0
             ;;

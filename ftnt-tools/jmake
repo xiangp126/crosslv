@@ -64,6 +64,7 @@ usage() {
 Usage: $SCRIPT_NAME [OPTIONS]
 
 Build Flags:
+    --debug                     Print debug information
     -c, --clean                 Clean the repo (default: ${fGitClean:-false})
     -C, --configure             Run Configure intelligently (default: ${fRunConfigure:-false})
     -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
@@ -103,7 +104,7 @@ _EOF
 fInputCmd="$SCRIPT_NAME $*"
 
 SHORTOPTS="hcCobOm:j:w:kB:s:t:P:u:l:p:"
-LONGOPTS="help,clean,configure,build,optimization,generate,clean-removal,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
+LONGOPTS="help,clean,debug,configure,build,optimization,generate,clean-removal,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
 sync-file:,sync_port:,target:,username:,password:"
 # getopt is a command that standardizes and validates command-line arguments.
 # It takes the messy input arguments and converts them into a standardized format.
@@ -132,6 +133,10 @@ while true; do
     case "$1" in
         -h|--help)
             usage
+            shift
+            ;;
+        -d|--debug)
+            set -x
             shift
             ;;
         -m|--model)
@@ -192,6 +197,7 @@ while true; do
             shift
             ;;
         --clean-removal)
+            fGitClean=true
             fRMCompileCommandsJson=true
             shift
             ;;
@@ -325,8 +331,8 @@ printBuildFlags() {
         [ -n "$fRunConfigure" ]          && echo -e "[C] ${COLOR}Configure${RESET} the project"
         [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
         [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} rebuild"
-        [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} compile_commands.json"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} the existing $fCompileCommandsJson"
+        [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} compile_commands.json"
         [ -n "$fEnableOptimization" ]    && echo -e "[O] ${COLOR}Optimization${RESET} enabled" \
                                          || echo -e "[O] ${COLOR}Optimization${RESET} disabled"
     fi
@@ -484,8 +490,8 @@ runConfigure() {
 
 runBuildCommands() {
     [ -z $fNeedBuild ] && return
-
     cd "$fWorkingDir" || exit
+
     makeCommand="make -j$fNumOfJobs $fBuildTarget"
     if [ -n "$fRebuildKernel" ]; then
         makeCommand="make kernel_only && $makeCommand"
