@@ -71,7 +71,7 @@ while true; do
             shift
             continue
             ;;
-        -i|--install-dir)
+        '-i'|'--install-dir')
             INSTALL_DIR="$2"
             shift 2
             continue

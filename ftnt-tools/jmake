@@ -857,11 +857,24 @@ runSyncCommands() {
     esac
 }
 
+switchFortidev() {
+    if [ "$fPlatform" == "FPX" ]; then
+        if command -v jdev &> /dev/null; then
+            echo -e "$USER_NOTATION Invoking ${LIGHTGREEN}jdev${RESET} to switch to Fortidev 6"
+            jdev -6
+        else
+            echo -e "$USER_NOTATION ${LIGHTYELLOW}jdev is not installed. Skipping.${RESET}"
+            exit
+        fi
+    fi
+}
+
 main () {
     preConfigure "$@"
     showLogo
     printBuildFlags
     cleanTheRepo
+    switchFortidev # Only needed for building FPX temporary
     runConfigure
     runBuildCommands
     rmWriteFromJson

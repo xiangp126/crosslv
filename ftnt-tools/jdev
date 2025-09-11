@@ -12,6 +12,7 @@ usage() {
 This script changes the symlink to fortidev between version 6 and 7
 
 Usage: $(basename "$0") [-7|-6]
+  -l: List current symlink
   -7: Switch to $(basename "$fortidev7")
   -6: Switch to $(basename "$fortidev6")
 
@@ -21,13 +22,17 @@ _EOF
     exit 1
 }
 
-while getopts "f67h" opt; do
+while getopts "f67hl" opt; do
     case "$opt" in
         6)
             targetFortidev="$fortidev6"
             ;;
         7)
             targetFortidev="$fortidev7"
+            ;;
+        l)
+            ls -l "$fortidevSymlink"
+            exit 0
             ;;
         h)
             usage
