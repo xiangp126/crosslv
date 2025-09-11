@@ -2,7 +2,8 @@
 # set -x
 
 # Define the target Bear version
-BEAR_TARG_VERSION="3.1.5"
+# BEAR_TARG_VERSION="3.1.5"
+BEAR_TARG_VERSION="2.4.3"
 BEAR_SOURCE_URL="https://github.com/rizsotto/Bear/archive/refs/tags/${BEAR_TARG_VERSION}.tar.gz"
 
 # Define installation directory
@@ -29,6 +30,7 @@ Usage: $(basename $0) [-c] [-h] [--skip] [--clean] [--force]
     -h: Display this help message
     --skip: Skip installation of build tools
     --force: Force the installation
+    --install-dir: Specify the installation directory
 
 _EOF_
     exit 0
@@ -67,6 +69,11 @@ while true; do
         '--skip')
             SKIP_BUILD_TOOLS=1
             shift
+            continue
+            ;;
+        -i|--install-dir)
+            INSTALL_DIR="$2"
+            shift 2
             continue
             ;;
         '--')

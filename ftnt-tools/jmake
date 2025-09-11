@@ -14,6 +14,7 @@ fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
 fMaxBuildAttempt=2
 fGenerateCompileCmds=
+fUseBear=
 fRunConfigure=
 fNeedBuild=
 fPrintBuildFlags= # Print build flags
@@ -72,7 +73,6 @@ Build Flags:
     -O, --optimization          Enable optimization (default: ${fEnableOptimization:-false})
 
 Build Options:
-    -g, --generate              Generate $fCompileCommandsJson (default: ${fGenerateCompileCmds:-false})
     --bear                      Use Bear to generate compile_commands.json
     -m, --model                 Set the build model (default: ${fBuildModel:-KVM})
     -j, --jobs                  Set the number of jobs (default: $fNumOfJobs)
@@ -508,21 +508,33 @@ runBuildCommands() {
         # Prepare the make command
         if [ -n "$fGenerateCompileCmds" ]; then
             # Use Bear to generate compile_commands.json
-            local pathOfLibExec=
+            local pathOfBearLib=
             local wrapperCmd=
-            if [ -n "$fUseBear" ]; then
-                if ! command -v "bear" >/dev/null 2>&1; then
+            if [ -n "$fUseBear" ] && [[ "$currAttempt" -eq 1 ]]; then
+                wrapperCmd="/bin/bear"
+                if [ ! -x "$wrapperCmd" ]; then
                     echo -e "$USER_NOTATION ${CYAN}Installing Bear...${RESET}"
                     sudo DEBIAN_FRONTEND=noninteractive apt install bear -y
                 fi
-                wrapperCmd="bear"
-                pathOfLibExec=$(find /usr/lib/ -name libexec.so | head -n 1)
-                if [ -n "$pathOfLibExec" ] && [[ "$currAttempt" -eq 1 ]]; then
-                    wrapperCmd="$wrapperCmd --library $pathOfLibExec --"
+                pathOfBearLib=$(find /usr/lib/ -name libexec.so | head -n 1)
+                if [ -n "$pathOfBearLib" ]; then
+                    wrapperCmd="$wrapperCmd --library $pathOfBearLib --"
                 else
-                    echo -e "$USER_NOTATION ${CYAN}Trying to force the use of the compile wrappers...${RESET}"
-                    wrapperCmd="$wrapperCmd --force-wrapper --"
+                    echo -e "$USER_NOTATION ${CYAN}Failed to find libexec.so.${RESET}"
+                    exit 1
                 fi
+            else
+                # Failback to use bear 2.4.3 and libear.so which is compiled by glibc.so.2.31
+                if [ ! -x "$HOME/.usr/bin/bear" ]; then
+                    echo -e "$USER_NOTATION ${CYAN}Failed to find $HOME/.usr/bin/bear...${RESET}"
+                    exit 1
+                fi
+                pathOfBearLib="$HOME/.usr/lib/libear.so"
+                if [ ! -f "$pathOfBearLib" ]; then
+                    echo -e "$USER_NOTATION ${CYAN}Failed to find $pathOfBearLib...${RESET}"
+                    exit 1
+                fi
+                wrapperCmd="$HOME/.usr/bin/bear --libear $pathOfBearLib"
             fi
             makeCommand="$wrapperCmd $plainMakeCommand"
         fi
@@ -743,7 +755,7 @@ runSyncCommands() {
     [[ $retValue -ne 0 ]] && echo "$USER_NOTATION Sync return value: $retValue"
 
     case $retValue in
-        $ESUCCESS)
+        "$ESUCCESS")
             COLOR=$MAGENTA
             echo -e "$USER_NOTATION You have synced $fSyncFile to $fSyncTarget successfully at $(getCurrentTime)"
             if ! command -v $loginTool &> /dev/null; then
@@ -766,11 +778,11 @@ runSyncCommands() {
                 exit 0
             fi
             ;;
-        $EMAXTRIES)
+        "$EMAXTRIES")
             echo "$USER_NOTATION Failed to sync $fSyncFile to $fSyncTarget after $maxSyncRetries attempts"
             exit $EMAXTRIES
             ;;
-        $EPERMDENIED)
+        "$EPERMDENIED")
             echo -e "$USER_NOTATION ${LIGHTYELLOW}Enabling the admin-scp for you intelligently${RESET}"
             expect -c "
                 set RESET       \"\033\[0m\"
@@ -834,7 +846,7 @@ runSyncCommands() {
             echo -e "$USER_NOTATION ${MAGENTA}Please re-run the sync command again.${RESET}"
             exit $ESUCCESS
             ;;
-        $ETIMEOUT)
+        "$ETIMEOUT")
             echo "$USER_NOTATION Timeout to sync $fSyncFile to $fSyncTarget"
             exit $ETIMEOUT
             ;;

@@ -469,6 +469,7 @@ ubuntuInstallApps() {
         gdb                     # The GNU Debugger
         universal-ctags         # Ctags for code navigation
         ragel                   # State machine compiler
+        bear                    # Generate compilation database
         clang-tools             # Clang compiler tools
         cmake                   # Cross-platform build system generator
         libtool                 # Generic library support script
