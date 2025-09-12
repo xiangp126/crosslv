@@ -576,8 +576,8 @@ makeSpawnCmd() {
 
     case "$fMode" in
         "$SSH_MODE")
-            param=
-            [ -n "$fX11Forwarding" ] && param="-X"
+            param="$keepAlive"
+            [ -n "$fX11Forwarding" ] && param="$param -X"
             cmd="$fSSHCmd"
 
             if [ -n "$fNeedJumpServer" ]; then
@@ -667,7 +667,7 @@ makeSpawnCmd() {
             ;;
     esac
     # Squash multiple spaces into one
-    fSpawnCmd=$(echo "$fSpawnCmd" | tr -s ' ')
+    # fSpawnCmd=$(echo "$fSpawnCmd" | tr -s ' ')
 }
 
 displayInfo() {
