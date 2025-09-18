@@ -657,7 +657,7 @@ runSyncCommands() {
     # expect -d -c "
     expect -c "
         # Set the initial values
-        set defaultTimeout 900
+        set defaultTimeout 1200
         set adjustTimeout 0
         set waitBeforeRetry 10
         set passwd_prompt_cnt 0

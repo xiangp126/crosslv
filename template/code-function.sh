@@ -3,7 +3,7 @@
 # Then add "source ~/Templates/code-function.sh" to your .bashrc
 # Usage: code [options] [file/directory]
 
-if declare -F code &> /dev/null; then
+if declare -F _code_preCheck &> /dev/null; then
     return
 fi
 
