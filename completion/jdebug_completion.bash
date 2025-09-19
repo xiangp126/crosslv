@@ -12,7 +12,7 @@ _jdebug_complete() {
 
     # List of all long options
     long_opts="--target --worker-type --debug-port --max-attempts --username --password --port \
-               --worker-cnt --display-only --reboot --silent --kill --help --select"
+               --worker-cnt --wad-info --reboot --silent --kill --help --select"
 
     # Function to get hosts from /etc/hosts
     _get_hosts() {
