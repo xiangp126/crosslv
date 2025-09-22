@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # set -x
 
 # Global Variables
 fQuery=
 fRgOnly=
-fEditor="jrcode"
+fEditor="code"
+# fEditor="jrcode"
 fCheckDepends=
 fzfSelected=
 fREMatching=
@@ -286,6 +288,9 @@ fuzzySearch() {
 }
 
 main() {
+    # source the code function
+    source "$HOME"/Templates/code-function.sh
+    # Do the main work
     parseOptions "$@"
     [ -n "$fCheckDepends" ] && checkDepends
     [ -z "$fNoClipboard" ] && GetClipboardContent

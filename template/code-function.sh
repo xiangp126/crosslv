@@ -1,6 +1,7 @@
 #!/bin/bash
+# set -x
 # VS Code CLI Function - Save as ~/Templates/code-function.sh
-# Then add "source ~/Templates/code-function.sh" to your .bashrc
+# Add "source "$HOME"/Templates/code-function.sh" to your .bashrc
 # Usage: code [options] [file/directory]
 
 if declare -F _code_preCheck &> /dev/null; then
