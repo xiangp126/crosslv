@@ -91,7 +91,7 @@ Basic Options:
     -d, --debug             Enable debug mode (-vvv)
     -c, --command           Execute commands remotely without opening an interactive login session
     --wireshark             Live capture packets from the remote device
-    --tls-keylog-file       Set the path to the TLS key log file
+    --tls-keylog-file       Set the path to the TLS key log file (If not set, auto detect the file)
     --get-system-status     Get the system status of the target device
     --spawned-cmd-only      Only show the spawned command
 
