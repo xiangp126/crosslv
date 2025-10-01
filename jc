@@ -479,6 +479,7 @@ ubuntuInstallApps() {
 
         # --- Development Libraries ---
         python3-dev             # Python 3 development headers
+        python3-venv            # Python 3 virtual environment
         libssl-dev              # OpenSSL development libraries
         libboost-all-dev        # Boost C++ libraries
         libsqlite3-dev          # SQLite 3 development library
