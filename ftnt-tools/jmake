@@ -20,6 +20,7 @@ fNeedBuild=
 fPrintBuildFlags= # Print build flags
 fGitClean=
 fEnableOptimization=
+fAddressSanitizer= # AddressSanitizer (ASan), a powerful memory error detection tool.
 fInputCmd=
 fBuildTimeFormatted=
 # Sync Options
@@ -65,12 +66,13 @@ usage() {
 Usage: $SCRIPT_NAME [OPTIONS]
 
 Build Flags:
+    -D, --debug                 Enable debug mode
     -c, --clean                 Clean the repo (default: ${fGitClean:-false})
-    --clean-removal             Remove $fCompileCommandsJson in clean command (default: ${fRMCompileCommandsJson:-false})
+        --clean-removal         Remove $fCompileCommandsJson in clean command (default: ${fRMCompileCommandsJson:-false})
     -C, --configure             Run Configure intelligently (default: ${fRunConfigure:-false})
     -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
-    --debug                     Print debug information
     -O, --optimization          Enable optimization (default: ${fEnableOptimization:-false})
+    -S, --address-sanitizer     Enable/Disable -fsanitize=address when compiling (default: ${fAddressSanitizer:-false})
 
 Build Options:
     --bear                      Use Bear to generate compile_commands.json
@@ -104,9 +106,9 @@ _EOF
 [[ $# -eq 0 ]] && usage
 fInputCmd="$SCRIPT_NAME $*"
 
-SHORTOPTS="hcCoOm:j:w:kB:s:t:P:u:l:p:"
+SHORTOPTS="hcCoOm:j:w:kB:s:t:P:u:l:p:DS:"
 LONGOPTS="help,clean,debug,bear,configure,build,optimization,clean-removal,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
-sync-file:,sync_port:,target:,username:,password:"
+sync-file:,sync_port:,target:,username:,password:,address-sanitizer:"
 # getopt is a command that standardizes and validates command-line arguments.
 # It takes the messy input arguments and converts them into a standardized format.
 # CLI Input: jmake TEST --model=VMWARE -j 8 --optimization
@@ -174,6 +176,22 @@ while true; do
             fNeedBuild=true
             shift
             ;;
+        -S|--address-sanitizer)
+            case "$2" in
+                yes|y)
+                    fAddressSanitizer="y"
+                    ;;
+                no|n)
+                    fAddressSanitizer="n"
+                    ;;
+                *)
+                    echo -e "${MAGENTA}Error: Invalid value for --address-sanitizer option: $2${RESET}" >&2;
+                    exit 1
+                    ;;
+            esac
+            fNeedBuild=true
+            shift 2
+            ;;
         -B|--build-target)
             fBuildTarget="$2"
             fNeedBuild=true
@@ -187,6 +205,11 @@ while true; do
             fGitClean=true
             shift
             ;;
+        --clean-removal)
+            fGitClean=true
+            fRMCompileCommandsJson=true
+            shift
+            ;;
         -t|--target)
             fSyncTarget="$2"
             shift 2
@@ -197,11 +220,6 @@ while true; do
             fGitClean=true
             fNeedBuild=true
             fUseBear=true
-            shift
-            ;;
-        --clean-removal)
-            fGitClean=true
-            fRMCompileCommandsJson=true
             shift
             ;;
         -s|--sync-file)
@@ -338,6 +356,8 @@ printBuildFlags() {
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} compile_commands.json"
         [ -n "$fEnableOptimization" ]    && echo -e "[O] ${COLOR}Optimization${RESET} enabled" \
                                          || echo -e "[O] ${COLOR}Optimization${RESET} disabled"
+        [ "$fAddressSanitizer" == "y" ]  && echo -e "[A] ${COLOR}AddressSanitizer${RESET} enabled" \
+                                         || echo -e "[A] ${COLOR}AddressSanitizer${RESET} disabled"
     fi
 
     # Print the build options
@@ -422,12 +442,23 @@ runConfigure() {
         exit 1
     fi
 
+    # OPTIONS
+    #        -h                Usage
+    #        -z                Usage, with advanced options
+    #        -m model_name     Specify model name
+    #        -d y/n/ccy/cg/p/d Build debug version, release version, code coverage,
+    #                          callgrind-enabled version, perf-enabled version, read-only-demo version?
+    #        -c                Build code coverage image
+    #        -f y/n            Install /fortidev symlink
+    #        -O                Turn off compiler optimization
+    #        -S                Enable -fsanitize=address when compiling.
     COLOR=$BLUE
-    # -O   Disable optimization
-    # -c   Enable code coverage
     params="-m $fBuildModel -d y -c"
     if [ -z "$fEnableOptimization" ]; then
         params+=" -O"
+    fi
+    if [ -n "$fAddressSanitizer" ]; then
+        params+=" -S $fAddressSanitizer"
     fi
     CONFIGURE_CMD="./Configure $params"
     echo -e "$USER_NOTATION Running Configure: ${COLOR}$CONFIGURE_CMD${RESET}"

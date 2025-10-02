@@ -17,13 +17,13 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -m -d -w -j -c -C -B -o -t -s -P -p -u -l -k -O"
+    opts="-h -m -d -w -j -c -C -B -o -t -s -P -p -u -l -k -O -S -D"
 
     # List of all long options
     long_opts="--help --model --debug --bear --working-dir --jobs --clean --configure \
                --build-target --build --clean-removal --max-build-attempt \
                --target --sync-file --sync-port --username --password --kernel \
-               --disable-optimization"
+               --optimization --address-sanitizer"
 
     # Function to get hosts from /etc/hosts
     _get_hosts() {
@@ -42,6 +42,12 @@ _jmake_complete() {
         -w|--working-dir)
             # Directory completion
             COMPREPLY=( $(compgen -d -- ${cur}) )
+            return 0
+            ;;
+        -S|--address-sanitizer)
+            # Suggest some common options
+            local options="y n yes no"
+            COMPREPLY=( $(compgen -W "${options}" -- ${cur}) )
             return 0
             ;;
         -j|--jobs)

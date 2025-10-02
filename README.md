@@ -151,8 +151,9 @@ Advanced Options:
 ```
 
 <a id="code"></a>
-#### [code](./ftnt-tools/code)
-`code` is a wrapper for the `code` command provided by VSCode. It allows you to open files in VSCode with additional features.
+#### [code](./template/code-function.sh)
+- `code` has been refactored into a function to modify public variables in place.
+- `code` is a wrapper for the `code` command provided by VSCode. It allows you to open files in VSCode with additional features.
 ```bash
 $ code -h
 Usage: code [options] <args>
