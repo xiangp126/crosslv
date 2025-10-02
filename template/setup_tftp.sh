@@ -15,7 +15,15 @@ sudo apt install -y tftpd-hpa
 TFTP_CONFIG="/etc/default/tftpd-hpa"
 
 # Add -c option to TFTP_OPTIONS
-sudo sed -i 's/^TFTP_OPTIONS="/TFTP_OPTIONS="--secure -c /' "$TFTP_CONFIG"
+if ! grep -q -- "secure" "$TFTP_CONFIG"; then
+    echo -e "Adding --secure -c option to TFTP_OPTIONS in $TFTP_CONFIG..."
+    sudo sed -i 's/^TFTP_OPTIONS="/TFTP_OPTIONS="--secure -c /' "$TFTP_CONFIG"
+fi
+
+if [ "$(stat -c %U /srv/tftp)" != "tftp" ]; then
+    echo "Changing ownership of /srv/tftp to tftp..."
+    sudo chown -R tftp:tftp /srv/tftp
+fi
 
 if [ $? -ne 0 ]; then
     echo "Error: Failed to configure TFTP server."
