@@ -88,7 +88,7 @@ Basic Options:
     -p, --password          Password for login (default: $fTargetPwd)
     -P, --port              SSH Port to connect to (default: $fTargetPort)
     -i, --identity-file     SSH identity file
-    -d, --debug             Enable debug mode (-vvv)
+    -D, --debug             Enable debug mode (-vvv)
     -c, --command           Execute commands remotely without opening an interactive login session
     --wireshark             Live capture packets from the remote device
     --tls-keylog-file       Set the path to the TLS key log file (If not set, auto detect the file)
@@ -159,7 +159,7 @@ parseOptions() {
     [[ $# -eq 0 ]] && help
     fInputCmd="$SCRIPT_NAME $*"
 
-    SHORTOPTS="ht:l:u:p:P:dc:J:L:R:v:TSm:Xi:"
+    SHORTOPTS="ht:l:u:p:P:Dc:J:L:R:v:TSm:Xi:"
     LONGOPTS="help,target:,username:,password:,port:,debug,command:,wireshark,jump:,jump-password:,\
     local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status,tls-keylog-file:,\
     spawned-cmd-only,identity-file:"
@@ -177,6 +177,10 @@ parseOptions() {
             -h|--help)
                 __help
                 usage
+                ;;
+            -D|--debug)
+                set -x
+                shift
                 ;;
             -t|--target)
                 fTarget="$2"
@@ -241,10 +245,6 @@ parseOptions() {
             -v|--vdom)
                 fVdom="$2"
                 shift 2
-                ;;
-            -d|--debug)
-                set -x
-                shift
                 ;;
             -X|--x11)
                 fX11Forwarding=true
@@ -352,11 +352,13 @@ parseVars() {
                 # The default IFS splits on space, tab, or newline
                 # $ printf '%q\n' "$IFS"
                 # $' \t\n'
+                local userFound=0 portFound=0
                 while read -r key value; do
                     case "$key" in
-                        user) fJumpUser=$value ;;
-                        port) fJumpPort=$value ;;
+                        user) fJumpUser=$value; userFound=1 ;;
+                        port) fJumpPort=$value; portFound=1 ;;
                     esac
+                    ((userFound && portFound)) && break
                 done < <(ssh -G "$fJumpServer" 2>/dev/null)
             fi
         else
@@ -419,11 +421,13 @@ parseVars() {
             fTargetUser="${BASH_REMATCH[2]}"
             fTargetPort="${BASH_REMATCH[5]:-22}"
         elif [[ -f "$HOME/.ssh/config" ]] && grep -qiE "^\s*Host\s+${fTarget}\s*$" "$HOME/.ssh/config"; then
+            local userFound=0 portFound=0
             while read -r key value; do
                 case "$key" in
-                    user) fTargetUser=$value ;;
-                    port) fTargetPort=$value ;;
+                    user) fTargetUser=$value; userFound=1 ;;
+                    port) fTargetPort=$value; portFound=1 ;;
                 esac
+                ((userFound && portFound)) && break
             done < <(ssh -G "$fTarget" 2>/dev/null)
         fi
         # fTargetUser and fTargetPort have default values if not set

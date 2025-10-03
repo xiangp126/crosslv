@@ -453,14 +453,14 @@ runConfigure() {
     #        -O                Turn off compiler optimization
     #        -S                Enable -fsanitize=address when compiling.
     COLOR=$BLUE
-    params="-m $fBuildModel -d y -c"
-    if [ -z "$fEnableOptimization" ]; then
-        params+=" -O"
-    fi
-    if [ -n "$fAddressSanitizer" ]; then
-        params+=" -S $fAddressSanitizer"
-    fi
-    CONFIGURE_CMD="./Configure $params"
+    local configParams="-m $fBuildModel -d y -c"
+    local sanitizerFlags=
+    [ -z "$fEnableOptimization" ] && configParams+=" -O" # Flag for optimization
+    [ "$fPlatform" == "FPX" ] && sanitizerFlags=" -S n"  # Flag for AddressSanitizer
+    [ -n "$fAddressSanitizer" ] && sanitizerFlags=" -S $fAddressSanitizer" # Flag for AddressSanitizer
+    [ -n "$sanitizerFlags" ] && configParams+="$sanitizerFlags" # The ultimate Configure params
+
+    CONFIGURE_CMD="./Configure $configParams"
     echo -e "$USER_NOTATION Running Configure: ${COLOR}$CONFIGURE_CMD${RESET}"
     COLOR=$MAGENTA
     echo -e "$USER_NOTATION ${COLOR}Spawning a new bash session${RESET}"

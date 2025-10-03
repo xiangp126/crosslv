@@ -534,6 +534,7 @@ ubuntuInstallApps() {
         qemu-utils              # QEMU utilities
         libvirt-daemon-system   # libvirt daemon
         virt-manager            # GUI for managing virtual machines
+        virt-top
 
         # --- Miscellaneous ---
         ffmpeg                  # FFmpeg command-line tools

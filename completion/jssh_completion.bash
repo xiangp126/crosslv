@@ -5,7 +5,7 @@ _jssh_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-t -l -u -p -P -d -h -c -J -L -R -v -S -T -X -m"
+    opts="-t -l -u -p -P -D -h -c -J -L -R -v -S -T -X -m"
 
     # List of all long options
     long_opts="--target --username --password --port --debug --help --command --wireshark \
