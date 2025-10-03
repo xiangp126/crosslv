@@ -650,29 +650,30 @@ runSyncCommands() {
         exit 1
     fi
 
-    # local debugTool="jdebug"
-    # checkCmdAvailability "$debugTool"
-
     local loginTool="jssh"
     checkCmdAvailability "$loginTool"
 
-    # The -t option tells mapfile to strip the trailing newlines from each line it reads.
-    mapfile -t syncFiles < <(find "$fWorkingDir" -name "$fSyncFile")
-    if [[ ${#syncFiles[@]} -eq 0 ]]; then
-        echo -e "$USER_NOTATION ${MAGENTA}$fSyncFile not found in $fWorkingDir${RESET}"
-        exit 1
+    local syncFile=
+    local syncFiles=()
+    if [[ "$fSyncFile" == */* ]]; then
+        if [[ -f "$fSyncFile" ]]; then
+            syncFile="$fSyncFile"
+        else
+            echo -e "$USER_NOTATION ${MAGENTA}$fSyncFile not found at path: $fSyncFile${RESET}"
+            exit 1
+        fi
+    else
+        # Otherwise, search for the file in the working directory
+        # The -t option tells mapfile to strip the trailing newlines from each line it reads.
+        mapfile -t syncFiles < <(find "$fWorkingDir" -name "$fSyncFile")
+        if [[ ${#syncFiles[@]} -eq 0 ]]; then
+            echo -e "$USER_NOTATION ${MAGENTA}$fSyncFile not found in $fWorkingDir${RESET}"
+            exit 1
+        fi
+        # Only sync the first file that is found.
+        syncFile="${syncFiles[0]}"
     fi
 
-    # echo -e "$USER_NOTATION Invoking ${LIGHTGREEN}$debugTool${RESET} to kill all existing debug sessions on $fSyncTarget"
-    # $debugTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget" -k -s
-    # if [[ $? -ne 0 ]]; then
-    #     COLOR=$MAGENTA
-    #     echo -e "$USER_NOTATION ${COLOR}$debugTool run failed, please check the server status manually.${RESET}"
-    #     echo -e "$USER_NOTATION ${NORMAL}But going on anyway${RESET}"
-    # fi
-
-    # Only sync the first file that is found.
-    syncFile="${syncFiles[0]}"
     COLOR="$BLUE"
     echo '----------------------------------------------------'
     echo -e "$USER_NOTATION Syncing ${COLOR}$syncFile${RESET} to ${COLOR}$fSyncTarget${RESET} ..."

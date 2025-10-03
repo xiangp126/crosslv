@@ -74,7 +74,8 @@ _jmake_complete() {
             return 0
             ;;
         -s|--sync-file)
-            # File completion with .out extension
+            # -f is for filenames
+            # -X '!*.out' excludes files without .out extension
             COMPREPLY=( $(compgen -f -X '!*.out' -- ${cur}) )
             return 0
             ;;
