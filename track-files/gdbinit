@@ -87,24 +87,35 @@ set $_gdb_tools_script = "~/Templates/gdb_tools.py"
 define connect
     python
 import os
+from glob import glob
 target_path = os.path.expanduser(gdb.parse_and_eval("$_gdb_target_script").string())
 tools_path = os.path.expanduser(gdb.parse_and_eval("$_gdb_tools_script").string())
-
-if not os.path.exists(target_path):
-    gdb.write(f"+++Error: Target script {target_path} not found\n")
-else:
-    gdb.execute(f"source {target_path}")
 
 if int(gdb.parse_and_eval("$_gdb_tools_sourced")) == 0:
     if not os.path.exists(tools_path):
         gdb.write(f"Error: Tools script {tools_path} not found\n")
     else:
+        # Add .so search paths from the current directory
+        result = ""
+        # Assumes gdb is invoked from $(TOP)
+        for filename in glob(os.getcwd() + "/" + "**/obj/*x86_64-fg/*.so", recursive=True):
+            result += os.path.dirname(filename) + ":"
+        if result:
+            gdb_cmd = "set solib-search-path {0}".format(result[:-1])
+            gdb.execute(gdb_cmd)
+        gdb.execute("set sysroot ~/.cache/fortinet/fortidev/fortidev-7.0.0")
+        gdb.write("+++solib-search-path set successfully\n")
         gdb.execute(f"source {tools_path}")
         gdb.execute("set $_gdb_tools_sourced = 1")
         gdb.write("+++GDB tools loaded successfully\n")
 else:
     pass
-    end
+
+if not os.path.exists(target_path):
+    gdb.write(f"+++Error: Target script {target_path} not found\n")
+else:
+    gdb.execute(f"source {target_path}")
+end
 end
 document connect
     Connect to remote target and load debugging tools.
@@ -112,23 +123,23 @@ document connect
 end
 
 # Load the shared library from local path
-define ftnt
-    if $argc == 0
-        set sysroot .
-        set solib-search-path ./rlib:./fortipkg/lib/x86_64:./fortipkg/lib/x86_64/providers
-    else
-        set sysroot $arg0
-        set solib-search-path $arg0/rlib:$arg0/fortipkg/lib/x86_64:$arg0/fortipkg/lib/x86_64/providers
-    end
-end
-document ftnt
-    Set sysroot and solib-search-path for shared libraries.
-    Usage: ftnt [sysroot_path]
-    If sysroot_path is not specified, current directory is used.
-    Use 'info sharedlibrary' to check the shared library status.
-end
+# define ftnt
+#     if $argc == 0
+#         set sysroot .
+#         set solib-search-path ./rlib:./fortipkg/lib/x86_64:./fortipkg/lib/x86_64/providers
+#     else
+#         set sysroot $arg0
+#         set solib-search-path $arg0/rlib:$arg0/fortipkg/lib/x86_64:$arg0/fortipkg/lib/x86_64/providers
+#     end
+# end
+# document ftnt
+#     Set sysroot and solib-search-path for shared libraries.
+#     Usage: ftnt [sysroot_path]
+#     If sysroot_path is not specified, current directory is used.
+#     Use 'info sharedlibrary' to check the shared library status.
+# end
 # Execute it immediately
-ftnt
+# ftnt
 
 # Reload the binary and source code after the binary is updated
 define reload
