@@ -455,10 +455,10 @@ runConfigure() {
     COLOR=$BLUE
     local configParams="-m $fBuildModel -d y -c"
     local sanitizerFlags=
-    [ -z "$fEnableOptimization" ] && configParams+=" -O" # Flag for optimization
-    [ "$fPlatform" == "FPX" ] && sanitizerFlags=" -S n"  # Flag for AddressSanitizer
-    [ -n "$fAddressSanitizer" ] && sanitizerFlags=" -S $fAddressSanitizer" # Flag for AddressSanitizer
-    [ -n "$sanitizerFlags" ] && configParams+="$sanitizerFlags" # The ultimate Configure params
+    [ -z "$fEnableOptimization" ] && configParams+=" -O"                     # Flag for optimization
+    [ "$fPlatform" == "FPX" ]     && sanitizerFlags=" -S n"                  # Flag for AddressSanitizer
+    [ -n "$fAddressSanitizer" ]   && sanitizerFlags=" -S $fAddressSanitizer" # Flag for AddressSanitizer
+    [ -n "$sanitizerFlags" ]      && configParams+="$sanitizerFlags"         # The ultimate Configure params
 
     CONFIGURE_CMD="./Configure $configParams"
     echo -e "$USER_NOTATION Running Configure: ${COLOR}$CONFIGURE_CMD${RESET}"
