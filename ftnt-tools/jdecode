@@ -76,7 +76,7 @@ class JDECODE:
         self.decodedOutputPath = os.path.expanduser(self.decodedOutputPath)
 
     def verifyExeFile(self):
-        print(f"\n{BOLD}❯ {CYAN}Verifying executable:{RESET} {GREEN}{self.exeFilePath}{RESET}")
+        print(f"\n❯ {CYAN}Verifying executable:{RESET} {GREEN}{self.exeFilePath}{RESET}")
         if not (os.path.exists(self.exeFilePath) and os.access(self.exeFilePath, os.X_OK)):
             print(f"{RED}✖ Error: {self.exeFilePath} does not exist or is not executable{RESET}")
             sys.exit(1)
@@ -178,7 +178,7 @@ class JDECODE:
             f.flush()
 
     def readCrashFile(self):
-        print(f"{BOLD}❯ {CYAN}Reading crash file:{RESET} {GREEN}{self.crashTxtPath}{RESET}")
+        print(f"❯ {CYAN}Reading crash file:{RESET} {GREEN}{self.crashTxtPath}{RESET}")
         if not os.path.exists(self.crashTxtPath):
             print(f"{RED}✖ Error: '{self.crashTxtPath}' does not exist{RESET}")
             sys.exit(1)
@@ -244,9 +244,9 @@ class JDECODE:
         return ""
 
     def run(self):
-        print(f"{BOLD}{CYAN}══════════════════════════════════════{RESET}")
-        print(f"{BOLD}{CYAN} JDECODE CRASH LOG DECODER{RESET}")
-        print(f"{BOLD}{CYAN}══════════════════════════════════════{RESET}")
+        print(f"{CYAN}══════════════════════════════════════{RESET}")
+        print(f"{CYAN} JDECODE CRASH LOG DECODER{RESET}")
+        print(f"{CYAN}══════════════════════════════════════{RESET}")
 
         # Print arguments in a more structured way
         print(f"{BOLD}{LIGHTYELLOW}▼ Configuration{RESET}")
@@ -264,7 +264,7 @@ class JDECODE:
         if self.write:
             # 'w+' will create the file if it doesn't exist
             try:
-                print(f"{BOLD}❯ {CYAN}Preparing output file:{RESET} {GREEN}{self.decodedOutputPath}{RESET}")
+                print(f"❯ {CYAN}Preparing output file:{RESET} {GREEN}{self.decodedOutputPath}{RESET}")
                 outputDir = os.path.dirname(self.decodedOutputPath)
                 if outputDir and not os.path.exists(outputDir):
                     os.makedirs(outputDir)
@@ -275,7 +275,7 @@ class JDECODE:
                 print(f"{RED}✖ Error creating output file: {e}{RESET}")
                 self.write = False
 
-        print(f"\n{BOLD}❯ {CYAN}Extracting pointers...{RESET}")
+        print(f"\n❯ {CYAN}Extracting pointers...{RESET}")
         pointers = []
         nonPointerLines = []
 
@@ -288,7 +288,7 @@ class JDECODE:
 
         print(f"{GREY}✓ Found {len(pointers)} pointers to decode{RESET}")
 
-        print(f"\n{BOLD}❯ {CYAN}Starting batch decode process...{RESET}")
+        print(f"\n❯ {CYAN}Starting batch decode process...{RESET}")
         print(f"{BOLD}{'─' * 50}{RESET}")
 
         # Process all pointers in batch
