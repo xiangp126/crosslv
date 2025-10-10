@@ -7,8 +7,8 @@ _jdecode_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define options
-    opts="-h -e -c -o"
-    long_opts="--help --exe --crash --output --no-verbose --no-write"
+    opts="-h -e -i -o -w"
+    long_opts="--help --exe --input --output --no-verbose --write"
 
     case "${prev}" in
 	*)

@@ -20,11 +20,11 @@ RESET = '\033[0m'
 class JDECODE:
     def __init__(self):
         self.script_name = os.path.basename(sys.argv[0])
-        self.version = "0.1.0"
+        self.version = "0.2"
         self.exe_file_path = "./sysinit/init"
-        self.crash_log_path = "/data/bugzilla/crash.txt"
-        self.crash_decode_output = "/data/bugzilla/crash_decoded.txt"
-        self.no_write = False
+        self.crash_txt_path = "/data/bugzilla/crash.txt"
+        self.decoded_output_path = "/data/bugzilla/crash_decoded.txt"
+        self.write = False
         self.no_verbose = False
         self.parse_arguments()
 
@@ -34,50 +34,42 @@ class JDECODE:
             description=f"Crash Log Decoder v{self.version}\n\n"
                 "Examples:\n"
                 f"  {self.script_name} --exe ./sysinit/init --crash /data/bugzilla/crash.txt -v\n"
-                f"  {self.script_name} --no-write",
+                f"  {self.script_name} --write",
             formatter_class=argparse.RawTextHelpFormatter,  # Preserves newlines in help text
             add_help=True
         )
 
         # Add arguments
         parser.add_argument('-e', '--exe', dest='exe_file_path', help='Path to the executable file')
-        parser.add_argument('-c', '--crash', dest='crash_log_path', help='Path to the crash log file')
-        parser.add_argument('-o', '--output', dest='crash_decode_output', help='Path to the crash decode output file')
+        parser.add_argument('-i', '--input', dest='crash_txt_path', help='Path to the crash txt file')
+        parser.add_argument('-o', '--output', dest='decoded_output_path', help='Path to the decoded output file')
+        parser.add_argument('-w', '--write', dest='write', action='store_true', help='Write output to file')
         parser.add_argument('--no-verbose', dest='no_verbose', action='store_true', help='Disable verbose mode')
-        parser.add_argument('--no-write', dest='no_write', action='store_true', help='Do not write output to file')
 
         # Parse arguments
-        args, remaining = parser.parse_known_args()
+        args = parser.parse_args()
         if args.exe_file_path:
             self.exe_file_path = args.exe_file_path
-        if args.crash_log_path:
-            self.crash_log_path = args.crash_log_path
-        if args.crash_decode_output:
-            self.crash_decode_output = args.crash_decode_output
+        if args.crash_txt_path:
+            self.crash_txt_path = args.crash_txt_path
+        if args.decoded_output_path:
+            self.decoded_output_path = args.decoded_output_path
         if args.no_verbose:
             self.no_verbose = True
-        if args.no_write:
-            self.no_write = True
+        if args.write:
+            self.write = True
 
         # expanduser() expands '~' to the user's home directory
         self.exe_file_path = os.path.expanduser(self.exe_file_path)
-        self.crash_log_path = os.path.expanduser(self.crash_log_path)
-        self.crash_decode_output = os.path.expanduser(self.crash_decode_output)
+        self.crash_txt_path = os.path.expanduser(self.crash_txt_path)
+        self.decoded_output_path = os.path.expanduser(self.decoded_output_path)
 
     def verify_exe_file(self):
         print(f"\n{BOLD}❯ {CYAN}Verifying executable:{RESET} {GREEN}{self.exe_file_path}{RESET}")
-        if not os.path.exists(self.exe_file_path):
-            print(f"{RED}✖ Error: {self.exe_file_path} does not exist{RESET}")
+        if not (os.path.exists(self.exe_file_path) and os.access(self.exe_file_path, os.X_OK)):
+            print(f"{RED}✖ Error: {self.exe_file_path} does not exist or is not executable{RESET}")
             sys.exit(1)
-        # -nx: prevents GDB from reading the .gdbinit initialization file.
-        # cmd = ['gdb', self.exe_file_path, '-q', '-batch', '-nx', '-ex', 'quit']
-        cmd = ['gdb', self.exe_file_path, '-q', '-batch', '-ex', 'quit']
-        try:
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            print(f"{GREY}✓ Executable verified successfully{RESET}")
-        except Exception as e:
-            print(f"{RED}✖ {e}{RESET}")
-            sys.exit(1)
+        print(f"{GREY}✓ Executable verified successfully{RESET}")
 
     def start_decoding(self, pointer, f):
         cmd = ['gdb', self.exe_file_path, '-q', '-batch', '-nx', '-ex', 'list *' + pointer, '-ex', 'quit']
@@ -101,7 +93,7 @@ class JDECODE:
                 if not self.no_verbose and middle_line:
                     combined_line = f"{MAGENTA}▶ {first_line}{RESET}\n{BLUE}{middle_line}{RESET}"
                 print(combined_line)
-                if not self.no_write:
+                if self.write:
                     f.write(f"{first_line}\n")
                     if not self.no_verbose and middle_line:
                         f.write(f"{middle_line}\n")
@@ -110,13 +102,88 @@ class JDECODE:
             print(f"{RED}✖ Error running GDB command:{RESET}")
             print(f"  {result.stderr}")
 
+    def start_decoding_batch(self, pointers, f):
+        """Batch decode multiple pointers, launching GDB only once."""
+        if not pointers:
+            return
+
+        # Build batch commands
+        # -q: quiet mode
+        # -batch: batch mode
+        # -nx: prevents GDB from reading the .gdbinit initialization file
+        # -ex: executes gdb commands
+        # -quit: exits GDB
+        gdb_commands = []
+        for pointer in pointers:
+            gdb_commands.extend(['-ex', f'list *{pointer}'])
+        gdb_commands.extend(['-ex', 'quit'])
+
+        cmd = ['gdb', self.exe_file_path, '-q', '-batch', '-nx'] + gdb_commands
+
+        try:
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except Exception as e:
+            print(f"{RED}✖ {e}{RESET}")
+            return
+
+        # import pdb; pdb.set_trace() # DEBUG
+        if result.returncode == 0:
+            # Process output line by line, detecting results of each list command
+            all_lines = result.stdout.split('\n')
+            current_block = []
+
+            for line in all_lines:
+                # GDB list command first line format: 0x... is in function_name (...)
+                # Identify new parsing block by detecting lines starting with "0x" and containing " is in "
+                if line.startswith('0x') and ' is in ' in line:
+                    # If there's content, process the previous block first
+                    if current_block:
+                        self._process_gdb_output_block(current_block, f)
+                    # Start a new block
+                    current_block = [line]
+                elif current_block:
+                    # Continue adding to the current block (including code lines and empty lines)
+                    current_block.append(line)
+
+            # Process the last block
+            if current_block:
+                self._process_gdb_output_block(current_block, f)
+        else:
+            print(f"{RED}✖ Error running GDB command:{RESET}")
+            print(f"  {result.stderr}")
+
+    def _process_gdb_output_block(self, lines, f):
+        """Processes a single GDB list command output block."""
+        if not lines:
+            return
+
+        # Filter out empty lines
+        non_empty_lines = [l for l in lines if l.strip()]
+        if not non_empty_lines:
+            return
+
+        first_line = non_empty_lines[0]
+        middle_line_index = len(non_empty_lines) // 2
+        middle_line = non_empty_lines[middle_line_index] if middle_line_index < len(non_empty_lines) else ""
+
+        combined_line = f"{MAGENTA}▶ {first_line}{RESET}"
+        if not self.no_verbose and middle_line:
+            combined_line = f"{MAGENTA}▶ {first_line}{RESET}\n{BLUE}{middle_line}{RESET}"
+        print(combined_line)
+
+        if self.write:
+            f.write(f"{first_line}\n")
+            if not self.no_verbose and middle_line:
+                f.write(f"{middle_line}\n")
+            f.flush()
+
     def read_crash_file(self):
-        print(f"{BOLD}❯ {CYAN}Reading crash file:{RESET} {GREEN}{self.crash_log_path}{RESET}")
-        if not os.path.exists(self.crash_log_path):
-            print(f"{RED}✖ Error: '{self.crash_log_path}' does not exist{RESET}")
+        print(f"{BOLD}❯ {CYAN}Reading crash file:{RESET} {GREEN}{self.crash_txt_path}{RESET}")
+        if not os.path.exists(self.crash_txt_path):
+            print(f"{RED}✖ Error: '{self.crash_txt_path}' does not exist{RESET}")
             sys.exit(1)
         try:
-            with open(self.crash_log_path, "r") as f:
+            with open(self.crash_txt_path, "r") as f:
                 lines = f.readlines()
                 print(f"{GREY}✓ Found {len(lines)} lines in crash file{RESET}")
                 return lines
@@ -183,53 +250,63 @@ class JDECODE:
 
         # Print arguments in a more structured way
         print(f"{BOLD}{LIGHTYELLOW}▼ Configuration{RESET}")
-        print(f"  {BLUE}Write to file:{RESET}    {'No' if self.no_write else 'Yes'}")
-        print(f"  {BLUE}Verbose mode:{RESET}     {'No' if self.no_verbose else 'Yes'}")
-        print(f"  {BLUE}Executable:{RESET}       {self.exe_file_path}")
-        print(f"  {BLUE}Crash log:{RESET}        {self.crash_log_path}")
-        if not self.no_write:
-            print(f"  {BLUE}Decoded Output:{RESET}   {self.crash_decode_output}")
+        print(f"  {BLUE}Write to file:{RESET}    {'Yes' if self.write else 'No'}")
+        print(f"  {BLUE}Verbose mode :{RESET}    {'Yes' if not self.no_verbose else 'No'}")
+        print(f"  {BLUE}Executable   :{RESET}    {self.exe_file_path}")
+        print(f"  {BLUE}Crash log txt:{RESET}    {self.crash_txt_path}")
+        if self.write:
+            print(f"  {BLUE}Decoded Output:{RESET}   {self.decoded_output_path}")
 
         self.verify_exe_file()
         crash_lines = self.read_crash_file()
 
         f = None
-        if not self.no_write:
+        if self.write:
             # 'w+' will create the file if it doesn't exist
             try:
-                print(f"{BOLD}❯ {CYAN}Preparing output file:{RESET} {GREEN}{self.crash_decode_output}{RESET}")
-                output_dir = os.path.dirname(self.crash_decode_output)
+                print(f"{BOLD}❯ {CYAN}Preparing output file:{RESET} {GREEN}{self.decoded_output_path}{RESET}")
+                output_dir = os.path.dirname(self.decoded_output_path)
                 if output_dir and not os.path.exists(output_dir):
                     os.makedirs(output_dir)
 
-                f = open(self.crash_decode_output, 'w+')
+                f = open(self.decoded_output_path, 'w+')
                 print(f"{GREY}✓ Output file ready{RESET}")
             except Exception as e:
                 print(f"{RED}✖ Error creating output file: {e}{RESET}")
-                self.no_write = True
+                self.write = False
 
-        print(f"\n{BOLD}❯ {CYAN}Starting decode process...{RESET}")
-        print(f"{BOLD}{'─' * 50}{RESET}")
+        print(f"\n{BOLD}❯ {CYAN}Extracting pointers...{RESET}")
+        pointers = []
+        non_pointer_lines = []
 
-        pointer_count = 0
         for line in crash_lines:
-            # Check if the line contains a function pointer
             pointer = self.extract_func_pointer(line)
             if pointer != "":
-                pointer_count += 1
-                self.start_decoding(pointer, f)
+                pointers.append(pointer)
             else:
-                # Print the line as is if it doesn't contain a function pointer
-                print(f"  {line.strip()}")
-                if not self.no_write:
-                    f.write(line)
-                    f.flush()
+                non_pointer_lines.append(line)
+
+        print(f"{GREY}✓ Found {len(pointers)} pointers to decode{RESET}")
+
+        print(f"\n{BOLD}❯ {CYAN}Starting batch decode process...{RESET}")
+        print(f"{BOLD}{'─' * 50}{RESET}")
+
+        # Process all pointers in batch
+        pointer_count = len(pointers)
+        self.start_decoding_batch(pointers, f)
+
+        # Output non-pointer lines
+        # for line in non_pointer_lines:
+        #     print(f"  {line.strip()}")
+        #     if self.write:
+        #         f.write(line)
+        #         f.flush()
 
         print(f"{BOLD}{'─' * 50}{RESET}")
-        if not self.no_write:
+        if self.write:
             f.close()
             print(f"\n{CYAN}✓ Done! {pointer_count} pointers decoded.{RESET}")
-            print(f"  Output saved to: {BOLD}{self.crash_decode_output}{RESET}\n")
+            print(f"  Output saved to: {BOLD}{self.decoded_output_path}{RESET}\n")
         else:
             print(f"\n{CYAN}✓ Completed! {pointer_count} pointers decoded.{RESET}\n")
 
