@@ -7,12 +7,30 @@ _jdecode_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define options
-    opts="-h -e -i -o -w"
-    long_opts="--help --exe --input --output --no-verbose --write"
+    opts="-h -e -i -o -w -v -l"
+    long_opts="--help --exe --input --output --write --verbose --list-size"
 
     case "${prev}" in
-	*)
+        -v|--verbose)
+            local verboseLevels=("all" "middle" "backtrace")
+            COMPREPLY=( $(compgen -W "${verboseLevels[*]}" -- "${cur}") )
+            return 0
 	    ;;
+        -l|--list-size)
+            local listSizes=("3" "5" "10")
+            COMPREPLY=( $(compgen -W "${listSizes[*]}" -- "${cur}") )
+            return 0
+        ;;
+        -e|--exe)
+            local exeFilePath=("./sysinit/init")
+            COMPREPLY=( $(compgen -W "${exeFilePath[*]}" -- "${cur}") )
+            return 0
+        ;;
+        -i|--input)
+            local crashTxtPath=("./crash.txt" "/data/bugzilla/crash.txt")
+            COMPREPLY=( $(compgen -W "${crashTxtPath[*]}" -- "${cur}") )
+            return 0
+        ;;
     esac
 
     if [[ ${cur} == -* ]]; then
