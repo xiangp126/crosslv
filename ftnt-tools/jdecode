@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import re
 import subprocess
 import argparse
 
@@ -125,11 +126,54 @@ class JDECODE:
 
     # Function to check if a line contains a function pointer
     def extract_func_pointer(self, line):
-        if line.strip() != "":
-            for s in line.split():
-                # add the check len(s) == 12 to avoid the case like [0x7f4a1850fdeb].
-                if len(s) <= 12 and s[0] == '[' and s[-1] == ']':
-                    return s[1:-1]
+        """
+        Extracts the function pointer (file offset address) from a coredump log line.
+
+        This function handles two main formats:
+        1. Lines containing a runtime address and a base address, requiring calculation
+           to derive the file offset.
+           Example format:
+           360: 2025-10-10 14:01:28 <01056> [0x55ca28364e54]  => /bin/wad {0x55ca26bfc000}
+           Calculation method:
+           0x55ca28364e54 (runtime address) - 0x55ca26bfc000 (base address) = 0x0000001768e54 (file offset)
+
+        2. Lines directly providing the file offset address.
+           Example format:
+           462: 2025-01-06 11:34:55 <03432> [0x01e58bac] => wad_ips
+
+        Args:
+            line (str): A line string from the coredump log.
+
+        Returns:
+            str: The calculated or extracted file offset address (e.g., '0x1768e54'),
+                 or an empty string if no valid address pattern is found.
+        """
+        # Case 1: The line contains a runtime address and a base address, requiring calculation.
+        # Use regex to match [runtime address and {base address}
+        match_calc = re.search(r'\[(0x[0-9a-fA-F]+)\]\s*=>\s*[^\{]*\{ *(0x[0-9a-fA-F]+) *\}', line)
+        if match_calc:
+            runtime_addr_str = match_calc.group(1)
+            base_addr_str = match_calc.group(2)
+            try:
+                runtime_addr = int(runtime_addr_str, 16)
+                base_addr = int(base_addr_str, 16)
+                file_offset = runtime_addr - base_addr
+                # Return the calculated file offset address as a hexadecimal string starting with '0x'.
+
+                return hex(file_offset)
+            except ValueError:
+                # Theoretically, if the regex match is successful, a ValueError should not occur here.
+                # As a robustness measure, return an empty string if conversion fails.
+                return ""
+
+        # Case 2: The line directly provides the file offset address.
+        # Use regex to match [file offset address
+        match_direct = re.search(r'\[(0x[0-9a-fA-F]+)\]\s*=>', line)
+        if match_direct:
+            file_offset_str = match_direct.group(1)
+            return file_offset_str
+
+        # If neither of the two patterns is matched, return an empty string.
         return ""
 
     def run(self):
