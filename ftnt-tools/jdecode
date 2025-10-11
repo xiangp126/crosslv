@@ -33,12 +33,12 @@ class JDECODE:
         parser = argparse.ArgumentParser(
             prog=self.scriptName,
             description=(
-                f"Crash Log Decoder v{self.version}\n\n"
+                f"Decode crash reports from FTNT devices v{self.version}\n\n"
                 "Examples:\n"
-                f"  {self.scriptName} --exe ./sysinit/init --crash /data/bugzilla/crash.txt -v\n"
+                f"  {self.scriptName} --exe ./sysinit/init --crash /data/bugzilla/crash.txt\n"
                 f"  {self.scriptName} --write\n"
-                f"  {self.scriptName} --write -v all\n" # Show all source lines
                 f"  {self.scriptName} -v backtrace\n"   # Show backtrace only
+                f"  {self.scriptName} --write -v all\n" # Show all source lines
             ),
             formatter_class=argparse.RawTextHelpFormatter,
             add_help=True
@@ -148,7 +148,7 @@ class JDECODE:
             return
 
         firstLine = nonEmptyLines[0]  # Backtrace info line (always show)
-        displayLines = [f"{MAGENTA}▶ {firstLine}{RESET}"] # Initialize output lines (first line always included)
+        displayLines = [f"▶ {MAGENTA}{firstLine}{RESET}"] # Initialize output lines (first line always included)
         writeLines = [firstLine]
 
         # Add additional lines based on verbose level

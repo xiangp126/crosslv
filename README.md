@@ -1,23 +1,24 @@
 ### Introduction
-- I wrote some tools to help me work more efficiently. These tools are mainly used for building, debugging, searching, connecting, and setting up working environments in the easiest way possible.
+- I wrote some tools to help me work more efficiently. These tools are mainly used for building, debugging, decoding, searching, connecting, and setting up working environments in the easiest way possible.
 - The tools are versatile, though they are primarily written for use in the Fortinet environment. However, they can be easily modified to support other devices.
 
 ### Key Tools
 
-| Category   | Tool | Description |
-|:----------:|:---------:|:-----------------|
-| Construct  | [jc](#jc)                   | Setting up working environment and links all the following tools                                     |
-| Search     | [jr](#jr)                   | Powerful search tool for searching code in large projects                                            |
-| Search     | [code](#code)               | Wrapper for the `code` command provided by VSCode, designed to bypass a long-standing and overlooked bug |
-| Compile    | [jmake](#jmake)             | Building tool for large C projects                                                                   |
-| Connect    | [jssh](#jssh)               | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up Wireshark live packet capture |
-| Debug      | [gdb_tools](#gdb_tools)     | Python tools for visualizing data structures in memory while debugging with GDB                      |
-| Debug      | [jdebug](#jdebug)           | Debugging tool for devices running gdbserver                                                         |
-| Debug      | [jrun](#jrun)               | Command Runner by sending commands to a tmux pane running an SSH session                             |
-| Debug      | [jroute](#jroute)           | Simple script to switch the default route between available gateways                                 |
-| Debug      | [jt](#jt)                   | Log file viewer with syntax highlighting                                                             |
-| VM         | [backup_vms](#backup_vms)   | Backup vms and config files                                                                         |
-| VM         | [delete_vms](#delete_vms)   | Delete VMs or restore VMs from backups                                                              |
+| Category   | Language | Tool | Description |
+|:----------:|:---------:|:-----------------|-------------|
+| Construct  | Bash Script | [jc](#jc)                   | Setting up working environment and links all the following tools                                     |
+| Compile    | Bash Script | [jmake](#jmake)             | Building tool for large C projects                                                                   |
+| Connect    | Bash Script | [jssh](#jssh)               | Connecting tool for connecting devices via SSH, SSHFS, SFTP, or setting up Wireshark live packet capture |
+| Search     | Bash Script | [jr](#jr)                   | Powerful search tool for searching code in large projects                                            |
+| Search     | Bash Function | [code](#code)               | Work with `jr` to search and open code in VSCode with  powerful features                          |
+| Decode     | Python Script | [jdecode](#jdecode)         | Decode crash reports from Fortinet devices                                                         |
+| Debug      | Bash Script | [jdebug](#jdebug)           | Debugging tool for devices running gdbserver                                                         |
+| Debug      | Bash Script | [jrun](#jrun)               | Command Runner by sending commands to a tmux pane running an SSH session                             |
+| Debug      | Bash Script | [jroute](#jroute)           | Simple script to switch the default route between available gateways                                 |
+| Debug      | Bash Script | [jt](#jt)                   | Log file viewer with syntax highlighting                                                             |
+| Debug      | Python Script | [gdb_tools](#gdb_tools)     | Python tools for visualizing data structures in memory while debugging with GDB                      |
+| VM         | Bash Script | [backup_vms](#backup_vms)   | Backup vms and config files                                                                         |
+| VM         | Bash Script | [delete_vms](#delete_vms)   | Delete VMs or restore VMs from backups |
 
 ### Other Tools
 
@@ -193,6 +194,35 @@ Example: code --version
          code -d
          code --install-extension gitlens-13.0.2.vsix
 
+```
+
+<a id="jdecode"></a>
+#### [jdecode](./ftnt-tools/jdecode)
+```bash
+$ jdecode -h
+usage: jdecode [-h] [-e EXEFILEPATH] [-i CRASHTXTPATH] [-o DECODEDOUTPUTPATH] [-l LISTSIZE] [-w] [-v {all,middle,backtrace}]
+
+Decode crash reports from FTNT devices v0.2
+
+Examples:
+  jdecode --exe ./sysinit/init --crash /data/bugzilla/crash.txt
+  jdecode --write
+  jdecode -v backtrace
+  jdecode --write -v all
+
+options:
+  -h, --help            show this help message and exit
+  -e EXEFILEPATH, --exe EXEFILEPATH
+                        Path to the executable file
+  -i CRASHTXTPATH, --input CRASHTXTPATH
+                        Path to the crash txt file
+  -o DECODEDOUTPUTPATH, --output DECODEDOUTPUTPATH
+                        Path to the decoded output file
+  -l LISTSIZE, --list-size LISTSIZE
+                        Number of source lines gdb will list by default is 3
+  -w, --write           Write output to file
+  -v {all,middle,backtrace}, --verbose {all,middle,backtrace}
+                        Verbose level: all=show all source lines, middle=show middle line only (default), backtrace=show backtrace only (no code)
 ```
 
 <a id="jdebug"></a>
