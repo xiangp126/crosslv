@@ -15,7 +15,7 @@
     "editor.suggest.snippetsPreventQuickSuggestions": false,
     "git.openRepositoryInParentFolders": "never",
     "remote.SSH.remotePlatform": {
-        "remotedev": "linux",
+        "remotedev": "linux"
     },
     "remote.SSH.maxReconnectionAttempts": 3,
     "remote.SSH.connectTimeout": 20,
@@ -59,7 +59,8 @@
     "window.autoDetectColorScheme": true,
     "workbench.colorCustomizations": {
         "inlineChat.foreground": "#b4b2b0",
-        "sideBar.foreground": "#afaeae",
+        "sideBar.foreground": "#a2a1a1",
+        // "sideBar.foreground": "#afaeae",
         // "sideBar.foreground": "#b4b3b3",
         "sideBar.background": "#1a1a1a",
         "tab.activeBorderTop": "#a9a9a9",
@@ -550,6 +551,7 @@
     "github.copilot.selectedCompletionModel": "gpt-4o-copilot",
     "github.copilot.editor.enableCodeActions": false,
     "github.copilot.renameSuggestions.triggerAutomatically": false,
+    "github.copilot.nextEditSuggestions.enabled": false,
     "github.copilot.enable": {
         "*": false,
     },
@@ -571,9 +573,11 @@
     "command-runner.terminal.autoClear": false,
     "command-runner.terminal.autoFocus": true,
     "command-runner.commands": {
-        "jr": "cd ${workspaceFolder}; jr '${selectedText}'",
-        "jk": "cd ${workspaceFolder}; jr --kernel '${selectedText}'",
-        "jn": "cd ${workspaceFolder}; jn '${selectedText}'"
+        // "jr": "cd ${workspaceFolder}; jr '${selectedText}'",
+        "jr": "cd ${workspaceFolder}; jr",
+        "jk": "cd ${workspaceFolder}; jr --kernel",
+        "jn": "cd ${workspaceFolder}; jr --no-clipboard",
+        "jm": "cd ${workspaceFolder}; jr --no-clipboard --kernel",
     },
     "leetcode.workspaceFolder": "/home/xiangp/myGit/leetcode",
     "files.eol": "\n",
@@ -606,7 +610,6 @@
     "terminal.external.osxExec": "iTerm2",
     "bookmarks.keepBookmarksOnLineDelete": true,
     "editor.stickyScroll.maxLineCount": 2,
-    "github.copilot.nextEditSuggestions.enabled": false,
     "codeium.snoozeTime": 120,
     "gitlens.views.repositories.autoRefresh": false,
     "vim.useSystemClipboard": true,
@@ -621,5 +624,8 @@
             ]
         }
     ],
-    "security.workspace.trust.untrustedFiles": "open"
+    "security.workspace.trust.untrustedFiles": "open",
+    "gitlens.views.repositories.autoReveal": false,
+    "gitlens.views.repositories.files.layout": "tree",
+    "workbench.editor.enablePreview": false
 }
