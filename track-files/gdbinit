@@ -103,7 +103,19 @@ if int(gdb.parse_and_eval("$_gdb_tools_sourced")) == 0:
         if result:
             gdb_cmd = "set solib-search-path {0}".format(result[:-1])
             gdb.execute(gdb_cmd)
-        gdb.execute("set sysroot ~/.cache/fortinet/fortidev/fortidev-7.0.0")
+
+        # Determine sysroot based on current directory
+        curr_dir = os.getcwd().lower()
+        sysroot_base_path ="~/.cache/fortinet/fortidev/"
+        sysroot_version = "fortidev-7.0.0"
+        if "fpx" in curr_dir:
+            sysroot_version = "fortidev-6.0.2"
+            gdb.write("+++Detected 'fpx' in current path. Setting sysroot for FPX.\n")
+        elif "fos" in curr_dir:
+            sysroot_version = "fortidev-7.0.0"
+            gdb.write("+++Detected 'fos' in current path. Setting sysroot for FOS.\n")
+        sysroot_path = os.path.expanduser(os.path.join(sysroot_base_path, sysroot_version))
+        gdb.execute(f"set sysroot {sysroot_path}")
         gdb.write("+++solib-search-path set successfully\n")
         gdb.execute(f"source {tools_path}")
         gdb.execute("set $_gdb_tools_sourced = 1")
