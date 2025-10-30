@@ -622,10 +622,10 @@
 		"command": "-inlineChat.start",
 		"when": "editorFocus && inlineChatHasProvider && inlineChatPossible && !editorReadonly && !editorSimpleInput"
 	},
-	{
-		"key": "ctrl+shift+\\",
-		"command": "github.copilot.chat.explain"
-	},
+	// {
+	// 	"key": "ctrl+shift+\\",
+	// 	"command": "github.copilot.chat.explain"
+	// },
 	{
 		"key": "ctrl+shift+j",
 		"command": "command-runner.run",
@@ -649,6 +649,13 @@
 		"command": "command-runner.run",
 		"args": {
 			"command": "jn",
+		}
+	},
+	{
+		"key": "ctrl+shift+m",
+		"command": "command-runner.run",
+		"args": {
+			"command": "jm",
 		}
 	},
 	{

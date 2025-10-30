@@ -500,7 +500,6 @@
         "git-rebase-todo": "default"
     },
     "gitlens.views.commits.showBranchComparison": false,
-    "gitlens.views.commits.files.layout": "tree",
     "gitlens.views.commits.avatars": false,
     "gitlens.views.commits.pullRequests.showForBranches": false,
     "gitlens.views.commits.pullRequests.enabled": false,
