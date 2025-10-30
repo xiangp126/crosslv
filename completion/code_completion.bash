@@ -7,8 +7,8 @@ _code_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define options
-    opts="-h -f -d -d -v -r -s"
-    long_opts="--help --force --debug --version --remove --install-extension \
+    opts="-h -f -d -d -v -c -s"
+    long_opts="--help --force --debug --version --clean --install-extension \
                --locate-shell-integration-path --status --list-extensions --print"
 
     case "${prev}" in

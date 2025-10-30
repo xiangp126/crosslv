@@ -27,7 +27,7 @@ Options:
     -d, --debug                      Enable debug mode (set -x)
     -f, --force                      Force search for the code binary, ignoring \$VSCODE_BIN_PATH
     -v, --version                    Show version information
-    -r, --remove                     Remove obsolete IPC sockets
+    -c, --clean                      Clean obsolete IPC sockets
     -s, --status                     Print process usage and diagnostics information
     --print                          Print core variables
     --install-extension              Install the specified extension from a .vsix file
@@ -45,8 +45,8 @@ EOF
 
 # Helper function: parse options
 _code_parseOptions() {
-    local SHORTOPTS="hfdvrs"
-    local LONGOPTS="help,force,debug,version,remove,install-extension:,locate-shell-integration-path,status,list-extensions,print"
+    local SHORTOPTS="hfdvcs"
+    local LONGOPTS="help,force,debug,version,clean,install-extension:,locate-shell-integration-path,status,list-extensions,print"
     local SCRIPTNAME="code"
 
     local PARSED
@@ -84,8 +84,8 @@ _code_parseOptions() {
                 _code_fArgs=("--install-extension" "$2")
                 shift 2
                 ;;
-            -r|--remove)
-                _code_removeObsoleteIPCSocks
+            -c|--clean)
+                _code_cleanObsoleteIPCSocks
                 return 0
                 ;;
             --list-extensions)
@@ -189,7 +189,7 @@ _code_runCmd() {
 }
 
 # Helper function: remove obsolete IPC sockets
-_code_removeObsoleteIPCSocks() {
+_code_cleanObsoleteIPCSocks() {
     local fSysPath="/run/user/$UID"
     local LIGHTYELLOW='\033[93m'
     local MAGENTA='\033[0;35m'
