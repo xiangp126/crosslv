@@ -157,9 +157,13 @@ backupVms() {
             vmImageName="$(basename "$vmDiskImagePath")"
             bkVmDiskImagePath="$bkVmDir/$vmImageName"
             bkQemuXmlPath="$bkVmDir/$vm.xml"
-            echo -e "${GREEN}Disk Image: ${RESET}$vmDiskImagePath => $bkVmDiskImagePath"
-            echo -e "${GREEN}XML path:   ${RESET}$qemuXmlPath => $bkQemuXmlPath"
 
+            # Calculate the maximum length for the disk image paths
+            local maxLeftDispLen=$((${#vmDiskImagePath} > ${#qemuXmlPath} ? ${#vmDiskImagePath} : ${#qemuXmlPath}))
+
+            # Use printf with dynamic padding
+            printf "${GREEN}Disk Image:${RESET} %-${maxLeftDispLen}s => %s\n" "$vmDiskImagePath" "$bkVmDiskImagePath"
+            printf "${GREEN}XML Config:${RESET} %-${maxLeftDispLen}s => %s\n" "$qemuXmlPath" "$bkQemuXmlPath"
             sudo rsync -aPv "$qemuXmlPath" "$bkQemuXmlPath"
             sudo rsync -aPv "$vmDiskImagePath" "$bkVmDiskImagePath"
         else
