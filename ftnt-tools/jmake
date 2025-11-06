@@ -766,6 +766,10 @@ runSyncCommands() {
                     puts stderr \"$USER_NOTATION 100-update image completed. Action completed.\"
                     exit $ESUCCESS
                 }
+                \"Command fail\" {
+                    puts stderr \"$USER_NOTATION Command fail. Action aborted.\"
+                    exit $EFAILED
+                }
                 \"lost connection\" {
                     puts stderr \"$USER_NOTATION Lost connection. Action aborted.\"
                     exit $EFAILED
