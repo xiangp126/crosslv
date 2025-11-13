@@ -283,6 +283,71 @@ displayInfo() {
     echo $SEPARATOR_RT
 }
 
+# tmux capture-pane usage
+#
+# Syntax:
+#   tmux capture-pane [-aEpPS] [-b buffer-name] [-E end-line] [-J] [-S start-line] [-t target-pane]
+#
+# Options:
+#   -S start-line      Start line to capture (relative to top of pane; negative numbers count from visible top)
+#   -E end-line        End line to capture (relative to top of pane)
+#   -a                 Include history outside the visible pane (scrollback)
+#   -p                 Print captured content to stdout
+#   -b buffer-name     Specify buffer name
+#   -J                 Join wrapped lines into a single line
+#   -t target-pane     Target pane (e.g., 1, %1, or session:window.pane)
+#
+# Examples:
+#   tmux capture-pane                 # Capture visible content of current pane to default buffer
+#   tmux capture-pane -a              # Capture full history of current pane
+#   tmux capture-pane -p              # Capture and print to terminal
+#   tmux capture-pane -a -p           # Capture full history and print
+#   tmux capture-pane -S 0 -E 50 -p   # Capture lines 0 to 50 and print
+#   tmux capture-pane -t 1 -p         # Capture specified pane 1
+#   tmux capture-pane -b mybuffer -p  # Capture content into named buffer
+#   tmux capture-pane -a -p | less    # Capture history and view with pager
+#   tmux capture-pane -p -S -1000 > pane.txt   # Capture last 1000 lines and save to file
+checkEnvReadiness() {
+    # Tmux Target Pane Content
+    local paneContent=$(tmux capture-pane -pt "$fTmuxTarget")
+    local lastLine=$(echo "$paneContent" | tail -n1)
+
+    # Remove potential escape sequences
+    lastLineCleaned=$(echo "$lastLine" | sed 's/\x1b\[[0-9;]*m//g')
+
+    # Check if the last line contains (Interim)#
+    if [[ $lastLineCleaned =~ .*\(Interim\)\# ]]; then
+        # echo "Fortigate CLI ready"
+        tmux send-keys -t "$fTmuxTarget" "show system interface" C-m
+    else
+        echo -e "${RED}Fatal Error: Fortigate CLI not ready, stop sending commands!${RESET}"
+        exit 1
+    fi
+}
+
+# tmux send-keys usage
+#
+# Syntax:
+#   tmux send-keys [-lMRX] [-t target-pane] key ...
+#
+# Options:
+#   -l             Send keys literally (treats input string as literal characters)
+#   -M             Forward keys through the terminal (for mouse or client events)
+#   -R             Reset the state of the terminal before sending keys
+#   -X             Send command to the pane (like a control command, e.g., "clear-screen")
+#   -t target-pane Specify target pane (e.g., 1, %1, or session:window.pane)
+#
+# Usage:
+#   tmux send-keys 'ls -l' C-m         # Send "ls -l" and Enter (C-m = Enter)
+#   tmux send-keys -l 'echo hello' C-m # Send literal string "echo hello" and Enter
+#   tmux send-keys -t 1 'top' C-m      # Send "top" command to pane 1
+#   tmux send-keys -X clear-screen      # Send pane control command (clear screen)
+#   tmux send-keys 'cd /tmp' C-m       # Change directory in target pane
+#
+# Notes:
+#   - Keys can be special keys like C-m (Enter), C-c (Ctrl+C), Up, Down, etc.
+#   - Multiple keys or strings can be sent in sequence.
+#   - Often combined with capture-pane to automate pane interactions.
 sendBuiltinCmds() {
     # 1. Access the value for the "$fDebugMode" key
     fullCmds="${DEBUG_CONFIG["$fDebugMode"]}"
@@ -350,24 +415,6 @@ sendCmdsFromFile() {
             exit 1
         fi
     done
-}
-
-checkEnvReadiness() {
-    # Tmux Target Pane Content
-    local paneContent=$(tmux capture-pane -pt "$fTmuxTarget")
-    local lastLine=$(echo "$paneContent" | tail -n1)
-
-    # Remove potential escape sequences
-    lastLineCleaned=$(echo "$lastLine" | sed 's/\x1b\[[0-9;]*m//g')
-
-    # Check if the last line contains (Interim)#
-    if [[ $lastLineCleaned =~ .*\(Interim\)\# ]]; then
-        # echo "Fortigate CLI ready"
-        tmux send-keys -t "$fTmuxTarget" "show system interface" C-m
-    else
-        echo -e "${RED}Fatal Error: Fortigate CLI not ready, stop sending commands!${RESET}"
-        exit 1
-    fi
 }
 
 main() {
