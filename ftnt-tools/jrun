@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2034
+# shellcheck disable=SC2034,SC2155
 # set -x
 
 # Constants
@@ -16,7 +16,7 @@ fSendNewLine=
 fTmuxPrefix="C-x"
 fCleanedCmd=
 fPacketTraceAddr=
-fDebugMode="none"
+fDebugMode=
 fCmdFile="commands.txt"
 # Colors
 RED='\033[31m'
@@ -264,7 +264,7 @@ displayInfo() {
     echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
     echo -e "[/] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
 
-    if [[ $fDebugMode != "none" ]]; then
+    if [ -n "$fDebugMode" ]; then
         COLOR=$LIGHTYELLOW
         IFS='|' read -r desc cmds <<< "${DEBUG_CONFIG[$fDebugMode]}"
         if [[ $fDebugMode == "ptrace" ]]; then
@@ -324,9 +324,10 @@ sendCmdsFromFile() {
         # Eliminates comments, deletes everything before : or #, and clears leading spaces
         fCleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
 
+        # Skip empty lines
         [ -z "$fCleanedCmd" ] && continue
 
-        # If the cleaned command starts with an exclamation mark
+        # If the cleaned command starts with an exclamation mark, it's a comment
         [ "${fCleanedCmd:0:1}" == "!" ] && exit 0
 
         # For dos file, there will be a '\r\n' ending in each command. No need to send extra new line.
@@ -351,10 +352,29 @@ sendCmdsFromFile() {
     done
 }
 
+checkEnvReadiness() {
+    # Tmux Target Pane Content
+    local paneContent=$(tmux capture-pane -pt "$fTmuxTarget")
+    local lastLine=$(echo "$paneContent" | tail -n1)
+
+    # Remove potential escape sequences
+    lastLineCleaned=$(echo "$lastLine" | sed 's/\x1b\[[0-9;]*m//g')
+
+    # Check if the last line contains (Interim)#
+    if [[ $lastLineCleaned =~ .*\(Interim\)\# ]]; then
+        # echo "Fortigate CLI ready"
+        tmux send-keys -t "$fTmuxTarget" "show system interface" C-m
+    else
+        echo -e "${RED}Fatal Error: Fortigate CLI not ready, stop sending commands!${RESET}"
+        exit 1
+    fi
+}
+
 main() {
     parseOptions "$@"
     displayInfo
-    if [[ "$fDebugMode" != "none" ]]; then
+    checkEnvReadiness
+    if [ -n "$fDebugMode" ]; then
         sendBuiltinCmds
     else
         sendCmdsFromFile
