@@ -313,13 +313,10 @@ checkEnvReadiness() {
     local lastLine=$(echo "$paneContent" | tail -n1)
 
     # Remove potential escape sequences
-    lastLineCleaned=$(echo "$lastLine" | sed 's/\x1b\[[0-9;]*m//g')
+    lastLineStripped=$(echo "$lastLine" | sed 's/\x1b\[[0-9;]*m//g')
 
     # Check if the last line contains (Interim)#
-    if [[ $lastLineCleaned =~ .*\(Interim\)\# ]]; then
-        # echo "Fortigate CLI ready"
-        tmux send-keys -t "$fTmuxTarget" "show system interface" C-m
-    else
+    if [[ ! $lastLineStripped =~ .*\(Interim\)\# ]]; then
         echo -e "${RED}Fatal Error: Fortigate CLI not ready, stop sending commands!${RESET}"
         exit 1
     fi
@@ -350,11 +347,11 @@ checkEnvReadiness() {
 #   - Often combined with capture-pane to automate pane interactions.
 sendBuiltinCmds() {
     # 1. Access the value for the "$fDebugMode" key
-    fullCmds="${DEBUG_CONFIG["$fDebugMode"]}"
+    local fullCmds="${DEBUG_CONFIG["$fDebugMode"]}"
 
     # 2. Extract the command block string
     # Remove the description part up to and including "|("
-    cmds="${fullCmds#*|(}"
+    local cmds="${fullCmds#*|(}"
     # Remove the trailing ")"
     cmds="${cmds%)}"
 
@@ -387,31 +384,31 @@ sendCmdsFromFile() {
     # Line Processing
     tail -n +1 "$fCmdFile" | while IFS= read -r command || [[ -n "$command" ]]; do
         # Eliminates comments, deletes everything before : or #, and clears leading spaces
-        fCleanedCmd=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
+        local fCmdCleaned=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
 
         # Skip empty lines
-        [ -z "$fCleanedCmd" ] && continue
+        [ -z "$fCmdCleaned" ] && continue
 
         # If the cleaned command starts with an exclamation mark, it's a comment
-        [ "${fCleanedCmd:0:1}" == "!" ] && exit 0
+        [ "${fCmdCleaned:0:1}" == "!" ] && exit 0
 
         # For dos file, there will be a '\r\n' ending in each command. No need to send extra new line.
-        if [[ "$fCleanedCmd" != *$'\r' ]]; then
+        if [[ "$fCmdCleaned" != *$'\r' ]]; then
             fSendNewLine="true"
         fi
 
-        echo -e "$USER_NOTATION Sending: ${MAGENTA}$fCleanedCmd${RESET}"
+        echo -e "$USER_NOTATION Sending: ${MAGENTA}$fCmdCleaned${RESET}"
 
         if [[ -n "$fSendNewLine" ]]; then
             # Use -l to send the command as a literal string
-            tmux send-keys -t "$fTmuxTarget" -l "$fCleanedCmd"
+            tmux send-keys -t "$fTmuxTarget" -l "$fCmdCleaned"
             tmux send-keys -t "$fTmuxTarget" Enter
         else
-            tmux send-keys -t "$fTmuxTarget" -l "$fCleanedCmd"
+            tmux send-keys -t "$fTmuxTarget" -l "$fCmdCleaned"
         fi
 
         if [[ $? -ne 0 ]]; then
-            echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $fCleanedCmd${RESET}"
+            echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $fCmdCleaned${RESET}"
             exit 1
         fi
     done
