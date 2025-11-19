@@ -8,10 +8,18 @@ if declare -F _code_pre_check &> /dev/null; then
     return
 fi
 
+# Colors for output
+export MAGENTA='\033[0;35m'
+export LIGHTYELLOW='\033[0;93m'
+export GREY='\033[0;90m'
+export RED='\033[0;31m'
+export BLUE='\033[0;34m'
+export GREEN='\033[0;32m'
+export RESET='\033[0m'
+
 # Helper function: usage
 _code_usage() {
-    local SCRIPTNAME="code"
-    cat << EOF
+    cat << _EOF
 Usage: code [options] <args>
 
 Description:
@@ -42,19 +50,19 @@ Example: code --version
          code --install-extension gitlens-13.0.2.vsix
          code myfile.txt
 
-EOF
+_EOF
     return 0
 }
 
 # Helper function: parse options
 _code_parse_options() {
-    local SHORTOPTS="hdfvpsc"
-    local LONGOPTS="help,debug,force,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
-    local SCRIPTNAME="code"
+    local shortopts="hdfvpscr"
+    local longopts="help,debug,force,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
+    local script_name="code"
 
     local PARSED
-    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$SCRIPTNAME" -- "$@"); then
-        echo -e "${_CODE_MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
+    if ! PARSED=$(getopt --options $shortopts --longoptions "$longopts" --name "$script_name" -- "$@"); then
+        echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
         return 1
     fi
 
@@ -63,7 +71,7 @@ _code_parse_options() {
         case "$1" in
             -h|--help)
                 _code_usage
-                return 0
+                return 1
                 ;;
             -d|--debug)
                 _code_f_debug=true
@@ -79,9 +87,8 @@ _code_parse_options() {
                 shift
                 ;;
             -p|--print)
-                # _code_f_args=("--version")
                 _code_print_core_vars
-                shift
+                return 1
                 ;;
             -s|--status)
                 _code_f_args=("--status")
@@ -89,10 +96,10 @@ _code_parse_options() {
                 ;;
             -c|--clean)
                 _code_clean_obsolete_ipc_socks
-                return 0
+                return 1
                 ;;
             -r|--reload)
-                __code_self_reload
+                _code_self_reload
                 return 2 # Special return code to signal a reload
                 ;;
             --install-extension)
@@ -104,7 +111,7 @@ _code_parse_options() {
                 shift
                 ;;
             --locate-shell-integration-path)
-                _code_f_args=("--locate-shell-integration-path")
+                _code_f_args=("--locate-shell-integration-path" "bash")
                 shift
                 ;;
             --)
@@ -112,31 +119,25 @@ _code_parse_options() {
                 break
                 ;;
             *)
-                echo -e "${_CODE_MAGENTA}Invalid option: $1${RESET}" >&2
+                echo -e "${MAGENTA}Invalid option: $1${RESET}" >&2
                 return 1
         esac
     done
-    [ -n "$1" ] && _code_f_args+=("--goto" "$1")
+
+    # If _code_f_args is empty here, _code_run_cmd will exit without execution.
+    local first_arg=true
+    for arg in "$@"; do
+        if [[ -n $first_arg ]]; then
+            _code_f_args+=("--goto")
+            first_arg=
+        fi
+        _code_f_args+=("$arg")
+    done
+
     return 0
 }
 
-__code_self_reload() {
-    # Unset all functions defined by this script to allow for reloading
-    unset -f code _code_usage _code_parse_options __set_vscode_code_path \
-              _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
-              _code_pre_check __code_self_reload
-
-    # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
-    if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
-        # shellcheck source=/dev/null
-        source "${BASH_SOURCE[0]}"
-        echo "code function has been reloaded."
-    else
-        echo "Error: Could not determine the source file path to reload." >&2
-    fi
-}
-
-__set_vscode_code_path() {
+_set_vscode_code_path() {
     # Step 1: Find the commit ID of the active VS Code server
     # Use process substitution to ensure `commit_id` is set in the current shell scope, not a subshell.
     # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
@@ -147,7 +148,7 @@ __set_vscode_code_path() {
             curr_pid=$(cat "$pid_file" 2>/dev/null)
             if [ -n "$curr_pid" ] && [[ "$curr_pid" =~ ^[0-9]+$ ]]; then
                 # Check if the process is actually running
-                if ps -p "$curr_pid" -o pid= > /dev/null 2>&1; then
+                if kill -0 "$curr_pid" 2>/dev/null; then
                     commit_id=$(basename "$(dirname "$pid_file")")
                     break
                 fi
@@ -201,27 +202,27 @@ _code_run_cmd() {
         if [[ $? -eq 0 ]]; then
             break
         else
-            __set_vscode_code_path
+            _set_vscode_code_path
         fi
     done
 }
 
 # Helper function: remove obsolete IPC sockets
 _code_clean_obsolete_ipc_socks() {
-    __set_vscode_code_path || return 1
+    _set_vscode_code_path || return 1
 
-    find "$_code_f_sys_path" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
-          grep -Fxv "$VSCODE_IPC_HOOK_CLI" |
-          while IFS= read -r sock; do
-        echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
-        rm -f "$sock"
-    done
+    local removed=0 remaining=0
+    while IFS= read -r -d '' sock; do
+        if [[ "$sock" != "$VSCODE_IPC_HOOK_CLI" ]]; then
+            echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
+            rm -f "$sock" && ((removed++))
+        else
+            ((remaining++))
+        fi
+    done < <(find "$_code_f_sys_path" -maxdepth 1 -type s -name "vscode-ipc-*.sock" -print0 2>/dev/null)
 
     echo "-------------------------------------------------------"
-    find "$_code_f_sys_path" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
-          while IFS= read -r sock; do
-        echo -e "Remaining: ${_CODE_MAGENTA}$sock${RESET}"
-    done
+    echo -e "Removed: $removed socket(s), Remaining: ${MAGENTA}$VSCODE_IPC_HOOK_CLI${RESET}"
 }
 
 # Helper function: pre-check
@@ -236,37 +237,47 @@ _code_pre_check() {
     fi
 }
 
+_code_self_reload() {
+    # Unset all functions defined by this script to allow for reloading
+    unset -f code _code_self_reload \
+             _code_usage _code_parse_options _set_vscode_code_path \
+             _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
+             _code_pre_check
+
+    # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
+    if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+        # shellcheck source=/dev/null
+        source "${BASH_SOURCE[0]}"
+        echo -e "${MAGENTA}code function has been reloaded.$RESET"
+    else
+        echo -e "${RED}Error: Could not determine the source file path to reload.$RESET" >&2
+    fi
+}
+
 # Main code function
 code() {
-    # Global variables
-    _code_f_args=()
-    _code_f_force=
-    _code_f_debug=
-    _code_f_sys_path="/run/user/$UID"
-    _code_f_search_path="$HOME/.vscode-server/cli/servers"
+    local _code_f_args=()
+    local _code_f_force=
+    local _code_f_debug=
+    local _code_f_sys_path="/run/user/$UID"
+    local _code_f_search_path="$HOME/.vscode-server/cli/servers"
 
-    # Colors
-    MAGENTA='\033[0;35m'
-    LIGHTYELLOW='\033[0;93m'
-    GREY='\033[0;90m'
-    BLUE='\033[0;34m'
-    GREEN='\033[0;32m'
-    RESET='\033[0m'
-
-    # Main logic
-    local parse_result
     _code_pre_check "$@" || return 1
+
+    local parse_result
     _code_parse_options "$@"
     parse_result=$?
-    if [[ $parse_result -eq 1 ]]; then # Skip the following steps
+    if [[ $parse_result -eq 1 ]]; then # Skip the following steps silently
         return 1
     elif [[ $parse_result -eq 2 ]]; then # The function was reloaded
         return 0
     fi
 
     if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$_code_f_force" ]; then
-        __set_vscode_code_path || return 1
+        _set_vscode_code_path || return 1
     fi
+
+    # Actually run the command
     _code_run_cmd
 
     # Disable debug mode
