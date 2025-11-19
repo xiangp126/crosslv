@@ -1,10 +1,10 @@
 #!/bin/bash
 # set -x
-# VS Code CLI Function - Save as ~/Templates/code-function.sh
-# Add "source "$HOME"/Templates/code-function.sh" to your .bashrc
-# Usage: code [options] [file/directory]
+# Wrapper for the VS Code Server CLI.
+# To install, add `source /path/to/code-function.sh` to your ~/.bashrc.
+# For usage, run `code --help`.
 
-if declare -F _code_preCheck &> /dev/null; then
+if declare -F _code_pre_check &> /dev/null; then
     return
 fi
 
@@ -27,9 +27,12 @@ Options:
     -d, --debug                      Enable debug mode (set -x)
     -f, --force                      Force search for the code binary, ignoring \$VSCODE_BIN_PATH
     -v, --version                    Show version information
-    -c, --clean                      Clean obsolete IPC sockets
     -s, --status                     Print process usage and diagnostics information
-    --print                          Print core variables
+    -c, --clean                      Clean obsolete IPC sockets
+    -p, --print                      Print core variables
+    -r, --reload                     Reload and update this function from its source file
+
+Commands:
     --install-extension              Install the specified extension from a .vsix file
     --list-extensions                List the installed extensions with versions
     --locate-shell-integration-path  Print the path to a terminal shell integration script
@@ -44,14 +47,14 @@ EOF
 }
 
 # Helper function: parse options
-_code_parseOptions() {
-    local SHORTOPTS="hfdvcs"
-    local LONGOPTS="help,force,debug,version,clean,install-extension:,locate-shell-integration-path,status,list-extensions,print"
+_code_parse_options() {
+    local SHORTOPTS="hdfvpsc"
+    local LONGOPTS="help,debug,force,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
     local SCRIPTNAME="code"
 
     local PARSED
     if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$SCRIPTNAME" -- "$@"); then
-        echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
+        echo -e "${_CODE_MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
         return 1
     fi
 
@@ -63,41 +66,45 @@ _code_parseOptions() {
                 return 0
                 ;;
             -d|--debug)
-                _code_debug=true
+                _code_f_debug=true
                 set -x
                 shift
                 ;;
             -f|--force)
-                _code_fForce=true
-                shift
-                ;;
-            --print)
-                _code_fArgs=("--version")
-                _code_fPrint=true
+                _code_f_force=true
                 shift
                 ;;
             -v|--version)
-                _code_fArgs=("--version")
+                _code_f_args=("--version")
                 shift
                 ;;
-            --install-extension)
-                _code_fArgs=("--install-extension" "$2")
-                shift 2
-                ;;
-            -c|--clean)
-                _code_cleanObsoleteIPCSocks
-                return 0
-                ;;
-            --list-extensions)
-                _code_fArgs=("--list-extensions" "--show-versions")
+            -p|--print)
+                # _code_f_args=("--version")
+                _code_print_core_vars
                 shift
                 ;;
             -s|--status)
-                _code_fArgs=("--status")
+                _code_f_args=("--status")
+                shift
+                ;;
+            -c|--clean)
+                _code_clean_obsolete_ipc_socks
+                return 0
+                ;;
+            -r|--reload)
+                __code_self_reload
+                return 2 # Special return code to signal a reload
+                ;;
+            --install-extension)
+                _code_f_args=("--install-extension" "$2")
+                shift 2
+                ;;
+            --list-extensions)
+                _code_f_args=("--list-extensions" "--show-versions")
                 shift
                 ;;
             --locate-shell-integration-path)
-                _code_fArgs=("--locate-shell-integration-path")
+                _code_f_args=("--locate-shell-integration-path")
                 shift
                 ;;
             --)
@@ -105,53 +112,67 @@ _code_parseOptions() {
                 break
                 ;;
             *)
-                echo -e "${MAGENTA}Invalid option: $1${RESET}" >&2
+                echo -e "${_CODE_MAGENTA}Invalid option: $1${RESET}" >&2
                 return 1
         esac
     done
-    [ -n "$1" ] && _code_fArgs+=("--goto" "$1")
+    [ -n "$1" ] && _code_f_args+=("--goto" "$1")
     return 0
 }
 
+__code_self_reload() {
+    # Unset all functions defined by this script to allow for reloading
+    unset -f code _code_usage _code_parse_options __set_vscode_code_path \
+              _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
+              _code_pre_check __code_self_reload
+
+    # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
+    if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+        # shellcheck source=/dev/null
+        source "${BASH_SOURCE[0]}"
+        echo "code function has been reloaded."
+    else
+        echo "Error: Could not determine the source file path to reload." >&2
+    fi
+}
+
 __set_vscode_code_path() {
-    local MAGENTA='\033[0;35m'
-    local RESET='\033[0m'
-    local syspath="/run/user/$UID"
-    local searchPath="$HOME/.vscode-server/cli/servers"
     # Step 1: Find the commit ID of the active VS Code server
-    # Use process substitution to ensure `commitId` is set in the current shell scope, not a subshell.
+    # Use process substitution to ensure `commit_id` is set in the current shell scope, not a subshell.
     # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
-    local pidFile currentPid commitId=
-    cd "$searchPath" || return
-    while IFS= read -r -d $'\0' pidFile; do
-        if [ -f "$pidFile" ]; then
-            currentPid=$(cat "$pidFile" 2>/dev/null)
-            if [ -n "$currentPid" ] && [[ "$currentPid" =~ ^[0-9]+$ ]]; then
+    local pid_file curr_pid commit_id=
+    cd "$_code_f_search_path" || return
+    while IFS= read -r -d $'\0' pid_file; do
+        if [ -f "$pid_file" ]; then
+            curr_pid=$(cat "$pid_file" 2>/dev/null)
+            if [ -n "$curr_pid" ] && [[ "$curr_pid" =~ ^[0-9]+$ ]]; then
                 # Check if the process is actually running
-                if ps -p "$currentPid" -o pid= > /dev/null 2>&1; then
-                    commitId=$(basename "$(dirname "$pidFile")")
+                if ps -p "$curr_pid" -o pid= > /dev/null 2>&1; then
+                    commit_id=$(basename "$(dirname "$pid_file")")
                     break
                 fi
             fi
         fi
     done < <(find . -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
+
     # Step 2: Set the VSCODE_BIN_PATH
-    if [[ -z "$commitId" ]]; then
-        echo -e "${MAGENTA}Warning: No active VS Code server found under $searchPath.${RESET}" >&2
+    if [[ -z "$commit_id" ]]; then
+        echo -e "${MAGENTA}Warning: No active VS Code server found under $_code_f_search_path.${RESET}" >&2
         cd - &> /dev/null || return
         return 1
     fi
-    VSCODE_BIN_PATH="$searchPath/$commitId/server/bin/remote-cli/code"
+    VSCODE_BIN_PATH="$_code_f_search_path/$commit_id/server/bin/remote-cli/code"
     if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
         echo -e "${MAGENTA}Error: VS Code binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
         return 1
     fi
+
     # Step 3: Set the VSCODE_IPC_HOOK_CLI
     # Get the most recently created vscode-ipc-*.sock file
     # shellcheck disable=SC2012 disable=SC2155
-    local newIPCHook=$(ls -t "$syspath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+    local newIPCHook=$(ls -t "$_code_f_sys_path"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
     if [ -z "$newIPCHook" ]; then
-        echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $syspath${RESET}" >&2
+        echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $_code_f_sys_path${RESET}" >&2
         return 1
     fi
     # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
@@ -163,41 +184,33 @@ __set_vscode_code_path() {
 }
 
 # Helper function: print core variables
-_code_printCoreVars() {
-    if [ -n "$_code_fPrint" ]; then
-        echo -e "${MAGENTA}VS Code Server Core Vars:${RESET}"
-        echo "==============================================="
-        echo -e "${GREEN}✔${GREY} Active VS Code Binary Path:${BLUE} $VSCODE_BIN_PATH${RESET}"
-        echo -e "${GREEN}✔${GREY} Active VS Code IPC Hook:${BLUE} $VSCODE_IPC_HOOK_CLI${RESET}"
-        echo "==============================================="
-    fi
+_code_print_core_vars() {
+    echo -e "${MAGENTA}VS Code Server Core Vars${RESET}"
+    echo "==============================================="
+    echo -e "${GREEN}✔${GREY} Active VS Code Bin Path:${BLUE} $VSCODE_BIN_PATH${RESET}"
+    echo -e "${GREEN}✔${GREY} Active VS Code IPC Hook:${BLUE} $VSCODE_IPC_HOOK_CLI${RESET}"
+    echo "==============================================="
 }
 
 # Helper function: run VS Code command
-_code_runCmd() {
-    [[ ${#_code_fArgs[@]} -eq 0 ]] && return
+_code_run_cmd() {
+    [[ ${#_code_f_args[@]} -eq 0 ]] && return
 
     for _ in {1..2}; do
-        "$VSCODE_BIN_PATH" "${_code_fArgs[@]}" 2>/dev/null
+        "$VSCODE_BIN_PATH" "${_code_f_args[@]}" 2>/dev/null
         if [[ $? -eq 0 ]]; then
             break
         else
             __set_vscode_code_path
         fi
     done
-    _code_printCoreVars
 }
 
 # Helper function: remove obsolete IPC sockets
-_code_cleanObsoleteIPCSocks() {
-    local fSysPath="/run/user/$UID"
-    local LIGHTYELLOW='\033[93m'
-    local MAGENTA='\033[0;35m'
-    local RESET='\033[0m'
-
+_code_clean_obsolete_ipc_socks() {
     __set_vscode_code_path || return 1
 
-    find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
+    find "$_code_f_sys_path" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
           grep -Fxv "$VSCODE_IPC_HOOK_CLI" |
           while IFS= read -r sock; do
         echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
@@ -205,19 +218,18 @@ _code_cleanObsoleteIPCSocks() {
     done
 
     echo "-------------------------------------------------------"
-    find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
+    find "$_code_f_sys_path" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
           while IFS= read -r sock; do
-        echo -e "Remaining: ${MAGENTA}$sock${RESET}"
+        echo -e "Remaining: ${_CODE_MAGENTA}$sock${RESET}"
     done
 }
 
 # Helper function: pre-check
-_code_preCheck() {
-    local fSearchPath="$HOME/.vscode-server/cli/servers"
-    if [ ! -d "$fSearchPath" ]; then
-        local codeBinPath="/usr/local/bin/code"
-        if [ -x "$codeBinPath" ]; then
-            "$codeBinPath" "$@"
+_code_pre_check() {
+    if [ ! -d "$_code_f_search_path" ]; then
+        local l_code_bin_path="/usr/local/bin/code"
+        if [ -x "$l_code_bin_path" ]; then
+            "$l_code_bin_path" "$@"
             return $?
         fi
         return 1
@@ -227,32 +239,38 @@ _code_preCheck() {
 # Main code function
 code() {
     # Global variables
-    _code_fArgs=()
-    _code_fForce=
-    _code_debug=
-    _code_fPrint=
-    # Local variables
-    local fSysPath="/run/user/$UID"
-    local fSearchPath="$HOME/.vscode-server/cli/servers"
+    _code_f_args=()
+    _code_f_force=
+    _code_f_debug=
+    _code_f_sys_path="/run/user/$UID"
+    _code_f_search_path="$HOME/.vscode-server/cli/servers"
 
     # Colors
     MAGENTA='\033[0;35m'
+    LIGHTYELLOW='\033[0;93m'
     GREY='\033[0;90m'
     BLUE='\033[0;34m'
     GREEN='\033[0;32m'
     RESET='\033[0m'
 
     # Main logic
-    _code_preCheck "$@" || return 1
-    _code_parseOptions "$@" || return 1
+    local parse_result
+    _code_pre_check "$@" || return 1
+    _code_parse_options "$@"
+    parse_result=$?
+    if [[ $parse_result -eq 1 ]]; then # Skip the following steps
+        return 1
+    elif [[ $parse_result -eq 2 ]]; then # The function was reloaded
+        return 0
+    fi
 
-    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$_code_fForce" ]; then
+    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$_code_f_force" ]; then
         __set_vscode_code_path || return 1
     fi
-    _code_runCmd
+    _code_run_cmd
 
     # Disable debug mode
-    [ -n "$_code_debug" ] && set +x
+    [ -n "$_code_f_debug" ] && set +x
 }
 
 # Export the function so it's available in subshells
