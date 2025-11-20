@@ -626,5 +626,6 @@
     "security.workspace.trust.untrustedFiles": "open",
     "gitlens.views.repositories.autoReveal": false,
     "gitlens.views.repositories.files.layout": "tree",
-    "workbench.editor.enablePreview": false
+    "workbench.editor.enablePreview": false,
+    "terminal.integrated.stickyScroll.enabled": false
 }
