@@ -50,6 +50,7 @@ fDockerForce=
 fWiresharkForce=
 fFirefoxForce=
 fChinesePinyinForce=
+fSwapReq=
 # Samba Server | 1: Start samba server 2: Start samba server and reset password
 fSambaServerFlag=
 # LiteLLM | 1: Start LiteLLM 2: Stop LiteLLM 3: Restart LiteLLM
@@ -86,6 +87,13 @@ Common Options:
     --update                        Update all packages
     --upgrade                       Upgrade all packages
 
+Samba Options:
+    --samba                         Install and configure Samba Server
+    --samba-reset-password          Reset Samba Server password
+
+Swap Options:
+	--swap                          Add swap file (default 8G)
+
 Vnc Server Options:
     --vnc,--vnc-start               Start VNC server
     --vnc-stop                      Stop VNC server
@@ -106,10 +114,6 @@ OpenGrok Options:
     --opengrok-stop                 Stop OpenGrok Docker container
     --opengrok-restart              Restart OpenGrok Docker container
     --opengrok-indexer              Start OpenGrok indexer
-
-Samba Options:
-    --samba                         Install and configure Samba Server
-    --samba-reset-password          Reset Samba Server password
 
 The following options force updates or re-installation (installed by default):
     --nvm                           Force update NVM
@@ -135,7 +139,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
           opengrok-restart,opengrok-indexer,samba,samba-reset-password,wireshark,git-lfs\
-          litellm-start,litellm-stop,litellm-restart,litellm,check-tls::"
+          litellm-start,litellm-stop,litellm-restart,litellm,check-tls::,swap::"
 
 # Use getopt to parse command-line options
 if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -248,14 +252,18 @@ while true; do
             fChinesePinyinForce=true
             shift
             ;;
+        --swap)
+            fSwapReq=true
+            shift 2
+            ;;
         --link-clang-format)
-            # $1 is '--link-clang-format'
-            # $2 is an empty string '' no matter whether it has an argument
-            # The argument if provided will be put in sequence in the positional parameters
-            # Exp: $ jc huhu --link-clang-format /home/user1/ leetcode
-            #     => jc --link-clang-format '' -- 'huhu' '/home/user1/' 'leetcode'
-            # CRITICAL: Always shift 2 to consume both the option token ($1)
-            # and its argument/empty placeholder token ($2).
+            # $1 is '--link-clang-format'.
+            # $2 is always an empty string '', even if an argument is provided.
+            # Any provided argument appears sequentially in the positional parameters.
+            # Example: $ jc huhu --link-clang-format /home/user1/ leetcode
+            #       => jc --link-clang-format '' -- 'huhu' '/home/user1/' 'leetcode'
+            # CRITICAL: Always 'shift 2' to consume the option ($1) and the
+            # empty placeholder token ($2).
             fLinkClangFormatPath="$PWD"
             shift 2
             ;;
@@ -1995,6 +2003,103 @@ installSambaServer() {
     return 0
 }
 
+addSwap() {
+    # Default swap size is 8G
+    local swapSize=${1:-8G}
+
+    # Use regex to parse size and unit, only matching integers
+    # ([0-9]+) matches one or more digits (integer part)
+    # ([KMGTP]B?|[kMGTp]b?)? matches K, M, G, T, P or kB, MB, GB, TB, PB (case-insensitive and optional)
+    local regex="^([0-9]+)([KkMmGgTtPp]B?)?$"
+
+    # Try to match the input
+    if [[ "$swapSize" =~ $regex ]]; then
+        local num=${BASH_REMATCH[1]}    # Integer number part
+        local unit=${BASH_REMATCH[2]}    # Unit part (can be empty)
+        # Convert unit to uppercase and remove optional 'B' for unified handling
+        local unit_upper=$(echo "$unit" | tr '[:lower:]' '[:upper:]' | sed 's/B$//')
+
+        # echo -e "${LIGHTYELLOW}Swap size parsed: ${num}${unit_upper}${RESET}"
+    else
+        # Exit if the format is invalid or contains decimals
+        echo -e "${RED}Invalid swap size format: ${swapSize}. Please use an integer followed by an optional unit (e.g., '8G', '4096M', or '8192').${RESET}"
+        return 1
+    fi
+
+    echo -e "${COLOR}Adding Swap File of size ${num}${unit_upper}${RESET}"
+
+    # ----------------------------------------------------
+    # Check if ANY swap is already active
+    # swapon --show outputs a header line, so we check if there is more than one line of output.
+    # The 'tail -n +2' command skips the header line, and we check if any content remains.
+    # ----------------------------------------------------
+    if swapon --show | tail -n +2 | grep -q '.*'; then
+        echo -e "${GREEN}✔${GREY} At least one swap area is already active.${RESET}"
+        swapon --show
+        return 0
+    fi
+    exit 1
+
+    # Create or enable the Swap
+    if [ -f /swapfile ]; then
+        echo -e "${LIGHTYELLOW}/swapfile exists but not active. Enabling it...${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Creating swap file of size $swapSize...${RESET}"
+
+        # Prefer fallocate, as it directly supports size strings with units
+        # Suppress standard error output of fallocate in case of failure
+        if ! sudo fallocate -l "$swapSize" /swapfile 2>/dev/null; then
+            echo -e "${RED}fallocate failed. Trying dd fallback...${RESET}"
+
+            # Fallback to dd command
+            # dd requires an integer count and a bs (block size)
+
+            local bs_val
+            case "$unit_upper" in
+                "K") bs_val="1K" ;;
+                "M") bs_val="1M" ;;
+                "G") bs_val="1G" ;;
+                "T") bs_val="1T" ;;
+                "")
+                     # If no unit is provided (e.g., 8192), assume 'M' unit and set bs to 1M
+                     echo -e "${LIGHTYELLOW}No unit provided. Assuming 'M' unit for dd fallback.${RESET}"
+                     bs_val="1M"
+                     ;;
+                *)
+                     # Should not happen if regex is correct, but safe check for dd
+                     echo -e "${RED}Unsupported unit '$unit_upper' for dd fallback (Use K, M, G, or T).${RESET}"
+                     return 1
+                     ;;
+            esac
+
+            echo -e "${LIGHTYELLOW}dd command: sudo dd if=/dev/zero of=/swapfile bs=${bs_val} count=${num} status=progress${RESET}"
+            if ! sudo dd if=/dev/zero of=/swapfile bs="$bs_val" count="$num" status=progress; then
+                echo -e "${RED}dd failed.${RESET}"
+                return 1
+            fi
+        fi
+
+        # Set correct permissions and format the swap file
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+    fi
+
+    # Activate the swap file
+    sudo swapon /swapfile
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Swap enabled successfully.${RESET}"
+        # Add to fstab for persistence across reboots
+        if ! grep -q "^/swapfile" /etc/fstab; then
+            echo -e "${GREY}Adding /swapfile to /etc/fstab${RESET}"
+            echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+        fi
+    else
+        echo -e "${RED}Failed to enable swap.${RESET}"
+        exit 1
+    fi
+    free -h
+}
+
 installLatestPPaWireshark() {
     echo -e "${COLOR}Checking for Wireshark (Wireshark PPA)${RESET}"
 
@@ -2312,6 +2417,7 @@ doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
+    [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
     [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
     case "$fVncServer" in
         1) startVncServer;       exit 0 ;;
