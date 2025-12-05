@@ -501,9 +501,9 @@ ubuntuInstallApps() {
         libmpfr-dev             # Multiple-precision floating-point library
 
         # --- System & Performance Analysis ---
-        linux-tools-common      # Common Linux tools
+        linux-tools-common        # Common Linux tools
         linux-tools-"$(uname -r)" # Linux kernel tools
-        bpfcc-tools             # BCC eBPF toolkit
+        bpfcc-tools               # BCC eBPF toolkit
 
         # --- Networking Tools ---
         netcat-openbsd          # nc
@@ -529,10 +529,10 @@ ubuntuInstallApps() {
         network-manager-gnome   # Network manager
         gnome-keyring           # Keyring manager
         xsel                    # Command-line clipboard tool
-        xclip
+        xclip                   # Command-line clipboard tool
         fonts-noto-cjk          # CJK fonts
         fonts-wqy-microhei      # Chinese fonts
-        fonts-wqy-zenhei
+        fonts-wqy-zenhei        # Chinese fonts
         remmina                 # Remote desktop client (VNC, RDP, etc.)
         tigervnc-standalone-server # VNC server
         tigervnc-xorg-extension    # VNC X11 extension
