@@ -534,6 +534,7 @@ ubuntuInstallApps() {
         fonts-wqy-microhei      # Chinese fonts
         fonts-wqy-zenhei        # Chinese fonts
         remmina                 # Remote desktop client (VNC, RDP, etc.)
+        remmina-plugin-rdp      # RDP plugin for Remmina
         tigervnc-standalone-server # VNC server
         tigervnc-xorg-extension    # VNC X11 extension
 
