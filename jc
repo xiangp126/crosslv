@@ -92,7 +92,7 @@ Samba Options:
     --samba-reset-password          Reset Samba Server password
 
 Swap Options:
-	--swap                          Add swap file (default 8G)
+    --swap                          Add swap file (default 8G)
 
 Vnc Server Options:
     --vnc,--vnc-start               Start VNC server
@@ -2039,7 +2039,6 @@ addSwap() {
         swapon --show
         return 0
     fi
-    exit 1
 
     # Create or enable the Swap
     if [ -f /swapfile ]; then
