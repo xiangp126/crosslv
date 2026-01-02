@@ -464,6 +464,7 @@ ubuntuInstallApps() {
         expect                  # Expect script interpreter
         shellcheck              # Shell script static analyzer
         bash-completion         # Bash completion
+        qrencode
 
         # --- File Finding & Processing ---
         fd-find                 # fd, a faster find
