@@ -577,6 +577,7 @@ ubuntuInstallApps() {
 macInstallApps() {
     checkSudoPrivilege
     appsForMac=(
+        fontconfig
         yt-dlp
         fzf
         fd
@@ -2464,6 +2465,7 @@ main() {
         setTimeZone
         createFirstTimeFile
     elif [ "$fOSCategory" == "mac" ]; then
+        macInstallApps
         createTKSymlinks
         installTmuxPluginsManager
         installVimPluginsManager
