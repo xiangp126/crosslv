@@ -13,6 +13,7 @@ fTKFontConfigDir=$fMainDir/assets/fontconfig
 fTKClangdConfig=$fMainDir/assets/clangd/config.yaml
 fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/ftnt-tools
+fNVToolsDir=$fMainDir/nv-tools
 fDownloads=$HOME/Downloads
 fJCPath=$fMainDir/jc
 fFirstTimeFile=$fMainDir/".has_been_invoked"
@@ -583,6 +584,7 @@ macInstallApps() {
         fd
         bat
         vim
+        tmux
     )
 
     echo -e "${COLOR}Updating Apps for MacOS${RESET}"
@@ -977,6 +979,7 @@ createToolsSymlinks() {
     [ -n "$fNoInstallTools" ] && return
     echo -e "${COLOR}Creating Tool Symlinks${RESET}"
     linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
+    linkFiles "$fNVToolsDir" "$HOME/.usr/bin"
     echo -e "${COLOR}Creating template symlinks${RESET}"
     linkFiles "$fTKtemplateDir" "$HOME/Templates"
 }

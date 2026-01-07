@@ -1,6 +1,10 @@
 #!/bin/bash
 # shellcheck disable=SC2155 disable=SC1090 disable=SC1091
 
+# Prevent double-sourcing
+[ -n "$_BASHRC_LOADED" ] && return
+export _BASHRC_LOADED=1
+
 # If not running interactively, don't do anything
 [ -z "$PS1" ] && return
 

@@ -1,0 +1,95 @@
+#!/bin/bash
+
+# Misc Info
+catBanner="---------------------------------------------------"
+catBanner=$(echo "$catBanner" | sed 's/------/------ /g')
+beautifyGap1="-> "
+beautifyGap2="   "
+beautifyGap3="♣  "
+
+# Define the the target dir
+target_dir="/srv/tftp"
+
+# Define the IP mappings
+ip_mapping_fgt1=("172.16.67.181:172.16.67.183" "192.168.101.1:192.168.103.1")
+ip_mapping_fgt2=("172.16.67.183:172.16.67.181" "192.168.103.1:192.168.101.1")
+
+# Define the substrings to exclude in the file name
+exclude_strings=("fgt1" "fgt2" "fosndr" "yang")
+
+# Loop through .conf files in the source directory
+for file in "$target_dir"/*.conf; do
+    is_matched=false
+    for exclude_string in "${exclude_strings[@]}"; do
+        if [[ "$file" =~ .*$exclude_string.* ]]; then
+            is_matched=true
+            break
+        fi
+    done
+
+    if [ "$is_matched" = true ]; then
+        echo -e "$beautifyGap1 Skip file: $file\n"
+        continue
+    fi
+
+    # Initialize selected_mapping as an empty array
+    selected_mapping=()
+
+    # Extract the left side IP address from the mapping
+    left_ip_mapping_fgt1="${ip_mapping_fgt1[0]%:*}"
+    left_ip_mapping_fgt2="${ip_mapping_fgt2[0]%:*}"
+
+    # Check for the presence of specific left side IPs in the file
+    if grep -q "$left_ip_mapping_fgt1" "$file"; then
+        selected_mapping=("${ip_mapping_fgt1[@]}")
+        new_suffix="_fgt2.conf"
+        dup_suffix="_fgt1.conf"
+    elif grep -q "$left_ip_mapping_fgt2" "$file"; then
+        selected_mapping=("${ip_mapping_fgt2[@]}")
+        new_suffix="_fgt1.conf"
+        dup_suffix="_fgt2.conf"
+    else
+        echo -e "\nError: No valid mapping found for file: $file\n"
+        continue
+    fi
+
+    new_filename="${file%.*}${new_suffix}"
+    dup_filename="${file%.*}${dup_suffix}"
+    # If a valid mapping is found, make the replacements and create a new file
+    if [ ${#selected_mapping[@]} -eq 2 ]; then
+        # Extract individual IP addresses
+        IFS=':' read -ra ips1 <<< "${selected_mapping[0]}"
+        IFS=':' read -ra ips2 <<< "${selected_mapping[1]}"
+        source_ip1="${ips1[0]}"
+        destination_ip1="${ips1[1]}"
+        source_ip2="${ips2[0]}"
+        destination_ip2="${ips2[1]}"
+
+        # Print some value information
+        cat << _EOF_
+$catBanner
+Processing $file:
+New $new_filename
+Dup $dup_filename
+$source_ip1 ===> $destination_ip1
+$source_ip2 ===> $destination_ip2
+_EOF_
+        cd $target_dir
+        
+        # overriten the file even if the file is exist
+        tmp_file=$(mktemp)
+        sudo sed -e "s/${source_ip1}/${destination_ip1}/g; s/${source_ip2}/${destination_ip2}/g" "$file" > $tmp_file
+        sudo mv $tmp_file $new_filename
+        sudo cp "$file" $dup_filename
+
+        if [ $? -ne 0 ]; then
+            echo -e "Error: Failed to procses file: $file\n"
+            continue
+        else
+            sudo chown tftp:tftp $new_filename
+            sudo chmod 666 $new_filename
+            sudo chmod 666 $dup_filename
+            echo -e "Success: Processed file: $file\n"
+        fi
+    fi
+done

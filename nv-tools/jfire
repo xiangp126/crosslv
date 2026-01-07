@@ -1,0 +1,53 @@
+#!/usr/bin/env python3.13
+import socket
+
+# Explicit Proxy
+PROXY = '192.168.103.6'
+PROXY_PORT = 8080
+SERVER = '172.16.67.182'
+SERVER_PORT = 921
+
+# Client IP
+source_ip = ''  # Empty string means use default local IP
+source_port = 0  # 0 means OS will choose an available ephemeral port
+
+# Create a raw socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# Set the SO_REUSEADDR socket option
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+# Bind the socket to the source address and port
+sock.bind((source_ip, source_port))
+
+# Connect to the proxy server
+sock.connect((PROXY, PROXY_PORT))
+
+# Create proper HTTP CONNECT request
+http_request = f"""CONNECT {SERVER}:{SERVER_PORT} HTTP/1.1\r\n\
+Host: {SERVER}:{SERVER_PORT}\r\n\
+User-Agent: curl/7.81.0\r\n\
+Proxy-Connection: Keep-Alive\r\n\
+\r\n"""
+
+# Print each line without interpreting \r\n
+# for line in http_request.split("\r\n"):
+#     print(repr(line + "\r\n"))
+
+# Send the HTTP CONNECT request
+sock.settimeout(5)  # 5 seconds timeout
+try:
+	sock.sendall(http_request.encode())
+except socket.timeout:
+	print("Request timed out")
+	sock.close()
+	exit(1)
+
+# Receive the response from the server
+response = sock.recv(4096)
+
+# Print the server's response
+print(response.decode(), end='')
+
+# Close the socket
+sock.close()

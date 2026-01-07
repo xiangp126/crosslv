@@ -1,0 +1,428 @@
+#!/bin/bash
+# shellcheck disable=SC2034,SC2155
+# set -x
+
+# Constants
+SCRIPT_NAME=$(basename "$0")
+USER_NOTATION="@@@@"
+SEPARATOR_LT="=================================="
+SEPARATOR_RT="=================================="
+# Variables
+fSessionId=
+fTmuxTarget=
+fWinId=1
+fPaneId=1
+fSendNewLine=
+fTmuxPrefix="C-x"
+fCleanedCmd=
+fPacketTraceAddr=
+fDebugMode=
+fCmdFile="commands.txt"
+# Colors
+RED='\033[31m'
+MAGENTA='\033[35m'
+CYAN='\033[36m'
+LIGHTYELLOW='\033[93m'
+LIGHTGREEN='\033[92m'
+GREY='\033[90m'
+RESET='\033[0m'
+COLOR=$MAGENTA
+declare -r -A DEBUG_CONFIG=(
+    ["none"]=""
+    ["wad"]="Enables WAD debugging|(
+        diag debug reset
+        diag wad debug enable all
+        diag debug enable
+    )"
+    ["output"]="Configures console for direct output|(
+        config system console
+        set output standard
+        end
+    )"
+    ["kernel"]="Enables kernel debugging and kmiglogd trace|(
+        diag debug reset
+        diag debug enable
+        diag debug application kmiglogd -1
+    )"
+    ["ptrace"]="Enables packet flow tracing for specific IP|(
+        diag debug reset
+        diag debug flow filter clear
+        diag debug enable
+        diag debug flow filter addr %s
+        diag debug flow show function-name enable
+        diag debug flow trace start 100
+    )"
+    ["ips"]="Enables IPS debugging and filters|(
+        diag debug reset
+        diag wad debug ips-filter all
+        diag ips debug enable all
+        diag wad debug enable all
+        diag debug enable
+    )"
+    ["scanunit"]="Enables scan unit debugging|(
+        diag debug reset
+        diag sys scanunit debug all
+        diag wad debug enable all
+        diag debug enable
+    )"
+    ["dns"]="Enables DNS proxy debugging|(
+        diag debug reset
+        diag debug application dnsproxy -1
+        diag wad debug enable all
+        diag debug enable
+    )"
+    ["vfcache"]="Toggles video filter cache settings|(
+        diag debug enable
+        diag test app wad 2200
+        diag test app wad 328
+        diag test app wad 329
+        diag test app wad 330
+    )"
+)
+
+logo() {
+cat << _EOF
+      _  ___   __  __ _  __
+     (_)/ _ \ / / / // |/ /
+    / // , _// /_/ //    /
+ __/ //_/|_| \____//_/|_/
+|___/
+_EOF
+}
+
+usage() {
+    cat << _EOF
+Usage: $SCRIPT_NAME session[:window[.pane]] [OPTIONS]
+
+This script sends commands to a tmux pane running a FortiGate CLI session.
+It allows you to specify a tmux session, window, and pane ID, as well as an optional command file.
+You can also send predefined debug commands automatically with simple flags.
+The script parses command files and handles various FortiGate debugging scenarios efficiently.
+
+Options:
+    -h, --help               Print this help message
+    -s, --session            Set session ID (default: $fSessionId)
+    -w, --window             Set window ID (default: $fWinId)
+    -p, --pane               Set pane ID (default: $fPaneId)
+    -f, --file               Specify command file (default: $fCmdFile)
+    -d, --debug              Enable debug mode with verbose output
+    -W, --wad-debug          Send WAD debug commands automatically
+    -O, --output-directly    Configure console to output directly (no pagination)
+    -K, --kernel-debug       Send kernel debug commands automatically
+    -T, --packet-trace       Send packet trace commands automatically
+    -I, --ips-debug          Send IPS debug commands automatically
+    -S, --scanunit-debug     Send scanunit debug commands automatically
+    -D, --dns-debug          Send DNS debug commands automatically
+    -V, --toggle-vf-cache    Toggles video filter cache settings
+
+Examples:
+    $SCRIPT_NAME --session=log --window=2 --pane=2 --file=\$HOME/commands.txt
+    $SCRIPT_NAME log --wad-debug      # Uses default window $fWinId and pane $fPaneId
+    $SCRIPT_NAME log:2 --wad-debug    # Uses default pane $fPaneId
+    $SCRIPT_NAME log:2.3 --wad-debug  # Specifies all parts
+    $SCRIPT_NAME log --packet-trace 192.168.1.100
+
+Tips:
+  For tmux, you can use:
+    1. Type '$fTmuxPrefix, q' to view the pane number within the tmux window.
+    2. Type '$fTmuxPrefix, s' to view the session name in tmux.
+  When using command files, you can use:
+    1. // to comment out a line in the command file.
+    2. ! to omit the rest of the commands in the command file.
+
+_EOF
+    exit 0
+}
+
+# @return 0 if the IP address is valid, 1 otherwise
+isValidIP() {
+    local ip="$1"
+    local stat=1
+    if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        IFS='.' read -r i1 i2 i3 i4 <<< "$ip"
+        if (( i1 <= 255 && i2 <= 255 && i3 <= 255 && i4 <= 255 )); then
+            stat=0
+        fi
+    fi
+    return $stat
+}
+
+parseOptions() {
+    SHORTOPTS="hs:w:p:f:dWOKT:ISD"
+    LONGOPTS="help,session:,window:,pane:,file:,debug,wad-debug,output-directly,kernel-debug,\
+              ips-debug,scanunit-debug,dns-debug,packet-trace:,toggle-vf-cache"
+    if ! PARSED=$(getopt --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
+        echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
+        echo -e "${MAGENTA}The argument --packet-trace requires an IP address.${RESET}" >&2
+        exit 1
+    fi
+
+    eval set -- "$PARSED"
+    unset PARSED
+
+    while true; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            -s|--session)
+                fSessionId="$2"
+                shift 2
+                ;;
+            -w|--window)
+                fWinId="$2"
+                shift 2
+                ;;
+            -p|--pane)
+                fPaneId="$2"
+                shift 2
+                ;;
+            -f|--file)
+                fCmdFile="$2"
+                shift 2
+                ;;
+            -d|--debug)
+                set -x
+                shift
+                ;;
+            -W|--wad-debug)
+                fDebugMode="wad"
+                shift
+                ;;
+            -O|--output-directly)
+                fDebugMode="output"
+                shift
+                ;;
+            -K|--kernel-debug)
+                fDebugMode="kernel"
+                shift
+                ;;
+            -T|--packet-trace)
+                fDebugMode="ptrace"
+                fPacketTraceAddr="$2"
+                # In bash, 0 represents true while non-zero represents false
+                if ! isValidIP "$fPacketTraceAddr"; then
+                    echo -e "$USER_NOTATION ${MAGENTA}Invalid IP address for packet trace: $fPacketTraceAddr${RESET}" >&2
+                    exit 1
+                fi
+                shift 2
+                ;;
+            -I|--ips-debug)
+                fDebugMode="ips"
+                shift
+                ;;
+            -S|--scanunit-debug)
+                fDebugMode="scanunit"
+                shift
+                ;;
+            -D|--dns-debug)
+                fDebugMode="dns"
+                shift
+                ;;
+            --toggle-vf-cache)
+                fDebugMode="vfcache"
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "$USER_NOTATION ${MAGENTA}Invalid option: $1${RESET}"
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ "$#" == 0 ]; then
+        usage
+    elif [ "$#" == 1 ]; then
+        local target="$1"
+        if [[ "$target" =~ ^([^:]+)(:([0-9]+)(\.([0-9]+))?)?$ ]]; then
+            fSessionId="${BASH_REMATCH[1]}"
+            fWinId="${BASH_REMATCH[3]:-$fWinId}"
+            fPaneId="${BASH_REMATCH[5]:-$fPaneId}"
+        else
+            echo -e "$USER_NOTATION ${MAGENTA}Invalid tmux target format. Use: session[:window[.pane]]${RESET}" >&2
+            exit 1
+        fi
+    else
+        echo -e "$USER_NOTATION ${MAGENTA}Too many arguments.${RESET}"
+        exit 1
+    fi
+
+    [ -z "$fSessionId" ] && echo -e "$USER_NOTATION ${MAGENTA}Session ID is required.${RESET}" && exit 1
+    fTmuxTarget="$fSessionId:$fWinId.$fPaneId"
+}
+
+# Display information about current settings
+displayInfo() {
+    logo
+    echo $SEPARATOR_LT
+    echo -e "[s] Set Session ID to: ${COLOR}$fSessionId${RESET}"
+    echo -e "[w] Set Window ID to: ${COLOR}$fWinId${RESET}"
+    echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
+    echo -e "[/] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
+
+    if [ -n "$fDebugMode" ]; then
+        COLOR=$LIGHTYELLOW
+        IFS='|' read -r desc cmds <<< "${DEBUG_CONFIG[$fDebugMode]}"
+        if [[ $fDebugMode == "ptrace" ]]; then
+            echo -e "[*] ${COLOR}$desc: ${MAGENTA}$fPacketTraceAddr${RESET}"
+        else
+            echo -e "[*] ${COLOR}$desc${RESET}"
+        fi
+    else
+        COLOR=$MAGENTA
+        if [[ ! -f "$fCmdFile" ]]; then
+            echo -e "Error: ${COLOR}Command file not found.${RESET}"
+            exit 1
+        fi
+        echo -e "[f] Set command file to: ${COLOR}$fCmdFile${RESET}"
+    fi
+    echo $SEPARATOR_RT
+}
+
+# tmux capture-pane usage
+#
+# Syntax:
+#   tmux capture-pane [-aEpPS] [-b buffer-name] [-E end-line] [-J] [-S start-line] [-t target-pane]
+#
+# Options:
+#   -S start-line      Start line to capture (relative to top of pane; negative numbers count from visible top)
+#   -E end-line        End line to capture (relative to top of pane)
+#   -a                 Include history outside the visible pane (scrollback)
+#   -p                 Print captured content to stdout
+#   -b buffer-name     Specify buffer name
+#   -J                 Join wrapped lines into a single line
+#   -t target-pane     Target pane (e.g., 1, %1, or session:window.pane)
+#
+# Examples:
+#   tmux capture-pane                 # Capture visible content of current pane to default buffer
+#   tmux capture-pane -a              # Capture full history of current pane
+#   tmux capture-pane -p              # Capture and print to terminal
+#   tmux capture-pane -a -p           # Capture full history and print
+#   tmux capture-pane -S 0 -E 50 -p   # Capture lines 0 to 50 and print
+#   tmux capture-pane -t 1 -p         # Capture specified pane 1
+#   tmux capture-pane -b mybuffer -p  # Capture content into named buffer
+#   tmux capture-pane -a -p | less    # Capture history and view with pager
+#   tmux capture-pane -p -S -1000 > pane.txt   # Capture last 1000 lines and save to file
+checkEnvReadiness() {
+    # Tmux Target Pane Content
+    local paneContent=$(tmux capture-pane -pt "$fTmuxTarget")
+    local lastLine=$(echo "$paneContent" | tail -n1)
+
+    # Remove potential escape sequences
+    lastLineStripped=$(echo "$lastLine" | sed 's/\x1b\[[0-9;]*m//g')
+
+    # Check if the last line contains (Interim)#
+    if [[ ! $lastLineStripped =~ .*\(Interim\)\# ]]; then
+        echo -e "${RED}Fatal Error: Fortigate CLI not ready, stop sending commands!${RESET}"
+        exit 1
+    fi
+}
+
+# tmux send-keys usage
+#
+# Syntax:
+#   tmux send-keys [-lMRX] [-t target-pane] key ...
+#
+# Options:
+#   -l             Send keys literally (treats input string as literal characters)
+#   -M             Forward keys through the terminal (for mouse or client events)
+#   -R             Reset the state of the terminal before sending keys
+#   -X             Send command to the pane (like a control command, e.g., "clear-screen")
+#   -t target-pane Specify target pane (e.g., 1, %1, or session:window.pane)
+#
+# Usage:
+#   tmux send-keys 'ls -l' C-m         # Send "ls -l" and Enter (C-m = Enter)
+#   tmux send-keys -l 'echo hello' C-m # Send literal string "echo hello" and Enter
+#   tmux send-keys -t 1 'top' C-m      # Send "top" command to pane 1
+#   tmux send-keys -X clear-screen      # Send pane control command (clear screen)
+#   tmux send-keys 'cd /tmp' C-m       # Change directory in target pane
+#
+# Notes:
+#   - Keys can be special keys like C-m (Enter), C-c (Ctrl+C), Up, Down, etc.
+#   - Multiple keys or strings can be sent in sequence.
+#   - Often combined with capture-pane to automate pane interactions.
+sendBuiltinCmds() {
+    # 1. Access the value for the "$fDebugMode" key
+    local fullCmds="${DEBUG_CONFIG["$fDebugMode"]}"
+
+    # 2. Extract the command block string
+    # Remove the description part up to and including "|("
+    local cmds="${fullCmds#*|(}"
+    # Remove the trailing ")"
+    cmds="${cmds%)}"
+
+    readarray -t cmdsArray < <(printf '%s' "$cmds")
+    for cmd in "${cmdsArray[@]}"; do
+        # Trim whitespace
+        cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+        [ -z "$cmd" ] && continue
+
+        # Replace placeholders
+        if [[ $fDebugMode == "ptrace" ]]; then
+            # shellcheck disable=SC2059
+            printf -v cmd "$cmd" "$fPacketTraceAddr"
+        fi
+
+        echo -e "$USER_NOTATION Sending: ${LIGHTGREEN}$cmd${RESET}"
+        tmux send-keys -t "$fTmuxTarget" -l "$cmd"
+        tmux send-keys -t "$fTmuxTarget" Enter
+
+        if [[ $? -ne 0 ]]; then
+            echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $cmd${RESET}"
+            exit 1
+        fi
+        # sleep 0.1
+    done
+    exit 0
+}
+
+sendCmdsFromFile() {
+    # Line Processing
+    tail -n +1 "$fCmdFile" | while IFS= read -r command || [[ -n "$command" ]]; do
+        # Eliminates comments, deletes everything before : or #, and clears leading spaces
+        local fCmdCleaned=$(sed '/^[[:space:]]*\/\//d; s/.*[:#]//; s/^[[:space:]]*//' <<< "$command")
+
+        # Skip empty lines
+        [ -z "$fCmdCleaned" ] && continue
+
+        # If the cleaned command starts with an exclamation mark, it's a comment
+        [ "${fCmdCleaned:0:1}" == "!" ] && exit 0
+
+        # For dos file, there will be a '\r\n' ending in each command. No need to send extra new line.
+        if [[ "$fCmdCleaned" != *$'\r' ]]; then
+            fSendNewLine="true"
+        fi
+
+        echo -e "$USER_NOTATION Sending: ${MAGENTA}$fCmdCleaned${RESET}"
+
+        if [[ -n "$fSendNewLine" ]]; then
+            # Use -l to send the command as a literal string
+            tmux send-keys -t "$fTmuxTarget" -l "$fCmdCleaned"
+            tmux send-keys -t "$fTmuxTarget" Enter
+        else
+            tmux send-keys -t "$fTmuxTarget" -l "$fCmdCleaned"
+        fi
+
+        if [[ $? -ne 0 ]]; then
+            echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $fCmdCleaned${RESET}"
+            exit 1
+        fi
+    done
+}
+
+main() {
+    parseOptions "$@"
+    displayInfo
+    checkEnvReadiness
+    if [ -n "$fDebugMode" ]; then
+        sendBuiltinCmds
+    else
+        sendCmdsFromFile
+    fi
+}
+
+main "$@"

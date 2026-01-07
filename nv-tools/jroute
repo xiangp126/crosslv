@@ -1,0 +1,185 @@
+#!/bin/bash
+# set -x
+
+# Variables
+fUsername=$(whoami)
+fHostname=$(hostname)
+fDryRun=""
+fNewGateway=""
+fNewGatewayIP=""
+# Constants
+USER_NOTATION="@@@@"
+BANNER1="---------------------------------"
+BANNER2="----------------------NOW----------------------"
+# Colors
+MAGENTA='\033[35m'
+NORMAL='\033[0m'
+BOLD='\033[1m'
+BLUE='\033[34m'
+RESET='\033[0m'
+COLOR=$MAGENTA
+
+# Gateway IP mappings: -A to declare an associative array
+declare -A gatewayIPs=(
+    ["fgt1"]="192.168.103.6"
+    ["fgt2"]="192.168.103.1"
+    ["fgt3"]="192.168.103.4"
+    ["fpx1"]="192.168.103.2"
+    ["fpx2"]="192.168.103.3"
+    ["fpx3"]="192.168.103.5"
+    ["h_br1"]="192.168.101.254"
+    ["h_br2"]="192.168.102.254"
+    ["h_br3"]="192.168.103.254"
+    ["h_router"]="172.16.67.1"
+)
+
+# Create reverse mapping
+declare -A reverseGatewayIPs
+for key in "${!gatewayIPs[@]}"; do
+    reverseGatewayIPs["${gatewayIPs[$key]}"]=$key
+done
+
+usage() {
+    cat <<_EOF_
+Usage: $(basename "$0") [OPTIONS] <gateway>
+
+Options:
+    -h, --help           Show this help message
+    -d, --dry-run        Show what would be done without making changes
+    -t, --gateway NAME   Specify the gateway to use (Only available gateways are allowed)
+
+_EOF_
+}
+
+printAvailGateways() {
+    local gatewayName
+    local currGatewayIP
+    echo $BANNER1
+    # Sort and display available gateways
+    printf "%-15s %s\n" "GATEWAY" "IP ADDRESS"
+    echo "$BANNER1"
+    for gatewayName in $(echo "${!gatewayIPs[@]}" | tr ' ' '\n' | sort); do
+        printf "%-15s %s\n" "$gatewayName" "${gatewayIPs[$gatewayName]}"
+    done
+
+    # Show current gateway
+    echo "$BANNER1"
+    read -r currGatewayIP device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+    echo -e "Current: ${COLOR}default via $currGatewayIP(${reverseGatewayIPs[$currGatewayIP]:-'-'}) dev $device${RESET}"
+    exit 1
+}
+
+help() {
+    usage
+    printAvailGateways
+}
+
+parseOptions() {
+    [[ $# -eq 0 ]] && printAvailGateways
+
+    SHORTOPTS="hdt:"
+    LONGOPTS="help,dry-run,gateway:"
+
+    if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$0" -- "$@"); then
+        echo -e "$USER_NOTATION ${MAGENTA}Error: Failed to parse options${RESET}"
+        exit 1
+    fi
+
+    eval set -- "$PARSED"
+
+    while true; do
+        case "$1" in
+            -h|--help)
+                help
+                ;;
+            -d|--dry-run)
+                fDryRun=true
+                shift
+                ;;
+            -t|--gateway)
+                fNewGateway="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid option $1${RESET}" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    [ -n "$1" ] && fNewGateway="$1"
+    if [ $# -gt 1 ]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Error: Too many arguments${RESET}" >&2
+        exit 1
+    fi
+}
+
+sanityCheck() {
+    if [[ "$fUsername" != "corsair" || ! "$fHostname" =~ ^client[0-9]+$ || "$OSTYPE" != "linux-gnu" ]]; then
+        echo "$USER_NOTATION USERNAME: $fUsername"
+        echo "$USER_NOTATION HOSTNAME: $fHostname"
+        echo "$USER_NOTATION OSTYPE: $OSTYPE"
+        echo -e "$USER_NOTATION ${COLOR}Stopped! This script is only for client VMs with username 'corsair' on Linux.${RESET}" >&2
+        exit 1
+    fi
+
+    # Check for gateway argument
+    if [[ -z $fNewGateway ]]; then
+        echo "$USER_NOTATION Error: Gateway name required (use -g option)"
+        usage
+    fi
+    # Get new gateway IP
+    fNewGatewayIP=${gatewayIPs[$fNewGateway]}
+    if [[ -z $fNewGatewayIP ]]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Error: Invalid gateway name '$fNewGateway'${RESET}"
+        exit 1
+    fi
+    # Check if the new gateway IP is reachable
+    if ! ping -c 1 -W 1 "$fNewGatewayIP" &>/dev/null; then
+        echo -e "$USER_NOTATION ${MAGENTA}Error: Gateway $fNewGatewayIP is not reachable${RESET}"
+        exit 1
+    fi
+}
+
+changeGateway() {
+    COLOR=$MAGENTA
+    local curr=
+    local cmd=
+    read -r curr device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+
+    if [ "$curr" = "$fNewGatewayIP" ]; then
+        echo -e "$USER_NOTATION ${COLOR}The default gateway is already set to $fNewGatewayIP(${reverseGatewayIPs[$fNewGatewayIP]:-'-'}) dev $device${RESET}"
+        return 0
+    fi
+
+    cmd="sudo ip route replace default via $fNewGatewayIP dev $device"
+    if [ -n "$fDryRun" ]; then
+        echo -e "$USER_NOTATION DRY RUN: ${COLOR}$cmd${RESET}"
+        return 0
+    fi
+
+    echo "$USER_NOTATION Changing default gateway to $fNewGatewayIP"
+    eval "$cmd"
+    if [ $? -ne 0 ]; then
+        echo -e "$USER_NOTATION ${COLOR}Error: Failed to change default gateway to $fNewGatewayIP${RESET}"
+        exit 1
+    fi
+
+    echo "$USER_NOTATION Default gateway changed successfully"
+    read -r curr device <<< "$(ip route show default | awk '/default/ {print $3, $5}')"
+    echo "$BANNER2"
+    echo -e "$USER_NOTATION ${COLOR}default via $curr(${reverseGatewayIPs[$curr]:-'-'}) dev $device${RESET}"
+    return 0
+}
+
+main() {
+    parseOptions "$@"
+    sanityCheck
+    changeGateway "$fNewGatewayIP"
+}
+
+main "$@"

@@ -1,0 +1,1037 @@
+#!/bin/bash
+# set -x
+
+# CONSTANTS
+SCRIPT_NAME=$(basename "$0")
+SEPARATOR="==================================================="
+SSH_MODE="SSH"
+SFTP_MODE="SFTP"
+TELNET_MODE="TELNET"
+SSHFS_MODE="SSHFS"
+LOCAL_FORWARD="LOCAL_FORWARD"
+REVERSE_FORWARD="REVERSE_FORWARD"
+# SHARED VARIABLES
+fMode=$SSH_MODE
+fIdentityFile=
+fSpawnCmdOnly=
+# Match "$ ", "# " or "sftp> " at the end of the line
+fGroupPattern='(\$|#|sftp>)\s*$' # For Literal Interpretation, use single quotes
+fDollarPattern='\$\s*$'
+fPoundPattern='#\s*$'
+# fSftpPattern='sftp>\s*$'
+# SSH Variables
+fInputCmd=
+fTarget=
+fTargetUser="admin"
+fTargetPwd="password"
+fTargetPort=22
+fVdom=
+fSSHCmd= # The command to execute remotely without opening an interactive login session
+fNoLoginShell=
+fSpawnCmd=
+fServerAliveInterval=30
+fServerAliveCountMax=3
+fMaxAttempts=2
+# SFTP Variables
+fSwitchToSftp=
+fX11Forwarding= # Enable X11 Forwarding
+fSSHpassInstalled=
+fUseWireshark=
+[ -n "$SSLKEYLOGFILE" ] && fTlsKeyFileName=${SSLKEYLOGFILE##*/} || fTlsKeyFileName=".ssl-keys.log"
+fTlsKeyLogFile= # Set the path to the TLS key log file for Wireshark
+fSocatListenPort="5555"
+# Jump Server
+fNeedJumpServer=
+fJumpOptions=
+fJumpServer=
+fJumpUser=
+fJumpPwd="password"
+fJumpPort=22
+# Forward Options
+fForwardMode=
+fForwardOptions=
+fForwardTarget=
+fForwardTargetPort=
+# Local Forward
+fLFLocalLisAddr="127.0.0.1"
+fLFLocalLisPort=("8880")
+# Reverse Forward
+fRFRemoteLisAddr="127.0.0.1"
+fRFRemoteLisPort=("8881")
+# SSHFS Variables
+fmountWithSSHfs=
+fFSOptions=
+fFSMountPoint=
+fFSRemoteDir=
+fFSBasicMountParams="-o reconnect -o transform_symlinks -o follow_symlinks -o auto_cache -o uid=$(id -u) -o gid=$(id -g)"
+# COLORS
+RED='\033[31m'
+MAGENTA='\033[35m'
+LIGHTYELLOW='\033[93m'
+CYAN='\033[36m'
+LIGHTGREEN='\033[92m'
+GREY='\033[90m'
+GREEN='\033[32m'
+NORMAL='\033[0m'
+BOLD='\033[1m'
+RESET='\033[0m'
+COLOR=$MAGENTA
+
+__help() {
+cat << _EOF
+Usage: $SCRIPT_NAME [OPTIONS] Target
+
+Basic Options:
+    -h, --help              Print this help message
+    -t, --target            The device to connect to
+    -l/-u, --username       Username for login (default: $fTargetUser)
+    -p, --password          Password for login (default: $fTargetPwd)
+    -P, --port              SSH Port to connect to (default: $fTargetPort)
+    -i, --identity-file     SSH identity file
+    -D, --debug             Enable debug mode (-vvv)
+    -c, --command           Execute commands remotely without opening an interactive login session
+    --wireshark             Live capture packets from the remote device
+    --tls-keylog-file       Set the path to the TLS key log file (If not set, auto detect the file)
+    --get-system-status     Get the system status of the target device
+    --spawned-cmd-only      Only show the spawned command
+
+Forward Options:
+    -L, --local-forward     Format: [local_listen_addr:]local_listen_port:target_listen_addr:target_listen_port
+    -R, --reverse-forward   Format: [remote_listen_addr:]remote_listen_port:target_listen_addr:target_listen_port
+    -J, --jump              The jump server to connect to. Format: user@jumpserver[:port]
+    --jump-password         Password for jump server (default: $fJumpPwd)
+
+Advanced Options:
+    -X, --x11               Enable X11 forwarding
+    -v, --vdom              Specify the VDOM (Used for FGT/FPX devices)
+    -m, --mount             Mount a remote directory to a local directory using sshfs. Format: [remote_dir:]mountpoint
+    -S, --sftp              Connect to the target device via SFTP
+    -T, --telnet            Auth to the target device via Telnet
+
+_EOF
+}
+
+help() {
+    __help
+    exit 0
+}
+
+usage() {
+    local dumpOptions=""
+    dumpOptions="not port 22 and not arp"
+cat << _EOF
+Examples:
+    # SSH Connection
+    $SCRIPT_NAME -t fpx1
+    $SCRIPT_NAME -t fpxauto@172.18.20.84:22 -p qaz
+
+    # SSH with a Jump Server
+    $SCRIPT_NAME -t guodong@10.120.1.111 -P 2121 -p 123 -J fpxauto@172.18.20.84:22 --jump-password qaz
+    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -J fpxauto@172.18.20.84:22 --jump-password qaz
+
+    # SFTP Connection
+    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" --sftp
+
+    # SFTP with a Jump Server
+    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -J fpxauto@172.18.20.84:22 --jump-password qaz --sftp
+
+    # Remote Live Capture
+    $SCRIPT_NAME -t fpxauto@172.18.20.84:22 -p qaz -c "tcpdump -i any -s 0 -U -n -vv '$dumpOptions'"
+    $SCRIPT_NAME -t fpxauto@172.18.20.84:22 -p qaz -c "tcpdump -i any -s 0 -U -n -w - '$dumpOptions'" -C
+    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -J fpxauto@172.18.20.84:22 --jump-password qaz -c "tcpdump -i any -s 0 -U -n -w - '$dumpOptions'" -C
+
+    # Local Port Forwarding
+    $SCRIPT_NAME -L 127.0.0.1:8880:172.18.52.37:22 -J fpxauto@172.18.20.84:22 --jump-password qaz
+    $SCRIPT_NAME -L 127.0.0.1:8880:172.18.52.37:22 -J fpxauto@172.18.20.84:22 --jump-password qaz -L 127.0.0.1:8881:172.20.32.47:22
+
+    # Reverse Port Forwarding
+    $SCRIPT_NAME -R 127.0.0.1:1080:172.18.52.37:22 -J fpxauto@172.18.20.84:22 --jump-password qaz
+
+    # SSHFS to mount remote directory
+    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -m :$HOME/Media
+    $SCRIPT_NAME -t 172.18.52.37 -l owner -p "FGT12\!34" -J fpxauto@172.18.20.84:22 --jump-password qaz -m :$HOME/Media
+
+_EOF
+    exit 0
+}
+
+parseOptions() {
+    [[ $# -eq 0 ]] && help
+    fInputCmd="$SCRIPT_NAME $*"
+
+    SHORTOPTS="ht:l:u:p:P:Dc:J:L:R:v:TSm:Xi:"
+    LONGOPTS="help,target:,username:,password:,port:,debug,command:,wireshark,jump:,jump-password:,\
+    local-forward:,reverse-forward:,vdom:,telnet,sftp,mount:,x11,get-system-status,tls-keylog-file:,\
+    spawned-cmd-only,identity-file:"
+    # Use getopt to parse command-line options
+    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+        echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
+        exit 1
+    fi
+
+    # Reset positional parameters to the parsed values
+    eval set -- "$PARSED"
+
+    while true; do
+        case "$1" in
+            -h|--help)
+                __help
+                usage
+                ;;
+            -D|--debug)
+                set -x
+                shift
+                ;;
+            -t|--target)
+                fTarget="$2"
+                shift 2
+                ;;
+            -l|-u|--username)
+                fTargetUser="$2"
+                shift 2
+                ;;
+            -p|--password)
+                fTargetPwd="$2"
+                shift 2
+                ;;
+            -P|--port)
+                fTargetPort="$2"
+                shift 2
+                ;;
+            -i|--identity-file)
+                fIdentityFile="$2"
+                shift 2
+                ;;
+            -c|--command)
+                fSSHCmd="$2"
+                if [ -n "$fSSHCmd" ]; then
+                    fNoLoginShell=true
+                fi
+                shift 2
+                ;;
+            --wireshark)
+                fUseWireshark=true
+                shift
+                ;;
+            --tls-keylog-file)
+                fTlsKeyLogFile="$2"
+                shift 2
+                ;;
+            --spawned-cmd-only)
+                fSpawnCmdOnly=true
+                shift
+                ;;
+            -L|--local-forward)
+                fForwardMode=$LOCAL_FORWARD
+                fLocalForward=true
+                fForwardOptions+=("$2")
+                shift 2
+                ;;
+            -R|--reverse-forward)
+                fForwardMode=$REVERSE_FORWARD
+                fReverseForward=true
+                fForwardOptions+=("$2")
+                shift 2
+                ;;
+            -J|--jump)
+                fNeedJumpServer=true
+                fJumpOptions="$2"
+                shift 2
+                ;;
+            --jump-password)
+                fJumpPwd="$2"
+                shift 2
+                ;;
+            -v|--vdom)
+                fVdom="$2"
+                shift 2
+                ;;
+            -X|--x11)
+                fX11Forwarding=true
+                shift
+                ;;
+            --get-system-status)
+                fSSHCmd="get system status"
+                fNoLoginShell=true
+                shift
+                ;;
+            -m|--mount)
+                fMode=$SSHFS_MODE
+                fmountWithSSHfs=true
+                fFSOptions="$2"
+                shift 2
+                ;;
+            -S|--sftp)
+                fMode=$SFTP_MODE
+                fSwitchToSftp=true
+                shift
+                ;;
+            -T|--telnet)
+                fMode=$TELNET_MODE
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                COLOR=$MAGENTA
+                echo -e "${COLOR}Error: Invalid option: $1${RESET}" >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    [ -n "$1" ] && fTarget="$1"
+
+    if [ $# -gt 1 ]; then
+        echo -e "${MAGENTA}Too many arguments.${RESET}" >&2
+        help
+    fi
+}
+
+checkSSHpass() {
+    if ! command -v sshpass &>/dev/null; then
+        echo -e "${MAGENTA}sshpass is not installed. Please install sshpass.${RESET}" >&2
+        exit 1
+    fi
+}
+
+checkWireshark() {
+    if ! command -v wireshark &>/dev/null; then
+        echo -e "${MAGENTA}Wireshark is not installed. Please install Wireshark.${RESET}" >&2
+        exit 1
+    fi
+}
+
+setCredentials() {
+    local credentials=()
+    if ! credentials_output=$(eval get_credentials); then
+        echo -e "${RED}Error: Failed to get credentials.${RESET}"
+        exit 1
+    fi
+
+    mapfile -t credentials <<< "$credentials_output"
+    fTargetUser=${credentials[0]}
+    fTargetPwd=${credentials[1]}
+    if [[ -z "$fTargetUser" || -z "$fTargetPwd" ]]; then
+        echo -e "${RED}Error: Failed to get credentials.${RESET}"
+        exit 1
+    fi
+}
+
+# Function to print BASH_REMATCH array
+printBashRematch() {
+    local COLOR=$MAGENTA
+    if [ ${#BASH_REMATCH[@]} -eq 0 ]; then
+        echo -e "${COLOR}BASH_REMATCH array is empty.${RESET}"
+        return
+    fi
+    for i in "${!BASH_REMATCH[@]}"; do
+        echo -e "${COLOR}BASH_REMATCH[$i]: ${BASH_REMATCH[$i]}${RESET}"
+    done
+}
+
+parseVars() {
+    COLOR=$MAGENTA
+    # !! Parse fJumpOptions in the format of [user@]jumpserver[:port]
+    if [ "$fNeedJumpServer" = true ]; then
+        # Exp: -J auto@172.18.20.84:2121 or -J auto@172.18.20.84
+        # pattern='^([a-zA-Z0-9._%+-]+)@(([0-9]{1,3}\.){3}[0-9]{1,3})(:([0-9]+))?$'
+        # (?: ... )?: This is a non-capturing optional group.
+        pattern='^(([a-zA-Z0-9._%+-]+)@)?([a-zA-Z0-9.-]+)(:([0-9]+))?$'
+        fJumpOptions=$(echo "$fJumpOptions" | xargs)
+        param=$fJumpOptions
+        if [[ $param =~ $pattern ]]; then
+            # printBashRematch
+            fJumpServer="${BASH_REMATCH[3]}"
+            if [ -n "${BASH_REMATCH[2]}" ]; then
+                fJumpUser="${BASH_REMATCH[2]}"
+                fJumpPort="${BASH_REMATCH[5]:-22}"
+            else
+                # The default IFS splits on space, tab, or newline
+                # $ printf '%q\n' "$IFS"
+                # $' \t\n'
+                local userFound=0 portFound=0
+                while read -r key value; do
+                    case "$key" in
+                        user) fJumpUser=$value; userFound=1 ;;
+                        port) fJumpPort=$value; portFound=1 ;;
+                    esac
+                    ((userFound && portFound)) && break
+                done < <(ssh -G "$fJumpServer" 2>/dev/null)
+            fi
+        else
+            echo -e "${COLOR}-J has to be in the format of [user@]jumpserver[:port]${RESET}" 2>&1
+            exit 1
+        fi
+    fi
+
+    # !! Parse $fForwarderOptions in the format of -L [local_listen_address:]local_listen_port:target_addr:target_port
+    # Exp: -L 127.0.0.1:8881:10.40.1.101:22 or -L 8881:10.40.1.101:22
+    if [ -n "$fForwardMode" ]; then
+        # Replace localhost with 127.0.0.1
+        fForwardOptions=("${fForwardOptions[@]/localhost/127.0.0.1}")
+        pattern='^((([0-9]{1,3}\.){3}[0-9]{1,3}):)?([0-9]+):(([0-9]{1,3}\.){3}[0-9]{1,3}):([0-9]+)$'
+        for options in "${fForwardOptions[@]:1}"; do
+            options=$(echo "$options" | xargs)
+            param=$options
+            if [[ $param =~ $pattern ]]; then
+                # BASH_REMATCH[0]: Contains the entire matched string.
+                # BASH_REMATCH[1], BASH_REMATCH[2], etc.: Contain the results of any capturing groups in the regex.
+                case $fForwardMode in
+                "$LOCAL_FORWARD")
+                    [ -n "${BASH_REMATCH[2]}" ] && fLFLocalLisAddr+=("${BASH_REMATCH[2]}")
+                    fLFLocalLisPort+=("${BASH_REMATCH[4]}")
+                    ;;
+                "$REVERSE_FORWARD")
+                    [ -n "${BASH_REMATCH[2]}" ] && fRFRemoteLisAddr+=("${BASH_REMATCH[2]}")
+                    fRFRemoteLisPort+=("${BASH_REMATCH[4]}")
+                    ;;
+                esac
+                fForwardTarget+=("${BASH_REMATCH[5]}")
+                fForwardTargetPort+=("${BASH_REMATCH[7]}")
+            else
+                echo -e "${COLOR}-L/-R has to be in the format of [listen_address:]listen_port:target_address:target_port${RESET}" 2>&1
+                exit 1
+            fi
+        done
+
+        if [ "$fForwardMode" == "$LOCAL_FORWARD" ]; then
+            for port in "${fLFLocalLisPort[@]:1}"; do
+                if lsof -i:"$port" -t &>/dev/null; then
+                    lsof -i:"$port"
+                    echo -e "${COLOR}Local port $port is already in use.${RESET}" 2>&1
+                    exit 1
+                fi
+            done
+        fi
+        return # Skip the rest of the parsing
+    fi
+
+    # !! Parse fTarget in the format of [user@]sshtarget[:port]
+    # Exp: -t auto@172.18.20.84 or -t 172.18.20.84
+    pattern='^(([a-zA-Z0-9._%+-]+)@)?([a-zA-Z0-9._%+-]+)(:([0-9]+))?$'
+    fTarget=$(echo "$fTarget" | xargs)
+    param=$fTarget
+    if [[ $param =~ $pattern ]]; then
+        # printBashRematch
+        fTarget="${BASH_REMATCH[3]}"
+        if [ -n "${BASH_REMATCH[2]}" ]; then
+            fTargetUser="${BASH_REMATCH[2]}"
+            fTargetPort="${BASH_REMATCH[5]:-22}"
+        elif [[ -f "$HOME/.ssh/config" ]] && grep -qiE "^\s*Host\s+${fTarget}\s*$" "$HOME/.ssh/config"; then
+            local userFound=0 portFound=0
+            while read -r key value; do
+                case "$key" in
+                    user) fTargetUser=$value; userFound=1 ;;
+                    port) fTargetPort=$value; portFound=1 ;;
+                esac
+                ((userFound && portFound)) && break
+            done < <(ssh -G "$fTarget" 2>/dev/null)
+        fi
+        # fTargetUser and fTargetPort have default values if not set
+    else
+        echo -e "${COLOR}Target has to be set and in the format of [user@]sshtarget[:port]${RESET}"
+        exit 1
+    fi
+
+    # !! Parse fFSOptions in the format of [remote_dir:]mountpoint
+    if [ -n "$fmountWithSSHfs" ]; then
+        if [[ $fFSOptions == *":"* ]]; then
+            IFS=':' read -r fFSRemoteDir fFSMountPoint <<< "$fFSOptions"
+        else
+            fFSMountPoint=$fFSOptions
+        fi
+        [ -z "$fFSRemoteDir" ] && fFSRemoteDir="/home/$fTargetUser"
+
+        mpoint=$(eval realpath "$fFSMountPoint")
+        if [ $? -ne 0 ]; then
+            echo -e "${COLOR}Mountpoint $fFSMountPoint does not exist.${RESET}" 2>&1
+            exit 1
+        fi
+
+        if ! [[ "$mpoint" == "$HOME/Media"* ]]; then
+            echo -e "${COLOR}Mountpoint $fFSMountPoint is not allowed. Only $HOME/Media is permitted.${RESET}" >&2
+            exit 1
+        elif [[ "$fFSMountPoint" == "$HOME/Media" || "$fFSMountPoint" == "$HOME/Media/" ]] ; then
+            # The real mountpoint is "$HOME/Media/$fTarget"
+            fFSMountPoint="$HOME/Media/$fTarget"
+            if [ ! -d "$fFSMountPoint" ]; then
+                echo -e "${COLOR}Creating $fFSMountPoint${RESET}"
+                mkdir -p "$fFSMountPoint"
+            fi
+        else
+            fFSMountPoint="$mpoint"
+        fi
+
+        array=("$fFSRemoteDir" "$fFSMountPoint")
+        pattern='^(/([^/ ]+)?)+/?$'
+        for ele in "${array[@]}" ; do
+            if [[ ! $ele =~ $pattern ]]; then
+                echo -e "${COLOR}sshfs options $ele is not a valid path.${RESET}"
+                exit 1
+            fi
+        done
+
+        if findmnt -rno SOURCE "$fFSMountPoint" &>/dev/null; then
+            cat << EOF
+$(printf "$COLOR%s is already mounted.$RESET\n" "$fFSMountPoint")
+$(df -h "$fFSMountPoint")
+To unmount it, use
+$(printf "$LIGHTGREEN%s$RESET" "umount $fFSMountPoint")
+or (specifically used for unmounting FUSE file systems)
+$(printf "$LIGHTGREEN%s$RESET" "fusermount -u $fFSMountPoint")
+EOF
+            exit 1
+
+        fi
+    fi
+}
+
+sanityCheck() {
+    if [ -z "$fTarget" ] && [ -z "$fForwardMode" ]; then
+        echo -e "${COLOR}Target is not set.${RESET}"
+        exit 1
+    fi
+
+    if [ -n "$fForwardMode" ]; then
+        if [ -z "$fNeedJumpServer" ]; then
+            COLOR=$MAGENTA
+            echo -e "${COLOR}Local/Remote Forward requires a Jump Server to be set as well.${RESET}"
+            exit 1
+        fi
+
+        # Local Forward and Reverse Forward are mutually exclusive
+        if [ -n "$fLocalForward" ] && [ -n "$fReverseForward" ]; then
+            COLOR=$MAGENTA
+            echo -e "${COLOR}Local/Remote Forward cannot be set at the same time.${RESET}"
+            exit 1
+        fi
+        fVdom=""
+        fSSHCmd=""
+        fNoLoginShell=""
+        fUseWireshark=""
+    fi
+
+    if [ -n "$fSwitchToSftp" ] && [ -n "$fmountWithSSHfs" ]; then
+        COLOR=$MAGENTA
+        echo -e "${COLOR}SFTP and SSHFS mode are mutually exclusive.${RESET}"
+        exit 1
+    fi
+
+    # sftp mode
+    if [ -n "$fSwitchToSftp" ]; then
+        fVdom=""
+        fSSHCmd=""
+        fNoLoginShell=""
+        fUseWireshark=""
+        fNeedJumpServer=""
+        fForwardMode=""
+    fi
+
+    # sshfs mode
+    if [ -n "$fmountWithSSHfs" ]; then
+        fVdom=""
+        fSSHCmd=""
+        fNoLoginShell=""
+        fUseWireshark=""
+        fForwardMode=""
+    fi
+
+    [ -n "$fNoLoginShell" ] && fVdom=""
+
+    if [ -n "$fUseWireshark" ] && [ -z "$fSSHCmd" ]; then
+        fSSHCmd="tcpdump -i any -s 0 -U -n -w - 'not port 22 and not arp and not port 6010 and not stp'"
+    fi
+    if [[ "$fSSHCmd" != *"tcpdump"* ]]; then
+        fUseWireshark=""
+    fi
+}
+
+makeSpawnCmd() {
+    local cmd=
+    local param=
+    local keepAlive="-o ServerAliveInterval=$fServerAliveInterval -o ServerAliveCountMax=$fServerAliveCountMax"
+
+    # Local Port Forwarding
+    if [ -n "$fForwardMode" ]; then
+        case "$fForwardMode" in
+        "$LOCAL_FORWARD")
+            for ((i=1; i<${#fForwardOptions[@]}; i++)); do
+                param+="-L ${fLFLocalLisAddr[$i]}:${fLFLocalLisPort[$i]}:${fForwardTarget[$i]}:${fForwardTargetPort[$i]} "
+            done
+            ;;
+        "$REVERSE_FORWARD")
+            for ((i=1; i<${#fForwardOptions[@]}; i++)); do
+                param+="-R ${fRFRemoteLisAddr[$i]}:${fRFRemoteLisPort[$i]}:${fForwardTarget[$i]}:${fForwardTargetPort[$i]} "
+            done
+            ;;
+        esac
+        param="${param%"${param##*[![:space:]]}"}"
+        if [ -n "$fIdentityFile" ]; then
+            cmd="ssh -N $param -i $fIdentityFile $fJumpUser@$fJumpServer"
+        else
+            cmd="ssh -N $param $fJumpUser@$fJumpServer"
+        fi
+        fSpawnCmd="$cmd $keepAlive"
+        return
+    fi
+
+    case "$fMode" in
+        "$SSH_MODE")
+            param="$keepAlive"
+            [ -n "$fX11Forwarding" ] && param="$param -X"
+            cmd="$fSSHCmd"
+
+            if [ -n "$fNeedJumpServer" ]; then
+                checkSSHpass
+                param="-o \"ProxyCommand=sshpass -p $fJumpPwd ssh -W %h:%p $fJumpUser@$fJumpServer\""
+            fi
+
+            if [ -n "$fUseWireshark" ]; then
+                # Live Capture with sshpass
+                # Launch a local Wireshark session for live packet capture.
+                checkWireshark
+                if [ -z "$fTlsKeyLogFile" ]; then
+                    local tlsFilePaths=()
+                    mapfile -t tlsFilePaths < <(find "$HOME/Media" -name "$fTlsKeyFileName" -type f 2> /dev/null)
+                    local fileCount=${#tlsFilePaths[@]}
+                    if (( fileCount > 1 )); then
+                        echo -e "${GREEN}✔${GREY} Found multiple TLS key log files. Please specify one using --tls-keylog-file${RESET}" >&2
+                        printf "%s\n" "${tlsFilePaths[@]}" >&2
+                        exit 1
+                    elif (( fileCount == 1 )); then
+                        fTlsKeyLogFile="${tlsFilePaths[0]}"
+                        echo -e "${GREEN}✔${GREY} Auto-detected TLS key log file: $fTlsKeyLogFile${RESET}" >&2
+                    else
+                        fTlsKeyLogFile="$HOME/${fTlsKeyFileName}"
+                    fi
+                fi
+                # Help message to use socat on the remote device
+                echo -e "${GREEN}☞${GREY} You can use the following command on the remote device to forward traffic:${RESET}"
+                echo -e "socat TCP-LISTEN:$fSocatListenPort,fork,reuseaddr EXEC:\"tcpdump -i any -s 0 -U -n -w - 'not port 22 and not arp and not port 6010 and not stp'\""
+                echo -e "${GREEN}☞${GREY} You can use the following command on the remote device to stop traffic capture:${RESET}"
+                echo -e "pkill socat"
+                echo -e "${GREEN}☞${GREY} On Local Machine, you can use the following command to receive traffic:${RESET}"
+                echo -e "nc $fTarget $fSocatListenPort | wireshark -o \"tls.keylog_file:${fTlsKeyLogFile}\" -k -i -"
+                echo -e "${GREEN}☞${GREY} Sometimes the TLS traffic is not decrypted immediately.${RESET}"
+                echo -e "${GREEN}☞${GREY} You can use the following steps to decrypt the traffic:${RESET}"
+                echo -e "1. Select one TLS traffic packet${RESET}"
+                echo -e "2. Right Click 'Decode As'${RESET}"
+                echo -e "3. Remove all existing rules (Optional)${RESET}"
+                echo -e "4. Click 'OK'${RESET}"
+                fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\" | wireshark -o \"tls.keylog_file:${fTlsKeyLogFile}\" -k -i -"
+            else
+                # fSpawnCmd="sshpass -p $fTargetPwd ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\""
+                if [ -z "$cmd" ]; then
+                    fSpawnCmd="ssh $param -p $fTargetPort $fTargetUser@$fTarget"
+                else
+                    fSpawnCmd="ssh $param -p $fTargetPort $fTargetUser@$fTarget \"$cmd\""
+                fi
+            fi
+            return
+            ;;
+
+        "$SFTP_MODE")
+            param=
+            if [ -n "$fNeedJumpServer" ]; then
+                param="-o \"ProxyJump=$fJumpUser@$fJumpServer\""
+            fi
+            fSpawnCmd="sftp $param -P $fTargetPort $fTargetUser@$fTarget"
+            ;;
+
+        "$TELNET_MODE")
+            fSpawnCmd="telnet $fTarget"
+            setCredentials
+            ;;
+
+        "$SSHFS_MODE")
+            checkSSHpass
+            # Do not use expect to spawn sshfs session, as it will not work as expected
+            # Add -o sshfs_debug for debugging
+            param="$fFSBasicMountParams -o StrictHostKeyChecking=no -o password_stdin"
+
+            # Case: with Jump Server
+            if [ -n "$fNeedJumpServer" ]; then
+                if [ -n "$fSSHpassInstalled" ]; then
+                    param="$param -o \"ProxyCommand=sshpass -p $fJumpPwd ssh -W %h:%p $fJumpUser@$fJumpServer\""
+                else
+                    param="$param -o \"ProxyJump=$fJumpUser@$fJumpServer\""
+                fi
+            fi
+            # Form the final spawned sshfs command
+            fSpawnCmd="sshfs $param -p $fTargetPort $fTargetUser@$fTarget:$fFSRemoteDir $fFSMountPoint <<< $fTargetPwd"
+            ;;
+
+        *)
+            COLOR=$MAGENTA
+            echo -e "${COLOR}Invalid mode: $fMode${RESET}"
+            exit 1
+            ;;
+    esac
+    # Squash multiple spaces into one
+    # fSpawnCmd=$(echo "$fSpawnCmd" | tr -s ' ')
+}
+
+displayInfo() {
+    local param=""
+    local COLOR=$CYAN
+    echo "$SEPARATOR" >&2
+    case $fForwardMode in
+    "$LOCAL_FORWARD")
+        param="Local"
+        echo -e "${BOLD}$param Forward Options:${RESET}" >&2
+        for ((i=1; i<${#fForwardOptions[@]}; i++)); do
+            echo -e "[L] Set $param Forward: ${COLOR}${fLFLocalLisAddr[$i]}:${fLFLocalLisPort[$i]} -> ${fForwardTarget[$i]}:${fForwardTargetPort[$i]}${RESET}" >&2
+        done
+        ;;
+    "$REVERSE_FORWARD")
+        param="Reverse"
+        echo -e "${BOLD}$param Forward Options:${RESET}" >&2
+        for ((i=1; i<${#fForwardOptions[@]}; i++)); do
+            echo -e "[R] Set $param Forward: ${COLOR}${fRFRemoteLisAddr[$i]}:${fRFRemoteLisPort[$i]} -> ${fForwardTarget[$i]}:${fForwardTargetPort[$i]}${RESET}" >&2
+        done
+        ;;
+    *)
+        echo -e "${BOLD}Target Options:${RESET}" >&2
+        if [ -n "$fIdentityFile" ]; then
+            echo -e "[i] Identity File: ${COLOR}$fIdentityFile${RESET}" >&2
+        else
+            echo -e "[l] Username: ${COLOR}$fTargetUser${RESET}" >&2
+            echo -e "[p] Password: ${COLOR}$fTargetPwd${RESET}" >&2
+        fi
+        echo -e "[P] ConnPort: ${COLOR}$fTargetPort${RESET}" >&2
+        echo -e "[t] TargetDev: ${COLOR}$fTarget${RESET}" >&2
+        if [ -n "$fVdom" ]; then
+            echo -e "[v] FGT/FPX VDOM: ${COLOR}$fVdom${RESET}" >&2
+        fi
+        if [ -n "$fTlsKeyLogFile" ]; then
+            echo -e "[-] TLS Key Log: ${COLOR}$fTlsKeyLogFile${RESET}" >&2
+        fi
+        ;;
+    esac
+
+    COLOR=$CYAN
+    if [ $fMode == $SSHFS_MODE ]; then
+        echo -e "${BOLD}SSHFS Options:${RESET}" >&2
+        echo -e "[F] SSHFS Remote Directory: ${COLOR}$fFSRemoteDir${RESET}" >&2
+        echo -e "[F] SSHFS Local Mountpoint: ${COLOR}$fFSMountPoint${RESET}" >&2
+    fi
+
+    if [ -n "$fNeedJumpServer" ]; then
+        echo -e "${BOLD}Jump Server Options:${RESET}" >&2
+        echo -e "[J] Jump Server:  ${COLOR}$fJumpServer${RESET}" >&2
+        echo -e "[-] Jump SrvPort: ${COLOR}$fJumpPort${RESET}" >&2
+        if [ -n "$fIdentityFile" ]; then
+            echo -e "[-] Jump Identity File: ${COLOR}$fIdentityFile${RESET}" >&2
+        else
+            echo -e "[-] Jump Username: ${COLOR}$fJumpUser${RESET}" >&2
+            echo -e "[-] Jump Password: ${COLOR}$fJumpPwd${RESET}" >&2
+        fi
+        if [ -z "$fJumpServer" ] || [ -z "$fJumpUser" ]; then
+            echo -e "${MAGENTA}Jump Server and its credentials are not set properly.${RESET}" >&2
+            exit 1
+        fi
+    fi
+
+    COLOR=$NORMAL
+    echo -e "${BOLD}Input Command:${RESET}" >&2
+    echo -e "${COLOR}$fInputCmd${RESET}" >&2
+
+    local spawnedCmdDisplay=
+    COLOR=$LIGHTYELLOW
+    spawnedCmdDisplay=$(echo "$fSpawnCmd" | sed -E 's/ -o ((ServerAliveInterval|ServerAliveCountMax)=[0-9]+)//g')
+    spawnedCmdDisplay=$(echo "$spawnedCmdDisplay" | tr -s ' ')
+    echo -e "${BOLD}Spawned Command:${RESET}" >&2
+    echo -e "${COLOR}$spawnedCmdDisplay${RESET}" >&2
+    [ -n "$fSpawnCmdOnly" ] && exit 0 # Only print the spawned command
+
+    echo "$SEPARATOR" >&2
+    if [ -n "$fForwardMode" ]; then
+        COLOR=$GREY
+        echo -ne "${COLOR}Connecting to Jump Server: $fJumpServer to set up Port Forwarding${RESET}" >&2
+    else
+        COLOR=$GREY
+        echo -ne "${COLOR}Connecting to $fTarget" >&2
+        if [ -n "$fNeedJumpServer" ]; then
+            echo -ne " via Jump Server: $fJumpServer" >&2
+        fi
+    fi
+    echo -e " ...${RESET}" >&2
+}
+
+doEarlyExitJobs() {
+    # Use bash to hahdle sshfs commands directly
+    if [ -n "$fmountWithSSHfs" ]; then
+        COLOR=$MAGENTA
+        if [ -n "$fNeedJumpServer" ] && [ -z "$fSSHpassInstalled" ]; then
+            echo -e "Warning: sshpass is not installed. Switching to manual password input mode."
+            echo -e "Passwd for ${COLOR}$fJumpUser@$fJumpServer${RESET} is ${COLOR}$fJumpPwd${RESET}"
+            echo -e "Passwd for ${COLOR}$fTargetUser@$fTarget${RESET} is ${COLOR}$fTargetPwd${RESET}"
+        fi
+
+        eval "$fSpawnCmd"
+        if [ $? -ne 0 ]; then
+            echo -e "${COLOR}Failed to mount $fFSRemoteDir to $fFSMountPoint${RESET}"
+            exit 1
+        fi
+
+        findmnt "$fFSMountPoint"
+        df -h "$fFSMountPoint"
+        echo -e "${COLOR}Successfully mounted $fTargetUser@$fTarget:$fFSRemoteDir${RESET} to ${COLOR}$fFSMountPoint${RESET}"
+        exit 0
+    fi
+
+    # $fUseWireshark is well handled in the checkSanity function
+    if [ -n "$fUseWireshark" ]; then
+        COLOR=$MAGENTA
+        eval "$fSpawnCmd"
+        if [ $? -ne 0 ]; then
+            echo -e "${COLOR}Failed to capture packets from $fTarget!${RESET}"
+            exit 1
+        fi
+        echo -e "${COLOR}Live capture from $fTarget completed!${RESET}"
+        exit 0
+    fi
+}
+
+loginViaExpect() {
+    # expect -d -c "
+    expect -c "
+        # Define ANSI color codes with capitalized names
+        # Full list can be found here: http://en.wikipedia.org/wiki/ANSI_escape_code
+        # https://stackoverflow.com/questions/12879483/color-texts-at-expect-shell
+        set RESET       \"\033\[0m\"
+        set BOLD        \"\033\[1m\"
+        set RED         \"\033\[31m\"
+        set GREEN       \"\033\[32m\"
+        set LIGHTGREEN  \"\033\[92m\"
+        set YELLOW      \"\033\[33m\"
+        set LIGHTYELLOW \"\033\[93m\"
+        set BLUE        \"\033\[34m\"
+        set MAGENTA     \"\033\[35m\"
+        set CYAN        \"\033\[36m\"
+        set GREY        \"\033\[90m\"
+
+        proc tcpdump_set_setuid  {} {
+            global LIGHTYELLOW MAGENTA RESET
+            set COLOR \$LIGHTYELLOW
+            set remote_cmd {echo '$fTargetPwd' | sudo -S chmod u+s \`which tcpdump\` && ls -l \`which tcpdump\`}
+
+            puts stderr \"\${COLOR}Set the setuid bit for tcpdump on $fTarget\n\${RESET}\"
+            if {\"$fNeedJumpServer\" != \"\"} {
+                system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -J $fJumpOptions -W $fJumpPwd -c '\$remote_cmd'
+            } else {
+                system $SCRIPT_NAME -t $fTargetUser@$fTarget:$fTargetPort -p $fTargetPwd -c '\$remote_cmd'
+            }
+        }
+
+        if {\"$fNoLoginShell\" != \"\" || \"$fForwardMode\" != \"\"} {
+            set timeout -1
+            trap {
+                set COLOR \$LIGHTYELLOW
+                if {\"$fUseWireshark\" != \"\"} {
+                    puts stderr \"\n\${COLOR}CTRL+C captured.\${RESET}\"
+                } else {
+                    puts stderr \"\n\${COLOR}CTRL+C captured; Sending SIGINT to remote as well.\${RESET}\"
+                    send \"\x03\"
+                }
+                set COLOR \$MAGENTA
+            } SIGINT
+        } else {
+            set timeout 5
+        }
+
+        set i 1
+        set COLOR \$MAGENTA
+        while {\$i <= $fMaxAttempts} {
+            # ssh -o StrictHostKeyChecking=no $fTarget
+            if {\$i > 1} {
+                puts stderr \"\${COLOR}Login attempt \$i/$fMaxAttempts\${RESET}\"
+            }
+
+            # Enable debugging for expect
+            # exp_internal 1
+            spawn -noecho $fSpawnCmd
+
+            set session_id [exp_pid]
+            puts stderr \"\${GREY}Spawned Session ID: \$session_id\${RESET}\"
+
+            set ssh_pwd_prompt_cnt 0
+            set jmp_pwd_prompt_cnt 0
+
+            # Only for telnet. If do not need telnet, remove this block
+            if {\"$fMode\" == \"$TELNET_MODE\"} {
+                expect {
+                    {login: } {
+                        send \"$fTargetUser\r\"
+                        exp_continue
+                    }
+                    -re {[pP]assword: } {
+                        send \"$fTargetPwd\r\"
+                        exp_continue
+                    }
+                    timeout {
+                        puts stderr \"\${COLOR}Session \$session_id Timed out waiting for a response.\${RESET}\"
+                        incr i
+                        continue
+                    }
+                    eof {
+                        puts stderr \"\${COLOR}Session \$session_id Reached EOF and Ended.\${RESET}\"
+                        exit 0
+                    }
+                }
+            }
+
+            # The Main expect block
+            set timeout [expr {\"$fNeedJumpServer\" != \"\" ? -1 : 20}]
+            expect {
+                {yes/no} {
+                    send \"yes\r\"
+                    exp_continue
+                }
+                -re {$fTargetUser@$fTarget's (password|Password):} {
+                    incr ssh_pwd_prompt_cnt
+                    if {\$ssh_pwd_prompt_cnt > 1} {
+                        puts stderr \"\n\${COLOR}Login credentials for SSH Target: $fTarget are wrong.\${RESET}\"
+                        exit 1
+                    }
+
+                    send \"$fTargetPwd\r\"
+                    exp_continue
+                }
+                -re {$fJumpUser@$fJumpServer's (password|Password):} {
+                    incr jmp_pwd_prompt_cnt
+                    if {\$jmp_pwd_prompt_cnt > 1} {
+                        puts stderr \"\n\${COLOR}Login credentials for Jump Server: $fJumpServer are wrong.\${RESET}\"
+                        exit 1
+                    }
+                    send \"$fJumpPwd\r\"
+                    exp_continue
+                }
+                -re {$fGroupPattern} {
+                    break
+                }
+                -re {[hH]ost key for (.+?) has changed} {
+                    # Get the matched variable from the first capturing group
+                    set host \$expect_out(1,string)
+                    set COLOR \$LIGHTYELLOW
+                    puts stderr \"\${COLOR}Host key verification failed. Updating known_hosts ...\${RESET}\"
+                    puts stderr \"\${COLOR}ssh-keygen -R \$host\${RESET}\"
+                    system \"ssh-keygen -R \$host\"
+                    puts stderr \"\${COLOR}Host key removed from known_hosts file.\${RESET}\n\"
+                    set COLOR \$MAGENTA
+                    incr i
+                    continue
+                }
+                -re {tcpdump: syntax error|You don't have permission to capture on that device} {
+                    set error_msg \$expect_out(0,string)
+                    if {[string match "*permission*" \$error_msg]} {
+                        tcpdump_set_setuid
+                    }
+                    exp_continue
+                }
+                {No route to host} {
+                    puts stderr \"\${COLOR}No route to host\${RESET}\"
+                    exit 1
+                }
+                {New Password:} {
+                    interact
+                }
+                timeout {
+                    puts stderr \"\${COLOR}Session \$session_id Timed out waiting for a response.\${RESET}\"
+                    # close \$ssh_session_id
+                    incr i
+                    continue
+                }
+                eof {
+                    puts stderr \"\${COLOR}Session \$session_id Reached EOF and Ended.\${RESET}\"
+                    exit 0
+                }
+            }
+        }
+
+        if {\$i > $fMaxAttempts} {
+            puts stderr \"\${COLOR}Failed to connect to $fTarget\${RESET}\"
+            exit 1
+        }
+
+        if {\"$fNoLoginShell\" != \"\"} {
+            expect eof {
+                set COLOR \$LIGHTYELLOW
+                set output \$expect_out(buffer)
+                # puts stderr \"\${COLOR}\$output\${RESET}\"
+                set pattern {build[0-9]+}  ;# Regex pattern to match 'build' followed by digits
+
+                set lines [split \$output \"\n\"]
+
+                foreach line \$lines {
+                    if {[regexp \$pattern \$line]} {
+                        puts -nonewline stderr \"\${COLOR}\$line\${RESET}\"
+                    }
+                }
+
+                puts stderr \"\"
+                exit 0
+            }
+        }
+
+        # Check if VDOM is supported. VDOM is only supported on FGT/FPX
+        if {\"$fVdom\" != \"\"} {
+            set timeout 3
+            send \"\r\"
+            expect {
+                -re {$fDollarPattern} {
+                    puts -nonewline stderr \"\${MAGENTA}VDOM is not supported on this device\${RESET}\"
+                    send \"\r\"
+                }
+                # Only for FGT/FPX
+                -re {$fPoundPattern} {
+                    send \"config vdom\r\"
+                    expect {
+                        -re {Command fail.|not found,} {
+                            set COLOR \$BLUE
+                            puts stderr \"\n\${COLOR}Error: VDOM is not supported on this device.\${RESET}\"
+                            exit 1
+                        }
+                        -re {$fGroupPattern} {
+                            send \"edit $fVdom\r\"
+                        }
+                    }
+                }
+            }
+            expect -re {$fGroupPattern}
+        }
+
+        proc handle_eof {} {
+            global MAGENTA COLOR RESET
+            set COLOR \$MAGENTA
+            puts stderr \"\${COLOR}Bye-bye.\${RESET}\"
+            exit 1
+        }
+
+        if {\"$fSwitchToSftp\" != \"\"} {
+            # \x04 is code for Ctrl-D. Only for SFTP
+            interact {
+                \x04 {
+                    handle_eof
+                }
+            }
+        } else {
+            interact
+        }
+    "
+}
+
+main() {
+    parseOptions "$@"
+    parseVars
+    sanityCheck
+    makeSpawnCmd
+    displayInfo
+    doEarlyExitJobs
+    loginViaExpect
+}
+
+main "$@"

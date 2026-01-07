@@ -1,0 +1,241 @@
+#!/bin/bash
+# shellcheck disable=SC2012 disable=SC2155
+# set -x
+
+# To be combined with templates/code-function.sh
+# Currently jr executed by vscode plugin will never see the helper functions defined in templates/code-function.sh
+# even though loading this script explicitly in jr
+# As a walkaround, keep both jrcode and code-function.sh at the moment
+
+# Variables
+fArgs=()
+fForce=
+fPrint=
+fSysPath="/run/user/$UID"
+fSearchPath="$HOME/.vscode-server/cli/servers"
+SCRIPTNAME=$(basename $0)
+# Colors
+MAGENTA='\033[0;35m'
+LIGHTYELLOW='\033[93m'
+GREY='\033[0;90m'
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+RESET='\033[0m'
+
+usage() {
+    cat << EOF
+Usage: $SCRIPTNAME [options] <args>
+
+Description:
+    A wrapper script for the VS Code server CLI.
+    It finds the VS Code server CLI binary and set the correct IPC socket.
+    The reason for this script is to avoid the bug which has never been fixed by Microsoft:
+    # Unable to connect to VS Code server: Error in request - ENOENT /run/user/1000/vscode-ipc-*.sock
+    https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
+    https://github.com/microsoft/vscode-remote-release/issues/6362#issuecomment-1046458477
+
+    Sample Error message:
+
+    Unable to connect to VS Code server: Error in request.
+    Error: connect ENOENT /run/user/1677703415/vscode-ipc-df98ad2d-40c7-4415-af75-e304c3269b89.sock
+        at PipeConnectWrap.afterConnect [as oncomplete] (node:net:1611:16) {
+      errno: -2,
+      code: 'ENOENT',
+      syscall: 'connect',
+      address: '/run/user/1677703415/vscode-ipc-df98ad2d-40c7-4415-af75-e304c3269b89.sock'
+    }
+
+Options:
+    -h, --help                       Show this help message and exit
+    -d, --debug                      Enable debug mode (set -x)
+    -f, --force                      Force search for the code binary, ignoring \$VSCODE_BIN_PATH,
+    -v, --version                    Show version information
+    -r, --remove                     Remove obsolete IPC sockets
+    -s, --status                     Print process usage and diagnostics information
+    --print                          Print core variables
+    --install-extension              Forcely install the specified extension from a .vsix file
+    --list-extensions                List the installed extensions with versions
+    --locate-shell-integration-path  Print the path to a terminal shell integration script
+
+Example: $SCRIPTNAME --version
+         $SCRIPTNAME -d
+         $SCRIPTNAME --install-extension gitlens-13.0.2.vsix
+
+EOF
+    exit 0
+}
+
+parseOptions() {
+    SHORTOPTS="hfdvrs"
+    LONGOPTS="help,force,debug,version,remove,install-extension:,locate-shell-integration-path,\
+              status,list-extensions,print"
+    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+        echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
+        exit 1
+    fi
+    eval set -- "$PARSED"
+    while true; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            -d|--debug)
+                set -x
+                shift
+                ;;
+            -f|--force)
+                fForce=true
+                shift
+                ;;
+            --print)
+                fArgs=("--version")
+                fPrint=true
+                shift
+                ;;
+            -v|--version)
+                fArgs=("--version")
+                shift
+                ;;
+            --install-extension)
+                fArgs=("--install-extension" "$2")
+                shift 2
+                ;;
+            -r|--remove)
+                removeObsoleteIPCSocks
+                exit 0
+                ;;
+            --list-extensions)
+                fArgs=("--list-extensions" "--show-versions")
+                shift
+                ;;
+            -s|--status)
+                fArgs=("--status")
+                shift
+                ;;
+            --locate-shell-integration-path)
+                fArgs=("--locate-shell-integration-path")
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "${MAGENTA}Invalid option: $1${RESET}" >&2
+                exit 1
+        esac
+    done
+    [ -n "$1" ] && fArgs+=("--goto" "$1")
+}
+
+checkFunctionDefinition() {
+    if declare -F __set_vscode_code_path > /dev/null; then
+        return
+    fi
+    __set_vscode_code_path() {
+        # Step 1: Find the commit ID of the active VS Code server
+        # Use process substitution to ensure `commitId` is set in the current shell scope, not a subshell.
+        # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
+        local pidFile currentPid commitId=
+        cd "$fSearchPath" || exit
+        while IFS= read -r -d $'\0' pidFile; do
+            if [ -f "$pidFile" ]; then
+                currentPid=$(cat "$pidFile" 2>/dev/null)
+                if [ -n "$currentPid" ] && [[ "$currentPid" =~ ^[0-9]+$ ]]; then
+                    # Check if the process is actually running
+                    if ps -p "$currentPid" -o pid= > /dev/null 2>&1; then
+                        commitId=$(basename "$(dirname "$pidFile")")
+                        break
+                    fi
+                fi
+            fi
+        done < <(find . -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
+
+        # Step 2: Set the VSCODE_BIN_PATH
+        if [[ -z "$commitId" ]]; then
+            echo -e "${MAGENTA}Error: No active VS Code server found with a valid pid.txt under $fSearchPath.${RESET}" >&2
+            return 1
+        fi
+        VSCODE_BIN_PATH="$fSearchPath/$commitId/server/bin/remote-cli/code"
+        if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
+            echo -e "${MAGENTA}Error: VS Code binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
+            return 1
+        fi
+
+        # Step 3: Set the VSCODE_IPC_HOOK_CLI
+        # Get the most recenely created vscode-ipc-*.sock file
+        local newIPCHook=$(ls -t "$fSysPath"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+        if [ -z "$newIPCHook" ]; then
+            echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $fSysPath${RESET}" >&2
+            return 1
+        fi
+        # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
+        # But you have to remember that only the sub shell can see the new value.
+        export VSCODE_IPC_HOOK_CLI=$newIPCHook
+        export VSCODE_BIN_PATH
+
+        # Step 4: Return to the original directory
+        cd - &> /dev/null || exit
+    }
+    export -f __set_vscode_code_path
+}
+
+printCoreVars() {
+    if [ -n "$fPrint" ]; then
+        echo -e "${MAGENTA}VS Code Server Core Vars:${RESET}"
+        echo "==============================================="
+        echo -e "${GREEN}✔${GREY} Active VS Code Binary Path:${BLUE} $VSCODE_BIN_PATH${RESET}"
+        echo -e "${GREEN}✔${GREY} Active VS Code IPC Hook:${BLUE} $VSCODE_IPC_HOOK_CLI${RESET}"
+        echo "==============================================="
+    fi
+}
+
+runCmd() {
+    [[ ${#fArgs[@]} -eq 0 ]] && return
+    for _ in {1..2}; do
+        "$VSCODE_BIN_PATH" "${fArgs[@]}" 2>/dev/null
+        if [[ $? -eq 0 ]]; then
+            break
+        else
+            checkFunctionDefinition
+            __set_vscode_code_path
+        fi
+    done
+    printCoreVars
+}
+
+removeObsoleteIPCSocks() {
+    checkFunctionDefinition
+    __set_vscode_code_path
+    find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
+          grep -Fxv "$VSCODE_IPC_HOOK_CLI" |
+          while IFS= read -r sock; do
+        echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
+        rm -f "$sock"
+    done
+    echo "-------------------------------------------------------"
+    find "$fSysPath" -maxdepth 1 -type s -name "vscode-ipc-*.sock" |
+          while IFS= read -r sock; do
+        echo -e "Remaining: ${MAGENTA}$sock${RESET}"
+    done
+}
+
+preCheck() {
+    if [ ! -d "$fSearchPath" ]; then
+        local codeBinPath="/usr/local/bin/code"
+        [ -x "$codeBinPath" ] && "$codeBinPath" "$@"
+        exit 0
+    fi
+}
+
+main() {
+    preCheck "$@"
+    parseOptions "$@"
+    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$fForce" ]; then
+        checkFunctionDefinition
+        __set_vscode_code_path
+    fi
+    runCmd
+}
+
+main "$@"

@@ -1,0 +1,541 @@
+#!/bin/bash
+# set -x
+# Process [0]: WAD manager type=manager(0) pid=1014 diagnosis=yes.\r\n
+# Process [1]: type=worker(2) index=0 pid=18369 state=running\r\n
+#               diagnosis=no debug=enable valgrind=supported/disabled\r\n
+# Process [2]: type=algo(3) index=0 pid=1061 state=running\r\n
+#               diagnosis=no debug=enable valgrind=unsupported/disabled\r\n
+# ...
+
+# Variables
+fTarget=
+fWorkerType="worker"
+fSSHConnPort=22
+fUsername="admin"
+fPasswd="password"
+fExpectRoot="#"
+fWADInfoOnly=
+fReboot=
+fSilent=
+fKill=              # Kill the existing gdbserver process attached to the worker PID
+fIndex=0            # Set which worker to attach to if multiple workers are found
+fGDBSrvLisPort=444  # GDB Server listen port
+fWADWorkerCnt=-1    # 0: unlimited, 1: 1 worker,  N: N workers
+fMaxAttempts=2
+# Constants
+SCRIPT_NAME=$(basename "$0")
+USER_NOTATION="@@@@"
+SUB_USER_NOTATION="@@@@ @"
+SEPARATOR_LT="<----------------------------------------------------------------"
+SEPARATOR_RT="---------------------------------------------------------------->"
+# Colors
+RED='\033[31m'
+LIGHTRED='\033[91m'
+MAGENTA='\033[35m'
+CYAN='\033[36m'
+LIGHTCYAN='\033[96m'
+BLACK='\033[30m'
+PURPLE='\033[35m'
+YELLOW='\033[33m'
+LIGHTYELLOW='\033[93m'
+GREEN='\033[32m'
+LIGHTGREEN='\033[92m'
+GREY='\033[90m'
+BLUE='\033[34m'
+LIGHTBLUE='\033[94m'
+PURPLE='\033[35m'
+LIGHTPURPLE='\033[95m'
+NORMAL='\033[0m'
+BOLD='\033[1m'
+RESET='\033[0m'
+COLOR=$MAGENTA
+
+usage() {
+    cat << _EOF
+Usage: $SCRIPT_NAME [OPTIONS] Target
+
+Options:
+    -h, --help           Print this help message
+    -w, --worker-type    Worker type(default: $fWorkerType)
+    -d, --debug-port     GDB Server listen port(default: $fGDBSrvLisPort)
+    -l/-u, --username    Username(default: $fUsername)
+    -p, --password       Password(default: $fPasswd)
+    -P, --port           SSH connection port(default: $fSSHConnPort)
+    -N, --worker-cnt     Set wad worker count(default: $fWADWorkerCnt)
+                         0: unlimited, 1: 1 worker to make life easier, N: N workers
+    -r, --reboot         Reboot the device
+    -s, --silent         Silent mode. Suppress the output of the wad process info
+    --select             Select the worker index(default: $fIndex) to attach to if multiple workers are found
+    --wad-info           Only display the WAD process info without entering the debug session
+    -k, --kill           Kill the existing gdbserver process attached to the worker PID
+    -T, --max-attempts   Maximum attempt(default: $fMaxAttempts)
+
+Example:
+    $SCRIPT_NAME fgt1
+    $SCRIPT_NAME fgt1 -k
+    $SCRIPT_NAME fgt1 -p "123" -N1
+    $SCRIPT_NAME fgt1 -w algo -d 9229 -l "admin" -p "123"
+    $SCRIPT_NAME -h
+
+_EOF
+    exit 0
+}
+
+parseOptions() {
+    if [ "$#" -eq 0 ]; then
+        usage
+    fi
+
+    SHORTOPTS="ht:w:d:T:l:u:p:P:N:rks"
+    LONGOPTS="help,target:,worker-type:,debug-port:,max-attempts:,username:,password:,port:,worker-cnt:,wad-info,reboot,silent,kill,select:"
+    if ! PARSED=$(getopt --options=$SHORTOPTS --longoptions=$LONGOPTS --name "$SCRIPT_NAME" -- "$@"); then
+        echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
+        exit 1
+    fi
+
+    eval set -- "$PARSED"
+
+    while true; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            -t|--target)
+                fTarget="$2"
+                shift 2
+                ;;
+            -w|--worker-type)
+                fWorkerType="$2"
+                shift 2
+                ;;
+            -d|--debug-port)
+                fGDBSrvLisPort="$2"
+                shift 2
+                ;;
+            -T|--max-attempts)
+                fMaxAttempts="$2"
+                shift 2
+                ;;
+            -l|-u|--username)
+                fUsername="$2"
+                shift 2
+                ;;
+            -p|--password)
+                fPasswd="$2"
+                shift 2
+                ;;
+            -P|--port)
+                fSSHConnPort="$2"
+                shift 2
+                ;;
+            -N|--worker-cnt)
+                fWADWorkerCnt="$2"
+                shift 2
+                ;;
+            --wad-info)
+                fWADInfoOnly=true
+                shift
+                ;;
+            -r|--reboot)
+                fReboot=true
+                shift
+                ;;
+            -s|--silent)
+                fSilent=true
+                shift
+                ;;
+            -k|--kill)
+                fKill=true
+                shift
+                ;;
+            --select)
+                fIndex="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "$USER_NOTATION Invalid option: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    [ -n "$1" ] && fTarget="$1"
+    if [ $# -gt 1 ]; then
+        echo -e "${MAGENTA}Too many arguments.${RESET}" >&2
+        usage
+    fi
+}
+
+sanityCheck() {
+    if [[ -z $fTarget ]]; then
+        echo -e "${MAGENTA}Target must be set.${RESET}" >&2
+        exit 1
+    fi
+    if ! ping -c 1 -W 1 "$fTarget" &>/dev/null; then
+        echo -e "$USER_NOTATION ${MAGENTA}$fTarget is unreachable.${RESET}"
+        exit 1
+    fi
+}
+
+displayInfo() {
+    fSearchPatt="type=.*$fWorkerType"
+    echo $SEPARATOR_LT
+    echo -e "[t] Set Target Device to: ${COLOR}$fTarget${RESET}"
+    echo -e "[l] Set Username to: ${COLOR}$fUsername${RESET}"
+    echo -e "[p] Set Password to: ${COLOR}$fPasswd${RESET}"
+    echo -e "[P] Set SSH Connection Port to: ${COLOR}$fSSHConnPort${RESET}"
+    echo -e "[T] Set SSH Maximum Attempts to: ${COLOR}$fMaxAttempts${RESET}"
+    echo -e "[d] Set GDB Server Listen Port to: ${COLOR}$fGDBSrvLisPort${RESET}"
+    echo -e "[w] Set WAD Worker Type to: ${COLOR}$fWorkerType${RESET}(Search Pattern: ${COLOR}$fSearchPatt${RESET})"
+    if [ "$fIndex" -gt 0 ]; then
+        echo -e "[/] Set Worker Index to: ${COLOR}$fIndex${RESET}"
+    fi
+    # if $wadWorkerCnt is larger or equal to 0, then print the message.
+    if [ "$fWADWorkerCnt" -ge 0 ]; then
+        echo -e "[N] Set WAD Worker Count to: ${COLOR}$fWADWorkerCnt${RESET}"
+    fi
+    echo -e "${GREY}Connecting to $fTarget ...${RESET}"
+    echo $SEPARATOR_RT
+}
+
+attachDGBServer() {
+    # expect -d -c "
+    expect -c "
+        # Define ANSI color codes with capitalized names
+        # Full list can be found here: http://en.wikipedia.org/wiki/ANSI_escape_code
+        # https://stackoverflow.com/questions/12879483/color-texts-at-expect-shell
+        set RESET   \"\033\[0m\"
+        set BOLD    \"\033\[1m\"
+        set RED     \"\033\[31m\"
+        set GREEN   \"\033\[32m\"
+        set YELLOW  \"\033\[33m\"
+        set BLUE    \"\033\[34m\"
+        set MAGENTA \"\033\[35m\"
+        set CYAN    \"\033\[36m\"
+        set WHITE   \"\033\[37m\"
+        set LIGHTGREEN \"\033\[92m\"
+        set LIGHTYELLOW \"\033\[93m\"
+
+        # Set your SSH credentials
+        set i 1
+        set timeout 30
+        set has_vdom 0
+        while {\$i <= $fMaxAttempts} {
+            if {\$i > 1} {
+                puts stderr \"$USER_NOTATION Login attempt \$i/$fMaxAttempts\"
+            }
+
+            # exp_internal 1
+            spawn -noecho ssh -p $fSSHConnPort $fUsername@$fTarget
+
+            set session_id \$spawn_id
+            set passwd_prompt_cnt 0
+            set COLOR \$RED
+            expect {
+                {yes/no} {
+                    send \"yes\r\"
+                    exp_continue
+                }
+                -re {[Pp]assword} {
+                    incr passwd_prompt_cnt
+                    if {\$passwd_prompt_cnt > 1} {
+                        puts stderr \"\n$USER_NOTATION \${COLOR}Permission denied. Please specify the login credentials.\${RESET}\n\"
+                        exit 1
+                    }
+                    send \"$fPasswd\r\"
+                    exp_continue
+                }
+                \"Connection refused\" {
+                    # puts stderr \"Connection refused when connecting to $fTarget\"
+                    exit 1
+                }
+                {Host key verification failed.} {
+                    puts stderr \"$USER_NOTATION Host key verification failed. Updating known_hosts file ...\"
+                    system \"ssh-keygen -R $fTarget\"
+                    puts stderr \"$USER_NOTATION Host key removed from known_hosts file.\"
+                    puts stderr \"$USER_NOTATION Retrying SSH immediately ...\"
+                    # close \$session_id
+                    incr i
+                    continue
+                }
+                # $fExpectRoot must be quoted.
+                \"$fExpectRoot\" {
+                    break
+                }
+                timeout {
+                    puts stderr \"$SUB_USER_NOTATION \${COLOR}Timeout when connecting to $fTarget\${RESET}\"
+                    # close \$session_id
+                    incr i
+                    continue
+                }
+                eof {
+                    puts stderr \"$SUB_USER_NOTATION \${COLOR}Reached EOF. Program ended.\${RESET}\"
+                    puts stderr \"$SUB_USER_NOTATION \${COLOR}Please check if $fTarget is a correct device name.\${RESET}\"
+                    exit 1
+                }
+            }
+        }
+
+        if {\$i > $fMaxAttempts} {
+            puts stderr \"$USER_NOTATION Failed to connect to $fTarget\"
+            exit 1
+        }
+
+        if {$fWADWorkerCnt >= 0} {
+            send \"config system global\r\"
+            expect {
+                {Command fail.} {
+                    # The device has VDOM
+                    set has_vdom 1
+                    expect \"$fExpectRoot\"
+                    send \"config global\r\"
+                    expect \"$fExpectRoot\"
+                    send \"config system global\r\"
+                    exp_continue
+                }
+                \"$fExpectRoot\" {
+                    # Pass through
+                }
+                timeout {
+                    puts stderr \"$USER_NOTATION Timeout when resetting debug.\r\"
+                    exit 1
+                }
+            }
+            send \"set wad-worker-count $fWADWorkerCnt\r\"
+            expect \"$fExpectRoot\"
+            set timeout 5
+            send \"end\r\"
+            expect {
+                \"$fExpectRoot\" {}
+                timeout {
+                    puts stderr \"$USER_NOTATION \${COLOR}Timeout when exiting the config mode.\${RESET}\"
+                    exit 1
+                }
+            }
+
+            send \"exit\r\"
+            expect eof {
+                set COLOR \$MAGENTA
+                puts stderr \"$USER_NOTATION \${COLOR}The worker count of WAD has been set to $fWADWorkerCnt successfully.\${RESET}\"
+                exit 0
+            }
+        }
+
+        if {\$has_vdom} {
+            send \"config global\r\"
+            expect \"$fExpectRoot\"
+        }
+
+        # Handle the reboot option
+        if {\"$fReboot\" != \"\"} {
+            send \"exe reboot\r\"
+            expect {
+                {(y/n)} {
+                    send \"y\r\"
+                    exp_continue
+                }
+                eof {
+                    puts stderr \"$USER_NOTATION \${RED}System is rebooting at $(date +"%m/%d/%Y %H:%M:%S").\${RESET}\"
+                    exit 0
+                }
+            }
+        }
+
+        send \"diagnose debug reset\r\"
+        expect \"$fExpectRoot\"
+        send \"diagnose debug disable\r\"
+        set timeout 30
+        expect {
+            {Command fail.} {
+                # The device has VDOM
+                set COLOR \$MAGENTA
+                puts stderr \"\${COLOR}Warning: The device has VDOM. Switch to the global configuration mode\${RESET}\"
+                expect \"$fExpectRoot\"
+                send \"\r\"
+                expect \"$fExpectRoot\"
+                send \"config global\r\"
+                exp_continue
+            }
+            \"$fExpectRoot\" {
+                # Pass through
+            }
+            timeout {
+                puts stderr \"$USER_NOTATION Timeout when resetting debug.\r\"
+                exit 1
+            }
+        }
+        send \"diagnose debug enable\r\"
+        expect \"$fExpectRoot\"
+        # Suppress the display of messages
+        if {\"$fSilent\" != \"\"} {
+            log_user 0
+        }
+        send \"diagnose test application wad 1000\r\"
+        expect \"$fExpectRoot\"
+        # Restore the display of messages
+        log_user 1
+
+        # Only display the wad process info and exit
+        if {\"$fWADInfoOnly\" != \"\"} {
+            send \"diagnose debug reset\r\"
+            expect \"$fExpectRoot\"
+            send \"exit\r\"
+            expect eof {
+                exit 0
+            }
+        }
+
+        set output \$expect_out(buffer)
+        set worker_pids [list]
+        set worker_indexes [list]
+        set pid_index_list [list]
+        set worker_cnt 0
+
+        set lines [split \$output \"\r\"]
+        foreach line \$lines {
+            if {![regexp \"$fSearchPatt\" \$line]} {
+                continue
+            }
+
+            set index 0
+            set pid \"\"
+            # Extract index if present
+            if {[regexp -nocase {index=(\d+)} \$line -> index]} {}
+
+            # Extract the PID from the line
+            if {[regexp -nocase {pid=(\d+)} \$line -> pid]} {
+                incr worker_cnt
+                lappend worker_pids \$pid
+                lappend worker_indexes \$index
+                lappend pid_index_list [list \$pid \$index]
+            }
+        }
+
+        set worker_pid [lindex \$worker_pids $fIndex]
+        set worker_index [lindex \$worker_indexes $fIndex]
+
+        if {\$worker_pid == \"\"} {
+            set COLOR \$MAGENTA
+            puts stderr \"\n$USER_NOTATION \${COLOR}Could not find the specific WAD process of type $fWorkerType.\${RESET}\"
+            exit 1
+        }
+
+        proc dump_pid_index_list {pid_index_list} {
+            global USER_NOTATION MAGENTA RESET
+            puts -nonewline stderr \"$USER_NOTATION \"
+            foreach pair \$pid_index_list {
+                lassign \$pair pid index
+                puts -nonewline stderr \"\[\$MAGENTA\${pid}, #\${index}\${RESET}\] \"
+            }
+            puts stderr \"\"
+        }
+
+        set COLOR \$MAGENTA
+        if {\$worker_cnt > 1} {
+            puts stderr \"\n$USER_NOTATION Found \${LIGHTYELLOW}\$worker_cnt\${RESET} WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
+            dump_pid_index_list \$pid_index_list
+            if {[string match -nocase \"*work*\" $fWorkerType]} {
+                puts stderr \"$USER_NOTATION Select #\${worker_index}\"
+                puts stderr \"$USER_NOTATION Warning: If you want to make life easier, retry the same command with \${BLUE}-N1\${RESET}\"
+            } else {
+                puts stderr \"$USER_NOTATION Recommend to check the input WAD process type\"
+                exit 1
+            }
+        } elseif {\$worker_cnt == 1} {
+            puts stderr \"\n$USER_NOTATION Found exact match \[\$MAGENTA\${pid}, \${index}\${RESET}\] for WAD process of type \${LIGHTYELLOW}$fWorkerType\${RESET}\"
+        } else {
+            puts stderr \"\n$USER_NOTATION \${COLOR}Could not find WAD process of type $fWorkerType.\${RESET}\"
+            exit 1
+        }
+
+        send \"\r\"
+        expect \"$fExpectRoot\"
+
+        send \"diagnose debug disable\r\"
+        set timeout 30
+        expect \"$fExpectRoot\"
+
+        send \"sys sh\r\"
+        expect {
+            \"Unknown action\" {
+                puts stderr \"\n$USER_NOTATION \${MAGENTA}This image does not support 'sys sh' command, Consider to use a debug image instead.\${RESET}\"
+                exit 1
+            }
+            \"$fExpectRoot\" {
+                # Do nothing, just continue
+            }
+        }
+
+        # Kill the existing gdbserver process attached to the worker PID
+        if {\"$fKill\" != \"\"} {
+            set COLOR \$MAGENTA
+            # The output maybe like:
+            # ps aux | grep gdbserver | grep 4527 | grep -v grep\r\r\n
+            # 7304      0       0       S       gdbserver 0.0.0.0:444 --attach 4527\r\n
+
+            send \"ps aux | grep gdbserver | grep \$worker_pid | grep -v grep\r\"
+            expect {
+                -re {\r\n(\d+)} {
+                    # Find an existing gdbserver process attached to the worker PID
+                    set process_id \$expect_out(1,string)
+                    puts stderr \"$USER_NOTATION \${COLOR}Found PID \$process_id\${RESET}\"
+                    puts stderr \"$USER_NOTATION \${COLOR}Sending kill signal to gdbserver process \$process_id\${RESET}\"
+                    set gdbserver_pid \$expect_out(1,string)
+                    send \"kill \$gdbserver_pid\r\"
+                    sleep 1
+                    exp_continue
+                }
+                \"$fExpectRoot\" {
+                    puts stderr \"$USER_NOTATION \${COLOR}All existing gdbserver processes have been killed\${RESET}\"
+                    exit 0
+                }
+            }
+        }
+
+        # start gdbserver
+        set timeout -1
+        send \"gdbserver 0.0.0.0:$fGDBSrvLisPort --attach \$worker_pid\r\"
+
+        # \x03 is used to send a Ctrl-C signal when the trap detects the SIGINT (Ctrl-C) signal.
+        trap {
+            # Disable console logging. The output may contain multiple blank lines starts with '/ # '.
+            log_user 0
+            set COLOR \$RED
+            puts stderr \"\n$USER_NOTATION \${COLOR}CTRL+C captured; sending SIGINT to gdbserver as well\${RESET}\"
+            send \x03
+            set COLOR \$MAGENTA
+            puts stderr \"$USER_NOTATION \${COLOR}Debugging session terminated\${RESET}\"
+        } SIGINT
+
+        log_user 1
+        expect {
+            {Address already in use} {
+                set COLOR \$RED
+                puts stderr \"\n$USER_NOTATION \${COLOR}Error: Address already in use\${RESET}\"
+                puts stderr \"$USER_NOTATION \${COLOR}Please retry the command with -k option to kill the existing gdbserver process.\${RESET}\"
+                exit 1
+            }
+            {Detaching from process} {
+                set COLOR \$MAGENTA
+                puts stderr \"$USER_NOTATION \${COLOR}Bye-bye.\${RESET}\"
+                exit 1
+            }
+            \"$fExpectRoot\" {
+                # Do nothing, just continue
+            }
+        }
+    "
+}
+
+main() {
+    parseOptions "$@"
+    sanityCheck
+    displayInfo
+    attachDGBServer
+}
+
+main "$@"
