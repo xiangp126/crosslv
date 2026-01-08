@@ -530,7 +530,6 @@ ubuntuInstallApps() {
 
         # --- System & Performance Analysis ---
         linux-tools-common        # Common Linux tools
-        linux-tools-"$(uname -r)" # Linux kernel tools
         bpfcc-tools               # BCC eBPF toolkit
 
         # --- Networking Tools ---
@@ -588,6 +587,23 @@ ubuntuInstallApps() {
     echo "gdm3 shared/default-x-display-manager select gdm3" | sudo debconf-set-selections
     # echo "wireshark-common wireshark-common/install-setuid boolean true" | sudo debconf-set-selections
     sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends "${appsForUbuntu[@]}"
+
+    # Install kernel-specific linux-tools if available (may not exist for custom kernels)
+    # Try kernel-specific version first, fall back to generic
+    local kernelToolsPkg="linux-tools-$(uname -r)"
+    local genericToolsPkg="linux-tools-generic"
+    if apt-cache show "$kernelToolsPkg" &>/dev/null; then
+        echo -e "${GREY}Installing kernel-specific tools: ${kernelToolsPkg}${RESET}"
+        sudo DEBIAN_FRONTEND=noninteractive apt install -y "$kernelToolsPkg" || \
+            echo -e "${LIGHTYELLOW}Warning: Failed to install ${kernelToolsPkg}, skipping.${RESET}"
+    elif apt-cache show "$genericToolsPkg" &>/dev/null; then
+        echo -e "${LIGHTYELLOW}Note: ${kernelToolsPkg} not available, trying ${genericToolsPkg}...${RESET}"
+        sudo DEBIAN_FRONTEND=noninteractive apt install -y "$genericToolsPkg" || \
+            echo -e "${LIGHTYELLOW}Warning: Failed to install ${genericToolsPkg}, skipping.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Note: Neither ${kernelToolsPkg} nor ${genericToolsPkg} available, skipping.${RESET}"
+    fi
+
     # sudo DEBIAN_FRONTEND=noninteractive dpkg-reconfigure gdm3
     sudo apt autoremove -y
     if [ $? -eq 0 ]; then
@@ -838,9 +854,10 @@ linkFile() {
     local type=${4:-file}  # Type of source
 
     if [[ "$type" == "command" ]]; then
+        local originalCmd="$src"
         src=$(command -v "$src")
         if [ -z "$src" ]; then
-            echo -e "${RED}${src} is not installed${RESET}"
+            echo -e "${RED}✗${GREY} ${originalCmd} is not installed${RESET}"
             return 2
         fi
     fi
@@ -2370,15 +2387,27 @@ configureTcpdumpCaps() {
         return 0
     fi
 
+    # Check if the filesystem supports extended attributes (required for setcap)
+    local tcpdumpDir
+    tcpdumpDir=$(dirname "$tcpdumpPath")
+    local fsType
+    fsType=$(df -T "$tcpdumpDir" 2>/dev/null | awk 'NR==2 {print $2}')
+    if [[ "$fsType" == "nfs"* ]] || [[ "$fsType" == "cifs" ]] || [[ "$fsType" == "smbfs" ]]; then
+        echo -e "${LIGHTYELLOW}⚠ Skipping: tcpdump is on a ${fsType} filesystem which doesn't support capabilities.${RESET}"
+        echo -e "${GREY}  Use 'sudo tcpdump' for packet capture on this system.${RESET}"
+        return 0
+    fi
+
     echo -e "${LIGHTYELLOW}Attempting to set network capture capabilities on the tcpdump binary...${RESET}"
     echo -e "${GREY}Executing: sudo setcap '$requiredCaps' '$tcpdumpPath'${RESET}"
     if sudo setcap "$requiredCaps" "$tcpdumpPath"; then
         echo -e "${GREEN}Successfully set capabilities on '$tcpdumpPath'.${RESET}"
         echo -e "${LIGHTYELLOW}Normal users should now be able to run tcpdump for packet capture.${RESET}"
     else
-        echo -e "${RED}Error: Failed to set capabilities on the tcpdump binary.${RESET}"
-        echo -e "${LIGHTYELLOW}This might be due to a security policy (e.g., AppArmor, SELinux).${RESET}"
-        return 1
+        echo -e "${LIGHTYELLOW}⚠ Could not set capabilities on tcpdump binary.${RESET}"
+        echo -e "${GREY}  This may be due to filesystem limitations, AppArmor, or SELinux.${RESET}"
+        echo -e "${GREY}  Use 'sudo tcpdump' for packet capture on this system.${RESET}"
+        return 0
     fi
 
     return 0
