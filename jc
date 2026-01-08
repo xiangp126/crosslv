@@ -623,6 +623,8 @@ macInstallApps() {
         bash
         gnu-getopt
         gnu-sed
+        gawk
+        grep
         bash-completion@2
         coreutils
         git
