@@ -13,7 +13,6 @@ fTKFontConfigDir=$fMainDir/assets/fontconfig
 fTKClangdConfig=$fMainDir/assets/clangd/config.yaml
 fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/nv-tools
-fNVToolsDir=$fMainDir/nv-tools
 fDownloads=$HOME/Downloads
 fJCPath=$fMainDir/jc
 fFirstTimeFile=$fMainDir/".has_been_invoked"
