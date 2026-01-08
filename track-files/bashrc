@@ -1,8 +1,11 @@
 #!/bin/bash
 # shellcheck disable=SC2155 disable=SC1090 disable=SC1091
 
+# Cache uname result once (avoid repeated forks)
+_UNAME_S=$(uname -s)
+
 # On macOS, always initialize Homebrew environment
-if [[ $(uname -s) == 'Darwin' ]]; then
+if [[ $_UNAME_S == 'Darwin' ]]; then
     if [ -x /opt/homebrew/bin/brew ]; then
         eval "$(/opt/homebrew/bin/brew shellenv)"
     elif [ -x /usr/local/bin/brew ]; then
@@ -35,7 +38,29 @@ shopt -s checkwinsize
 # export PS1="\u@${HOSTNAME:0:10}:\W\$ "
 # Bash provides an environment variable called PROMPT_COMMAND.
 # The contents of this variable are executed as a regular Bash command just before Bash displays a prompt.
-PROMPT_COMMAND='pwd2=$(sed -e "s:$HOME:~:" -e "s:\(\.\?[^/]\)[^/]*/:\1/:g" <<< $PWD)'
+# Pure bash version (no fork) - much faster on NFS
+_prompt_shorten_path() {
+    local p="${PWD/#$HOME/\~}"
+    local result="" part
+    local IFS='/'
+    read -ra parts <<< "$p"
+    local last_idx=$((${#parts[@]} - 1))
+    for i in "${!parts[@]}"; do
+        part="${parts[i]}"
+        if [[ $i -eq $last_idx ]] || [[ -z "$part" ]]; then
+            result+="$part"
+        else
+            # Keep first char (or first 2 if starts with dot)
+            if [[ "$part" == .* ]]; then
+                result+="${part:0:2}/"
+            else
+                result+="${part:0:1}/"
+            fi
+        fi
+    done
+    pwd2="$result"
+}
+PROMPT_COMMAND='_prompt_shorten_path'
 PS1="\u@${HOSTNAME:0:10}:\${pwd2:0:30}\$ "
 
 # Disable XON/XOFF software flow control to make <C-S> work in Vim.
@@ -48,7 +73,7 @@ stty -ixon
 # export LS_COLORS=$LS_COLORS:'ex=0;0:ln=36:di=34:ow=01;90'
 export LS_COLORS=$LS_COLORS:'ex=0;0:ln=36:di=34'
 
-if [[ $(uname -s) == 'Darwin' ]]; then
+if [[ $_UNAME_S == 'Darwin' ]]; then
     alias ls='ls -G' # Compatible with Mac
 else
     # Linux
@@ -106,7 +131,7 @@ LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/local/lib:/usr/local/lib64
 LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/.usr/lib:$HOME/.usr/lib64
 PATH="/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin"
 # On macOS, add Homebrew paths
-if [[ $(uname -s) == 'Darwin' ]]; then
+if [[ $_UNAME_S == 'Darwin' ]]; then
     PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
 fi
 if [ -d "$HOME/.usr/bin" ] && [[ ":$PATH:" != *":$HOME/.usr/bin:"* ]]; then
@@ -129,7 +154,7 @@ if ! shopt -oq posix; then
   fi
 fi
 # For macOS only, load Homebrew bash completion
-if [[ $(uname -s) == 'Darwin' ]]; then
+if [[ $_UNAME_S == 'Darwin' ]]; then
     # Homebrew bash-completion@2 requires Bash 4.2+
     if [[ "${BASH_VERSINFO[0]}" -ge 5 || ("${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 2) ]]; then
         if [[ -r "/opt/homebrew/share/bash-completion/bash_completion" ]]; then
@@ -155,10 +180,17 @@ fi
 if [ -f ~/.xprofile ]; then
     source ~/.xprofile
 fi
-# Load nvm and nvm bash completion
+# Lazy load nvm - only initialize when needed (speeds up shell startup)
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-[ -s "$NVM_DIR/bash_completion" ] && source "$NVM_DIR/bash_completion"
+nvm() {
+    unset -f nvm node npm npx
+    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/bash_completion" ] && source "$NVM_DIR/bash_completion"
+    nvm "$@"
+}
+node() { nvm use default &>/dev/null; unset -f node; node "$@"; }
+npm() { nvm use default &>/dev/null; unset -f npm; npm "$@"; }
+npx() { nvm use default &>/dev/null; unset -f npx; npx "$@"; }
 
 # Settings for fzf -- the fuzzy finder
 # Use fd (https://github.com/sharkdp/fd) instead of the default find
