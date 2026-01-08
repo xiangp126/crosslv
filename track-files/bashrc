@@ -1,17 +1,17 @@
 #!/bin/bash
 # shellcheck disable=SC2155 disable=SC1090 disable=SC1091
 
-# Prevent double-sourcing
-[ -n "$_BASHRC_LOADED" ] && return
-export _BASHRC_LOADED=1
+# On macOS, always initialize Homebrew environment
+if [[ $(uname -s) == 'Darwin' ]]; then
+    if [ -x /opt/homebrew/bin/brew ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -x /usr/local/bin/brew ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+fi
 
 # If not running interactively, don't do anything
 [ -z "$PS1" ] && return
-
-# On macOS, initialize Homebrew if not already done
-if [[ $(uname -s) == 'Darwin' ]] && [ -x /opt/homebrew/bin/brew ] && [ -z "$HOMEBREW_PREFIX" ]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-fi
 
 # don't put duplicate lines or lines starting with space in the history.
 # See bash(1) for more options
@@ -105,6 +105,10 @@ PKG_CONFIG_PATH=$HOME/.usr/lib/pkgconfig:/usr/local/lib/pkgconfig
 LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/local/lib:/usr/local/lib64
 LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/.usr/lib:$HOME/.usr/lib64
 PATH="/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin"
+# On macOS, add Homebrew paths
+if [[ $(uname -s) == 'Darwin' ]]; then
+    PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+fi
 if [ -d "$HOME/.usr/bin" ] && [[ ":$PATH:" != *":$HOME/.usr/bin:"* ]]; then
     PATH="$HOME/.usr/bin:$PATH"
 fi
@@ -126,21 +130,23 @@ if ! shopt -oq posix; then
 fi
 # For macOS only, load Homebrew bash completion
 if [[ $(uname -s) == 'Darwin' ]]; then
-    # Homebrew bash-completion@2
-    if [[ -r "/opt/homebrew/etc/profile.d/bash_completion.sh" ]]; then
+    # Homebrew bash-completion@2 requires Bash 4.2+
+    if [[ "${BASH_VERSINFO[0]}" -ge 5 || ("${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 2) ]]; then
+        if [[ -r "/opt/homebrew/share/bash-completion/bash_completion" ]]; then
+            source "/opt/homebrew/share/bash-completion/bash_completion"
+        elif [[ -r "/usr/local/share/bash-completion/bash_completion" ]]; then
+            source "/usr/local/share/bash-completion/bash_completion"
+        fi
+    # Fallback to bash-completion@1 (for Bash 3.2)
+    elif [[ -r "/opt/homebrew/etc/profile.d/bash_completion.sh" ]]; then
         source "/opt/homebrew/etc/profile.d/bash_completion.sh"
     elif [[ -r "/usr/local/etc/profile.d/bash_completion.sh" ]]; then
         source "/usr/local/etc/profile.d/bash_completion.sh"
-    else
-        # Fallback to bash-completion@1 style (deprecated)
-        for COMPLETION in "/opt/homebrew/etc/bash_completion.d/"* "/usr/local/etc/bash_completion.d/"*; do
-            [[ -r "$COMPLETION" ]] && source "$COMPLETION"
-        done
     fi
 fi
-# Load custom bash completions
+# Load custom bash completions (requires Bash 4.0+ for some scripts)
 TK_COMPLETION_SELF="$HOME/.bash_completion.d"
-if [ -d "$TK_COMPLETION_SELF" ]; then
+if [ -d "$TK_COMPLETION_SELF" ] && [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     for file in "$TK_COMPLETION_SELF"/*; do
         [[ -f $file ]] && source "$file"
     done
@@ -210,6 +216,8 @@ export FZF_COMPLETION_OPTS='+c -x'
 [ -d "$HOME/.vscode-server/cli/servers" ] && [ -f "$HOME/Templates/code-function.sh" ] && \
   source ~/Templates/code-function.sh
 
-# For fzf-tab-completion vim plugin
-bind -r "\\\t"
-bind -x '"\\\t": fzf_bash_completion'
+# For fzf-tab-completion vim plugin (requires Bash 4.0+)
+if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+    bind -r "\\\t"
+    bind -x '"\\\t": fzf_bash_completion'
+fi

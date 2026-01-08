@@ -72,6 +72,12 @@ CYAN='\033[36m'
 RESET='\033[0m'
 COLOR=$MAGENTA
 
+# On macOS, always initialize Homebrew environment
+if [[ $(uname -s) == 'Darwin' ]]; then
+    [ -x /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"
+    [ -x /usr/local/bin/brew ] && eval "$(/usr/local/bin/brew shellenv)"
+fi
+
 usage() {
     cat << _EOF
 Usage: $SCRIPT_NAME [OPTIONS]
@@ -290,11 +296,7 @@ while true; do
         --update)
             echo -e "${COLOR}Updating all packages${RESET}"
             if [[ $(uname -s) == 'Darwin' ]]; then
-                if command -v brew &> /dev/null; then
-                    brew update
-                else
-                    /opt/homebrew/bin/brew update
-                fi
+                brew update
             else
                 sudo apt update -y
             fi
@@ -304,15 +306,9 @@ while true; do
         --upgrade)
             echo -e "${COLOR}Updating all packages${RESET}"
             if [[ $(uname -s) == 'Darwin' ]]; then
-                if command -v brew &> /dev/null; then
-                    brew update
-                    echo -e "${COLOR}Upgrading all packages${RESET}"
-                    brew upgrade
-                else
-                    /opt/homebrew/bin/brew update
-                    echo -e "${COLOR}Upgrading all packages${RESET}"
-                    /opt/homebrew/bin/brew upgrade
-                fi
+                brew update
+                echo -e "${COLOR}Upgrading all packages${RESET}"
+                brew upgrade
             else
                 sudo apt update -y
                 echo -e "${COLOR}Upgrading all packages${RESET}"
@@ -610,7 +606,10 @@ macInstallApps() {
     appsForMac=(
         bash
         gnu-getopt
-        bash-completion
+        gnu-sed
+        bash-completion@2
+        coreutils
+        git
         fontconfig
         yt-dlp
         fzf
@@ -622,6 +621,13 @@ macInstallApps() {
 
     echo -e "${COLOR}Updating Apps for MacOS${RESET}"
     brew update
+    
+    # Unlink old bash-completion if installed (conflicts with bash-completion@2)
+    # if brew list bash-completion &>/dev/null; then
+    #     echo -e "${GREY}Unlinking old bash-completion...${RESET}"
+    #     brew unlink bash-completion
+    # fi
+    
     brew install "${appsForMac[@]}"
 }
 
@@ -958,6 +964,19 @@ buildExtraFonts() {
     [ ! -d "$fontDir" ] && mkdir -p "$fontDir"
     [ ! -d "$fontConfigDir" ] && mkdir -p "$fontConfigDir"
 
+    # Detect fc-list command
+    local FC_LIST_CMD="fc-list"
+    local FC_CACHE_CMD="fc-cache"
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        if command -v /opt/homebrew/bin/fc-list &> /dev/null; then
+            FC_LIST_CMD="/opt/homebrew/bin/fc-list"
+            FC_CACHE_CMD="/opt/homebrew/bin/fc-cache"
+        elif command -v /usr/local/bin/fc-list &> /dev/null; then
+            FC_LIST_CMD="/usr/local/bin/fc-list"
+            FC_CACHE_CMD="/usr/local/bin/fc-cache"
+        fi
+    fi
+
     for fontConfig in "$fTKFontConfigDir"/*; do
         linkFile "$fontConfig" "$fontConfigDir"
         if [ $? -eq 1 ]; then
@@ -967,10 +986,20 @@ buildExtraFonts() {
 
     for font in "$fTKFontDir"/*; do
         local fontFile=$(basename "$font")
-        local fontExists=$(fc-list | grep -i "$fontFile")
-        if [ -n "$fontExists" ]; then
-            echo -e "${GREEN}✔${GREY} Font ${BLUE}${fontFile}${GREY} is already up to date.${RESET}"
-            continue
+
+        # Check if font exists
+        if command -v "$FC_LIST_CMD" &> /dev/null; then
+            local fontExists=$("$FC_LIST_CMD" | grep -i "$fontFile")
+            if [ -n "$fontExists" ]; then
+                echo -e "${GREEN}✔${GREY} Font ${BLUE}${fontFile}${GREY} is already up to date.${RESET}"
+                continue
+            fi
+        else
+            # Fallback: check if font file exists in font directory
+            if [ -f "$fontDir/$fontFile" ] || [ -L "$fontDir/$fontFile" ]; then
+                echo -e "${GREEN}✔${GREY} Link ${BLUE}${fontFile}${GREY} is already up to date.${RESET}"
+                continue
+            fi
         fi
 
         linkFile "$font" "$fontDir"
@@ -981,13 +1010,23 @@ buildExtraFonts() {
     done
 
     [ -z "$needBuild" ] && return
-    echo -e "${COLOR}Building font cache...${RESET}"
-    sudo fc-cache -fv
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Success!${RESET}"
+
+    # Build font cache if fc-cache is available
+    if command -v "$FC_CACHE_CMD" &> /dev/null; then
+        echo -e "${COLOR}Building font cache...${RESET}"
+        if [[ $(uname -s) == 'Darwin' ]]; then
+            "$FC_CACHE_CMD" -fv
+        else
+            sudo "$FC_CACHE_CMD" -fv
+        fi
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Success!${RESET}"
+        else
+            echo -e "${LIGHTYELLOW}Warning: Font cache build had issues, but fonts are installed.${RESET}"
+        fi
     else
-        echo -e "${RED}Failed!${RESET}"
-        exit 1
+        echo -e "${LIGHTYELLOW}Note: fc-cache not available, fonts installed but cache not rebuilt.${RESET}"
+        echo -e "${GREY}On macOS, fonts may require logging out and back in to take effect.${RESET}"
     fi
 }
 
@@ -1041,6 +1080,45 @@ relinkSysCmds() {
 createMacOSBashProfile() {
     echo -e "${COLOR}Creating macOS bash_profile${RESET}"
     linkFile "$fMainDir/readonly/bash_profile" "$HOME" ".bash_profile"
+}
+
+setMacOSDefaultShell() {
+    # Only run on macOS
+    [[ $(uname -s) != 'Darwin' ]] && return
+
+    local HOMEBREW_BASH="/opt/homebrew/bin/bash"
+    # Fallback for Intel Mac
+    [ ! -x "$HOMEBREW_BASH" ] && HOMEBREW_BASH="/usr/local/bin/bash"
+
+    if [ ! -x "$HOMEBREW_BASH" ]; then
+        echo -e "${LIGHTYELLOW}Homebrew bash not found, skipping default shell setup${RESET}"
+        return
+    fi
+
+    echo -e "${COLOR}Setting up Homebrew Bash as default shell${RESET}"
+
+    # Add to /etc/shells if not already there
+    if ! grep -q "^${HOMEBREW_BASH}$" /etc/shells; then
+        echo -e "${GREY}Adding ${HOMEBREW_BASH} to /etc/shells${RESET}"
+        sudo sh -c "echo '$HOMEBREW_BASH' >> /etc/shells"
+    else
+        echo -e "${GREEN}✔${GREY} ${HOMEBREW_BASH} already in /etc/shells${RESET}"
+    fi
+
+    # Change default shell if not already set
+    if [ "$SHELL" != "$HOMEBREW_BASH" ]; then
+        echo -e "${GREY}Changing default shell to ${HOMEBREW_BASH}${RESET}"
+        # Use sudo to avoid password prompt (requires passwordless sudo)
+        sudo chsh -s "$HOMEBREW_BASH" "$USER"
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✔${GREY} Default shell changed to Bash 5.x${RESET}"
+            echo -e "${LIGHTYELLOW}Note: Please restart your terminal for the change to take effect.${RESET}"
+        else
+            echo -e "${RED}Failed to change default shell${RESET}"
+        fi
+    else
+        echo -e "${GREEN}✔${GREY} Default shell is already ${HOMEBREW_BASH}${RESET}"
+    fi
 }
 
 createExtraSymlinks() {
@@ -2528,6 +2606,7 @@ main() {
         macInstallApps
         createTKSymlinks
         createMacOSBashProfile
+        setMacOSDefaultShell
         installTmuxPluginsManager
         installVimPluginsManager
         createToolsSymlinks
