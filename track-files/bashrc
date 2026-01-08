@@ -124,11 +124,19 @@ if ! shopt -oq posix; then
     source /etc/bash_completion
   fi
 fi
-# For MacOS only, load homebrew bash completion
-if [[ -d /usr/local/etc/bash_completion.d ]]; then
-    for file in /usr/local/etc/bash_completion.d/*; do
-        [[ -L $file ]] && source "$file"
-    done
+# For macOS only, load Homebrew bash completion
+if [[ $(uname -s) == 'Darwin' ]]; then
+    # Homebrew bash-completion@2
+    if [[ -r "/opt/homebrew/etc/profile.d/bash_completion.sh" ]]; then
+        source "/opt/homebrew/etc/profile.d/bash_completion.sh"
+    elif [[ -r "/usr/local/etc/profile.d/bash_completion.sh" ]]; then
+        source "/usr/local/etc/profile.d/bash_completion.sh"
+    else
+        # Fallback to bash-completion@1 style (deprecated)
+        for COMPLETION in "/opt/homebrew/etc/bash_completion.d/"* "/usr/local/etc/bash_completion.d/"*; do
+            [[ -r "$COMPLETION" ]] && source "$COMPLETION"
+        done
+    fi
 fi
 # Load custom bash completions
 TK_COMPLETION_SELF="$HOME/.bash_completion.d"

@@ -610,6 +610,7 @@ macInstallApps() {
     appsForMac=(
         bash
         gnu-getopt
+        bash-completion
         fontconfig
         yt-dlp
         fzf
