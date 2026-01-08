@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # shellcheck disable=SC2155 disable=SC2120 disable=SC2024
 # set -x
 
@@ -12,7 +12,7 @@ fTKFontDir=$fMainDir/assets/fonts
 fTKFontConfigDir=$fMainDir/assets/fontconfig
 fTKClangdConfig=$fMainDir/assets/clangd/config.yaml
 fTKtemplateDir=$fMainDir/template
-fTKToolsDir=$fMainDir/ftnt-tools
+fTKToolsDir=$fMainDir/nv-tools
 fNVToolsDir=$fMainDir/nv-tools
 fDownloads=$HOME/Downloads
 fJCPath=$fMainDir/jc
@@ -134,6 +134,14 @@ _EOF
 exit 0
 }
 
+# Detect and use GNU getopt if available (required for long options on macOS)
+GETOPT_BIN="getopt"
+if command -v /opt/homebrew/opt/gnu-getopt/bin/getopt &> /dev/null; then
+    GETOPT_BIN="/opt/homebrew/opt/gnu-getopt/bin/getopt"
+elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
+    GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
+fi
+
 SHORTOPTS="hdnf"
 # Two colons: The option takes an optional argument
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
@@ -143,8 +151,9 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           litellm-start,litellm-stop,litellm-restart,litellm,check-tls::,swap::"
 
 # Use getopt to parse command-line options
-if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
     echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
+    echo -e "${CYAN}Tip: On macOS, install GNU getopt: ${GREY}brew install gnu-getopt${RESET}" >&2
     exit 1
 fi
 
@@ -280,15 +289,35 @@ while true; do
             ;;
         --update)
             echo -e "${COLOR}Updating all packages${RESET}"
-            sudo apt update -y
+            if [[ $(uname -s) == 'Darwin' ]]; then
+                if command -v brew &> /dev/null; then
+                    brew update
+                else
+                    /opt/homebrew/bin/brew update
+                fi
+            else
+                sudo apt update -y
+            fi
             shift
             exit 0
             ;;
         --upgrade)
             echo -e "${COLOR}Updating all packages${RESET}"
-            sudo apt update -y
-            echo -e "${COLOR}Upgrading all packages${RESET}"
-            sudo apt upgrade -y
+            if [[ $(uname -s) == 'Darwin' ]]; then
+                if command -v brew &> /dev/null; then
+                    brew update
+                    echo -e "${COLOR}Upgrading all packages${RESET}"
+                    brew upgrade
+                else
+                    /opt/homebrew/bin/brew update
+                    echo -e "${COLOR}Upgrading all packages${RESET}"
+                    /opt/homebrew/bin/brew upgrade
+                fi
+            else
+                sudo apt update -y
+                echo -e "${COLOR}Upgrading all packages${RESET}"
+                sudo apt upgrade -y
+            fi
             shift
             exit 0
             ;;
@@ -354,7 +383,8 @@ checkTlsConnWithOpenssl() {
 
     # Grep for the specific success indicator and check the exit code.
     # The 'verify return:1' is the most direct confirmation of CA trust.
-    if echo "$opensslOutput" | grep -q 'verify return:1' && [ $opensslExitCode -eq 0 ]; then
+    # Note: openssl s_client may return non-zero even on successful verification due to connection closure
+    if echo "$opensslOutput" | grep -q 'verify return:1' && ! echo "$opensslOutput" | grep -q 'verify return:0'; then
         echo -e "${GREEN}✔${GREY} Server certificate is trusted (legally issued and verifiable against CA list).${RESET}"
         # Optionally display specific certificate details if needed for context:
         local certDetails=$(echo "$opensslOutput" | openssl x509 -noout -subject -issuer -dates)
@@ -578,6 +608,8 @@ ubuntuInstallApps() {
 macInstallApps() {
     checkSudoPrivilege
     appsForMac=(
+        bash
+        gnu-getopt
         fontconfig
         yt-dlp
         fzf
@@ -593,12 +625,27 @@ macInstallApps() {
 }
 
 setTimeZone() {
-    if [ "$(timedatectl | grep "Time zone" | awk '{print $3}')" == "America/Vancouver" ]; then
-        # echo -e "${GREEN}✔${GREY} Time zone is already vancouver${RESET}"
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        echo -e "${COLOR}Checking Timezone on macOS${RESET}"
+        local currentTZ=$(readlink /etc/localtime 2>/dev/null | sed 's|/var/db/timezone/zoneinfo/||' || echo "Unknown")
+        if [[ "$currentTZ" == "Asia/Shanghai" ]]; then
+            echo -e "${GREEN}✔${GREY} Timezone is already set to Asia/Shanghai${RESET}"
+        else
+            echo -e "${LIGHTYELLOW}Current timezone: $currentTZ${RESET}"
+            echo -e "${LIGHTYELLOW}To change timezone on macOS:${RESET}"
+            echo -e "${GREY}  System Settings → General → Date & Time → Time Zone${RESET}"
+            echo -e "${GREY}  Or use: sudo systemsetup -settimezone Asia/Shanghai${RESET}"
+        fi
         return
     fi
-    echo -e "${COLOR}Setting Timezone to Vancouver${RESET}"
-    sudo timedatectl set-timezone America/Vancouver
+
+    # Linux (Ubuntu/Debian)
+    if [ "$(timedatectl | grep "Time zone" | awk '{print $3}')" == "Asia/Shanghai" ]; then
+        # echo -e "${GREEN}✔${GREY} Time zone is already shanghai${RESET}"
+        return
+    fi
+    echo -e "${COLOR}Setting Timezone to Shanghai${RESET}"
+    sudo timedatectl set-timezone Asia/Shanghai
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
     else
@@ -979,7 +1026,6 @@ createToolsSymlinks() {
     [ -n "$fNoInstallTools" ] && return
     echo -e "${COLOR}Creating Tool Symlinks${RESET}"
     linkFiles "$fTKToolsDir" "$HOME/.usr/bin"
-    linkFiles "$fNVToolsDir" "$HOME/.usr/bin"
     echo -e "${COLOR}Creating template symlinks${RESET}"
     linkFiles "$fTKtemplateDir" "$HOME/Templates"
 }
@@ -989,6 +1035,11 @@ relinkSysCmds() {
     linkFile "batcat" "$HOME/.usr/bin" "bat" "command"
     linkFile "fdfind" "$HOME/.usr/bin" "fd" "command"
     linkFile "bash" "/bin" "sh" "command"
+}
+
+createMacOSBashProfile() {
+    echo -e "${COLOR}Creating macOS bash_profile${RESET}"
+    linkFile "$fMainDir/readonly/bash_profile" "$HOME" ".bash_profile"
 }
 
 createExtraSymlinks() {
@@ -2443,6 +2494,11 @@ doEarlyExitJobs() {
 }
 
 showUfwStatus() {
+    # UFW is Linux-specific, skip on macOS
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        return
+    fi
+
     if ! command -v ufw &> /dev/null || sudo ufw status | grep -qw "Status: inactive"; then
         return
     fi
@@ -2470,8 +2526,10 @@ main() {
     elif [ "$fOSCategory" == "mac" ]; then
         macInstallApps
         createTKSymlinks
+        createMacOSBashProfile
         installTmuxPluginsManager
         installVimPluginsManager
+        createToolsSymlinks
         createExtraSymlinks
         buildBatTheme
         buildExtraFonts

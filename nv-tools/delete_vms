@@ -58,11 +58,19 @@ _EOF
 
 parseOptions() {
     # Define short and long options
+    # Detect and use GNU getopt if available (required for long options on macOS)
+    local GETOPT_BIN="getopt"
+    if command -v /opt/homebrew/opt/gnu-getopt/bin/getopt &> /dev/null; then
+        GETOPT_BIN="/opt/homebrew/opt/gnu-getopt/bin/getopt"
+    elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
+        GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
+    fi
+
     SHORTOPTS="hdab:kr"
     LONGOPTS="help,debug,all,backup:,keep-disk,restore"
 
     # Use getopt to parse command-line options
-    if ! PARSED=$(getopt --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$SCRIPTNAME" -- "$@"); then
+    if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$SCRIPTNAME" -- "$@"); then
         echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
         exit 1
     fi

@@ -106,6 +106,14 @@ _EOF
 [[ $# -eq 0 ]] && usage
 fInputCmd="$SCRIPT_NAME $*"
 
+# Detect and use GNU getopt if available (required for long options on macOS)
+GETOPT_BIN="getopt"
+if command -v /opt/homebrew/opt/gnu-getopt/bin/getopt &> /dev/null; then
+    GETOPT_BIN="/opt/homebrew/opt/gnu-getopt/bin/getopt"
+elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
+    GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
+fi
+
 SHORTOPTS="hcCoOm:j:w:kB:s:t:P:u:l:p:DS:"
 LONGOPTS="help,clean,debug,bear,configure,build,optimization,clean-removal,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
 sync-file:,sync_port:,target:,username:,password:,address-sanitizer:"
@@ -113,7 +121,7 @@ sync-file:,sync_port:,target:,username:,password:,address-sanitizer:"
 # It takes the messy input arguments and converts them into a standardized format.
 # CLI Input: jmake TEST --model=VMWARE -j 8 --optimization
 # getopt will convert it into:  --model 'VMWARE' -j '8' --optimization -- 'TEST'
-if ! PARSED=$(getopt --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
+if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
     exit 1
 fi

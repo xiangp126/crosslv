@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
 # set -x
 
@@ -148,12 +148,22 @@ isValidIP() {
 }
 
 parseOptions() {
-    SHORTOPTS="hs:w:p:f:dWOKT:ISD"
+    # Detect and use GNU getopt if available (required for long options)
+    local GETOPT_BIN="getopt"
+    if command -v /opt/homebrew/opt/gnu-getopt/bin/getopt &> /dev/null; then
+        GETOPT_BIN="/opt/homebrew/opt/gnu-getopt/bin/getopt"
+    elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
+        GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
+    fi
+    
+    SHORTOPTS="hs:w:p:f:dWOKT:ISDV"
     LONGOPTS="help,session:,window:,pane:,file:,debug,wad-debug,output-directly,kernel-debug,\
               ips-debug,scanunit-debug,dns-debug,packet-trace:,toggle-vf-cache"
-    if ! PARSED=$(getopt --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
+    
+    if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
         echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
         echo -e "${MAGENTA}The argument --packet-trace requires an IP address.${RESET}" >&2
+        echo -e "${CYAN}Tip: On macOS, install GNU getopt: ${GREY}brew install gnu-getopt${RESET}" >&2
         exit 1
     fi
 
