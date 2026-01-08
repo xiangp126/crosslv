@@ -1,6 +1,0 @@
-#!/bin/bash
-
-dev=enp0s31f6
-DNS1=172.16.100.100
-DNS2=172.16.100.80
-sudo resolvectl dns $dev $DNS1 $DNS2

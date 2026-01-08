@@ -1,6 +1,7 @@
 #!/bin/bash
 # set -x
-# Wrapper for the VS Code Server CLI.
+# Wrapper for the VS Code / Cursor Server CLI.
+# Supports both VS Code (.vscode-server) and Cursor (.cursor-server).
 # To install, add `source /path/to/code-function.sh` to your ~/.bashrc.
 # For usage, run `code --help`.
 
@@ -23,8 +24,9 @@ _code_usage() {
 Usage: code [options] <args>
 
 Description:
-    A wrapper function for the VS Code server CLI.
-    It finds the VS Code server CLI binary and sets the correct IPC socket.
+    A wrapper function for the VS Code / Cursor server CLI.
+    It finds the server CLI binary and sets the correct IPC socket.
+    Supports both VS Code (.vscode-server) and Cursor (.cursor-server).
     The reason for this function is to avoid the bug which has never been fixed by Microsoft:
     # Unable to connect to VS Code server: Error in request - ENOENT /run/user/1000/vscode-ipc-*.sock
     https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
@@ -87,8 +89,8 @@ _code_parse_options() {
                 shift
                 ;;
             -p|--print)
-                _code_print_core_vars
-                return 1
+                _code_f_print=true
+                shift
                 ;;
             -s|--status)
                 _code_f_args=("--status")
@@ -138,33 +140,53 @@ _code_parse_options() {
 }
 
 _set_vscode_code_path() {
-    # Step 1: Find the commit ID of the active VS Code server
+    # Step 1: Find the commit ID of the active server
     # Use process substitution to ensure `commit_id` is set in the current shell scope, not a subshell.
-    # Added -maxdepth 2 for efficiency, assuming pid.txt is in <commit_id>/pid.txt structure.
     local pid_file curr_pid commit_id=
     cd "$_code_f_search_path" || return
-    while IFS= read -r -d $'\0' pid_file; do
-        if [ -f "$pid_file" ]; then
-            curr_pid=$(cat "$pid_file" 2>/dev/null)
-            if [ -n "$curr_pid" ] && [[ "$curr_pid" =~ ^[0-9]+$ ]]; then
-                # Check if the process is actually running
-                if kill -0 "$curr_pid" 2>/dev/null; then
-                    commit_id=$(basename "$(dirname "$pid_file")")
-                    break
+
+    # For Cursor: no pid.txt, find the most recent commit directory with code binary
+    if [[ "$_code_f_is_cursor" == "1" ]]; then
+        # Find the most recently modified directory that has the code binary
+        local code_bin
+        for dir in $(ls -t "$_code_f_search_path" 2>/dev/null); do
+            code_bin="$_code_f_search_path/$dir/bin/remote-cli/code"
+            if [[ -x "$code_bin" ]]; then
+                commit_id="$dir"
+                break
+            fi
+        done
+    else
+        # For VS Code: use pid.txt to find active server
+        while IFS= read -r -d $'\0' pid_file; do
+            if [ -f "$pid_file" ]; then
+                curr_pid=$(cat "$pid_file" 2>/dev/null)
+                if [ -n "$curr_pid" ] && [[ "$curr_pid" =~ ^[0-9]+$ ]]; then
+                    if kill -0 "$curr_pid" 2>/dev/null; then
+                        commit_id=$(basename "$(dirname "$pid_file")")
+                        break
+                    fi
                 fi
             fi
-        fi
-    done < <(find . -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
+        done < <(find . -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
+    fi
 
     # Step 2: Set the VSCODE_BIN_PATH
     if [[ -z "$commit_id" ]]; then
-        echo -e "${MAGENTA}Warning: No active VS Code server found under $_code_f_search_path.${RESET}" >&2
+        echo -e "${MAGENTA}Warning: No active server found under $_code_f_search_path.${RESET}" >&2
         cd - &> /dev/null || return
         return 1
     fi
-    VSCODE_BIN_PATH="$_code_f_search_path/$commit_id/server/bin/remote-cli/code"
+
+    # Different path structure for Cursor vs VS Code
+    if [[ "$_code_f_is_cursor" == "1" ]]; then
+        VSCODE_BIN_PATH="$_code_f_search_path/$commit_id/bin/remote-cli/code"
+    else
+        VSCODE_BIN_PATH="$_code_f_search_path/$commit_id/server/bin/remote-cli/code"
+    fi
+
     if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
-        echo -e "${MAGENTA}Error: VS Code binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
+        echo -e "${MAGENTA}Error: Binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
         return 1
     fi
 
@@ -177,7 +199,6 @@ _set_vscode_code_path() {
         return 1
     fi
     # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
-    # But you have to remember that only the sub shell can see the new value.
     export VSCODE_IPC_HOOK_CLI=$newIPCHook
     export VSCODE_BIN_PATH
     # Step 4: Return to the original directory
@@ -227,7 +248,8 @@ _code_clean_obsolete_ipc_socks() {
 
 # Helper function: pre-check
 _code_pre_check() {
-    if [ ! -d "$_code_f_search_path" ]; then
+    # Check if either VS Code or Cursor server directory exists
+    if [ ! -d "$HOME/.vscode-server/cli/servers" ] && [ ! -d "$HOME/.cursor-server/bin" ]; then
         local l_code_bin_path="/usr/local/bin/code"
         if [ -x "$l_code_bin_path" ]; then
             "$l_code_bin_path" "$@"
@@ -259,8 +281,21 @@ code() {
     local _code_f_args=()
     local _code_f_force=
     local _code_f_debug=
-    local _code_f_sys_path="/run/user/$UID"
-    local _code_f_search_path="$HOME/.vscode-server/cli/servers"
+    local _code_f_print=
+    # Support both VS Code and Cursor with different paths:
+    # - VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code, IPC in /run/user/$UID
+    # - Cursor:  ~/.cursor-server/bin/<commit>/bin/remote-cli/code, IPC in /tmp
+    local _code_f_sys_path
+    local _code_f_search_path
+    local _code_f_is_cursor=""
+    if [ -d "$HOME/.cursor-server/bin" ]; then
+        _code_f_search_path="$HOME/.cursor-server/bin"
+        _code_f_sys_path="/tmp"
+        _code_f_is_cursor="1"
+    else
+        _code_f_search_path="$HOME/.vscode-server/cli/servers"
+        _code_f_sys_path="/run/user/$UID"
+    fi
 
     _code_pre_check "$@" || return 1
 
@@ -273,8 +308,14 @@ code() {
         return 0
     fi
 
-    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$_code_f_force" ]; then
+    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$_code_f_force" ] || [ -n "$_code_f_print" ]; then
         _set_vscode_code_path || return 1
+    fi
+
+    # Handle print flag after variables are set
+    if [ -n "$_code_f_print" ]; then
+        _code_print_core_vars
+        return 0
     fi
 
     # Actually run the command

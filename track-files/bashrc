@@ -244,9 +244,9 @@ export FZF_COMPLETION_TRIGGER='*'
 # Options to fzf command
 export FZF_COMPLETION_OPTS='+c -x'
 
-# Load customized code wrapper
-[ -d "$HOME/.vscode-server/cli/servers" ] && [ -f "$HOME/Templates/code-function.sh" ] && \
-  source ~/Templates/code-function.sh
+# Load customized code wrapper (supports both VS Code and Cursor)
+{ [ -d "$HOME/.vscode-server/cli/servers" ] || [ -d "$HOME/.cursor-server" ]; } && \
+  [ -f "$HOME/Templates/code-function.sh" ] && source ~/Templates/code-function.sh
 
 # For fzf-tab-completion vim plugin (requires Bash 4.0+)
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then

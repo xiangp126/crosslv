@@ -1,7 +1,0 @@
-#!/bin/bash
-
-CRASH_FILE="/data/bugzilla/crash.txt"
-[ ! -f "$CRASH_FILE" ] && echo "File not found: $CRASH_FILE" && exit 1
-
-truncate -s 0 "$CRASH_FILE"
-vim -c "set paste" -c "startinsert" "$CRASH_FILE"
