@@ -306,7 +306,7 @@ printBuildFlags() {
 cleanTheRepo() {
     [ -z "$fGitClean" ] && return
     cd "$fWorkingDir" || exit
-    echo "$USER_NOTATION Cleaning the build ..."
+    echo -e "$USER_NOTATION ${CYAN}Cleaning the build ...${RESET}"
 
     if [ -n "$fGitDeepClean" ]; then
         # Deep clean using git clean -fdx
