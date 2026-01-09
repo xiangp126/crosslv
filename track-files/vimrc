@@ -64,9 +64,19 @@ Plug 'vim-airline/vim-airline-themes'
 "------ CODE EXPAND -----
 Plug 'ervandew/supertab'
 Plug 'lincheney/fzf-tab-completion'
+"------ CLIPBOARD (OSC 52) -----
+Plug 'ojroques/vim-oscyank'
 
 " Initialize plugin system
 call plug#end()
+
+""""""""""""""""""""""""""""""
+" OSC 52 CLIPBOARD (works in tmux over SSH)
+""""""""""""""""""""""""""""""
+" Auto-copy to system clipboard on any yank operation
+autocmd TextYankPost * if v:event.operator is 'y' && v:event.regname is '' | execute 'OSCYankRegister "' | endif
+" Manual copy with ;y in visual mode
+vnoremap <leader>y :OSCYankVisual<CR>
 
 """"""""""""""""""""""""""""""
 " BASIC KEYBIND
