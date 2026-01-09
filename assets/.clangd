@@ -1,0 +1,14 @@
+CompileFlags:
+  Remove:
+    - --target=mellanox64h
+    - -mllvm
+    - -mlx-*
+  Add:
+    - --target=x86_64-unknown-linux-gnu
+    - -Wno-unknown-warning-option
+    - -Wno-unknown-argument
+
+Diagnostics:
+  UnusedIncludes: None
+  Suppress:
+    - "*"

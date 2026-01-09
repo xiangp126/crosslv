@@ -1,37 +1,38 @@
 #!/bin/bash
 # set -x
 
+# Platform: GOLAN (default) or FORTINET (reserved for future use)
+fPlatform="GOLAN"
+
 # Build flags & Options
-FTNTBUILDTARGET="image.out"
-fPoundPattern='#\s*$'
-ftntUser=
-ftntPasswd=
-fRebuildKernel=
-fPlatform="FOS" # Default platform
-fBuildTarget="$FTNTBUILDTARGET"
 fBuildModel=
 fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
-fMaxBuildAttempt=2
+fMaxBuildAttempt=1
 fGenerateCompileCmds=
-fUseBear=
-fRunConfigure=
+fLinkCompileDb=
 fNeedBuild=
-fPrintBuildFlags= # Print build flags
+fPrintBuildFlags=
 fGitClean=
-fEnableOptimization=
-fAddressSanitizer= # AddressSanitizer (ASan), a powerful memory error detection tool.
+fGitDeepClean=
+fVerbose=
 fInputCmd=
 fBuildTimeFormatted=
-# Sync Options
-fSyncTarget=
-fSyncFile=$fBuildTarget
-fSyncPort=22
-fSyncUsername="admin"
-fSyncPassword="password"
 # Git associated variables
 fCompileCommandsJson="compile_commands.json"
 fRMCompileCommandsJson=
+
+# Fortinet-specific variables (reserved for future use)
+fPoundPattern='#\s*$'
+ftntUser=
+ftntPasswd=
+fRunConfigure=
+fSyncTarget=
+fSyncFile=
+fSyncPort=22
+fSyncUsername="admin"
+fSyncPassword="password"
+
 # Common Constants
 SEPARATOR="==================================================="
 SCRIPT_NAME=$(basename $0)
@@ -45,10 +46,12 @@ MAGENTA='\033[35m'
 BLUE='\033[34m'
 GREY='\033[90m'
 LIGHTYELLOW='\033[93m'
-LIGHTGREEN='\033[92m'
-# YELLOW='\033[33m'
 RESET='\033[0m'
 COLOR=$MAGENTA
+
+# GOLAN supported models
+GOLAN_MODELS="arava viper tamar carmel mustang gilboa argaman alpine"
+DEFAULT_MODEL="mustang"
 
 # https://patorjk.com/software/taag/
 showLogo() {
@@ -65,39 +68,36 @@ usage() {
     cat << _EOF
 Usage: $SCRIPT_NAME [OPTIONS]
 
+Build tool for NVIDIA golan_fw firmware.
+
 Build Flags:
     -D, --debug                 Enable debug mode
-    -c, --clean                 Clean the repo (default: ${fGitClean:-false})
-        --clean-removal         Remove $fCompileCommandsJson in clean command (default: ${fRMCompileCommandsJson:-false})
-    -C, --configure             Run Configure intelligently (default: ${fRunConfigure:-false})
-    -o, --build                 Run build commands (set automatically if any of the [bmjwT] options is set)
-    -O, --optimization          Enable optimization (default: ${fEnableOptimization:-false})
-    -S, --address-sanitizer     Enable/Disable -fsanitize=address when compiling (default: ${fAddressSanitizer:-false})
+    -C, --clean                 Clean the build (auto-set by -o)
+        --clean-removal         Also remove $fCompileCommandsJson during clean
+        --git-clean             Deep clean using git clean -fdx (preserves submodules)
+    -o, --build                 Run build commands (implies -C)
+    -v, --verbose               Show full compilation output (default: only errors)
 
 Build Options:
-    --bear                      Use Bear to generate compile_commands.json
-    -m, --model                 Set the build model (default: ${fBuildModel:-KVM})
-    -j, --jobs                  Set the number of jobs (default: $fNumOfJobs)
-    -w, --working-dir           Set working directory  (default: $fWorkingDir)
-    -k, --kernel                Rebuild the kernel (default: ${fRebuildKernel:-false})
-    --max-build-attempt         Set the maximum number of build attempts (default: $fMaxBuildAttempt)
-    -B, --build-target          Set the build target (default: $fBuildTarget)
-
-Sync Options:
-    -t, --target                Set the sync target machine
-    -s, --sync-file             Set the sync source file (default: $fSyncFile)
-    -P, --sync_port             Set the sync ssh port (default: $fSyncPort)
-    -l/-u, --username           Set the sync username (default: $fSyncUsername)
-    -p, --password              Set the sync password (default: $fSyncPassword)
+    --bear                      Generate compile_commands.json (implies -C -o)
+    -m, --model                 Set the build model (default: $DEFAULT_MODEL)
+    -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
+    -w, --working-dir           Set working directory (default: current dir)
+    --max-attempt               Set max build attempts (default: $fMaxBuildAttempt)
 
 Other Options:
     -h, --help                  Print this help message
+    -l, --list                  List available models
+        --link                  Link compile_commands.json for clangd (use with -m)
 
-Example:
-    $SCRIPT_NAME -m FGT_VM64_KVM -c -T1 -j4 -b
-    $SCRIPT_NAME -m VMWARE
-    $SCRIPT_NAME -t fgt1 -s FGT_VM64_KVM-v7-build1662.out -l "admin" -p "password" -P 22
-    $SCRIPT_NAME -h
+Supported Models:
+    $GOLAN_MODELS
+
+Examples:
+    $SCRIPT_NAME -o                        # Build mustang (default, quiet mode)
+    $SCRIPT_NAME -v -o                     # Build with full output
+    $SCRIPT_NAME -C -m mustang -o          # Clean and build mustang
+    $SCRIPT_NAME --bear -m gilboa -o       # Build gilboa with compile_commands.json
 
 _EOF
     exit 0
@@ -114,31 +114,15 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hcCoOm:j:w:kB:s:t:P:u:l:p:DS:"
-LONGOPTS="help,clean,debug,bear,configure,build,optimization,clean-removal,model:,working-dir:,jobs:,kernel,max-build-attempt:,build-target:,\
-sync-file:,sync_port:,target:,username:,password:,address-sanitizer:"
-# getopt is a command that standardizes and validates command-line arguments.
-# It takes the messy input arguments and converts them into a standardized format.
-# CLI Input: jmake TEST --model=VMWARE -j 8 --optimization
-# getopt will convert it into:  --model 'VMWARE' -j '8' --optimization -- 'TEST'
+SHORTOPTS="hCom:j:w:Dvl"
+LONGOPTS="help,clean,debug,bear,build,clean-removal,git-clean,model:,jobs:,working-dir:,max-build-attempt:,verbose,list,link"
+
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
     exit 1
 fi
 
-# Reset positional parameters to the parsed values
 eval set -- "$PARSED"
-
-# for ((i=1; i<=$#; i++)); do
-#     echo "\$$i = ${!i}"
-# done
-# $1 = --model
-# $2 = VMWARE
-# $3 = -j
-# $4 = 8
-# $5 = --optimization
-# $6 = --
-# $7 = TEST
 
 while true; do
     case "$1" in
@@ -146,7 +130,7 @@ while true; do
             usage
             shift
             ;;
-        -d|--debug)
+        -D|--debug)
             set -x
             shift
             ;;
@@ -165,51 +149,16 @@ while true; do
             fNeedBuild=true
             shift 2
             ;;
-        --max-build-attempt)
+        --max-attempt)
             fMaxBuildAttempt="$2"
             fNeedBuild=true
             shift 2
-            ;;
-        -k|--kernel)
-            fRebuildKernel=true
-            fNeedBuild=true
-            shift
             ;;
         -o|--build)
             fNeedBuild=true
             shift
             ;;
-        -O|--optimization)
-            fEnableOptimization=true
-            fNeedBuild=true
-            shift
-            ;;
-        -S|--address-sanitizer)
-            case "$2" in
-                yes|y)
-                    fAddressSanitizer="y"
-                    ;;
-                no|n)
-                    fAddressSanitizer="n"
-                    ;;
-                *)
-                    echo -e "${MAGENTA}Error: Invalid value for --address-sanitizer option: $2${RESET}" >&2;
-                    exit 1
-                    ;;
-            esac
-            fNeedBuild=true
-            shift 2
-            ;;
-        -B|--build-target)
-            fBuildTarget="$2"
-            fNeedBuild=true
-            shift 2
-            ;;
-        -C|--configure)
-            fRunConfigure=true
-            shift
-            ;;
-        -c|--clean)
+        -C|--clean)
             fGitClean=true
             shift
             ;;
@@ -218,33 +167,29 @@ while true; do
             fRMCompileCommandsJson=true
             shift
             ;;
-        -t|--target)
-            fSyncTarget="$2"
-            shift 2
+        --git-clean)
+            fGitDeepClean=true
+            fGitClean=true
+            shift
             ;;
         --bear)
             fGenerateCompileCmds=true
-            fRMCompileCommandsJson=true
-            fGitClean=true
             fNeedBuild=true
-            fUseBear=true
+            fGitClean=true  # --bear implies -C and -o
             shift
             ;;
-        -s|--sync-file)
-            fSyncFile="$2"
-            shift 2
+        -v|--verbose)
+            fVerbose=true
+            shift
             ;;
-        -P|--sync_port)
-            fSyncPort="$2"
-            shift 2
+        -l|--list)
+            echo -e "${BOLD}Available models:${RESET}"
+            echo -e "${GREEN}$GOLAN_MODELS${RESET}"
+            exit 0
             ;;
-        -l|-u|--username)
-            fSyncUsername="$2"
-            shift 2
-            ;;
-        -p|--password)
-            fSyncPassword="$2"
-            shift 2
+        --link)
+            fLinkCompileDb=true
+            shift
             ;;
         --)
             shift
@@ -258,20 +203,18 @@ while true; do
 done
 
 if [[ $# -gt 0 ]]; then
-    echo -e "$USER_NOTATION ${COLOR}Illegal non-option arguments: $@${RESET}"
+    echo -e "$USER_NOTATION ${COLOR}Illegal non-option arguments: $*${RESET}"
     exit 1
 fi
+
+# Auto-set flags:
+# -o implies -C (build implies clean)
+# --bear implies -o and -C (already set above)
+[ -n "$fNeedBuild" ] && fGitClean=true
 
 getCurrentTime() {
     COLOR="$RED"
     echo -e "${COLOR}$(date +"%m/%d/%Y %H:%M:%S")${RESET}"
-}
-
-checkCmdAvailability() {
-    if ! command -v "$1" &> /dev/null; then
-        echo -e "$USER_NOTATION ${RED}Error: Command $1 not found.${RESET}"
-        exit 1
-    fi
 }
 
 # $1: available models, $2: target model
@@ -280,13 +223,11 @@ searchBuildModel() {
     local availModels="$1"
     local targetModel="$2"
 
-    # Collect exact and partial matched models
     for model in $availModels; do
         if [[ "$model" == *"$targetModel"* ]]; then
             matchedModels+=("$model")
             if [[ "$model" == "$targetModel" ]]; then
                 fBuildModel="$model"
-                # return
             fi
         fi
     done
@@ -295,6 +236,7 @@ searchBuildModel() {
     case ${#matchedModels[@]} in
         0)
             echo -e "$USER_NOTATION No matched model found for ${COLOR}$targetModel${RESET}"
+            echo -e "$USER_NOTATION Available models: ${CYAN}$GOLAN_MODELS${RESET}"
             exit 1
             ;;
         1)
@@ -312,82 +254,49 @@ searchBuildModel() {
 }
 
 preConfigure() {
-    # Set fRunConfigure to true if $fNeedBuild is true
-    [ -n "$fNeedBuild" ] && fRunConfigure=true
-    [ -n "$fGitClean" ] || [ -n "$fRunConfigure" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] && fPrintBuildFlags=true
+    [ -n "$fGitClean" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] || [ -n "$fLinkCompileDb" ] && fPrintBuildFlags=true
     [ -z "$fPrintBuildFlags" ] && return
 
     fWorkingDir=$(realpath "$fWorkingDir")
     cd "$fWorkingDir" || exit 1
 
-    checkCmdAvailability "./Configure"
-    availModels="$(./Configure list)"
-    for model in $availModels; do
-        if [[ "$model" == "FPX"* ]]; then
-            fPlatform="FPX"
-            break
-        fi
-    done
+    # Verify this is a golan_fw project
+    if [[ ! -x "./build.sh" ]]; then
+        echo -e "$USER_NOTATION ${RED}Error: build.sh not found. Are you in a golan_fw directory?${RESET}"
+        exit 1
+    fi
 
-    # Upper case the build model
-    fBuildModel=$(echo "$fBuildModel" | tr '[:lower:]' '[:upper:]')
-
-    if [[ "$fPlatform" == "FPX" ]]; then
-        if [ -z "$fBuildModel" ]; then
-            fBuildModel="FPX_KVM"
-        else
-            searchBuildModel "$availModels" "$fBuildModel"
-        fi
+    # Lower case the build model
+    fBuildModel=$(echo "$fBuildModel" | tr '[:upper:]' '[:lower:]')
+    if [ -z "$fBuildModel" ]; then
+        fBuildModel="$DEFAULT_MODEL"
     else
-        # The platform is FOS
-        if [ -z "$fBuildModel" ]; then
-            fBuildModel="FGT_VM64_KVM"
-        elif [[ "$fBuildModel" == "VMWARE" ]]; then
-            fBuildModel="FGT_VM64"
-        else
-            searchBuildModel "$availModels" "$fBuildModel"
-        fi
+        searchBuildModel "$GOLAN_MODELS" "$fBuildModel"
     fi
 }
 
 printBuildFlags() {
     echo $SEPARATOR
-    # Print the build flags
     if [ -n "$fPrintBuildFlags" ]; then
         COLOR="$GREEN"
         echo -e "${BOLD}Build Flags:${RESET}"
-        [ -n "$fGitClean" ]              && echo -e "[c] ${COLOR}Clean${RESET} the repo"
-        [ -n "$fRunConfigure" ]          && echo -e "[C] ${COLOR}Configure${RESET} the project"
+        [ -n "$fGitClean" ]              && echo -e "[C] ${COLOR}Clean${RESET} the build"
+        [ -n "$fGitDeepClean" ]          && echo -e "[G] ${COLOR}Git deep clean${RESET} (git clean -fdx)"
         [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
-        [ -n "$fRebuildKernel" ]         && echo -e "[k] ${COLOR}Kernel${RESET} rebuild"
-        [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} the existing $fCompileCommandsJson"
+        [ -n "$fVerbose" ]               && echo -e "[v] ${COLOR}Verbose${RESET} output enabled"
+        [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} existing $fCompileCommandsJson"
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} compile_commands.json"
-        [ -n "$fEnableOptimization" ]    && echo -e "[O] ${COLOR}Optimization${RESET} enabled" \
-                                         || echo -e "[O] ${COLOR}Optimization${RESET} disabled"
-        [ "$fAddressSanitizer" == "y" ]  && echo -e "[A] ${COLOR}AddressSanitizer${RESET} enabled" \
-                                         || echo -e "[A] ${COLOR}AddressSanitizer${RESET} disabled"
+        [ -n "$fLinkCompileDb" ]         && echo -e "[L] ${COLOR}Link${RESET} compile_commands.json for clangd"
     fi
 
-    # Print the build options
     if [ -n "$fNeedBuild" ]; then
-        echo -e "${BOLD}Build Optioins:${RESET}"
+        echo -e "${BOLD}Build Options:${RESET}"
         COLOR="$RED"
-        echo -e "[m] Build Modle:  ${COLOR}$fBuildModel${RESET}"
+        echo -e "[m] Build Model:  ${COLOR}$fBuildModel${RESET}"
         COLOR="$CYAN"
-        echo -e "[B] Build Target: ${COLOR}$fBuildTarget${RESET}"
         echo -e "[w] Build Directory: ${COLOR}$fWorkingDir${RESET}"
         echo -e "[T] Maximum Build Attempts: ${COLOR}$fMaxBuildAttempt${RESET}"
-        echo -e "[j] Concurrent Build Jobs:  ${COLOR}$fNumOfJobs${RESET}"
-    fi
-
-    if [ -n "$fSyncTarget" ]; then
-        COLOR="$RED"
-        echo -e "${BOLD}Sync Optioins:${RESET}"
-        echo -e "[/] Scheduled to sync ${COLOR}$fSyncFile${RESET} to ${COLOR}$fSyncTarget${RESET}"
-        echo -e "[l] Username: (${COLOR}$fSyncUsername${RESET})"
-        echo -e "[p] Password: (${COLOR}$fSyncPassword${RESET})"
-        echo -e "[s] Sync File:   (${COLOR}$fSyncFile${RESET})"
-        echo -e "[t] Sync Target: (${COLOR}$fSyncTarget${RESET})"
+        echo -e "[j] Parallel Jobs: ${COLOR}$fNumOfJobs${RESET}"
     fi
     echo "$SEPARATOR"
     echo -en "${BOLD}Input Command: ${RESET}" >&2
@@ -397,42 +306,197 @@ printBuildFlags() {
 cleanTheRepo() {
     [ -z "$fGitClean" ] && return
     cd "$fWorkingDir" || exit
-    echo "$USER_NOTATION Cleaning the working directory ..."
+    echo "$USER_NOTATION Cleaning the build ..."
 
-    local gitCleanCmd=
-    # .cache will match both the .cache and .cache/ directories
-    # .cache/ will only match the .cache/ directory
-    # .cache/* will match all files and directories under .cache/
-    declare -a gitExcludePatterns=(
-        "\*.code-workspace"
-        ".cache/"
-        ".clang-format"
-        ".clang-tidy"
-    )
-    [ -z "$fRMCompileCommandsJson" ] && gitExcludePatterns+=("$fCompileCommandsJson")
-    for patt in "${gitExcludePatterns[@]}"; do
-        echo -e "$USER_NOTATION Exclude ${COLOR}$patt${RESET}"
-        gitExclude+="--exclude=$patt "
-    done
-
-    gitCleanCmd="git clean -xdf ${gitExclude}"
-    echo -e "$USER_NOTATION Running: ${BLUE}$gitCleanCmd${RESET}"
-
-    sleep 1
-    COLOR=$MAGENTA
-    eval "$gitCleanCmd"
-    if [[ $? -ne 0 ]]; then
-        echo -e "$USER_NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
-        echo -e "$USER_NOTATION ${NORMAL}But going on anyway${RESET}"
+    if [ -n "$fGitDeepClean" ]; then
+        # Deep clean using git clean -fdx
+        echo -e "$USER_NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
+        
+        # Build exclude options
+        local excludeOpts=""
+        [ -z "$fRMCompileCommandsJson" ] && excludeOpts="--exclude=$fCompileCommandsJson"
+        
+        local cleanCmd="git clean -fdx $excludeOpts"
+        echo -e "$USER_NOTATION Running: ${BLUE}$cleanCmd${RESET}"
+        eval "$cleanCmd"
+        
+        # Also clean submodules
+        echo -e "$USER_NOTATION ${CYAN}Cleaning submodules...${RESET}"
+        git submodule foreach --recursive git clean -fdx
+        
+        echo -e "$USER_NOTATION ${MAGENTA}Deep clean completed.${RESET}"
     else
-        echo -e "$USER_NOTATION ${COLOR}Cleaned the working directory successfully.${RESET}"
+        # Standard make clean
+        local cleanCmd="./build.sh -C"
+        echo -e "$USER_NOTATION Running: ${BLUE}$cleanCmd${RESET}"
+        sleep 1
+        COLOR=$MAGENTA
+        eval "$cleanCmd"
+        if [[ $? -ne 0 ]]; then
+            echo -e "$USER_NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
+            echo -e "$USER_NOTATION ${RESET}But going on anyway${RESET}"
+        else
+            echo -e "$USER_NOTATION ${COLOR}Cleaned the build successfully.${RESET}"
+        fi
+
+        # Remove compile_commands.json if requested
+        if [ -n "$fRMCompileCommandsJson" ] && [ -f "$fCompileCommandsJson" ]; then
+            echo -e "$USER_NOTATION Removing ${CYAN}$fCompileCommandsJson${RESET}"
+            rm -f "$fCompileCommandsJson"
+        fi
     fi
 }
 
-runConfigure() {
-    if [[ -z "$fRunConfigure" ]]; then
-        return
+updateSubmodules() {
+    # Only update submodules when building
+    [ -z "$fNeedBuild" ] && return
+    cd "$fWorkingDir" || exit
+
+    # Check if submodules are initialized by looking for a key file
+    if [[ ! -f "shared/glib/glib.mak" ]]; then
+        echo -e "$USER_NOTATION ${CYAN}Initializing submodules (first time)...${RESET}"
+        git submodule update --init --recursive
+    else
+        echo -e "$USER_NOTATION ${CYAN}Updating submodules...${RESET}"
+        git submodule update --recursive
     fi
+
+    if [[ $? -ne 0 ]]; then
+        echo -e "$USER_NOTATION ${RED}Warning: Submodule update failed${RESET}"
+    fi
+}
+
+runBuildCommands() {
+    [ -z "$fNeedBuild" ] && return
+    cd "$fWorkingDir" || exit
+
+    local buildCommand="./build.sh -d $fBuildModel -c $fNumOfJobs"
+    [ -n "$fVerbose" ] && buildCommand+=" -v"
+    [ -n "$fGenerateCompileCmds" ] && buildCommand+=" --bear"
+
+    local currAttempt=1
+    local maxAttempt=$fMaxBuildAttempt
+    local buildStartTime buildEndTime
+    local eval_status=1
+
+    while [[ $currAttempt -le $maxAttempt ]]; do
+        buildStartTime=$(date +%s)
+        COLOR="$GREEN"
+        echo -e "$USER_NOTATION Running: ${LIGHTYELLOW}$buildCommand${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Build attempt $currAttempt/$maxAttempt${RESET}"
+        sleep 1
+
+        eval "$buildCommand"
+        eval_status=$?
+
+        if [[ $eval_status -eq 0 ]]; then
+            break
+        else
+            currAttempt=$((currAttempt + 1))
+        fi
+    done
+    buildEndTime=$(date +%s)
+
+    if [[ $eval_status -ne 0 ]]; then
+        COLOR="$MAGENTA"
+        echo -e "$USER_NOTATION ${COLOR}Build failed.${RESET}"
+        exit 1
+    fi
+
+    local buildTime=$((buildEndTime - buildStartTime))
+    local hours=$((buildTime / 3600))
+    local minutes=$((buildTime % 3600 / 60))
+    local seconds=$((buildTime % 60))
+    fBuildTimeFormatted="${seconds}s"
+
+    if [[ $minutes -gt 0 ]]; then
+        fBuildTimeFormatted="${minutes}m${fBuildTimeFormatted}"
+    fi
+
+    if [[ $hours -gt 0 ]]; then
+        fBuildTimeFormatted="${hours}h${fBuildTimeFormatted}"
+    fi
+
+    echo "$USER_NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
+}
+
+linkCompileDatabase() {
+    [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkCompileDb" ] && return
+    cd "$fWorkingDir" || exit
+
+    local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
+    local targetLink="$fWorkingDir/compile_commands.json"
+    local clangdSource="/labhome/pexiang/myGit/crosslv/assets/.clangd"
+    local clangdTarget="$fWorkingDir/.clangd"
+
+    # Link compile_commands.json
+    # Skip if link already exists and points to correct target (only for --link, not --bear)
+    if [ -n "$fLinkCompileDb" ] && [ -z "$fGenerateCompileCmds" ]; then
+        if [[ -L "$targetLink" && "$(readlink "$targetLink")" == "$dbFile" ]]; then
+            echo -e "$USER_NOTATION ${GREEN}Link already exists:${RESET} compile_commands.json -> $dbFile"
+        else
+            if [[ -f "$dbFile" ]]; then
+                echo -e "$USER_NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
+                ln -sf "$dbFile" "$targetLink"
+                echo -e "$USER_NOTATION Created: ${GREEN}compile_commands.json${RESET} -> ${BLUE}$dbFile${RESET}"
+            else
+                echo -e "$USER_NOTATION ${RED}Warning: Compile database not found: $dbFile${RESET}"
+            fi
+        fi
+    else
+        if [[ -f "$dbFile" ]]; then
+            echo -e "$USER_NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
+            ln -sf "$dbFile" "$targetLink"
+            echo -e "$USER_NOTATION Created: ${GREEN}compile_commands.json${RESET} -> ${BLUE}$dbFile${RESET}"
+        else
+            echo -e "$USER_NOTATION ${RED}Warning: Compile database not found: $dbFile${RESET}"
+        fi
+    fi
+
+    # Link .clangd config
+    if [[ -L "$clangdTarget" && "$(readlink "$clangdTarget")" == "$clangdSource" ]]; then
+        echo -e "$USER_NOTATION ${GREEN}Link already exists:${RESET} .clangd -> $clangdSource"
+    elif [[ -f "$clangdSource" ]]; then
+        ln -sf "$clangdSource" "$clangdTarget"
+        echo -e "$USER_NOTATION Created: ${GREEN}.clangd${RESET} -> ${BLUE}$clangdSource${RESET}"
+    else
+        echo -e "$USER_NOTATION ${RED}Warning: .clangd config not found: $clangdSource${RESET}"
+    fi
+}
+
+rmWriteFromJson() {
+    [ -z "$fNeedBuild" ] && return
+
+    COLOR=$MAGENTA
+    local jsonFile=$fCompileCommandsJson
+    local jsonPath=$fWorkingDir/$jsonFile
+    if [[ -f "$jsonPath" ]]; then
+        if [[ -w "$jsonPath" ]]; then
+            echo -e "$USER_NOTATION ${COLOR}$jsonPath is writable${RESET}"
+            echo -e "$USER_NOTATION ${COLOR}Remove the write privilege of $jsonPath${RESET}"
+            chmod -w "$jsonPath"
+        else
+            echo -e "$USER_NOTATION ${COLOR}$jsonPath is read-only${RESET}"
+        fi
+    fi
+}
+
+###############################################################################
+# FORTINET-SPECIFIC FUNCTIONS (Reserved for future use)
+# These functions are not called for GOLAN platform
+###############################################################################
+
+checkCmdAvailability() {
+    if ! command -v "$1" &> /dev/null; then
+        echo -e "$USER_NOTATION ${RED}Error: Command $1 not found.${RESET}"
+        exit 1
+    fi
+}
+
+# Run Fortinet Configure with expect automation
+runFortnetConfigure() {
+    [[ "$fPlatform" != "FORTINET" ]] && return
+    [[ -z "$fRunConfigure" ]] && return
 
     checkCmdAvailability "expect"
     checkCmdAvailability "get_credentials"
@@ -450,36 +514,17 @@ runConfigure() {
         exit 1
     fi
 
-    # OPTIONS
-    #        -h                Usage
-    #        -z                Usage, with advanced options
-    #        -m model_name     Specify model name
-    #        -d y/n/ccy/cg/p/d Build debug version, release version, code coverage,
-    #                          callgrind-enabled version, perf-enabled version, read-only-demo version?
-    #        -c                Build code coverage image
-    #        -f y/n            Install /fortidev symlink
-    #        -O                Turn off compiler optimization
-    #        -S                Enable -fsanitize=address when compiling.
     COLOR=$BLUE
     local configParams="-m $fBuildModel -d y -c"
-    local sanitizerFlags=
-    [ -z "$fEnableOptimization" ] && configParams+=" -O"                     # Flag for optimization
-    [ "$fPlatform" == "FPX" ]     && sanitizerFlags=" -S n"                  # Flag for AddressSanitizer
-    [ -n "$fAddressSanitizer" ]   && sanitizerFlags=" -S $fAddressSanitizer" # Flag for AddressSanitizer
-    [ -n "$sanitizerFlags" ]      && configParams+="$sanitizerFlags"         # The ultimate Configure params
-
     CONFIGURE_CMD="./Configure $configParams"
     echo -e "$USER_NOTATION Running Configure: ${COLOR}$CONFIGURE_CMD${RESET}"
     COLOR=$MAGENTA
     echo -e "$USER_NOTATION ${COLOR}Spawning a new bash session${RESET}"
     sleep 1
 
-    # expect -d -c "
     expect -c "
         set config_bash_prompt \"$ \"
-
         log_user 1
-        # exp_internal 1
         spawn -noecho bash
 
         expect \"\$config_bash_prompt\"
@@ -502,8 +547,6 @@ runConfigure() {
                 exp_continue
             }
             \"\$config_bash_prompt\" {
-                # log_user 0
-                # send \"exit\r\"
                 send \"\x04\r\"
             }
             {\[Yn\]:} {
@@ -530,136 +573,15 @@ runConfigure() {
     fi
 }
 
-runBuildCommands() {
-    [ -z $fNeedBuild ] && return
-    cd "$fWorkingDir" || exit
-
-    local plainMakeCommand="make -j$fNumOfJobs $fBuildTarget"
-    if [ -n "$fRebuildKernel" ]; then
-        plainMakeCommand="make kernel_only && $plainMakeCommand"
-    fi
-    local makeCommand="$plainMakeCommand"
-
-    local currAttempt=1
-    local maxAttempt=$fMaxBuildAttempt
-    local buildStartTime buildEndTime
-    while [[ $currAttempt -le $maxAttempt ]]; do
-        # Prepare the make command
-        if [ -n "$fGenerateCompileCmds" ]; then
-            # Use Bear to generate compile_commands.json
-            local pathOfBearLib=
-            local wrapperCmd=
-            if [ -n "$fUseBear" ] && [[ "$currAttempt" -eq 1 ]]; then
-                wrapperCmd="/bin/bear"
-                if [ ! -x "$wrapperCmd" ]; then
-                    echo -e "$USER_NOTATION ${CYAN}Installing Bear...${RESET}"
-                    sudo DEBIAN_FRONTEND=noninteractive apt install bear -y
-                fi
-                pathOfBearLib=$(find /usr/lib/ -name libexec.so | head -n 1)
-                if [ -n "$pathOfBearLib" ]; then
-                    wrapperCmd="$wrapperCmd --library $pathOfBearLib --"
-                else
-                    echo -e "$USER_NOTATION ${CYAN}Failed to find libexec.so.${RESET}"
-                    exit 1
-                fi
-            else
-                # Failback to use bear 2.4.3 and libear.so which is compiled by glibc.so.2.31
-                if [ ! -x "$HOME/.usr/bin/bear" ]; then
-                    echo -e "$USER_NOTATION ${CYAN}Failed to find $HOME/.usr/bin/bear...${RESET}"
-                    exit 1
-                fi
-                pathOfBearLib="$HOME/.usr/lib/libear.so"
-                if [ ! -f "$pathOfBearLib" ]; then
-                    echo -e "$USER_NOTATION ${CYAN}Failed to find $pathOfBearLib...${RESET}"
-                    exit 1
-                fi
-                wrapperCmd="$HOME/.usr/bin/bear --libear $pathOfBearLib"
-            fi
-            makeCommand="$wrapperCmd $plainMakeCommand"
-        fi
-
-        # Loop to build the projects
-        buildStartTime=$(date +%s)
-        COLOR="$GREEN"
-        echo -e "$USER_NOTATION Running build commands: ${LIGHTYELLOW}$makeCommand${RESET}"
-        echo -e "$USER_NOTATION ${COLOR}Build attempt $currAttempt/$maxAttempt${RESET}"
-        sleep 2
-
-        eval "$makeCommand"
-        eval_status=$?
-
-        if [[ $eval_status -eq 0 ]]; then
-            break
-        else
-            currAttempt=$((currAttempt + 1))
-        fi
-    done
-    buildEndTime=$(date +%s)
-
-    if [[ $eval_status -ne 0 ]]; then
-        COLOR="$MAGENTA"
-        echo -e "$USER_NOTATION ${COLOR}Build projects failed.${RESET}"
-        echo -e "$USER_NOTATION ${CYAN}Search for error: to find the error message.${RESET}"
-        exit 1
-    fi
-
-    local buildTime=$((buildEndTime - buildStartTime))
-    local hours=$((buildTime / 3600))
-    local minutes=$((buildTime % 3600 / 60))
-    local seconds=$((buildTime % 60))
-    fBuildTimeFormatted="${seconds}s"
-
-    if [[ $minutes -gt 0 ]]; then
-        fBuildTimeFormatted="${minutes}m${fBuildTimeFormatted}"
-    fi
-
-    if [[ $hours -gt 0 ]]; then
-        fBuildTimeFormatted="${hours}h${fBuildTimeFormatted}"
-    fi
-
-    echo "$USER_NOTATION Congratulations! You have built projects successfully at $(getCurrentTime) for $fBuildTimeFormatted"
-}
-
-rmWriteFromJson() {
-    [ -z $fNeedBuild ] && return
-
-    COLOR=$MAGENTA
-    local jsonFile=$fCompileCommandsJson
-    local jsonPath=$fWorkingDir/$jsonFile
-    # Remove the write privilege of compile_commands.json if it is writable
-    if [[ -f "$jsonPath" ]]; then
-        if [[ -w "$jsonPath" ]]; then
-            echo -e "$USER_NOTATION ${COLOR}$jsonPath is writable${RESET}"
-            echo -e "$USER_NOTATION ${COLOR}Remove the write privilege of $jsonPath${RESET}"
-            chmod -w "$jsonPath"
-            if [[ $? -ne 0 ]]; then
-                echo -e "$USER_NOTATION ${COLOR}Failed to remove the write privilege of $jsonPath${RESET}"
-                exit 1
-            fi
-        else
-            echo -e "$USER_NOTATION ${COLOR}$jsonPath is read-only${RESET}"
-        fi
-    else
-        echo -e "$USER_NOTATION ${COLOR}No $jsonFile found in $fWorkingDir${RESET}"
-        if [ -n "$fGenerateCompileCmds" ]; then
-            echo -e "$USER_NOTATION ${COLOR}Please check the generate compile command${RESET}"
-            exit 1
-        fi
-    fi
-}
-
-runSyncCommands() {
-    if [[ -z "$fSyncTarget" ]]; then
-        return
-    fi
+# Sync image to Fortinet device with expect automation
+runFortinetSync() {
+    [[ "$fPlatform" != "FORTINET" ]] && return
+    [[ -z "$fSyncTarget" ]] && return
 
     if ! ping -c 1 -W 1 "$fSyncTarget" &> /dev/null; then
         echo -e "$USER_NOTATION ${MAGENTA}Host $fSyncTarget not reachable${RESET}"
         exit 1
     fi
-
-    local loginTool="jssh"
-    checkCmdAvailability "$loginTool"
 
     local syncFile=
     local syncFiles=()
@@ -671,14 +593,11 @@ runSyncCommands() {
             exit 1
         fi
     else
-        # Otherwise, search for the file in the working directory
-        # The -t option tells mapfile to strip the trailing newlines from each line it reads.
         mapfile -t syncFiles < <(find "$fWorkingDir" -name "$fSyncFile")
         if [[ ${#syncFiles[@]} -eq 0 ]]; then
             echo -e "$USER_NOTATION ${MAGENTA}$fSyncFile not found in $fWorkingDir${RESET}"
             exit 1
         fi
-        # Only sync the first file that is found.
         syncFile="${syncFiles[0]}"
     fi
 
@@ -688,34 +607,21 @@ runSyncCommands() {
 
     maxSyncRetries=3
     ESUCCESS=0
-    EMAXTRIES=$(($maxSyncRetries + 1))    # 4
-    ETIMEOUT=$(($maxSyncRetries + 2))     # 5
-    EFAILED=$(($maxSyncRetries + 3))      # 6
-    EPERMDENIED=$(($maxSyncRetries + 4))  # 7
-    # If not use escape for $i, it will be replaced by the value of $i, since it is in the bash environment.
-    # But \$i will keep as $i in the expect script generated.
-    # expect -d -c "
+    EMAXTRIES=$(($maxSyncRetries + 1))
+    ETIMEOUT=$(($maxSyncRetries + 2))
+    EFAILED=$(($maxSyncRetries + 3))
+    EPERMDENIED=$(($maxSyncRetries + 4))
+
     expect -c "
-        # Set the initial values
         set defaultTimeout 1200
         set adjustTimeout 0
         set waitBeforeRetry 10
         set passwd_prompt_cnt 0
 
         set RESET       \"\033\[0m\"
-        set BOLD        \"\033\[1m\"
-        set RED         \"\033\[31m\"
-        set GREEN       \"\033\[32m\"
-        set LIGHTGREEN  \"\033\[92m\"
-        set YELLOW      \"\033\[33m\"
-        set LIGHTYELLOW \"\033\[93m\"
-        set BLUE        \"\033\[34m\"
         set MAGENTA     \"\033\[35m\"
-        set CYAN        \"\033\[36m\"
-        set GREY        \"\033\[90m\"
         set COLOR       \$MAGENTA
 
-        # Loop to sync the file
         for {set i 1} {\$i <= $maxSyncRetries} {incr i} {
             puts stderr \"$USER_NOTATION Sync attempt \${COLOR}\$i/$maxSyncRetries\${RESET}\"
             spawn -noecho scp -P $fSyncPort $syncFile ${fSyncUsername}@${fSyncTarget}:/fgt-image
@@ -744,31 +650,21 @@ runSyncCommands() {
                     exp_continue
                 }
                 \"Host key verification failed.\" {
-                    set COLOR \$LIGHTYELLOW
-                    puts stderr \"$USER_NOTATION \${COLOR}Host key verification failed. Updating known_hosts ...\${RESET}\"
-                    puts stderr \"$USER_NOTATION \${COLOR}ssh-keygen -R $fSyncTarget\${RESET}\"
+                    puts stderr \"$USER_NOTATION Host key verification failed. Updating known_hosts ...\"
                     system \"ssh-keygen -R $fSyncTarget\"
-                    puts stderr \"$USER_NOTATION \${COLOR}Host key removed from known_hosts file.\${RESET}\n\"
-                    puts stderr \"$USER_NOTATION Retrying SCP immediately...\"
-                    set COLOR \$MAGENTA
+                    puts stderr \"$USER_NOTATION Host key removed. Retrying...\"
                     continue
                 }
                 -re {Connection refused|No route to host} {
                     set adjustTimeout -1
                     puts stderr \"$USER_NOTATION Waiting for \$waitBeforeRetry seconds before retrying ...\"
                     sleep \$waitBeforeRetry
-                    # Exponential backoff
                     set waitBeforeRetry [expr {\$waitBeforeRetry * 2}]
                     continue
                 }
                 \"501-Permission Denied\" {
-                    puts stderr \"$USER_NOTATION Permission Denied. Please enable \${COLOR}admin-scp\${RESET} under \${COLOR}config system global\${RESET}\"
+                    puts stderr \"$USER_NOTATION Permission Denied. Please enable admin-scp under config system global\"
                     exit $EPERMDENIED
-                }
-                \"check image error\" {
-                    puts stderr \"$USER_NOTATION Check image error. Action aborted.\"
-                    puts stderr \"$USER_NOTATION Please check if the model of the image matches the target machine.\"
-                    exit $EFAILED
                 }
                 \"100-update image completed\" {
                     puts stderr \"$USER_NOTATION 100-update image completed. Action completed.\"
@@ -776,10 +672,6 @@ runSyncCommands() {
                 }
                 \"Command fail\" {
                     puts stderr \"$USER_NOTATION Command fail. Action aborted.\"
-                    exit $EFAILED
-                }
-                \"lost connection\" {
-                    puts stderr \"$USER_NOTATION Lost connection. Action aborted.\"
                     exit $EFAILED
                 }
                 timeout {
@@ -796,133 +688,39 @@ runSyncCommands() {
     "
 
     retValue=$?
-    [[ $retValue -ne 0 ]] && echo "$USER_NOTATION Sync return value: $retValue"
-
     case $retValue in
         "$ESUCCESS")
             COLOR=$MAGENTA
             echo -e "$USER_NOTATION You have synced $fSyncFile to $fSyncTarget successfully at $(getCurrentTime)"
-            if ! command -v $loginTool &> /dev/null; then
-                echo -e "$USER_NOTATION ${COLOR}Login tool $loginTool not found${RESET}"
-                exit 1
-            fi
-
-            echo -e "$USER_NOTATION Invoking ${LIGHTGREEN}$loginTool${RESET} to login to $fSyncTarget and wait for it to reboot"
-            $loginTool -P "$fSyncPort" -l "$fSyncUsername" -p "$fSyncPassword" -t "$fSyncTarget"
-            if [[ $? -ne 0 ]]; then
-                echo "$USER_NOTATION $loginTool run failed. Please check the server status manually."
-                exit 1
-            else
-                echo -ne "$USER_NOTATION Target ${MAGENTA}$fSyncTarget${RESET} started to reboot at $(getCurrentTime)"
-                if [ -n "$fBuildTimeFormatted" ]; then
-                    echo -e " (BT: ${LIGHTYELLOW}$fBuildTimeFormatted${RESET})"
-                else
-                    echo
-                fi
-                exit 0
-            fi
             ;;
         "$EMAXTRIES")
-            echo "$USER_NOTATION Failed to sync $fSyncFile to $fSyncTarget after $maxSyncRetries attempts"
+            echo "$USER_NOTATION Failed to sync after $maxSyncRetries attempts"
             exit $EMAXTRIES
             ;;
-        "$EPERMDENIED")
-            echo -e "$USER_NOTATION ${LIGHTYELLOW}Enabling the admin-scp for you intelligently${RESET}"
-            expect -c "
-                set RESET       \"\033\[0m\"
-                set BOLD        \"\033\[1m\"
-                set RED         \"\033\[31m\"
-                set GREEN       \"\033\[32m\"
-                set LIGHTGREEN  \"\033\[92m\"
-                set YELLOW      \"\033\[33m\"
-                set LIGHTYELLOW \"\033\[93m\"
-                set BLUE        \"\033\[34m\"
-                set MAGENTA     \"\033\[35m\"
-                set CYAN        \"\033\[36m\"
-                set GREY        \"\033\[90m\"
-                set COLOR       \$MAGENTA
-
-                set has_vdom 0
-                spawn -noecho ssh -p $fSyncPort $fSyncUsername@$fSyncTarget
-                expect {
-                    -nocase {Password:} {
-                        send \"$fSyncPassword\r\"
-                        exp_continue
-                    }
-                    -re {$fPoundPattern} {
-                        # just pass
-                    }
-                    timeout {
-                        puts stderr \"$USER_NOTATION Timeout. Action aborted.\"
-                        exit $ETIMEOUT
-                    }
-                }
-
-                send \"config global\r\"
-                expect {
-                    -re {Command fail.|not found,} {
-                        puts stderr \"$USER_NOTATION \${BLUE}This device does not support vdom. Roll back to normal mode.\${RESET}\"
-                    }
-                    -re {$fPoundPattern} {
-                        set has_vdom 1
-                    }
-                    timeout {
-                        puts stderr \"$USER_NOTATION Timeout. Action aborted.\"
-                        exit $ETIMEOUT
-                    }
-                }
-
-                send \"config system global\r\"
-                expect -re {$fPoundPattern}
-                send \"set admin-scp enable\r\"
-                expect -re {$fPoundPattern}
-
-                send \"end\r\"
-                expect -re {$fPoundPattern}
-                if {\$has_vdom != 0} {
-                    send \"end\r\"
-                    expect -re {$fPoundPattern}
-                }
-
-                send \"exit\r\"
-                expect eof
-            "
-            echo -e "$USER_NOTATION ${MAGENTA}Please re-run the sync command again.${RESET}"
-            exit $ESUCCESS
-            ;;
         "$ETIMEOUT")
-            echo "$USER_NOTATION Timeout to sync $fSyncFile to $fSyncTarget"
+            echo "$USER_NOTATION Timeout syncing to $fSyncTarget"
             exit $ETIMEOUT
             ;;
         *)
-            echo "$USER_NOTATION Failed to sync $fSyncFile to $fSyncTarget"
+            echo "$USER_NOTATION Failed to sync to $fSyncTarget"
             exit $EFAILED
             ;;
     esac
 }
 
-switchFortidev() {
-    if [ "$fPlatform" == "FPX" ]; then
-        if command -v jdev &> /dev/null; then
-            echo -e "$USER_NOTATION Invoking ${LIGHTGREEN}jdev${RESET} to switch to Fortidev 6"
-            jdev -6
-        else
-            echo -e "$USER_NOTATION ${LIGHTYELLOW}jdev is not installed. Skipping.${RESET}"
-            exit
-        fi
-    fi
-}
+###############################################################################
+# END OF FORTINET-SPECIFIC FUNCTIONS
+###############################################################################
 
-main () {
+main() {
     preConfigure "$@"
     showLogo
     printBuildFlags
     cleanTheRepo
-    switchFortidev # Only needed for building FPX temporary
-    runConfigure
+    updateSubmodules
     runBuildCommands
+    linkCompileDatabase
     rmWriteFromJson
-    runSyncCommands
 }
 
 main "$@"

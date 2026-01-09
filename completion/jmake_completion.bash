@@ -17,25 +17,17 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -m -d -w -j -c -C -B -o -t -s -P -p -u -l -k -O -S -D"
+    opts="-h -m -j -w -C -o -D -v -l"
 
     # List of all long options
-    long_opts="--help --model --debug --bear --working-dir --jobs --clean --configure \
-               --build-target --build --clean-removal --max-build-attempt \
-               --target --sync-file --sync-port --username --password --kernel \
-               --optimization --address-sanitizer"
-
-    # Function to get hosts from /etc/hosts
-    _get_hosts() {
-        awk '/^[^#]/ { print $2 }' /etc/hosts
-    }
+    long_opts="--help --model --jobs --working-dir --clean --clean-removal \
+               --git-clean --build --bear --debug --max-attempt --verbose --list --link"
 
     # Handle option arguments
     case $prev in
-        # Build options
         -m|--model)
-            # You can customize this list based on your available models
-            local models="vmware FGT_VM64_KVM VMWARE"
+            # GOLAN supported models
+            local models="arava viper tamar carmel mustang gilboa argaman alpine"
             COMPREPLY=( $(compgen -W "${models}" -- ${cur}) )
             return 0
             ;;
@@ -44,68 +36,27 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -d -- ${cur}) )
             return 0
             ;;
-        -S|--address-sanitizer)
-            # Suggest some common options
-            local options="y n yes no"
-            COMPREPLY=( $(compgen -W "${options}" -- ${cur}) )
-            return 0
-            ;;
         -j|--jobs)
-            # Suggest some common numbers of jobs
-            local jobs="1 2 4 8 16"
+            # Suggest common numbers of parallel jobs
+            local jobs="1 2 4 8 16 32"
             COMPREPLY=( $(compgen -W "${jobs}" -- ${cur}) )
             return 0
             ;;
-        -B|--build-target)
-            # Common build targets
-            local targets="image.out"
-            COMPREPLY=( $(compgen -W "${targets}" -- ${cur}) )
-            return 0
-            ;;
-        -T|--max-build-attempt)
-            # Suggest some common numbers for max attempts
+        --max-attempt)
+            # Suggest common numbers for max attempts
             local attempts="1 2 3"
             COMPREPLY=( $(compgen -W "${attempts}" -- ${cur}) )
-            return 0
-            ;;
-        # Sync options
-        -t|--target)
-            COMPREPLY=( $(compgen -W "$(_get_hosts)" -- ${cur}) )
-            return 0
-            ;;
-        -s|--sync-file)
-            # -f is for filenames
-            # -X '!*.out' excludes files without .out extension
-            COMPREPLY=( $(compgen -f -X '!*.out' -- ${cur}) )
-            return 0
-            ;;
-        -P|--sync-port)
-            # Common SSH ports
-            local ports="22 8822 8022"
-            COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
-            return 0
-            ;;
-        -l|-u|--username)
-            # Common FortiGate usernames
-            local users="admin corsair root"
-            COMPREPLY=( $(compgen -W "${users}" -- ${cur}) )
-            return 0
-            ;;
-        -p|--password)
-            # For security reasons, don't suggest passwords
             return 0
             ;;
     esac
 
     # Handle initial options
     if [[ ${cur} == -* ]]; then
-        # If it starts with --, only suggest long options
         if [[ ${cur} == --* ]]; then
+            # Only suggest long options
             COMPREPLY=( $(compgen -W "${long_opts}" -- ${cur}) )
         else
-            # Suggest both short and long options
-            # COMPREPLY=( $(compgen -W "${opts} ${long_opts}" -- ${cur}) )
-            # Suggest only short options
+            # Suggest short options
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
         fi
         return 0
