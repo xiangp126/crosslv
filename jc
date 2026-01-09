@@ -2405,9 +2405,9 @@ configureTcpdumpCaps() {
         echo -e "${GREEN}Successfully set capabilities on '$tcpdumpPath'.${RESET}"
         echo -e "${LIGHTYELLOW}Normal users should now be able to run tcpdump for packet capture.${RESET}"
     else
-        echo -e "${LIGHTYELLOW}⚠ Could not set capabilities on tcpdump binary.${RESET}"
-        echo -e "${GREY}  This may be due to filesystem limitations, AppArmor, or SELinux.${RESET}"
-        echo -e "${GREY}  Use 'sudo tcpdump' for packet capture on this system.${RESET}"
+        echo -e "${LIGHTYELLOW}🔸 Could not set capabilities on tcpdump binary.${RESET}"
+        echo -e "${GREY}   This may be due to filesystem limitations, AppArmor, or SELinux.${RESET}"
+        echo -e "${GREY}   Use 'sudo tcpdump' for packet capture on this system.${RESET}"
         return 0
     fi
 
