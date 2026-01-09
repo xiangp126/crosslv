@@ -638,13 +638,13 @@ macInstallApps() {
 
     echo -e "${COLOR}Updating Apps for MacOS${RESET}"
     brew update
-    
+
     # Unlink old bash-completion if installed (conflicts with bash-completion@2)
     # if brew list bash-completion &>/dev/null; then
     #     echo -e "${GREY}Unlinking old bash-completion...${RESET}"
     #     brew unlink bash-completion
     # fi
-    
+
     brew install "${appsForMac[@]}"
 }
 
