@@ -1097,7 +1097,7 @@ relinkSysCmds() {
 
 createMacOSBashProfile() {
     echo -e "${COLOR}Creating macOS bash_profile${RESET}"
-    linkFile "$fMainDir/readonly/bash_profile" "$HOME" ".bash_profile"
+    linkFile "$fTKFilesDir/bash_profile" "$HOME" ".bash_profile"
 }
 
 setMacOSDefaultShell() {
