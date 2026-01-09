@@ -15,7 +15,7 @@ fNeedBuild=
 fPrintBuildFlags=
 fGitClean=
 fGitDeepClean=
-fVerbose=
+fVerbose=true
 fInputCmd=
 fBuildTimeFormatted=
 # Git associated variables
@@ -76,7 +76,7 @@ Build Flags:
         --clean-removal         Also remove $fCompileCommandsJson during clean
         --git-clean             Deep clean using git clean -fdx (preserves submodules)
     -o, --build                 Run build commands (implies -C)
-    -v, --verbose               Show full compilation output (default: only errors)
+        --no-verbose            Suppress full compilation output (default: verbose)
 
 Build Options:
     --bear                      Generate compile_commands.json (implies -C -o)
@@ -94,10 +94,10 @@ Supported Models:
     $GOLAN_MODELS
 
 Examples:
-    $SCRIPT_NAME -o                        # Build mustang (default, quiet mode)
-    $SCRIPT_NAME -v -o                     # Build with full output
+    $SCRIPT_NAME -o                        # Build mustang (default, verbose)
+    $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
     $SCRIPT_NAME -C -m mustang -o          # Clean and build mustang
-    $SCRIPT_NAME --bear -m gilboa -o       # Build gilboa with compile_commands.json
+    $SCRIPT_NAME --bear -m gilboa          # Build gilboa with compile_commands.json
 
 _EOF
     exit 0
@@ -114,8 +114,8 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hCom:j:w:Dvl"
-LONGOPTS="help,clean,debug,bear,build,clean-removal,git-clean,model:,jobs:,working-dir:,max-build-attempt:,verbose,list,link"
+SHORTOPTS="hCom:j:w:Dl"
+LONGOPTS="help,clean,debug,bear,build,clean-removal,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -178,8 +178,8 @@ while true; do
             fGitClean=true  # --bear implies -C and -o
             shift
             ;;
-        -v|--verbose)
-            fVerbose=true
+        --no-verbose)
+            fVerbose=
             shift
             ;;
         -l|--list)
@@ -283,7 +283,7 @@ printBuildFlags() {
         [ -n "$fGitClean" ]              && echo -e "[C] ${COLOR}Clean${RESET} the build"
         [ -n "$fGitDeepClean" ]          && echo -e "[G] ${COLOR}Git deep clean${RESET} (git clean -fdx)"
         [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
-        [ -n "$fVerbose" ]               && echo -e "[v] ${COLOR}Verbose${RESET} output enabled"
+        [ -z "$fVerbose" ]               && echo -e "[q] ${COLOR}Quiet${RESET} mode (--no-verbose)"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} existing $fCompileCommandsJson"
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} compile_commands.json"
         [ -n "$fLinkCompileDb" ]         && echo -e "[L] ${COLOR}Link${RESET} compile_commands.json for clangd"
@@ -371,7 +371,7 @@ runBuildCommands() {
     cd "$fWorkingDir" || exit
 
     local buildCommand="./build.sh -d $fBuildModel -c $fNumOfJobs"
-    [ -n "$fVerbose" ] && buildCommand+=" -v"
+    [ -n "$fVerbose" ] && buildCommand+=" --verbose"
     [ -n "$fGenerateCompileCmds" ] && buildCommand+=" --bear"
 
     local currAttempt=1
