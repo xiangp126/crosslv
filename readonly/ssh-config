@@ -8,11 +8,13 @@
 # Read more about SSH config files: https://linux.die.net/man/5/ssh_config
 Host remotedev
     HostName 172.16.67.180
-    User login_user
+    User corsair
     Port 22
     IdentityFile C:\Users\login_user\.ssh\id_rsa
-    ServerAliveInterval 60
-    ServerAliveCountMax 3
+    ServerAliveInterval 30
+    ServerAliveCountMax 5
+    TCPKeepAlive yes
+    ConnectionAttempts 3
     ForwardX11 yes
     ForwardX11Trusted yes
 Host client3
@@ -21,7 +23,8 @@ Host client3
     Port 22
     IdentityFile C:\Users\login_user\.ssh\id_rsa
     ProxyJump remotedev
-    ServerAliveInterval 60
-    ServerAliveCountMax 3
+    ServerAliveInterval 30
+    ServerAliveCountMax 5
+    TCPKeepAlive yes
     ForwardX11 yes
     ForwardX11Trusted yes
