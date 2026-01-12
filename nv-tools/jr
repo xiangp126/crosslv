@@ -33,10 +33,15 @@ This script requires the following dependencies:
 - rg (ripgrep)
 - fzf (fuzzy finder)
 - bat (cat replacement)
-- xsel (clipboard manager)
+- xsel (clipboard manager, Linux with X11) or pbpaste/pbcopy (macOS)
 - code/vim
 
 Run this script with the --check-depends option to check if these dependencies are installed.
+
+Clipboard support:
+- macOS (local): Uses pbpaste/pbcopy natively
+- macOS -> Linux (SSH): Use XQuartz with X11 forwarding (ssh -X) for xsel support
+- Windows -> Linux (SSH): Use XLaunch/VcXsrv with X11 forwarding for xsel support
 
 Options:
     -h, --help               Print this help message
@@ -127,9 +132,16 @@ parseOptions() {
 
 checkDepends() {
     local missingDeps=()
-    local depends=("rg" "fzf" "bat" "xsel" "$fEditor")
+    local depends=("rg" "fzf" "bat" "$fEditor")
     local depStatus
     local depVersion
+
+    # Add OS-specific clipboard dependency
+    if [[ "$(uname)" == "Darwin" ]]; then
+        depends+=("pbpaste" "pbcopy")
+    else
+        depends+=("xsel")
+    fi
 
     echo -e "${COLOR}Checking dependencies...${RESET}"
 
@@ -137,9 +149,14 @@ checkDepends() {
         if command -v "$dep" &>/dev/null; then
             depStatus="${BLUE}[FOUND]${RESET}"
             # Try to get version, handle errors gracefully
-            depVersion=$($dep --version 2>&1 | head -n 1)
-            if [[ $? -ne 0 || -z "$depVersion" ]]; then
-                depVersion="Version info unavailable"
+            # pbpaste/pbcopy don't support --version
+            if [[ "$dep" == "pbpaste" || "$dep" == "pbcopy" ]]; then
+                depVersion="(macOS built-in)"
+            else
+                depVersion=$($dep --version 2>&1 | head -n 1)
+                if [[ $? -ne 0 || -z "$depVersion" ]]; then
+                    depVersion="Version info unavailable"
+                fi
             fi
             echo -e "$dep: $depStatus $depVersion"
         else
@@ -162,37 +179,69 @@ checkDepends() {
     exit 0
 }
 
-# In X11, there are three primary selections (clipboard buffers):
+# Clipboard notes:
 #
-# 1. PRIMARY
-#    - Default selection in X11
-#    - Used for middle-click paste (Shift+Insert in terminals)
-#    - Example: Highlighting text automatically copies it to PRIMARY
+# macOS:
+#   - Uses pbpaste/pbcopy for clipboard access
+#   - Single unified clipboard (like Windows)
 #
-# 2. CLIPBOARD
-#    - Behaves like the traditional clipboard (Ctrl+C / Ctrl+V)
-#    - Used by most GUI applications (e.g., Firefox, LibreOffice)
-#
-# 3. SECONDARY
-#    - Rarely used, mainly for legacy applications
+# X11 (Linux with X server):
+#   There are three primary selections (clipboard buffers):
+#   1. PRIMARY
+#      - Default selection in X11
+#      - Used for middle-click paste (Shift+Insert in terminals)
+#      - Example: Highlighting text automatically copies it to PRIMARY
+#   2. CLIPBOARD
+#      - Behaves like the traditional clipboard (Ctrl+C / Ctrl+V)
+#      - Used by most GUI applications (e.g., Firefox, LibreOffice)
+#   3. SECONDARY
+#      - Rarely used, mainly for legacy applications
 GetClipboardContent() {
-    if [ -z "$fQuery" ] && [ -n "$DISPLAY" ]; then
-        fQuery=$(timeout $fXselTimeout xsel -o -p 2> /dev/null)
-        if [[ $? -ne 0 ]]; then
-            echo -e "${COLOR}Error: Failed to get PRIMARY clipboard content.${RESET}"
-            echo -e "${COLOR}Please check the status of the X server (XLaunch/VcXsrv on Windows).${RESET}"
-            exit 1
+    if [ -z "$fQuery" ]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            # macOS - use pbpaste (unified clipboard)
+            fQuery=$(pbpaste 2>/dev/null)
+            if [[ $? -ne 0 ]]; then
+                echo -e "${COLOR}Error: Failed to get clipboard content using pbpaste.${RESET}"
+                exit 1
+            fi
+            [ -n "$fQuery" ] && fQueryFromClipboard=true
+        elif [ -n "$DISPLAY" ]; then
+            # Linux with X11 - use xsel (PRIMARY selection)
+            fQuery=$(timeout $fXselTimeout xsel -o -p 2> /dev/null)
+            if [[ $? -ne 0 ]]; then
+                echo -e "${COLOR}Error: Failed to get PRIMARY clipboard content.${RESET}"
+                echo -e "${COLOR}Please check the status of the X server (XQuartz on Mac, XLaunch/VcXsrv on Windows).${RESET}"
+                exit 1
+            fi
+            [ -n "$fQuery" ] && fQueryFromClipboard=true
+        elif [ -n "$SSH_CONNECTION" ]; then
+            # SSH session without X11 forwarding - provide helpful message
+            echo -e "${COLOR}No clipboard access (SSH without X11 forwarding).${RESET}"
+            echo -e "${COLOR}Options:${RESET}"
+            echo -e "  1. Pass search term as argument: ${BOLD}jr \"search_term\"${RESET}"
+            echo -e "  2. Use X11 forwarding: ${BOLD}ssh -X${RESET} (requires XQuartz on Mac)"
+            echo ""
         fi
-        [ -n "$fQuery" ] && fQueryFromClipboard=true
     fi
 }
 
 ClearClipboard() {
     if [ -n "$fQueryFromClipboard" ]; then
-        timeout $fXselTimeout xsel -c -p 2> /dev/null
-        if [[ $? -ne 0 ]]; then
-            echo -e "${COLOR}Error: Failed to clear PRIMARY clipboard content${RESET}"
-            exit 1
+        if [[ "$(uname)" == "Darwin" ]]; then
+            # macOS - clear clipboard by writing empty string
+            echo -n "" | pbcopy 2>/dev/null
+            if [[ $? -ne 0 ]]; then
+                echo -e "${COLOR}Error: Failed to clear clipboard content${RESET}"
+                exit 1
+            fi
+        elif [ -n "$DISPLAY" ]; then
+            # Linux with X11 - use xsel
+            timeout $fXselTimeout xsel -c -p 2> /dev/null
+            if [[ $? -ne 0 ]]; then
+                echo -e "${COLOR}Error: Failed to clear PRIMARY clipboard content${RESET}"
+                exit 1
+            fi
         fi
     fi
 }
