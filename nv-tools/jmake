@@ -479,17 +479,16 @@ restoreWriteToJson() {
 
 removeWriteFromJson() {
     [ -z "$fNeedBuild" ] && return
+    cd "$fWorkingDir" || exit
 
-    COLOR=$MAGENTA
-    local jsonFile=$fCompileCommandsJson
-    local jsonPath=$fWorkingDir/$jsonFile
-    if [[ -f "$jsonPath" ]]; then
-        if [[ -w "$jsonPath" ]]; then
-            echo -e "$USER_NOTATION ${COLOR}$jsonPath is writable${RESET}"
-            echo -e "$USER_NOTATION ${COLOR}Remove the write privilege of $jsonPath${RESET}"
-            chmod -w "$jsonPath"
+    # Operate on the actual target file, not the symlink
+    local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
+    if [[ -f "$dbFile" ]]; then
+        if [[ -w "$dbFile" ]]; then
+            echo -e "$USER_NOTATION ${CYAN}Removing write privilege from $dbFile${RESET}"
+            chmod u-w "$dbFile"
         else
-            echo -e "$USER_NOTATION ${COLOR}$jsonPath is read-only${RESET}"
+            echo -e "$USER_NOTATION ${GREY}$dbFile is already read-only${RESET}"
         fi
     fi
 }
