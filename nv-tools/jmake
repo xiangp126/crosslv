@@ -464,7 +464,20 @@ linkCompileDatabase() {
     fi
 }
 
-rmWriteFromJson() {
+restoreWriteToJson() {
+    [ -z "$fGenerateCompileCmds" ] && return
+    cd "$fWorkingDir" || exit
+
+    # When using --bear, we need to restore write permission to the target JSON file
+    # because bear needs to write to it
+    local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
+    if [[ -f "$dbFile" && ! -w "$dbFile" ]]; then
+        echo -e "$USER_NOTATION ${CYAN}Restoring write permission to $dbFile for bear...${RESET}"
+        chmod u+w "$dbFile"
+    fi
+}
+
+removeWriteFromJson() {
     [ -z "$fNeedBuild" ] && return
 
     COLOR=$MAGENTA
@@ -718,9 +731,10 @@ main() {
     printBuildFlags
     cleanTheRepo
     updateSubmodules
+    restoreWriteToJson
     runBuildCommands
     linkCompileDatabase
-    rmWriteFromJson
+    removeWriteFromJson
 }
 
 main "$@"
