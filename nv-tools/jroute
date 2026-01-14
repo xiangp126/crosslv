@@ -8,16 +8,17 @@ fDryRun=""
 fNewGateway=""
 fNewGatewayIP=""
 # Constants
-USER_NOTATION="@@@@"
 BANNER1="---------------------------------"
 BANNER2="----------------------NOW----------------------"
 # Colors
 MAGENTA='\033[35m'
+CYAN='\033[36m'
 NORMAL='\033[0m'
 BOLD='\033[1m'
 BLUE='\033[34m'
 RESET='\033[0m'
 COLOR=$MAGENTA
+USER_NOTATION="${CYAN}▸${RESET}"
 
 # Gateway IP mappings: -A to declare an associative array
 declare -A gatewayIPs=(

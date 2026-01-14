@@ -35,7 +35,9 @@ mapfile -t credentials <<< "$credentials_output"
 ftntUser=${credentials[0]}
 ftntPasswd=${credentials[1]}
 
-USER_NOTATION="@@@@"
+CYAN='\033[36m'
+RESET='\033[0m'
+USER_NOTATION="${CYAN}▸${RESET}"
 SCRIPT_LOCATION="/tmp/indexing_repos"
 
 # check if the script exists
@@ -66,7 +68,7 @@ update_git_repo() {
         echo "$USER_NOTATION Fetching tags:"
         git fetch --tags
         if [ \$? -ne 0 ]; then
-            echo "@@@@ Error fetching tags. Aborting."
+            echo "$USER_NOTATION Error fetching tags. Aborting."
             exit 1
         fi
         echo "$USER_NOTATION Pulling the current branch: \$current_branch"

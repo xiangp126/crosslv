@@ -4,7 +4,6 @@
 
 # Constants
 SCRIPT_NAME=$(basename "$0")
-USER_NOTATION="@@@@"
 SEPARATOR_LT="=================================="
 SEPARATOR_RT="=================================="
 # Variables
@@ -27,6 +26,7 @@ LIGHTGREEN='\033[92m'
 GREY='\033[90m'
 RESET='\033[0m'
 COLOR=$MAGENTA
+USER_NOTATION="${CYAN}▸${RESET}"
 declare -r -A DEBUG_CONFIG=(
     ["none"]=""
     ["wad"]="Enables WAD debugging|(

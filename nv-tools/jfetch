@@ -14,7 +14,9 @@ mapfile -t credentials <<< "$credentials_output"
 ftntUser=${credentials[0]}
 ftntPasswd=${credentials[1]}
 
-USER_NOTATION="@@@@"
+CYAN='\033[36m'
+RESET='\033[0m'
+USER_NOTATION="${CYAN}▸${RESET}"
 SCRIPT_LOCATION="/tmp/git_fetch_repos"
 
 # check if the script exists

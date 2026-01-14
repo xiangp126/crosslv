@@ -24,8 +24,6 @@ fWADWorkerCnt=-1    # 0: unlimited, 1: 1 worker,  N: N workers
 fMaxAttempts=2
 # Constants
 SCRIPT_NAME=$(basename "$0")
-USER_NOTATION="@@@@"
-SUB_USER_NOTATION="@@@@ @"
 SEPARATOR_LT="<----------------------------------------------------------------"
 SEPARATOR_RT="---------------------------------------------------------------->"
 # Colors
@@ -49,6 +47,8 @@ NORMAL='\033[0m'
 BOLD='\033[1m'
 RESET='\033[0m'
 COLOR=$MAGENTA
+USER_NOTATION="${CYAN}▸${RESET}"
+SUB_USER_NOTATION="${CYAN}▸ ▸${RESET}"
 
 usage() {
     cat << _EOF
