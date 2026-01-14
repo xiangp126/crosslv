@@ -72,14 +72,14 @@ Build tool for NVIDIA golan_fw firmware.
 
 Build Flags:
     -D, --debug                 Enable debug mode
-    -C, --clean                 Run make clean (./build.sh -C)
+    -c, --clean                 Run make clean (./build.sh -C)
         --clean-db              Also remove $fCompileCommandsJson during clean
         --git-clean             Deep clean using git clean -fdx (preserves submodules)
     -o, --build                 Run build commands
         --no-verbose            Suppress full compilation output (default: verbose)
 
 Build Options:
-    --bear                      Generate compile_commands.json (implies -C --clean-db -o)
+    -b, --bear                  Generate compile_commands.json (implies -c --clean-db -o)
     -m, --model                 Set the build model (default: $DEFAULT_MODEL)
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
@@ -95,9 +95,9 @@ Supported Models:
 
 Examples:
     $SCRIPT_NAME -o                        # Build mustang (default, verbose)
-    $SCRIPT_NAME -C -o                     # Clean and build mustang
+    $SCRIPT_NAME -c -o                     # Clean and build mustang
     $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
-    $SCRIPT_NAME --bear -m gilboa          # Build gilboa with compile_commands.json
+    $SCRIPT_NAME -b -m gilboa              # Build gilboa with compile_commands.json
 
 _EOF
     exit 0
@@ -114,7 +114,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hCom:j:w:Dl"
+SHORTOPTS="hcom:j:w:Dlb"
 LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
@@ -158,7 +158,7 @@ while true; do
             fNeedBuild=true
             shift
             ;;
-        -C|--clean)
+        -c|--clean)
             fClean=true
             shift
             ;;
@@ -172,11 +172,11 @@ while true; do
             fClean=true
             shift
             ;;
-        --bear)
+        -b|--bear)
             fGenerateCompileCmds=true
             fNeedBuild=true
             fClean=true
-            fRMCompileCommandsJson=true  # --bear implies -C --clean-db -o
+            fRMCompileCommandsJson=true  # -b/--bear implies -c --clean-db -o
             shift
             ;;
         --no-verbose)
@@ -429,7 +429,7 @@ runBuildCommands() {
         fBuildTimeFormatted="${hours}h${fBuildTimeFormatted}"
     fi
 
-    echo "$USER_NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
+    echo -e "$USER_NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
 }
 
 linkCompileDatabase() {

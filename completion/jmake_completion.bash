@@ -17,7 +17,7 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -m -j -w -C -o -D -l"
+    opts="-h -m -j -w -c -o -D -l -b"
 
     # List of all long options
     long_opts="--help --model --jobs --working-dir --clean --clean-db \
