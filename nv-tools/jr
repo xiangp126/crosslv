@@ -11,11 +11,13 @@ fCheckDepends=
 fzfSelected=
 fREMatching=
 fNoClipboard=
-fXselTimeout=2
+fXselTimeout=10
 fQueryFromClipboard=
 fKernelIncluded=  # Include the linux kernel source code in the search
 # Constants
 SCRIPTNAME=$(basename $0)
+# Cache uname result to avoid repeated calls
+OS_TYPE=$(uname)
 USER_NOTATION="@@@@"
 # Colors
 MAGENTA='\033[35m'
@@ -137,7 +139,7 @@ checkDepends() {
     local depVersion
 
     # Add OS-specific clipboard dependency
-    if [[ "$(uname)" == "Darwin" ]]; then
+    if [[ "$OS_TYPE" == "Darwin" ]]; then
         depends+=("pbpaste" "pbcopy")
     else
         depends+=("xsel")
@@ -198,7 +200,7 @@ checkDepends() {
 #      - Rarely used, mainly for legacy applications
 GetClipboardContent() {
     if [ -z "$fQuery" ]; then
-        if [[ "$(uname)" == "Darwin" ]]; then
+        if [[ "$OS_TYPE" == "Darwin" ]]; then
             # macOS - use pbpaste (unified clipboard)
             fQuery=$(pbpaste 2>/dev/null)
             if [[ $? -ne 0 ]]; then
@@ -207,12 +209,11 @@ GetClipboardContent() {
             fi
             [ -n "$fQuery" ] && fQueryFromClipboard=true
         elif [ -n "$DISPLAY" ]; then
-            # Linux with X11 - use xsel (PRIMARY selection)
-            fQuery=$(timeout $fXselTimeout xsel -o -p 2> /dev/null)
-            if [[ $? -ne 0 ]]; then
-                echo -e "${COLOR}Error: Failed to get PRIMARY clipboard content.${RESET}"
-                echo -e "${COLOR}Please check the status of the X server (XQuartz on Mac, XLaunch/VcXsrv on Windows).${RESET}"
-                exit 1
+            # Linux with X11 - try CLIPBOARD first (Cmd+C on Mac), then PRIMARY (selection)
+            fQuery=$(timeout $fXselTimeout xsel -o -b 2>/dev/null)
+            if [[ -z "$fQuery" ]]; then
+                # Fallback to PRIMARY selection
+                fQuery=$(timeout $fXselTimeout xsel -o -p 2>/dev/null)
             fi
             [ -n "$fQuery" ] && fQueryFromClipboard=true
         elif [ -n "$SSH_CONNECTION" ]; then
@@ -221,14 +222,14 @@ GetClipboardContent() {
             echo -e "${COLOR}Options:${RESET}"
             echo -e "  1. Pass search term as argument: ${BOLD}jr \"search_term\"${RESET}"
             echo -e "  2. Use X11 forwarding: ${BOLD}ssh -X${RESET} (requires XQuartz on Mac)"
-            echo ""
+            exit 1
         fi
     fi
 }
 
 ClearClipboard() {
     if [ -n "$fQueryFromClipboard" ]; then
-        if [[ "$(uname)" == "Darwin" ]]; then
+        if [[ "$OS_TYPE" == "Darwin" ]]; then
             # macOS - clear clipboard by writing empty string
             echo -n "" | pbcopy 2>/dev/null
             if [[ $? -ne 0 ]]; then
@@ -274,9 +275,21 @@ fuzzySearch() {
         "--colors" "match:style:bold"
         "--line-number"
         "--no-heading"
+        "--max-columns=200"
+        "--max-columns-preview"
+        "--glob" "!.git/*"
+        "--glob" "!*.o"
+        "--glob" "!*.a"
+        "--glob" "!*.so"
+        "--glob" "!*.bin"
+        "--glob" "!*.elf"
+        "--glob" "!*.map"
+        "--glob" "!node_modules/*"
+        "--glob" "!vendor/*"
+        "--glob" "!build/*"
+        "--glob" "!bin/*"
         "--glob" "!fpx-sync/*"
         "--glob" "!linux-3.2.16/*"
-        "--glob" "!.git/*"
     )
     # By default, fzf starts in extended-search mode, which allows multiple search terms separated by spaces
     # fzf options:
@@ -345,8 +358,9 @@ fuzzySearch() {
 }
 
 main() {
-    # source the code function
-    source "$HOME"/Templates/code-function.sh
+    # source the code function (only if file exists)
+    # shellcheck source=/dev/null
+    [[ -f "$HOME/Templates/code-function.sh" ]] && source "$HOME/Templates/code-function.sh"
     # Do the main work
     parseOptions "$@"
     [ -n "$fCheckDepends" ] && checkDepends

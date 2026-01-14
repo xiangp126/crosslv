@@ -352,3 +352,16 @@ let g:SuperTabDefaultCompletionType = '<C-N>'
 """"""""""""""""""""""""""""""
 let g:AutoPairs = {'[':']', '{':'}',"'":"'",'"':'"', '`':'`'}
 inoremap <buffer><silent> ) <C-R>=AutoPairsInsert(')')<CR>
+""""""""""""""""""""""""""""""
+" LARGE FILE PERFORMANCE
+""""""""""""""""""""""""""""""
+" If the file is larger than 50MB, disable heavy features to improve performance
+autocmd BufReadPre * if getfsize(expand("%")) > 10 * 1024 * 1024
+    \ | syntax off
+    \ | set eventignore=all
+    \ | set nobackup
+    \ | set noswapfile
+    \ | set noundofile
+    \ | set number
+    \ | echohl WarningMsg | echo "Large file detected: Performance mode enabled (Syntax/Undo OFF)" | echohl None
+    \ | endif
