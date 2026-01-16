@@ -118,6 +118,7 @@ alias cdo='__cd /opt'
 alias cds='__cd /opt/src'
 # NV specific
 alias cdw='__cd /auto/fwgwork1/pexiang/golan_fw'
+alias cdw2='__cd /auto/fwgwork1/pexiang/golan_fw2'
 
 # Print entry names without quotation marks
 export QUOTING_STYLE=literal

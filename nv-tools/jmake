@@ -374,7 +374,10 @@ updateSubmodules() {
     fi
 
     if [[ $? -ne 0 ]]; then
-        echo -e "$USER_NOTATION ${RED}Warning: Submodule update failed${RESET}"
+        echo -e "$USER_NOTATION ${RED}Error: Submodule update failed${RESET}"
+        exit 1
+    else
+        echo -e "$USER_NOTATION ${GREEN}Submodules updated successfully.${RESET}"
     fi
 }
 
@@ -411,7 +414,7 @@ runBuildCommands() {
 
     if [[ $eval_status -ne 0 ]]; then
         COLOR="$MAGENTA"
-        echo -e "$USER_NOTATION ${COLOR}Build failed.${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Build failed. Please search for error: in the build output.${RESET}"
         exit 1
     fi
 
