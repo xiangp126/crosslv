@@ -17,10 +17,10 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -m -j -w -c -o -D -l -b"
+    opts="-h -a -m -j -w -c -o -D -l -b"
 
     # List of all long options
-    long_opts="--help --model --jobs --working-dir --clean --clean-db \
+    long_opts="--help --all --model --jobs --working-dir --clean --clean-db \
                --git-clean --build --bear --debug --max-attempt --no-verbose --list --link"
 
     # Handle option arguments

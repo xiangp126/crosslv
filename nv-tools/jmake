@@ -6,6 +6,7 @@ fPlatform="GOLAN"
 
 # Build flags & Options
 fBuildModel=
+fBuildAll=
 fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
 fMaxBuildAttempt=1
@@ -23,7 +24,7 @@ fCompileCommandsJson="compile_commands.json"
 fRMCompileCommandsJson=
 
 # Fortinet-specific variables (reserved for future use)
-fPoundPattern='#\s*$'
+# fPoundPattern='#\s*$'
 ftntUser=
 ftntPasswd=
 fRunConfigure=
@@ -79,6 +80,7 @@ Build Flags:
         --no-verbose            Suppress full compilation output (default: verbose)
 
 Build Options:
+    -a, --all                   Build all models (no -d flag to build.sh)
     -b, --bear                  Generate compile_commands.json (implies -c --clean-db -o)
     -m, --model                 Set the build model (default: $DEFAULT_MODEL)
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
@@ -95,6 +97,7 @@ Supported Models:
 
 Examples:
     $SCRIPT_NAME -o                        # Build mustang (default, verbose)
+    $SCRIPT_NAME -a                        # Build all models
     $SCRIPT_NAME -c -o                     # Clean and build mustang
     $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
     $SCRIPT_NAME -b -m gilboa              # Build gilboa with compile_commands.json
@@ -114,8 +117,8 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hcom:j:w:Dlb"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link"
+SHORTOPTS="hcoam:j:w:Dlb"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -192,6 +195,11 @@ while true; do
             fLinkCompileDb=true
             shift
             ;;
+        -a|--all)
+            fBuildAll=true
+            fNeedBuild=true
+            shift
+            ;;
         --)
             shift
             break
@@ -265,6 +273,11 @@ preConfigure() {
         exit 1
     fi
 
+    # Skip model configuration if building all
+    if [ -n "$fBuildAll" ]; then
+        return
+    fi
+
     # Lower case the build model
     fBuildModel=$(echo "$fBuildModel" | tr '[:upper:]' '[:lower:]')
     if [ -z "$fBuildModel" ]; then
@@ -291,7 +304,11 @@ printBuildFlags() {
     if [ -n "$fNeedBuild" ]; then
         echo -e "${BOLD}Build Options:${RESET}"
         COLOR="$RED"
-        echo -e "[m] Build Model:  ${COLOR}$fBuildModel${RESET}"
+        if [ -n "$fBuildAll" ]; then
+            echo -e "[a] Build Model:  ${COLOR}ALL${RESET}"
+        else
+            echo -e "[m] Build Model:  ${COLOR}$fBuildModel${RESET}"
+        fi
         COLOR="$CYAN"
         echo -e "[w] Build Directory: ${COLOR}$fWorkingDir${RESET}"
         echo -e "[T] Maximum Build Attempts: ${COLOR}$fMaxBuildAttempt${RESET}"
@@ -385,7 +402,9 @@ runBuildCommands() {
     [ -z "$fNeedBuild" ] && return
     cd "$fWorkingDir" || exit
 
-    local buildCommand="./build.sh -d $fBuildModel -c $fNumOfJobs"
+    local buildCommand="./build.sh"
+    [ -z "$fBuildAll" ] && buildCommand+=" -d $fBuildModel"
+    buildCommand+=" -c $fNumOfJobs"
     [ -n "$fVerbose" ] && buildCommand+=" --verbose"
     [ -n "$fGenerateCompileCmds" ] && buildCommand+=" --bear"
 
@@ -437,6 +456,11 @@ runBuildCommands() {
 
 linkCompileDatabase() {
     [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkCompileDb" ] && return
+    # Skip linking when building all models (no single model-specific database)
+    if [ -n "$fBuildAll" ]; then
+        echo -e "$USER_NOTATION ${GREY}Skipping compile database link (building all models)${RESET}"
+        return
+    fi
     cd "$fWorkingDir" || exit
 
     local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
@@ -481,6 +505,8 @@ linkCompileDatabase() {
 
 removeWriteFromJson() {
     [ -z "$fNeedBuild" ] && return
+    # Skip when building all models
+    [ -n "$fBuildAll" ] && return
     cd "$fWorkingDir" || exit
 
     # Operate on the actual target file, not the symlink

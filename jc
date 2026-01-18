@@ -1458,7 +1458,8 @@ installLatestPPaDocker() {
     if getent group docker > /dev/null; then
         if sudo usermod -aG docker "$USER"; then
             echo -e "${GREEN}User '$USER' added to the 'docker' group.${RESET}"
-            echo -e "${BOLD}${MAGENTA}IMPORTANT: You must log out and log back in, or run 'newgrp docker', for this change to take effect.${RESET}"
+            echo -e "${BOLD}${MAGENTA}→ Run 'newgrp docker' to apply the change immediately.${RESET}"
+            echo -e "${BOLD}${MAGENTA}→ For Cursor/VSCode users: Kill the remote server and reload the window so the container tools extension can access /run/docker.sock${RESET}"
         else
             echo -e "${RED}Failed to add user $USER to the 'docker' group. You may need to do this manually (e.g., sudo usermod -aG docker \"\$USER\").${RESET}"
         fi
