@@ -433,7 +433,7 @@ runBuildCommands() {
 
     if [[ $eval_status -ne 0 ]]; then
         COLOR="$MAGENTA"
-        echo -e "$USER_NOTATION ${COLOR}Build failed. Please search for error: in the build output.${RESET}"
+        echo -e "$USER_NOTATION ${COLOR}Build failed. Please search for Error in the build output.${RESET}"
         exit 1
     fi
 
