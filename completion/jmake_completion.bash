@@ -21,7 +21,7 @@ _jmake_complete() {
 
     # List of all long options
     long_opts="--help --all --model --jobs --working-dir --clean --clean-db \
-               --git-clean --build --bear --debug --max-attempt --no-verbose --list --link"
+               --git-clean --build --bear --debug --max-attempt --no-verbose --list --link --loop"
 
     # Handle option arguments
     case $prev in

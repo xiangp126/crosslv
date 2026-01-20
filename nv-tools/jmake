@@ -19,7 +19,7 @@ fNeedBuild=
 fPrintBuildFlags=
 fClean=
 fGitClean=
-fVerbose=
+fNoVerbose=
 fInputCmd=
 fBuildTimeFormatted=
 # Git associated variables
@@ -178,7 +178,7 @@ while true; do
             shift
             ;;
         --no-verbose)
-            fVerbose=true
+            fNoVerbose=true
             shift
             ;;
         -l|--list)
@@ -295,7 +295,7 @@ printBuildFlags() {
         [ -n "$fClean" ]                 && echo -e "[C] ${COLOR}Clean${RESET} the build"
         [ -n "$fGitClean" ]              && echo -e "[G] ${COLOR}Git deep clean${RESET} (git clean -fdx)"
         [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
-        [ -n "$fVerbose" ]               && echo -e "[V] ${COLOR}Verbose${RESET} mode"
+        [ -n "$fNoVerbose" ]             && echo -e "[V] ${COLOR}No Verbose${RESET} mode"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} existing $fCompileCommandsJson"
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} compile_commands.json"
         [ -n "$fLinkCompileDb" ]         && echo -e "[L] ${COLOR}Link${RESET} compile_commands.json for clangd"
@@ -394,11 +394,11 @@ updateSubmodules() {
 
     # Check if submodules are initialized by looking for a key file
     if [[ ! -f "shared/glib/glib.mak" ]]; then
-        echo -e "$USER_NOTATION ${CYAN}Initializing submodules (first time)...${RESET}"
-        git submodule update --init --recursive
+        echo -e "$USER_NOTATION ${CYAN}Initializing submodules with: ${YELLOW}git submodule update --init --recursive${RESET}"
+        eval "git submodule update --init --recursive"
     else
-        echo -e "$USER_NOTATION ${CYAN}Updating submodules...${RESET}"
-        git submodule update --recursive
+        echo -e "$USER_NOTATION ${CYAN}Updating submodules with: ${YELLOW}git submodule update --recursive${RESET}"
+        eval "git submodule update --recursive"
     fi
 
     if [[ $? -ne 0 ]]; then
@@ -430,7 +430,7 @@ makeBuildCommand() {
     fBuildCommand="./build.sh"
     [ -z "$fBuildAll" ] && fBuildCommand+=" -d $fBuildModel"
     fBuildCommand+=" -c $fNumOfJobs"
-    [ -n "$fVerbose" ] && fBuildCommand+=" --verbose"
+    [ -z "$fNoVerbose" ] && fBuildCommand+=" --verbose"
     [ -n "$fGenerateCompileCmds" ] && fBuildCommand+=" --bear"
 }
 
@@ -504,7 +504,7 @@ runLoopModels() {
         fLoopPendingModels=("${allModels[@]:$((i+1))}")
         fBuildModel="$model"
         
-        echo -e "$USER_NOTATION ${BOLD}Building model: ${GREEN}$model${RESET}"
+        echo -e "$USER_NOTATION ${BOLD}Current building model: ${GREEN}$model${RESET}"
         
         runBuildCommands  # exits on failure with status chart
         
@@ -588,7 +588,7 @@ removeWriteFromJson() {
     local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
     if [[ -f "$dbFile" ]]; then
         if [[ -w "$dbFile" ]]; then
-            echo -e "$USER_NOTATION ${CYAN}Removing write privilege from $dbFile${RESET}"
+            echo -e "$USER_NOTATION ${CYAN}Removing write privilege from ${YELLOW}$dbFile${RESET}"
             chmod u-w "$dbFile"
         else
             echo -e "$USER_NOTATION ${GREY}$dbFile is already read-only${RESET}"

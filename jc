@@ -965,7 +965,7 @@ buildBatTheme() {
     done
 
     [ -z "$needBuild" ] && return
-    bat cache --build
+    batcat cache --build
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
     else
