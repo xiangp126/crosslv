@@ -329,8 +329,17 @@ cleanTheRepo() {
         echo -e "$USER_NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
         
         # Build exclude options
-        local excludeOpts=""
-        [ -z "$fRMCompileCommandsJson" ] && excludeOpts="--exclude=$fCompileCommandsJson"
+        # Always exclude *.code-workspace files by default
+        local excludeOpts="--exclude=*.code-workspace"
+        if [ -z "$fRMCompileCommandsJson" ]; then
+            if [ -L "$fCompileCommandsJson" ]; then
+                # It's a symlink, exclude the real file instead of the symlink itself
+                realFile=$(readlink -f "$fCompileCommandsJson")
+                excludeOpts="$excludeOpts --exclude=$(basename "$realFile")"
+            else
+                excludeOpts="$excludeOpts --exclude=$fCompileCommandsJson"
+            fi
+        fi
         
         local cleanCmd="git clean -fdx $excludeOpts"
         echo -e "$USER_NOTATION Running: ${BLUE}$cleanCmd${RESET}"
@@ -338,7 +347,7 @@ cleanTheRepo() {
         
         # Also clean submodules
         echo -e "$USER_NOTATION ${CYAN}Cleaning submodules...${RESET}"
-        git submodule foreach --recursive git clean -fdx
+        git submodule foreach --recursive git clean -fdx "$excludeOpts"
         
         echo -e "$USER_NOTATION ${MAGENTA}Deep clean completed.${RESET}"
     else
