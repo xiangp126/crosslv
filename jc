@@ -1139,6 +1139,33 @@ setMacOSDefaultShell() {
     fi
 }
 
+setLinuxDefaultShell() {
+    # Only run on Linux
+    [[ $(uname -s) != 'Linux' ]] && return
+
+    local BASH_PATH="/bin/bash"
+
+    if [ ! -x "$BASH_PATH" ]; then
+        echo -e "${LIGHTYELLOW}Bash not found, skipping default shell setup${RESET}"
+        return
+    fi
+
+    # Change default shell if not already set
+    if [ "$SHELL" != "$BASH_PATH" ]; then
+        echo -e "${COLOR}Setting up Bash as default shell${RESET}"
+        echo -e "${GREY}Changing default shell to ${BASH_PATH}${RESET}"
+        chsh -s "$BASH_PATH"
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✔${GREY} Default shell changed to Bash${RESET}"
+            echo -e "${LIGHTYELLOW}Note: Please restart your terminal for the change to take effect.${RESET}"
+        else
+            echo -e "${RED}Failed to change default shell${RESET}"
+        fi
+    else
+        echo -e "${GREEN}✔${GREY} Default shell is already ${BASH_PATH}${RESET}"
+    fi
+}
+
 createExtraSymlinks() {
     echo -e "${COLOR}Creating Extra Symlinks${RESET}"
     # The directories are guaranteed to exist when this function is called.
@@ -2631,6 +2658,7 @@ main() {
     if [ "$fOSCategory" == "debian" ]; then
         doCoreJobs
         changeTMOUTToWritable
+        setLinuxDefaultShell
         setTimeZone
         createFirstTimeFile
     elif [ "$fOSCategory" == "mac" ]; then
