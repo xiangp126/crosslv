@@ -1154,7 +1154,7 @@ setLinuxDefaultShell() {
     if [ "$SHELL" != "$BASH_PATH" ]; then
         echo -e "${COLOR}Setting up Bash as default shell${RESET}"
         echo -e "${GREY}Changing default shell to ${BASH_PATH}${RESET}"
-        chsh -s "$BASH_PATH"
+        sudo chsh -s "$BASH_PATH"
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}✔${GREY} Default shell changed to Bash${RESET}"
             echo -e "${LIGHTYELLOW}Note: Please restart your terminal for the change to take effect.${RESET}"
