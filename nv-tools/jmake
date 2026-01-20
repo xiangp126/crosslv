@@ -1,12 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# shellcheck disable=SC2155 disable=SC2120 disable=SC2024
 # set -x
-
-# Platform: GOLAN (default) or FORTINET (reserved for future use)
-fPlatform="GOLAN"
 
 # Build flags & Options
 fBuildModel=
+fBuildCommand=
 fBuildAll=
+fLoopModels=
+fLoopVerifiedModels=()
+fLoopCurrentModel=
+fLoopPendingModels=()
 fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
 fMaxBuildAttempt=1
@@ -16,23 +19,12 @@ fNeedBuild=
 fPrintBuildFlags=
 fClean=
 fGitClean=
-fVerbose=true
+fVerbose=
 fInputCmd=
 fBuildTimeFormatted=
 # Git associated variables
 fCompileCommandsJson="compile_commands.json"
 fRMCompileCommandsJson=
-
-# Fortinet-specific variables (reserved for future use)
-# fPoundPattern='#\s*$'
-ftntUser=
-ftntPasswd=
-fRunConfigure=
-fSyncTarget=
-fSyncFile=
-fSyncPort=22
-fSyncUsername="admin"
-fSyncPassword="password"
 
 # Common Constants
 SEPARATOR="==================================================="
@@ -45,6 +37,7 @@ GREEN='\033[32m'
 MAGENTA='\033[35m'
 BLUE='\033[34m'
 GREY='\033[90m'
+YELLOW='\033[33m'
 LIGHTYELLOW='\033[93m'
 RESET='\033[0m'
 COLOR=$MAGENTA
@@ -83,6 +76,7 @@ Build Options:
     -a, --all                   Build all models (no -d flag to build.sh)
     -b, --bear                  Generate compile_commands.json (implies -c --clean-db -o)
     -m, --model                 Set the build model (default: $DEFAULT_MODEL)
+        --loop                  Loop through all models and execute command for each
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
     --max-attempt               Set max build attempts (default: $fMaxBuildAttempt)
@@ -97,7 +91,8 @@ Supported Models:
 
 Examples:
     $SCRIPT_NAME -o                        # Build mustang (default, verbose)
-    $SCRIPT_NAME -a                        # Build all models
+    $SCRIPT_NAME -a                        # Build all models (single build.sh invocation)
+    $SCRIPT_NAME --loop                    # Loop build each model one by one
     $SCRIPT_NAME -c -o                     # Clean and build mustang
     $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
     $SCRIPT_NAME -b -m gilboa              # Build gilboa with compile_commands.json
@@ -118,7 +113,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
 fi
 
 SHORTOPTS="hcoam:j:w:Dlb"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all,loop"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -183,7 +178,7 @@ while true; do
             shift
             ;;
         --no-verbose)
-            fVerbose=
+            fVerbose=true
             shift
             ;;
         -l|--list)
@@ -197,6 +192,11 @@ while true; do
             ;;
         -a|--all)
             fBuildAll=true
+            fNeedBuild=true
+            shift
+            ;;
+        --loop)
+            fLoopModels=true
             fNeedBuild=true
             shift
             ;;
@@ -295,7 +295,7 @@ printBuildFlags() {
         [ -n "$fClean" ]                 && echo -e "[C] ${COLOR}Clean${RESET} the build"
         [ -n "$fGitClean" ]              && echo -e "[G] ${COLOR}Git deep clean${RESET} (git clean -fdx)"
         [ -n "$fNeedBuild" ]             && echo -e "[o] ${COLOR}Build${RESET} the project"
-        [ -z "$fVerbose" ]               && echo -e "[q] ${COLOR}Quiet${RESET} mode (--no-verbose)"
+        [ -n "$fVerbose" ]               && echo -e "[V] ${COLOR}Verbose${RESET} mode"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} existing $fCompileCommandsJson"
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} compile_commands.json"
         [ -n "$fLinkCompileDb" ]         && echo -e "[L] ${COLOR}Link${RESET} compile_commands.json for clangd"
@@ -304,7 +304,9 @@ printBuildFlags() {
     if [ -n "$fNeedBuild" ]; then
         echo -e "${BOLD}Build Options:${RESET}"
         COLOR="$RED"
-        if [ -n "$fBuildAll" ]; then
+        if [ -n "$fLoopModels" ]; then
+            echo -e "[L] Build Mode:   ${COLOR}LOOP (all models one by one)${RESET}"
+        elif [ -n "$fBuildAll" ]; then
             echo -e "[a] Build Model:  ${COLOR}ALL${RESET}"
         else
             echo -e "[m] Build Model:  ${COLOR}$fBuildModel${RESET}"
@@ -407,15 +409,36 @@ updateSubmodules() {
     fi
 }
 
+printLoopStatusChart() {
+    echo "$SEPARATOR"
+    echo -e "$USER_NOTATION ${BOLD}${RED}Build Failed - Loop Status Chart:${RESET}"
+    echo -e "$USER_NOTATION ${RED}✗ Failed:${RESET}      $fLoopCurrentModel"
+    if [[ ${#fLoopVerifiedModels[@]} -gt 0 ]]; then
+        echo -e "$USER_NOTATION ${GREEN}✓ Verified:${RESET}    ${fLoopVerifiedModels[*]}"
+    else
+        echo -e "$USER_NOTATION ${GREEN}✓ Verified:${RESET}    (none)"
+    fi
+    if [[ ${#fLoopPendingModels[@]} -gt 0 ]]; then
+        echo -e "$USER_NOTATION ${YELLOW}○ Pending:${RESET}     ${fLoopPendingModels[*]}"
+    else
+        echo -e "$USER_NOTATION ${YELLOW}○ Pending:${RESET}     (none)"
+    fi
+    echo "$SEPARATOR"
+}
+
+makeBuildCommand() {
+    fBuildCommand="./build.sh"
+    [ -z "$fBuildAll" ] && fBuildCommand+=" -d $fBuildModel"
+    fBuildCommand+=" -c $fNumOfJobs"
+    [ -n "$fVerbose" ] && fBuildCommand+=" --verbose"
+    [ -n "$fGenerateCompileCmds" ] && fBuildCommand+=" --bear"
+}
+
 runBuildCommands() {
     [ -z "$fNeedBuild" ] && return
     cd "$fWorkingDir" || exit
 
-    local buildCommand="./build.sh"
-    [ -z "$fBuildAll" ] && buildCommand+=" -d $fBuildModel"
-    buildCommand+=" -c $fNumOfJobs"
-    [ -n "$fVerbose" ] && buildCommand+=" --verbose"
-    [ -n "$fGenerateCompileCmds" ] && buildCommand+=" --bear"
+    makeBuildCommand # set fBuildCommand
 
     local currAttempt=1
     local maxAttempt=$fMaxBuildAttempt
@@ -425,11 +448,11 @@ runBuildCommands() {
     while [[ $currAttempt -le $maxAttempt ]]; do
         buildStartTime=$(date +%s)
         COLOR="$GREEN"
-        echo -e "$USER_NOTATION Running: ${LIGHTYELLOW}$buildCommand${RESET}"
+        echo -e "$USER_NOTATION Running: ${LIGHTYELLOW}$fBuildCommand${RESET}"
         echo -e "$USER_NOTATION ${COLOR}Build attempt $currAttempt/$maxAttempt${RESET}"
         sleep 1
 
-        eval "$buildCommand"
+        eval "$fBuildCommand"
         eval_status=$?
 
         if [[ $eval_status -eq 0 ]]; then
@@ -443,6 +466,7 @@ runBuildCommands() {
     if [[ $eval_status -ne 0 ]]; then
         COLOR="$MAGENTA"
         echo -e "$USER_NOTATION ${COLOR}Build failed. Please search for Error in the build output.${RESET}"
+        [ -n "$fLoopModels" ] && printLoopStatusChart
         exit 1
     fi
 
@@ -461,6 +485,48 @@ runBuildCommands() {
     fi
 
     echo -e "$USER_NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
+}
+
+runLoopModels() {
+    [ -z "$fLoopModels" ] && return 1
+    
+    local totalStartTime=$(date +%s)
+    local allModels=($GOLAN_MODELS)
+    
+    echo -e "$USER_NOTATION ${BOLD}${CYAN}Starting loop build for all models...${RESET}"
+    echo "$SEPARATOR"
+    
+    for i in "${!allModels[@]}"; do
+        local model="${allModels[$i]}"
+        
+        # Set current model and calculate pending models
+        fLoopCurrentModel="$model"
+        fLoopPendingModels=("${allModels[@]:$((i+1))}")
+        fBuildModel="$model"
+        
+        echo -e "$USER_NOTATION ${BOLD}Building model: ${GREEN}$model${RESET}"
+        
+        runBuildCommands  # exits on failure with status chart
+        
+        # If we get here, build succeeded
+        fLoopVerifiedModels+=("$model")
+        echo -e "$USER_NOTATION ${GREEN}✓ $model build succeeded${RESET}"
+        echo "$SEPARATOR"
+    done
+    
+    local totalEndTime=$(date +%s)
+    local totalTime=$((totalEndTime - totalStartTime))
+    local hours=$((totalTime / 3600))
+    local minutes=$((totalTime % 3600 / 60))
+    local seconds=$((totalTime % 60))
+    local totalTimeFormatted="${seconds}s"
+    [[ $minutes -gt 0 ]] && totalTimeFormatted="${minutes}m${totalTimeFormatted}"
+    [[ $hours -gt 0 ]] && totalTimeFormatted="${hours}h${totalTimeFormatted}"
+    
+    echo -e "$USER_NOTATION ${BOLD}Loop Build Summary:${RESET}"
+    echo -e "$USER_NOTATION Total time: ${CYAN}$totalTimeFormatted${RESET}"
+    echo -e "$USER_NOTATION ${GREEN}All ${#fLoopVerifiedModels[@]} models verified:${RESET} ${fLoopVerifiedModels[*]}"
+    return 0
 }
 
 linkCompileDatabase() {
@@ -530,244 +596,18 @@ removeWriteFromJson() {
     fi
 }
 
-###############################################################################
-# FORTINET-SPECIFIC FUNCTIONS (Reserved for future use)
-# These functions are not called for GOLAN platform
-###############################################################################
-
-checkCmdAvailability() {
-    if ! command -v "$1" &> /dev/null; then
-        echo -e "$USER_NOTATION ${RED}Error: Command $1 not found.${RESET}"
-        exit 1
-    fi
-}
-
-# Run Fortinet Configure with expect automation
-runFortnetConfigure() {
-    [[ "$fPlatform" != "FORTINET" ]] && return
-    [[ -z "$fRunConfigure" ]] && return
-
-    checkCmdAvailability "expect"
-    checkCmdAvailability "get_credentials"
-
-    if ! credentials_output=$(eval get_credentials); then
-        echo -e "$USER_NOTATION ${RED}Error: Failed to get credentials.${RESET}"
-        exit 1
-    fi
-
-    mapfile -t credentials <<< "$credentials_output"
-    ftntUser=${credentials[0]}
-    ftntPasswd=${credentials[1]}
-    if [[ -z "$ftntUser" || -z "$ftntPasswd" ]]; then
-        echo -e "$USER_NOTATION ${RED}Error: Failed to get credentials.${RESET}"
-        exit 1
-    fi
-
-    COLOR=$BLUE
-    local configParams="-m $fBuildModel -d y -c"
-    CONFIGURE_CMD="./Configure $configParams"
-    echo -e "$USER_NOTATION Running Configure: ${COLOR}$CONFIGURE_CMD${RESET}"
-    COLOR=$MAGENTA
-    echo -e "$USER_NOTATION ${COLOR}Spawning a new bash session${RESET}"
-    sleep 1
-
-    expect -c "
-        set config_bash_prompt \"$ \"
-        log_user 1
-        spawn -noecho bash
-
-        expect \"\$config_bash_prompt\"
-        send \"cd $fWorkingDir\r\"
-        expect \"\$config_bash_prompt\"
-        send \"$CONFIGURE_CMD\r\"
-
-        set timeout 300
-        expect {
-            {Username} {
-                send \"$ftntUser\r\"
-                exp_continue
-            }
-            {Password for '$ftntUser':} {
-                send \"$ftntPasswd\r\"
-                exp_continue
-            }
-            {Please select a region: van, ott, sjc:} {
-                send \"van\r\"
-                exp_continue
-            }
-            \"\$config_bash_prompt\" {
-                send \"\x04\r\"
-            }
-            {\[Yn\]:} {
-                send \"y\r\"
-                exp_continue
-            }
-            {yes/no} {
-                send \"yes\r\"
-                exp_continue
-            }
-            timeout {
-                puts stderr \"$USER_NOTATION Timeout. Action aborted.\n\"
-                exit 1
-            }
-        }
-    "
-
-    COLOR=$MAGENTA
-    if [[ $? -ne 0 ]]; then
-        echo -e "$USER_NOTATION ${COLOR}Failed to run Configure.${RESET}"
-        exit 1
-    else
-        echo -e "$USER_NOTATION ${COLOR}Configure completed successfully.${RESET}"
-    fi
-}
-
-# Sync image to Fortinet device with expect automation
-runFortinetSync() {
-    [[ "$fPlatform" != "FORTINET" ]] && return
-    [[ -z "$fSyncTarget" ]] && return
-
-    if ! ping -c 1 -W 1 "$fSyncTarget" &> /dev/null; then
-        echo -e "$USER_NOTATION ${MAGENTA}Host $fSyncTarget not reachable${RESET}"
-        exit 1
-    fi
-
-    local syncFile=
-    local syncFiles=()
-    if [[ "$fSyncFile" == */* ]]; then
-        if [[ -f "$fSyncFile" ]]; then
-            syncFile="$fSyncFile"
-        else
-            echo -e "$USER_NOTATION ${MAGENTA}$fSyncFile not found at path: $fSyncFile${RESET}"
-            exit 1
-        fi
-    else
-        mapfile -t syncFiles < <(find "$fWorkingDir" -name "$fSyncFile")
-        if [[ ${#syncFiles[@]} -eq 0 ]]; then
-            echo -e "$USER_NOTATION ${MAGENTA}$fSyncFile not found in $fWorkingDir${RESET}"
-            exit 1
-        fi
-        syncFile="${syncFiles[0]}"
-    fi
-
-    COLOR="$BLUE"
-    echo '----------------------------------------------------'
-    echo -e "$USER_NOTATION Syncing ${COLOR}$syncFile${RESET} to ${COLOR}$fSyncTarget${RESET} ..."
-
-    maxSyncRetries=3
-    ESUCCESS=0
-    EMAXTRIES=$(($maxSyncRetries + 1))
-    ETIMEOUT=$(($maxSyncRetries + 2))
-    EFAILED=$(($maxSyncRetries + 3))
-    EPERMDENIED=$(($maxSyncRetries + 4))
-
-    expect -c "
-        set defaultTimeout 1200
-        set adjustTimeout 0
-        set waitBeforeRetry 10
-        set passwd_prompt_cnt 0
-
-        set RESET       \"\033\[0m\"
-        set MAGENTA     \"\033\[35m\"
-        set COLOR       \$MAGENTA
-
-        for {set i 1} {\$i <= $maxSyncRetries} {incr i} {
-            puts stderr \"$USER_NOTATION Sync attempt \${COLOR}\$i/$maxSyncRetries\${RESET}\"
-            spawn -noecho scp -P $fSyncPort $syncFile ${fSyncUsername}@${fSyncTarget}:/fgt-image
-            if {\$adjustTimeout != 0} {
-                set timeout \$adjustTimeout
-            } else {
-                set timeout \$defaultTimeout
-            }
-
-            expect {
-                \"bad port\" {
-                    puts stderr \"$USER_NOTATION Bad port. Connecting aborted.\"
-                    exit $EFAILED
-                }
-                {yes/no} {
-                    send \"yes\r\"
-                    exp_continue
-                }
-                -nocase {Password:} {
-                    incr passwd_prompt_cnt
-                    if {\$passwd_prompt_cnt > 1} {
-                        puts stderr \"\n$USER_NOTATION Permission Denied. Please specify the login credentials.\"
-                        exit $EFAILED
-                    }
-                    send \"$fSyncPassword\r\"
-                    exp_continue
-                }
-                \"Host key verification failed.\" {
-                    puts stderr \"$USER_NOTATION Host key verification failed. Updating known_hosts ...\"
-                    system \"ssh-keygen -R $fSyncTarget\"
-                    puts stderr \"$USER_NOTATION Host key removed. Retrying...\"
-                    continue
-                }
-                -re {Connection refused|No route to host} {
-                    set adjustTimeout -1
-                    puts stderr \"$USER_NOTATION Waiting for \$waitBeforeRetry seconds before retrying ...\"
-                    sleep \$waitBeforeRetry
-                    set waitBeforeRetry [expr {\$waitBeforeRetry * 2}]
-                    continue
-                }
-                \"501-Permission Denied\" {
-                    puts stderr \"$USER_NOTATION Permission Denied. Please enable admin-scp under config system global\"
-                    exit $EPERMDENIED
-                }
-                \"100-update image completed\" {
-                    puts stderr \"$USER_NOTATION 100-update image completed. Action completed.\"
-                    exit $ESUCCESS
-                }
-                \"Command fail\" {
-                    puts stderr \"$USER_NOTATION Command fail. Action aborted.\"
-                    exit $EFAILED
-                }
-                timeout {
-                    puts stderr \"$USER_NOTATION Timeout. Action aborted.\"
-                    exit $ETIMEOUT
-                }
-                eof {
-                    puts stderr \"$USER_NOTATION Reaching EOF.\"
-                    exit $ESUCCESS
-                }
-            }
-        }
-        exit \$i
-    "
-
-    retValue=$?
-    case $retValue in
-        "$ESUCCESS")
-            COLOR=$MAGENTA
-            echo -e "$USER_NOTATION You have synced $fSyncFile to $fSyncTarget successfully at $(getCurrentTime)"
-            ;;
-        "$EMAXTRIES")
-            echo "$USER_NOTATION Failed to sync after $maxSyncRetries attempts"
-            exit $EMAXTRIES
-            ;;
-        "$ETIMEOUT")
-            echo "$USER_NOTATION Timeout syncing to $fSyncTarget"
-            exit $ETIMEOUT
-            ;;
-        *)
-            echo "$USER_NOTATION Failed to sync to $fSyncTarget"
-            exit $EFAILED
-            ;;
-    esac
-}
-
-###############################################################################
-# END OF FORTINET-SPECIFIC FUNCTIONS
-###############################################################################
-
 main() {
     preConfigure "$@"
     showLogo
     printBuildFlags
     cleanTheRepo
     updateSubmodules
-    runBuildCommands
+    # Handle loop mode or regular build
+    if [ -n "$fLoopModels" ]; then
+        runLoopModels
+    else
+        runBuildCommands
+    fi
     linkCompileDatabase
     removeWriteFromJson
 }
