@@ -526,7 +526,6 @@ runLoopModels() {
 
         # Check if model should be skipped
         if isModelSkipped "$model"; then
-            echo -e "$USER_NOTATION ${YELLOW}⊘ Skipping $model (in skip list)${RESET}"
             fLoopSkippedModels+=("$model")
             continue
         fi
