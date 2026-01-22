@@ -7,6 +7,8 @@ fBuildModel=
 fBuildCommand=
 fBuildAll=
 fLoopModels=
+fLoopSkipModels=()
+fLoopSkippedModels=()
 fLoopVerifiedModels=()
 fLoopCurrentModel=
 fLoopPendingModels=()
@@ -77,6 +79,7 @@ Build Options:
     -b, --bear                  Generate compile_commands.json (implies -c --clean-db -o)
     -m, --model                 Set the build model (default: $DEFAULT_MODEL)
         --loop                  Loop through all models and execute command for each
+        --loop-skip "<models>"  Skip models during loop (quote if space-separated)
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
     --max-attempt               Set max build attempts (default: $fMaxBuildAttempt)
@@ -93,6 +96,8 @@ Examples:
     $SCRIPT_NAME -o                        # Build mustang (default, verbose)
     $SCRIPT_NAME -a                        # Build all models (single build.sh invocation)
     $SCRIPT_NAME --loop                    # Loop build each model one by one
+    $SCRIPT_NAME --loop --loop-skip "arava viper tamar"
+                                           # Loop build, skip arava, viper and tamar
     $SCRIPT_NAME -c -o                     # Clean and build mustang
     $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
     $SCRIPT_NAME -b -m gilboa              # Build gilboa with compile_commands.json
@@ -113,7 +118,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
 fi
 
 SHORTOPTS="hcoam:j:w:Dlb"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all,loop"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all,loop,loop-skip:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -199,6 +204,11 @@ while true; do
             fLoopModels=true
             fNeedBuild=true
             shift
+            ;;
+        --loop-skip)
+            IFS=', ' read -ra _skipModels <<< "$2"
+            fLoopSkipModels+=("${_skipModels[@]}")
+            shift 2
             ;;
         --)
             shift
@@ -306,6 +316,9 @@ printBuildFlags() {
         COLOR="$RED"
         if [ -n "$fLoopModels" ]; then
             echo -e "[L] Build Mode:   ${COLOR}LOOP (all models one by one)${RESET}"
+            if [[ ${#fLoopSkipModels[@]} -gt 0 ]]; then
+                echo -e "[S] Skip Models:  ${YELLOW}${fLoopSkipModels[*]}${RESET}"
+            fi
         elif [ -n "$fBuildAll" ]; then
             echo -e "[a] Build Model:  ${COLOR}ALL${RESET}"
         else
@@ -329,7 +342,7 @@ cleanTheRepo() {
     if [ -n "$fGitClean" ]; then
         # Deep clean using git clean -fdx
         echo -e "$USER_NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
-        
+
         # Build exclude options
         # Always exclude *.code-workspace files by default
         local excludeOpts="--exclude=*.code-workspace"
@@ -342,15 +355,15 @@ cleanTheRepo() {
                 excludeOpts="$excludeOpts --exclude=$fCompileCommandsJson"
             fi
         fi
-        
+
         local cleanCmd="git clean -fdx $excludeOpts"
         echo -e "$USER_NOTATION Running: ${BLUE}$cleanCmd${RESET}"
         eval "$cleanCmd"
-        
+
         # Also clean submodules
         echo -e "$USER_NOTATION ${CYAN}Cleaning submodules...${RESET}"
         git submodule foreach --recursive git clean -fdx "$excludeOpts"
-        
+
         echo -e "$USER_NOTATION ${MAGENTA}Deep clean completed.${RESET}"
     else
         # Standard make clean
@@ -412,16 +425,19 @@ updateSubmodules() {
 printLoopStatusChart() {
     echo "$SEPARATOR"
     echo -e "$USER_NOTATION ${BOLD}${RED}Build Failed - Loop Status Chart:${RESET}"
-    echo -e "$USER_NOTATION ${RED}✗ Failed:${RESET}      $fLoopCurrentModel"
+    echo -e "  ${RED}✗ Failed:${RESET}      $fLoopCurrentModel"
     if [[ ${#fLoopVerifiedModels[@]} -gt 0 ]]; then
-        echo -e "$USER_NOTATION ${GREEN}✓ Verified:${RESET}    ${fLoopVerifiedModels[*]}"
+        echo -e "  ${GREEN}✓ Verified:${RESET}    ${fLoopVerifiedModels[*]}"
     else
-        echo -e "$USER_NOTATION ${GREEN}✓ Verified:${RESET}    (none)"
+        echo -e "  ${GREEN}✓ Verified:${RESET}    (none)"
+    fi
+    if [[ ${#fLoopSkippedModels[@]} -gt 0 ]]; then
+        echo -e "  ${CYAN}⊘ Skipped:${RESET}     ${fLoopSkippedModels[*]}"
     fi
     if [[ ${#fLoopPendingModels[@]} -gt 0 ]]; then
-        echo -e "$USER_NOTATION ${YELLOW}○ Pending:${RESET}     ${fLoopPendingModels[*]}"
+        echo -e "  ${YELLOW}○ Pending:${RESET}     ${fLoopPendingModels[*]}"
     else
-        echo -e "$USER_NOTATION ${YELLOW}○ Pending:${RESET}     (none)"
+        echo -e "  ${YELLOW}○ Pending:${RESET}     (none)"
     fi
     echo "$SEPARATOR"
 }
@@ -487,33 +503,49 @@ runBuildCommands() {
     echo -e "$USER_NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
 }
 
+isModelSkipped() {
+    local model="$1"
+    for skip in "${fLoopSkipModels[@]}"; do
+        [[ "$model" == "$skip" ]] && return 0
+    done
+    return 1
+}
+
 runLoopModels() {
     [ -z "$fLoopModels" ] && return 1
-    
+
     local totalStartTime=$(date +%s)
     local allModels=($GOLAN_MODELS)
-    
+    fLoopSkippedModels=()
+
     echo -e "$USER_NOTATION ${BOLD}${CYAN}Starting loop build for all models...${RESET}"
     echo "$SEPARATOR"
-    
+
     for i in "${!allModels[@]}"; do
         local model="${allModels[$i]}"
-        
+
+        # Check if model should be skipped
+        if isModelSkipped "$model"; then
+            echo -e "$USER_NOTATION ${YELLOW}⊘ Skipping $model (in skip list)${RESET}"
+            fLoopSkippedModels+=("$model")
+            continue
+        fi
+
         # Set current model and calculate pending models
         fLoopCurrentModel="$model"
         fLoopPendingModels=("${allModels[@]:$((i+1))}")
         fBuildModel="$model"
-        
+
         echo -e "$USER_NOTATION ${BOLD}Current building model: ${GREEN}$model${RESET}"
-        
+
         runBuildCommands  # exits on failure with status chart
-        
+
         # If we get here, build succeeded
         fLoopVerifiedModels+=("$model")
         echo -e "$USER_NOTATION ${GREEN}✓ $model build succeeded${RESET}"
         echo "$SEPARATOR"
     done
-    
+
     local totalEndTime=$(date +%s)
     local totalTime=$((totalEndTime - totalStartTime))
     local hours=$((totalTime / 3600))
@@ -522,10 +554,13 @@ runLoopModels() {
     local totalTimeFormatted="${seconds}s"
     [[ $minutes -gt 0 ]] && totalTimeFormatted="${minutes}m${totalTimeFormatted}"
     [[ $hours -gt 0 ]] && totalTimeFormatted="${hours}h${totalTimeFormatted}"
-    
+
     echo -e "$USER_NOTATION ${BOLD}Loop Build Summary:${RESET}"
     echo -e "$USER_NOTATION Total time: ${CYAN}$totalTimeFormatted${RESET}"
-    echo -e "$USER_NOTATION ${GREEN}All ${#fLoopVerifiedModels[@]} models verified:${RESET} ${fLoopVerifiedModels[*]}"
+    echo -e "$USER_NOTATION ${GREEN}✓ Verified (${#fLoopVerifiedModels[@]}):${RESET} ${fLoopVerifiedModels[*]}"
+    if [[ ${#fLoopSkippedModels[@]} -gt 0 ]]; then
+        echo -e "$USER_NOTATION ${CYAN}⊘ Skipped (${#fLoopSkippedModels[@]}):${RESET} ${fLoopSkippedModels[*]}"
+    fi
     return 0
 }
 

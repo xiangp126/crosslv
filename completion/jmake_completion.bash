@@ -21,7 +21,7 @@ _jmake_complete() {
 
     # List of all long options
     long_opts="--help --all --model --jobs --working-dir --clean --clean-db \
-               --git-clean --build --bear --debug --max-attempt --no-verbose --list --link --loop"
+               --git-clean --build --bear --debug --max-attempt --no-verbose --list --link --loop --loop-skip"
 
     # Handle option arguments
     case $prev in
@@ -46,6 +46,12 @@ _jmake_complete() {
             # Suggest common numbers for max attempts
             local attempts="1 2 3"
             COMPREPLY=( $(compgen -W "${attempts}" -- ${cur}) )
+            return 0
+            ;;
+        --loop-skip)
+            # GOLAN supported models (can be comma or space separated)
+            local models="arava viper tamar carmel mustang gilboa argaman alpine"
+            COMPREPLY=( $(compgen -W "${models}" -- ${cur}) )
             return 0
             ;;
     esac

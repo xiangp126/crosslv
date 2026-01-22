@@ -649,6 +649,7 @@ macInstallApps() {
 }
 
 setTimeZone() {
+    echo -e "${COLOR}Setting Timezone${RESET}"
     if [[ $(uname -s) == 'Darwin' ]]; then
         echo -e "${COLOR}Checking Timezone on macOS${RESET}"
         local currentTZ=$(readlink /etc/localtime 2>/dev/null | sed 's|/var/db/timezone/zoneinfo/||' || echo "Unknown")
@@ -665,7 +666,7 @@ setTimeZone() {
 
     # Linux (Ubuntu/Debian)
     if [ "$(timedatectl | grep "Time zone" | awk '{print $3}')" == "Asia/Shanghai" ]; then
-        # echo -e "${GREEN}✔${GREY} Time zone is already shanghai${RESET}"
+        echo -e "${GREEN}✔${GREY} Time zone is already shanghai${RESET}"
         return
     fi
     echo -e "${COLOR}Setting Timezone to Shanghai${RESET}"
@@ -1101,7 +1102,7 @@ createMacOSBashProfile() {
 }
 
 setMacOSDefaultShell() {
-    # Only run on macOS
+    echo -e "${COLOR}Setting up macOS default shell${RESET}"
     [[ $(uname -s) != 'Darwin' ]] && return
 
     local HOMEBREW_BASH="/opt/homebrew/bin/bash"
@@ -1140,7 +1141,7 @@ setMacOSDefaultShell() {
 }
 
 setLinuxDefaultShell() {
-    # Only run on Linux
+    echo -e "${COLOR}Setting up Linux default shell${RESET}"
     [[ $(uname -s) != 'Linux' ]] && return
 
     local BASH_PATH="/bin/bash"
@@ -2584,16 +2585,20 @@ restartLiteLLMService() {
     startLiteLLMService
 }
 
-doCoreJobs() {
-    ubuntuInstallApps          # Install apps for Ubuntu
+doCommonJobs() {
     createTKSymlinks           # Create Tracked Files symlinks
     installVimPluginsManager   # Install Vim Plugins Manager
     installTmuxPluginsManager  # Install Tmux Plugins Manager
     createToolsSymlinks        # Create tool symlinks
-    relinkSysCmds              # Relink system commands
     createExtraSymlinks        # Create extra symlinks
     buildBatTheme              # Build bat theme
     buildExtraFonts            # Build extra fonts
+}
+
+doDebianJobs() {
+    ubuntuInstallApps          # Install apps for Ubuntu
+    doCommonJobs               # Common setup tasks
+    relinkSysCmds              # Relink system commands
     addUserIntoLibvirtGrp      # Add user into libvirt group
     installNvmNodeJs           # Install NVM and Node.js
     installLatestGitLfs        # Install Git LFS (PackageCloud)
@@ -2604,6 +2609,17 @@ doCoreJobs() {
     configureTcpdumpCaps       # Configure tcpdump for non-root user packet capture
     installLatestGithubClangd  # Install Github Clangd
     stopUnnecessaryServices    # Stop unnecessary services
+    changeTMOUTToWritable      # Change TMOUT to writable
+    setLinuxDefaultShell       # Set default shell
+    setTimeZone                # Set timezone
+    createFirstTimeFile        # Create first-time file marker
+}
+
+doMacJobs() {
+    macInstallApps             # Install apps for macOS
+    doCommonJobs               # Common setup tasks
+    createMacOSBashProfile     # Create macOS bash_profile
+    setMacOSDefaultShell       # Set default shell
 }
 
 doEarlyExitJobs() {
@@ -2655,24 +2671,10 @@ main() {
     checkOSAndArch
     checkTlsConnection
     createEssentialPaths
-    if [ "$fOSCategory" == "debian" ]; then
-        doCoreJobs
-        changeTMOUTToWritable
-        setLinuxDefaultShell
-        setTimeZone
-        createFirstTimeFile
-    elif [ "$fOSCategory" == "mac" ]; then
-        macInstallApps
-        createTKSymlinks
-        createMacOSBashProfile
-        setMacOSDefaultShell
-        installTmuxPluginsManager
-        installVimPluginsManager
-        createToolsSymlinks
-        createExtraSymlinks
-        buildBatTheme
-        buildExtraFonts
-    fi
+    case "$fOSCategory" in
+        debian) doDebianJobs ;;
+        mac)    doMacJobs    ;;
+    esac
     showUfwStatus
 }
 
