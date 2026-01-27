@@ -1,0 +1,110 @@
+# squirrel.custom.yaml
+# macOS Squirrel configuration
+# encoding: utf-8
+patch:
+  # Appearance settings
+  style:
+    color_scheme: google
+    horizontal: true
+    inline_preedit: true
+    corner_radius: 5
+    border_height: 0
+    border_width: 0
+    line_spacing: 5
+    spacing: 10
+    font_point: 16
+    label_font_point: 14
+
+  # Per-application settings
+  # ascii_mode: true = English input by default
+  # ascii_mode: false = Chinese input by default
+  app_options:
+    # Terminal applications - default to English
+    com.apple.Terminal:
+      ascii_mode: true
+    com.googlecode.iterm2:
+      ascii_mode: true
+    io.alacritty:
+      ascii_mode: true
+    com.github.wez.wezterm:
+      ascii_mode: true
+    net.kovidgoyal.kitty:
+      ascii_mode: true
+
+    # Code editors and IDEs - default to English
+    com.microsoft.VSCode:
+      ascii_mode: true
+    com.apple.dt.Xcode:
+      ascii_mode: true
+    com.jetbrains.intellij:
+      ascii_mode: true
+    com.jetbrains.pycharm:
+      ascii_mode: true
+    com.jetbrains.CLion:
+      ascii_mode: true
+    com.jetbrains.goland:
+      ascii_mode: true
+    com.sublimetext.4:
+      ascii_mode: true
+    com.sublimetext.3:
+      ascii_mode: true
+    org.vim.MacVim:
+      ascii_mode: true
+    com.todesktop.230313mzl4w4u92:
+      ascii_mode: true  # Cursor IDE
+
+    # SSH and remote tools - default to English
+    com.panic.Transmit:
+      ascii_mode: true
+    com.nssurge.surge-mac:
+      ascii_mode: true
+
+    # Browsers - default to Chinese (for web browsing, searching)
+    com.apple.Safari:
+      ascii_mode: false
+    com.google.Chrome:
+      ascii_mode: false
+    org.mozilla.firefox:
+      ascii_mode: false
+    com.microsoft.edgemac:
+      ascii_mode: false
+    com.brave.Browser:
+      ascii_mode: false
+    company.thebrowser.Browser:
+      ascii_mode: false  # Arc browser
+
+    # Communication apps - default to Chinese
+    com.tencent.xinWeChat:
+      ascii_mode: false
+    com.tencent.qq:
+      ascii_mode: false
+    com.apple.MobileSMS:
+      ascii_mode: false
+    com.apple.mail:
+      ascii_mode: false
+    us.zoom.xos:
+      ascii_mode: false
+    com.microsoft.teams2:
+      ascii_mode: false
+    com.hnc.Discord:
+      ascii_mode: false
+    com.slack.Slack:
+      ascii_mode: false
+    ru.keepcoder.Telegram:
+      ascii_mode: false
+
+    # Note-taking apps - default to Chinese
+    com.apple.Notes:
+      ascii_mode: false
+    md.obsidian:
+      ascii_mode: false
+    com.notion.Notion:
+      ascii_mode: false
+
+    # System utilities - default to English
+    com.apple.systempreferences:
+      ascii_mode: true
+    com.apple.finder:
+      ascii_mode: true
+    com.apple.ActivityMonitor:
+      ascii_mode: true

@@ -1,0 +1,25 @@
+# default.custom.yaml for macOS
+# encoding: utf-8
+patch:
+  schema_list:
+    - schema: luna_pinyin_simp
+  default: luna_pinyin_simp # default schema
+  menu:
+    page_size: 10
+  switcher:
+    caption: [Schemes]
+    hotkeys:
+      - F4
+  ascii_composer:
+    good_old_caps_lock: false # disable caps lock
+    switch_key:
+      Shift_L: noop # Left shift is easy to hit by mistake
+      Shift_R: noop # Right shift is easy to hit by mistake
+      Control_L: noop
+      Control_R: noop
+      Caps_Lock: commit_code
+  key_binder:
+    bindings:
+      # see ori_default.yaml for more hotkey binding
+      - { when: has_menu, accept: minus, send: Page_Up }
+      - { when: has_menu, accept: equal, send: Page_Down }
