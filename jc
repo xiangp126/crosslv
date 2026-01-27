@@ -617,6 +617,8 @@ ubuntuInstallApps() {
 }
 
 macInstallApps() {
+    [ ! -f "$fFirstTimeFile" ] && appInstallForce=1
+    [ -z "$appInstallForce" ] && return
     checkSudoPrivilege
     appsForMac=(
         bash
@@ -1499,6 +1501,9 @@ installLatestPPaDocker() {
 }
 
 installLatestRimePinyin() {
+    # Skip if not first time and not explicitly requested
+    [ -f "$fFirstTimeFile" ] && [ -z "$fChinesePinyinForce" ] && return
+
     echo -e "${COLOR}Checking Rime Pinyin Input Method${RESET}"
 
     # Dispatch to macOS-specific function if on Darwin
@@ -1652,12 +1657,14 @@ installRimeMacOS() {
         return 1
     fi
 
-    # Check if Squirrel is already installed
-    if [ -d "/Library/Input Methods/Squirrel.app" ] || [ -d "$HOME/Library/Input Methods/Squirrel.app" ]; then
-        local squirrelVersion=$(/Library/Input\ Methods/Squirrel.app/Contents/MacOS/Squirrel --version 2>/dev/null || echo "unknown")
-        echo -e "${GREEN}✔${GREY} Squirrel (Rime) is already installed.${RESET}"
-        echo -e "  ${GREY}Version: ${squirrelVersion}${RESET}"
-        return 0
+    # Check if Squirrel is already installed (skip check if force flag is set)
+    if [ -z "$fChinesePinyinForce" ]; then
+        if [ -d "/Library/Input Methods/Squirrel.app" ] || [ -d "$HOME/Library/Input Methods/Squirrel.app" ]; then
+            local squirrelVersion=$(/Library/Input\ Methods/Squirrel.app/Contents/MacOS/Squirrel --version 2>/dev/null || echo "unknown")
+            echo -e "${GREEN}✔${GREY} Squirrel (Rime) is already installed.${RESET}"
+            echo -e "  ${GREY}Version: ${squirrelVersion}${RESET}"
+            return 0
+        fi
     fi
 
     # Install Squirrel via Homebrew
@@ -1682,20 +1689,9 @@ installRimeMacOS() {
     mkdir -p "$rimeConfigPath"
 
     # Link configuration files
-    if [ -f "$squirrelCustomYaml" ]; then
-        linkFile "$squirrelCustomYaml" "$rimeConfigPath" squirrel.custom.yaml
-        echo -e "${GREEN}✔${GREY} Linked squirrel.custom.yaml (per-app input switching)${RESET}"
-    fi
-
-    if [ -f "$defaultCustomYaml" ]; then
-        linkFile "$defaultCustomYaml" "$rimeConfigPath" default.custom.yaml
-        echo -e "${GREEN}✔${GREY} Linked default.custom.yaml${RESET}"
-    fi
-
-    if [ -f "$lunaPinyinCustomYaml" ]; then
-        linkFile "$lunaPinyinCustomYaml" "$rimeConfigPath" luna_pinyin_simp.custom.yaml
-        echo -e "${GREEN}✔${GREY} Linked luna_pinyin_simp.custom.yaml${RESET}"
-    fi
+    [ -f "$squirrelCustomYaml" ] && linkFile "$squirrelCustomYaml" "$rimeConfigPath" squirrel.custom.yaml
+    [ -f "$defaultCustomYaml" ] && linkFile "$defaultCustomYaml" "$rimeConfigPath" default.custom.yaml
+    [ -f "$lunaPinyinCustomYaml" ] && linkFile "$lunaPinyinCustomYaml" "$rimeConfigPath" luna_pinyin_simp.custom.yaml
 
     echo -e "${GREEN}Squirrel (Rime) installation completed.${RESET}"
     echo ""
@@ -2711,6 +2707,8 @@ doMacJobs() {
     doCommonJobs               # Common setup tasks
     createMacOSBashProfile     # Create macOS bash_profile
     setMacOSDefaultShell       # Set default shell
+    installLatestRimePinyin    # Install Rime Pinyin input method
+    createFirstTimeFile        # Create first-time file marker
 }
 
 doEarlyExitJobs() {
