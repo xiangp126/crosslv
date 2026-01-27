@@ -1500,6 +1500,13 @@ installLatestPPaDocker() {
 
 installLatestRimePinyin() {
     echo -e "${COLOR}Checking Rime Pinyin Input Method${RESET}"
+
+    # Dispatch to macOS-specific function if on Darwin
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        installRimeMacOS
+        return $?
+    fi
+
     if [ -z "$fChinesePinyinForce" ]; then
         for cmd in fcitx5 fcitx; do
             if command -v "${cmd}-configtool" &>/dev/null; then
@@ -1624,6 +1631,90 @@ installLatestRimePinyin() {
     echo -e "${LIGHTYELLOW}Please ensure your system is Ubuntu/Debian based and your package sources are correctly configured.${RESET}"
     echo -e "${LIGHTYELLOW}No Rime input method was installed.${RESET}"
     return 1
+}
+
+# Install Rime (Squirrel) input method on macOS
+# Squirrel is the macOS frontend for Rime input method engine
+# Requires macOS 13 (Ventura) or later for the latest version
+installRimeMacOS() {
+    echo -e "${COLOR}Checking Rime (Squirrel) Input Method for macOS${RESET}"
+
+    # Check if we're on macOS
+    if [[ $(uname -s) != 'Darwin' ]]; then
+        echo -e "${LIGHTYELLOW}This function is for macOS only. Use installLatestRimePinyin() for Linux.${RESET}"
+        return 1
+    fi
+
+    # Check if Homebrew is available
+    if ! command -v brew &>/dev/null; then
+        echo -e "${RED}Homebrew is not installed. Please install Homebrew first:${RESET}"
+        echo -e "${GREY}  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${RESET}"
+        return 1
+    fi
+
+    # Check if Squirrel is already installed
+    if [ -d "/Library/Input Methods/Squirrel.app" ] || [ -d "$HOME/Library/Input Methods/Squirrel.app" ]; then
+        local squirrelVersion=$(/Library/Input\ Methods/Squirrel.app/Contents/MacOS/Squirrel --version 2>/dev/null || echo "unknown")
+        echo -e "${GREEN}✔${GREY} Squirrel (Rime) is already installed.${RESET}"
+        echo -e "  ${GREY}Version: ${squirrelVersion}${RESET}"
+        return 0
+    fi
+
+    # Install Squirrel via Homebrew
+    echo -e "${LIGHTYELLOW}Installing Squirrel (Rime) via Homebrew...${RESET}"
+    if ! brew install --cask squirrel; then
+        echo -e "${RED}Failed to install Squirrel via Homebrew.${RESET}"
+        echo -e "${LIGHTYELLOW}You can try manual installation from: https://github.com/rime/squirrel/releases${RESET}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Successfully installed Squirrel (Rime).${RESET}"
+
+    # Set up configuration files
+    local rimeConfigPath="$HOME/Library/Rime"
+    local squirrelCustomYaml="$fMainDir/assets/rime/squirrel.custom.yaml"
+    local defaultCustomYaml="$fMainDir/assets/rime/default.custom.macos.yaml"
+    local lunaPinyinCustomYaml="$fMainDir/assets/rime/luna_pinyin_simp.custom.yaml"
+
+    echo -e "${COLOR}Setting up Rime configuration files...${RESET}"
+
+    # Create Rime config directory if it doesn't exist
+    mkdir -p "$rimeConfigPath"
+
+    # Link configuration files
+    if [ -f "$squirrelCustomYaml" ]; then
+        linkFile "$squirrelCustomYaml" "$rimeConfigPath" squirrel.custom.yaml
+        echo -e "${GREEN}✔${GREY} Linked squirrel.custom.yaml (per-app input switching)${RESET}"
+    fi
+
+    if [ -f "$defaultCustomYaml" ]; then
+        linkFile "$defaultCustomYaml" "$rimeConfigPath" default.custom.yaml
+        echo -e "${GREEN}✔${GREY} Linked default.custom.yaml${RESET}"
+    fi
+
+    if [ -f "$lunaPinyinCustomYaml" ]; then
+        linkFile "$lunaPinyinCustomYaml" "$rimeConfigPath" luna_pinyin_simp.custom.yaml
+        echo -e "${GREEN}✔${GREY} Linked luna_pinyin_simp.custom.yaml${RESET}"
+    fi
+
+    echo -e "${GREEN}Squirrel (Rime) installation completed.${RESET}"
+    echo ""
+    echo -e "${BOLD}${MAGENTA}IMPORTANT: Post-installation steps required:${RESET}"
+    echo -e "${LIGHTYELLOW}1. Log out and log back in (or restart your Mac)${RESET}"
+    echo -e "${LIGHTYELLOW}2. Go to: ${BLUE}System Settings → Keyboard → Input Sources${RESET}"
+    echo -e "${LIGHTYELLOW}3. Click '+' and add 'Squirrel' (under Chinese, Simplified)${RESET}"
+    echo -e "${LIGHTYELLOW}4. Use ${BLUE}Ctrl+\`${RESET} or ${BLUE}F4${RESET} to switch Rime schemas${RESET}"
+    echo -e "${LIGHTYELLOW}5. Use your configured hotkey to switch between input methods${RESET}"
+    echo ""
+    echo -e "${COLOR}Per-Application Input Mode (configured in squirrel.custom.yaml):${RESET}"
+    echo -e "${GREY}  - Terminal, iTerm2, VS Code, Xcode → English (ascii_mode)${RESET}"
+    echo -e "${GREY}  - Safari, Chrome, Firefox → Chinese${RESET}"
+    echo -e "${GREY}  - WeChat, QQ, Messages → Chinese${RESET}"
+    echo -e "${GREY}  - Edit ${BLUE}~/Library/Rime/squirrel.custom.yaml${RESET} to customize${RESET}"
+    echo ""
+    echo -e "${LIGHTYELLOW}After editing config files, click 'Deploy' in Squirrel menu (鼠鬚管 → 重新部署)${RESET}"
+
+    return 0
 }
 
 installLatestPPaFirefox() {

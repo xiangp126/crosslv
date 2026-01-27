@@ -18,12 +18,13 @@
     lgg = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr)%Creset'
     lga = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr)%Creset %C(blue)%an%Creset'
     cm = commit -v
+    cmm = commit -v -m
+    cmd = commit --amend
     cp = cherry-pick
     br = branch
     co = checkout
     dt = difftool
     mt = mergetool
-    cmm = commit -v -m
     dfc = diff --cached
     dfs = diff --stat
     showmsg = show -s --format=%B
