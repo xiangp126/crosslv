@@ -9,6 +9,49 @@
 # The -- in a command is used to signal the end of options, ensuring that subsequent arguments are treated as positional parameters
 # rather than options, even if they start with a dash (-).
 
+# GOLAN supported models
+JMAKE_GOLAN_MODELS="arava viper tamar carmel mustang gilboa argaman alpine"
+
+# Helper function to complete multiple models with comma separation
+# Supports: jmake --loop mustang,gilboa,<TAB> to suggest remaining models
+# No quotes needed!
+_jmake_complete_models() {
+    local all_models="$JMAKE_GOLAN_MODELS"
+    local typed_content="$cur"
+    local remaining_models=""
+    local last_word=""
+    local prefix=""
+
+    # Get the last word being typed (after last comma)
+    # and the prefix (already completed models)
+    if [[ "$typed_content" == *,* ]]; then
+        last_word="${typed_content##*,}"
+        prefix="${typed_content%,*},"
+    else
+        last_word="$typed_content"
+        prefix=""
+    fi
+
+    # Filter out already-typed models from suggestions
+    for m in $all_models; do
+        # Check if this model is already in the comma-separated prefix
+        if [[ ! ",$prefix" =~ ",$m," ]]; then
+            remaining_models+="$m "
+        fi
+    done
+
+    # Generate completions for the last word
+    local completions
+    completions=$(compgen -W "$remaining_models" -- "$last_word")
+
+    if [[ -n "$completions" ]]; then
+        COMPREPLY=()
+        while IFS= read -r completion; do
+            COMPREPLY+=("${prefix}${completion}")
+        done <<< "$completions"
+    fi
+}
+
 # Completion function for jmake
 _jmake_complete() {
     local cur prev opts long_opts
@@ -21,37 +64,36 @@ _jmake_complete() {
 
     # List of all long options
     long_opts="--help --all --model --jobs --working-dir --clean --clean-db \
-               --git-clean --build --bear --debug --max-attempt --no-verbose --list --link --loop --loop-skip"
+               --git-clean --build --bear --debug --max-attempt --no-verbose --list --link --loop --loop-all --loop-skip"
 
     # Handle option arguments
     case $prev in
         -m|--model)
-            # GOLAN supported models
-            local models="arava viper tamar carmel mustang gilboa argaman alpine"
-            COMPREPLY=( $(compgen -W "${models}" -- ${cur}) )
+            # Single model completion
+            COMPREPLY=( $(compgen -W "$JMAKE_GOLAN_MODELS" -- "$cur") )
             return 0
             ;;
         -w|--working-dir)
             # Directory completion
-            COMPREPLY=( $(compgen -d -- ${cur}) )
+            COMPREPLY=( $(compgen -d -- "$cur") )
             return 0
             ;;
         -j|--jobs)
             # Suggest common numbers of parallel jobs
             local jobs="1 2 4 8 16 32"
-            COMPREPLY=( $(compgen -W "${jobs}" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "$jobs" -- "$cur") )
             return 0
             ;;
         --max-attempt)
             # Suggest common numbers for max attempts
             local attempts="1 2 3"
-            COMPREPLY=( $(compgen -W "${attempts}" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "$attempts" -- "$cur") )
             return 0
             ;;
-        --loop-skip)
-            # GOLAN supported models (can be comma or space separated)
-            local models="arava viper tamar carmel mustang gilboa argaman alpine"
-            COMPREPLY=( $(compgen -W "${models}" -- ${cur}) )
+        --loop|--loop-skip)
+            # Multi-model completion with comma separation (e.g., mustang,gilboa,argaman)
+            compopt -o nospace  # Don't add space after completion, allow user to type comma
+            _jmake_complete_models
             return 0
             ;;
     esac
@@ -60,10 +102,10 @@ _jmake_complete() {
     if [[ ${cur} == -* ]]; then
         if [[ ${cur} == --* ]]; then
             # Only suggest long options
-            COMPREPLY=( $(compgen -W "${long_opts}" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "$long_opts" -- "$cur") )
         else
             # Suggest short options
-            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
         fi
         return 0
     fi

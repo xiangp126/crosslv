@@ -6,7 +6,7 @@
 fBuildModel=
 fBuildCommand=
 fBuildAll=
-fLoopModels=
+fLoopModels=()
 fLoopSkipModels=()
 fLoopSkippedModels=()
 fLoopVerifiedModels=()
@@ -43,7 +43,8 @@ YELLOW='\033[33m'
 LIGHTYELLOW='\033[93m'
 RESET='\033[0m'
 COLOR=$MAGENTA
-USER_NOTATION="${CYAN}▸${RESET}"
+NOTATION="${CYAN}▸${RESET}"
+PLACEHOLDER=" "
 
 # GOLAN supported models
 GOLAN_MODELS="arava viper tamar carmel mustang gilboa argaman alpine"
@@ -78,8 +79,9 @@ Build Options:
     -a, --all                   Build all models (no -d flag to build.sh)
     -b, --bear                  Generate compile_commands.json (implies -c --clean-db -o)
     -m, --model                 Set the build model (default: $DEFAULT_MODEL)
-        --loop                  Loop through all models and execute command for each
-        --loop-skip "<models>"  Skip models during loop (quote if space-separated)
+        --loop <models>         Loop build specified models (comma-separated)
+        --loop-all              Loop build all models one by one
+        --loop-skip <models>    Loop build all except these models (comma-separated)
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
     --max-attempt               Set max build attempts (default: $fMaxBuildAttempt)
@@ -95,9 +97,10 @@ Supported Models:
 Examples:
     $SCRIPT_NAME -o                        # Build mustang (default, verbose)
     $SCRIPT_NAME -a                        # Build all models (single build.sh invocation)
-    $SCRIPT_NAME --loop                    # Loop build each model one by one
-    $SCRIPT_NAME --loop --loop-skip "arava viper tamar"
-                                           # Loop build, skip arava, viper and tamar
+    $SCRIPT_NAME --loop-all                 # Loop build all models one by one
+    $SCRIPT_NAME --loop argaman,alpine     # Loop build only argaman and alpine
+    $SCRIPT_NAME --loop-all --loop-skip arava,viper
+                                           # Loop build all except arava and viper
     $SCRIPT_NAME -c -o                     # Clean and build mustang
     $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
     $SCRIPT_NAME -b -m gilboa              # Build gilboa with compile_commands.json
@@ -118,7 +121,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
 fi
 
 SHORTOPTS="hcoam:j:w:Dlb"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all,loop,loop-skip:"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all,loop:,loop-all,loop-skip:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -201,13 +204,21 @@ while true; do
             shift
             ;;
         --loop)
-            fLoopModels=true
+            IFS=', ' read -ra _loopModels <<< "$2"
+            fLoopModels+=("${_loopModels[@]}")
+            fNeedBuild=true
+            shift 2
+            ;;
+        --loop-all)
+            IFS=' ' read -ra _loopModels <<< "$GOLAN_MODELS"
+            fLoopModels+=("${_loopModels[@]}")
             fNeedBuild=true
             shift
             ;;
         --loop-skip)
             IFS=', ' read -ra _skipModels <<< "$2"
             fLoopSkipModels+=("${_skipModels[@]}")
+            fNeedBuild=true
             shift 2
             ;;
         --)
@@ -215,14 +226,14 @@ while true; do
             break
             ;;
         *)
-            echo -e "$USER_NOTATION ${MAGENTA}Invalid option: $1${RESET}"
+            echo -e "$NOTATION ${MAGENTA}Invalid option: $1${RESET}"
             exit 1
             ;;
     esac
 done
 
 if [[ $# -gt 0 ]]; then
-    echo -e "$USER_NOTATION ${COLOR}Illegal non-option arguments: $*${RESET}"
+    echo -e "$NOTATION ${COLOR}Illegal non-option arguments: $*${RESET}"
     exit 1
 fi
 
@@ -252,16 +263,16 @@ searchBuildModel() {
     COLOR="$RED"
     case ${#matchedModels[@]} in
         0)
-            echo -e "$USER_NOTATION No matched model found for ${COLOR}$targetModel${RESET}"
-            echo -e "$USER_NOTATION Available models: ${CYAN}$GOLAN_MODELS${RESET}"
+            echo -e "$NOTATION No matched model found for ${COLOR}$targetModel${RESET}"
+            echo -e "$NOTATION Available models: ${CYAN}$GOLAN_MODELS${RESET}"
             exit 1
             ;;
         1)
             fBuildModel="${matchedModels[0]}"
             ;;
         *)
-            echo "$USER_NOTATION Multiple matched models found for $targetModel"
-            echo "$USER_NOTATION Please specify the model from the following list:"
+            echo "$NOTATION Multiple matched models found for $targetModel"
+            echo "$NOTATION Please specify the model from the following list:"
             for model in "${matchedModels[@]}"; do
                 echo -e "${COLOR}$model${RESET}"
             done
@@ -279,7 +290,7 @@ preConfigure() {
 
     # Verify this is a golan_fw project
     if [[ ! -x "./build.sh" ]]; then
-        echo -e "$USER_NOTATION ${RED}Error: build.sh not found. Are you in a golan_fw directory?${RESET}"
+        echo -e "$NOTATION ${RED}Error: build.sh not found. Are you in a golan_fw directory?${RESET}"
         exit 1
     fi
 
@@ -314,8 +325,11 @@ printBuildFlags() {
     if [ -n "$fNeedBuild" ]; then
         echo -e "${BOLD}Build Options:${RESET}"
         COLOR="$RED"
-        if [ -n "$fLoopModels" ]; then
-            echo -e "[L] Build Mode:   ${COLOR}LOOP (all models one by one)${RESET}"
+        if [[ ${#fLoopModels[@]} -gt 0 || ${#fLoopSkipModels[@]} -gt 0 ]]; then
+            echo -e "[L] Build Mode:   ${COLOR}LOOP (models one by one)${RESET}"
+            if [[ ${#fLoopModels[@]} -gt 0 ]]; then
+                echo -e "[I] Include Only: ${GREEN}${fLoopModels[*]}${RESET}"
+            fi
             if [[ ${#fLoopSkipModels[@]} -gt 0 ]]; then
                 echo -e "[S] Skip Models:  ${YELLOW}${fLoopSkipModels[*]}${RESET}"
             fi
@@ -337,11 +351,11 @@ printBuildFlags() {
 cleanTheRepo() {
     [ -z "$fClean" ] && return
     cd "$fWorkingDir" || exit
-    echo -e "$USER_NOTATION ${CYAN}Cleaning the build...${RESET}"
+    echo -e "$NOTATION ${CYAN}Cleaning the build...${RESET}"
 
     if [ -n "$fGitClean" ]; then
         # Deep clean using git clean -fdx
-        echo -e "$USER_NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
+        echo -e "$NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
 
         # Build exclude options
         # Always exclude *.code-workspace files by default
@@ -357,26 +371,26 @@ cleanTheRepo() {
         fi
 
         local cleanCmd="git clean -fdx $excludeOpts"
-        echo -e "$USER_NOTATION Running: ${BLUE}$cleanCmd${RESET}"
+        echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
         eval "$cleanCmd"
 
         # Also clean submodules
-        echo -e "$USER_NOTATION ${CYAN}Cleaning submodules...${RESET}"
+        echo -e "$NOTATION ${CYAN}Cleaning submodules...${RESET}"
         git submodule foreach --recursive git clean -fdx "$excludeOpts"
 
-        echo -e "$USER_NOTATION ${MAGENTA}Deep clean completed.${RESET}"
+        echo -e "$NOTATION ${MAGENTA}Deep clean completed.${RESET}"
     else
         # Standard make clean
         local cleanCmd="./build.sh -C"
-        echo -e "$USER_NOTATION Running: ${BLUE}$cleanCmd${RESET}"
+        echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
         sleep 1
         COLOR=$MAGENTA
         eval "$cleanCmd"
         if [[ $? -ne 0 ]]; then
-            echo -e "$USER_NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
-            echo -e "$USER_NOTATION ${RESET}But going on anyway${RESET}"
+            echo -e "$NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
+            echo -e "$NOTATION ${RESET}But going on anyway${RESET}"
         else
-            echo -e "$USER_NOTATION ${COLOR}Cleaned the build successfully.${RESET}"
+            echo -e "$NOTATION ${COLOR}Cleaned the build successfully.${RESET}"
         fi
 
         # Remove compile_commands.json if requested
@@ -385,15 +399,15 @@ cleanTheRepo() {
                 # It's a symlink - remove both the symlink and the real file it points to
                 local realFile
                 realFile=$(readlink -f "$fCompileCommandsJson")
-                echo -e "$USER_NOTATION Removing symlink ${CYAN}$fCompileCommandsJson${RESET}"
+                echo -e "$NOTATION Removing symlink ${CYAN}$fCompileCommandsJson${RESET}"
                 rm -f "$fCompileCommandsJson"
                 if [ -f "$realFile" ]; then
-                    echo -e "$USER_NOTATION Removing real file ${CYAN}$realFile${RESET}"
+                    echo -e "$NOTATION Removing real file ${CYAN}$realFile${RESET}"
                     rm -f "$realFile"
                 fi
             elif [ -f "$fCompileCommandsJson" ]; then
                 # It's a regular file - just remove it
-                echo -e "$USER_NOTATION Removing ${CYAN}$fCompileCommandsJson${RESET}"
+                echo -e "$NOTATION Removing ${CYAN}$fCompileCommandsJson${RESET}"
                 rm -f "$fCompileCommandsJson"
             fi
         fi
@@ -407,24 +421,24 @@ updateSubmodules() {
 
     # Check if submodules are initialized by looking for a key file
     if [[ ! -f "shared/glib/glib.mak" ]]; then
-        echo -e "$USER_NOTATION ${CYAN}Initializing submodules with: ${YELLOW}git submodule update --init --recursive${RESET}"
+        echo -e "$NOTATION ${CYAN}Initializing submodules with: ${YELLOW}git submodule update --init --recursive${RESET}"
         eval "git submodule update --init --recursive"
     else
-        echo -e "$USER_NOTATION ${CYAN}Updating submodules with: ${YELLOW}git submodule update --recursive${RESET}"
+        echo -e "$NOTATION ${CYAN}Updating submodules with: ${YELLOW}git submodule update --recursive${RESET}"
         eval "git submodule update --recursive"
     fi
 
     if [[ $? -ne 0 ]]; then
-        echo -e "$USER_NOTATION ${RED}Error: Submodule update failed${RESET}"
+        echo -e "$NOTATION ${RED}Error: Submodule update failed${RESET}"
         exit 1
     else
-        echo -e "$USER_NOTATION ${GREEN}Submodules updated successfully.${RESET}"
+        echo -e "$NOTATION ${GREEN}Submodules updated successfully.${RESET}"
     fi
 }
 
 printLoopStatusChart() {
     echo "$SEPARATOR"
-    echo -e "$USER_NOTATION ${BOLD}${RED}Build Failed - Loop Status Chart:${RESET}"
+    echo -e "$NOTATION ${BOLD}${RED}Build Failed - Loop Status Chart:${RESET}"
     echo -e "  ${RED}✗ Failed:${RESET}      $fLoopCurrentModel"
     if [[ ${#fLoopVerifiedModels[@]} -gt 0 ]]; then
         echo -e "  ${GREEN}✓ Verified:${RESET}    ${fLoopVerifiedModels[*]}"
@@ -464,8 +478,8 @@ runBuildCommands() {
     while [[ $currAttempt -le $maxAttempt ]]; do
         buildStartTime=$(date +%s)
         COLOR="$GREEN"
-        echo -e "$USER_NOTATION Running: ${LIGHTYELLOW}$fBuildCommand${RESET}"
-        echo -e "$USER_NOTATION ${COLOR}Build attempt $currAttempt/$maxAttempt${RESET}"
+        echo -e "$NOTATION Running: ${LIGHTYELLOW}$fBuildCommand${RESET}"
+        echo -e "$NOTATION ${COLOR}Build attempt $currAttempt/$maxAttempt${RESET}"
         sleep 1
 
         eval "$fBuildCommand"
@@ -481,8 +495,8 @@ runBuildCommands() {
 
     if [[ $eval_status -ne 0 ]]; then
         COLOR="$MAGENTA"
-        echo -e "$USER_NOTATION ${COLOR}Build failed. Please search for 'error:' in the build output.${RESET}"
-        [ -n "$fLoopModels" ] && printLoopStatusChart
+        echo -e "$NOTATION ${COLOR}Build failed. Please search for 'error:' in the build output.${RESET}"
+        [[ ${#fLoopModels[@]} -gt 0 || ${#fLoopSkipModels[@]} -gt 0 ]] && printLoopStatusChart
         exit 1
     fi
 
@@ -500,7 +514,7 @@ runBuildCommands() {
         fBuildTimeFormatted="${hours}h${fBuildTimeFormatted}"
     fi
 
-    echo -e "$USER_NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
+    echo -e "$NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
 }
 
 isModelSkipped() {
@@ -511,37 +525,63 @@ isModelSkipped() {
     return 1
 }
 
+isModelInList() {
+    local model="$1"
+    for item in "${fLoopModels[@]}"; do
+        [[ "$model" == "$item" ]] && return 0
+    done
+    return 1
+}
+
 runLoopModels() {
-    [ -z "$fLoopModels" ] && return 1
+    # Check that --loop-skip requires --loop or --loop-all
+    if [[ ${#fLoopSkipModels[@]} -gt 0 && ${#fLoopModels[@]} -eq 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: --loop-skip requires --loop or --loop-all${RESET}"
+        exit 1
+    fi
+
+    # Only run if --loop or --loop-all is specified
+    [[ ${#fLoopModels[@]} -eq 0 ]] && return 1
 
     local totalStartTime=$(date +%s)
-    local allModels=($GOLAN_MODELS)
     fLoopSkippedModels=()
 
-    echo -e "$USER_NOTATION ${BOLD}${CYAN}Starting loop build for all models...${RESET}"
+    # Apply --loop-skip filter to fLoopModels (ignore skip models not in the list)
+    if [[ ${#fLoopSkipModels[@]} -gt 0 ]]; then
+        local filteredModels=()
+        for model in "${fLoopModels[@]}"; do
+            if ! isModelSkipped "$model"; then
+                filteredModels+=("$model")
+            else
+                fLoopSkippedModels+=("$model")
+            fi
+        done
+        fLoopModels=("${filteredModels[@]}")
+    fi
+
+    # Show what we're building
+    if [[ ${#fLoopSkipModels[@]} -gt 0 ]]; then
+        echo -e "$NOTATION ${BOLD}${CYAN}Starting loop build for: ${GREEN}${fLoopModels[*]}${CYAN} (skipping: ${YELLOW}${fLoopSkipModels[*]}${CYAN})${RESET}"
+    else
+        echo -e "$NOTATION ${BOLD}${CYAN}Starting loop build for: ${GREEN}${fLoopModels[*]}${RESET}"
+    fi
     echo "$SEPARATOR"
 
-    for i in "${!allModels[@]}"; do
-        local model="${allModels[$i]}"
-
-        # Check if model should be skipped
-        if isModelSkipped "$model"; then
-            fLoopSkippedModels+=("$model")
-            continue
-        fi
+    for i in "${!fLoopModels[@]}"; do
+        local model="${fLoopModels[$i]}"
 
         # Set current model and calculate pending models
         fLoopCurrentModel="$model"
-        fLoopPendingModels=("${allModels[@]:$((i+1))}")
+        fLoopPendingModels=("${fLoopModels[@]:$((i+1))}")
         fBuildModel="$model"
 
-        echo -e "$USER_NOTATION ${BOLD}Current building model: ${GREEN}$model${RESET}"
+        echo -e "$NOTATION ${BOLD}Current building model: ${GREEN}$model${RESET}"
 
         runBuildCommands  # exits on failure with status chart
 
         # If we get here, build succeeded
         fLoopVerifiedModels+=("$model")
-        echo -e "$USER_NOTATION ${GREEN}✓ $model build succeeded${RESET}"
+        echo -e "$NOTATION ${GREEN}✓ $model build succeeded${RESET}"
         echo "$SEPARATOR"
     done
 
@@ -554,11 +594,11 @@ runLoopModels() {
     [[ $minutes -gt 0 ]] && totalTimeFormatted="${minutes}m${totalTimeFormatted}"
     [[ $hours -gt 0 ]] && totalTimeFormatted="${hours}h${totalTimeFormatted}"
 
-    echo -e "$USER_NOTATION ${BOLD}Loop Build Summary:${RESET}"
-    echo -e "$USER_NOTATION Total time: ${CYAN}$totalTimeFormatted${RESET}"
-    echo -e "$USER_NOTATION ${GREEN}✓ Verified (${#fLoopVerifiedModels[@]}):${RESET} ${fLoopVerifiedModels[*]}"
+    echo -e "$NOTATION ${BOLD}Loop Build Summary:${RESET}"
+    echo -e "$NOTATION Total time: ${CYAN}$totalTimeFormatted${RESET}"
+    echo -e "$PLACEHOLDER${GREEN}✓ Verified (${#fLoopVerifiedModels[@]}):${RESET} ${fLoopVerifiedModels[*]}"
     if [[ ${#fLoopSkippedModels[@]} -gt 0 ]]; then
-        echo -e "$USER_NOTATION ${CYAN}⊘ Skipped (${#fLoopSkippedModels[@]}):${RESET} ${fLoopSkippedModels[*]}"
+        echo -e "$PLACEHOLDER${CYAN}⊘ Skipped (${#fLoopSkippedModels[@]}):${RESET} ${fLoopSkippedModels[*]}"
     fi
     return 0
 }
@@ -567,7 +607,7 @@ linkCompileDatabase() {
     [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkCompileDb" ] && return
     # Skip linking when building all models (no single model-specific database)
     if [ -n "$fBuildAll" ]; then
-        echo -e "$USER_NOTATION ${GREY}Skipping compile database link (building all models)${RESET}"
+        echo -e "$NOTATION ${GREY}Skipping compile database link (building all models)${RESET}"
         return
     fi
     cd "$fWorkingDir" || exit
@@ -581,34 +621,34 @@ linkCompileDatabase() {
     # Skip if link already exists and points to correct target (only for --link, not --bear)
     if [ -n "$fLinkCompileDb" ] && [ -z "$fGenerateCompileCmds" ]; then
         if [[ -L "$targetLink" && "$(readlink "$targetLink")" == "$dbFile" ]]; then
-            echo -e "$USER_NOTATION ${GREEN}Link already exists:${RESET} compile_commands.json -> $dbFile"
+            echo -e "$NOTATION ${GREEN}Link already exists:${RESET} compile_commands.json -> $dbFile"
         else
             if [[ -f "$dbFile" ]]; then
-                echo -e "$USER_NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
+                echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
                 ln -sf "$dbFile" "$targetLink"
-                echo -e "$USER_NOTATION Created: ${GREEN}compile_commands.json${RESET} -> ${BLUE}$dbFile${RESET}"
+                echo -e "$NOTATION Created: ${GREEN}compile_commands.json${RESET} -> ${BLUE}$dbFile${RESET}"
             else
-                echo -e "$USER_NOTATION ${RED}Warning: Compile database not found: $dbFile${RESET}"
+                echo -e "$NOTATION ${RED}Warning: Compile database not found: $dbFile${RESET}"
             fi
         fi
     else
         if [[ -f "$dbFile" ]]; then
-            echo -e "$USER_NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
+            echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
             ln -sf "$dbFile" "$targetLink"
-            echo -e "$USER_NOTATION Created: ${GREEN}compile_commands.json${RESET} -> ${BLUE}$dbFile${RESET}"
+            echo -e "$NOTATION Created: ${GREEN}compile_commands.json${RESET} -> ${BLUE}$dbFile${RESET}"
         else
-            echo -e "$USER_NOTATION ${RED}Warning: Compile database not found: $dbFile${RESET}"
+            echo -e "$NOTATION ${RED}Warning: Compile database not found: $dbFile${RESET}"
         fi
     fi
 
     # Link .clangd config
     if [[ -L "$clangdTarget" && "$(readlink "$clangdTarget")" == "$clangdSource" ]]; then
-        echo -e "$USER_NOTATION ${GREEN}Link already exists:${RESET} .clangd -> $clangdSource"
+        echo -e "$NOTATION ${GREEN}Link already exists:${RESET} .clangd -> $clangdSource"
     elif [[ -f "$clangdSource" ]]; then
         ln -sf "$clangdSource" "$clangdTarget"
-        echo -e "$USER_NOTATION Created: ${GREEN}.clangd${RESET} -> ${BLUE}$clangdSource${RESET}"
+        echo -e "$NOTATION Created: ${GREEN}.clangd${RESET} -> ${BLUE}$clangdSource${RESET}"
     else
-        echo -e "$USER_NOTATION ${RED}Warning: .clangd config not found: $clangdSource${RESET}"
+        echo -e "$NOTATION ${RED}Warning: .clangd config not found: $clangdSource${RESET}"
     fi
 }
 
@@ -622,10 +662,10 @@ removeWriteFromJson() {
     local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
     if [[ -f "$dbFile" ]]; then
         if [[ -w "$dbFile" ]]; then
-            echo -e "$USER_NOTATION ${CYAN}Removing write privilege from ${YELLOW}$dbFile${RESET}"
+            echo -e "$NOTATION ${CYAN}Removing write privilege from ${YELLOW}$dbFile${RESET}"
             chmod u-w "$dbFile"
         else
-            echo -e "$USER_NOTATION ${GREY}$dbFile is already read-only${RESET}"
+            echo -e "$NOTATION ${GREY}$dbFile is already read-only${RESET}"
         fi
     fi
 }
@@ -636,8 +676,8 @@ main() {
     printBuildFlags
     cleanTheRepo
     updateSubmodules
-    # Handle loop mode or regular build
-    if [ -n "$fLoopModels" ]; then
+    # Handle loop mode (--loop or --loop-skip) or regular build
+    if [[ ${#fLoopModels[@]} -gt 0 || ${#fLoopSkipModels[@]} -gt 0 ]]; then
         runLoopModels
     else
         runBuildCommands
