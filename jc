@@ -1659,8 +1659,14 @@ installRimeMacOS() {
 
     # Check if Squirrel is already installed (skip check if force flag is set)
     if [ -z "$fChinesePinyinForce" ]; then
-        if [ -d "/Library/Input Methods/Squirrel.app" ] || [ -d "$HOME/Library/Input Methods/Squirrel.app" ]; then
-            local squirrelVersion=$(/Library/Input\ Methods/Squirrel.app/Contents/MacOS/Squirrel --version 2>/dev/null || echo "unknown")
+        local squirrelPath=""
+        if [ -d "/Library/Input Methods/Squirrel.app" ]; then
+            squirrelPath="/Library/Input Methods/Squirrel.app"
+        elif [ -d "$HOME/Library/Input Methods/Squirrel.app" ]; then
+            squirrelPath="$HOME/Library/Input Methods/Squirrel.app"
+        fi
+        if [ -n "$squirrelPath" ]; then
+            local squirrelVersion=$("$squirrelPath/Contents/MacOS/Squirrel" --version 2>/dev/null || echo "unknown")
             echo -e "${GREEN}✔${GREY} Squirrel (Rime) is already installed.${RESET}"
             echo -e "  ${GREY}Version: ${squirrelVersion}${RESET}"
             return 0
@@ -1680,7 +1686,7 @@ installRimeMacOS() {
     # Set up configuration files
     local rimeConfigPath="$HOME/Library/Rime"
     local squirrelCustomYaml="$fMainDir/assets/rime/squirrel.custom.yaml"
-    local defaultCustomYaml="$fMainDir/assets/rime/default.custom.macos.yaml"
+    local defaultCustomYaml="$fMainDir/assets/rime/default.custom.yaml"
     local lunaPinyinCustomYaml="$fMainDir/assets/rime/luna_pinyin_simp.custom.yaml"
 
     echo -e "${COLOR}Setting up Rime configuration files...${RESET}"
@@ -1709,6 +1715,11 @@ installRimeMacOS() {
     echo -e "${GREY}  - Edit ${BLUE}~/Library/Rime/squirrel.custom.yaml${RESET} to customize${RESET}"
     echo ""
     echo -e "${LIGHTYELLOW}After editing config files, click 'Deploy' in Squirrel menu (鼠鬚管 → 重新部署)${RESET}"
+    echo ""
+    echo -e "${COLOR}Troubleshooting: If Squirrel doesn't appear after restart:${RESET}"
+    echo -e "${GREY}  Squirrel is installed but NOT automatically added to input sources.${RESET}"
+    echo -e "${GREY}  You MUST manually add it via: System Settings → Keyboard → Input Sources → '+' → Chinese, Simplified → Squirrel${RESET}"
+    echo -e "${GREY}  If Squirrel is not in the list, run: ${BLUE}/Library/Input\\ Methods/Squirrel.app/Contents/MacOS/Squirrel --install${RESET}"
 
     return 0
 }

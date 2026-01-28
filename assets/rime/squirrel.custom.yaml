@@ -5,7 +5,9 @@ patch:
   # Appearance settings
   style:
     color_scheme: google
-    horizontal: true
+    horizontal: true                    # Legacy setting for older Squirrel versions
+    candidate_list_layout: linear       # New setting for Squirrel 0.16+: linear = horizontal, stacked = vertical
+    text_orientation: horizontal        # Text direction
     inline_preedit: true
     corner_radius: 5
     border_height: 0
@@ -32,8 +34,11 @@ patch:
       ascii_mode: true
 
     # Code editors and IDEs - default to English
+    # Note: ascii_mode only sets the DEFAULT mode, you can still switch manually
+    # Use Caps Lock to toggle between English/Chinese (both Shift keys are disabled)
     com.microsoft.VSCode:
       ascii_mode: true
+      no_inline: true  # Use floating window for better terminal compatibility
     com.apple.dt.Xcode:
       ascii_mode: true
     com.jetbrains.intellij:
@@ -52,6 +57,7 @@ patch:
       ascii_mode: true
     com.todesktop.230313mzl4w4u92:
       ascii_mode: true  # Cursor IDE
+      no_inline: true  # Use floating window for better terminal compatibility
 
     # SSH and remote tools - default to English
     com.panic.Transmit:

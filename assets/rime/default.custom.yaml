@@ -13,11 +13,11 @@ patch:
   ascii_composer:
     good_old_caps_lock: false # disable caps lock
     switch_key:
-      Shift_L: noop # Left shift is easy to hit by mistake
-      Shift_R: noop # Right shift is easy to hit by mistake
+      Shift_L: noop           # Left Shift: disabled (easy to hit by mistake when coding)
+      Shift_R: noop           # Right Shift: disabled (easy to hit by mistake when coding)
       Control_L: noop
       Control_R: noop
-      Caps_Lock: commit_code
+      Caps_Lock: commit_code  # Caps Lock: switch Chinese/English
   key_binder:
     bindings:
       # see ori_default.yaml for more hotkey binding

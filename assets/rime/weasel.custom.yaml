@@ -1,4 +1,10 @@
+# weasel.custom.yaml
+# Windows Weasel (小狼毫) frontend configuration
+# Note: Only for appearance and app_options, not for translator/schema settings
 patch:
-  "style/color_scheme": google    # Use Google-like theme
-  translator:
-    enable_user_dict: true
+  style:
+    color_scheme: google
+    horizontal: true
+    candidate_list_layout: linear
+    inline_preedit: true
+    font_point: 16

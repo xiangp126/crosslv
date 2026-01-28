@@ -1,11 +1,40 @@
-# luna_pinyin_simp.custom.yaml, create it if it doesn't exist
-# Note: Use spaces for indentation (no tabs), and include space after colons
+# luna_pinyin_simp.custom.yaml
+# Schema-specific settings for luna_pinyin_simp (Simplified Chinese Pinyin)
+#
+# ============================================================================
+# Rime Configuration Priority (from lowest to highest):
+# ============================================================================
+#
+#  ┌─────────────────────────────────────────────────────────────────┐
+#  │  HIGHEST PRIORITY (overrides settings below)                    │
+#  ├─────────────────────────────────────────────────────────────────┤
+#  │  1. Schema-specific: luna_pinyin_simp.custom.yaml               │
+#  │     - Only affects this specific input schema                   │
+#  │     - Can override same settings from default                   │
+#  ├─────────────────────────────────────────────────────────────────┤
+#  │  2. Frontend-specific (platform):                               │
+#  │     - macOS: squirrel.custom.yaml                               │
+#  │     - Windows: weasel.custom.yaml                               │
+#  │     - Linux: (fcitx has its own config)                         │
+#  │     - Controls appearance (style) and app_options               │
+#  ├─────────────────────────────────────────────────────────────────┤
+#  │  3. Global default: default.custom.yaml                         │
+#  │     - Global default settings                                   │
+#  │     - ascii_composer, key_binder, menu, etc.                    │
+#  └─────────────────────────────────────────────────────────────────┘
+#    LOWEST PRIORITY
+#
+# Which file controls what:
+#   - Key switching (Shift/Caps) → default.custom.yaml
+#   - Appearance/style           → squirrel.custom.yaml (macOS)
+#   - Per-app settings           → squirrel.custom.yaml (macOS)
+#   - Schema-specific patches    → luna_pinyin_simp.custom.yaml (this file)
+#
+# ============================================================================
+#
+# Note: Style settings should be in squirrel.custom.yaml (macOS) or weasel.custom.yaml (Windows)
+#       This file is for schema-specific patches only (e.g., fuzzy pinyin, custom phrases)
 patch:
-  style:
-    color_scheme: google     # Use Google-style color theme
-    horizontal: true         # Display candidates horizontally (false for vertical)
-    inline_preedit: true     # Show raw input (pinyin) at cursor position
-    font_point: 12           # Candidate font size (in points)
-    corner_radius: 5         # Candidate panel corner radius (in pixels)
+  # Menu settings (also defined in default.custom.yaml, kept here for schema-level override if needed)
   menu:
     page_size: 10            # Number of candidates per page
