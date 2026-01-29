@@ -125,9 +125,10 @@ export QUOTING_STYLE=literal
 export BAT_THEME=TwoDark
 
 # Useful local variables.
-export LC_ALL=en_US.UTF-8
-export LANG=en_US.UTF-8
+unset LC_ALL
 export LC_CTYPE=en_US.UTF-8
+export LC_TIME=C  # 24-hour format (always available)
+export LANG=en_US.UTF-8
 export SSLKEYLOGFILE=~/.ssl-keys.log # Wireshark to decode SSL/TLS traffic
 PKG_CONFIG_PATH=$HOME/.usr/lib/pkgconfig:/usr/local/lib/pkgconfig
 LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/usr/local/lib:/usr/local/lib64
