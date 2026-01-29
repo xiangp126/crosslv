@@ -9,11 +9,11 @@
 # The -- in a command is used to signal the end of options, ensuring that subsequent arguments are treated as positional parameters
 # rather than options, even if they start with a dash (-).
 
-# GOLAN supported models
-JMAKE_GOLAN_MODELS="arava viper tamar carmel mustang gilboa argaman alpine"
+# GOLAN supported models (same order as jmake)
+JMAKE_GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
 
 # Helper function to complete multiple models with comma separation
-# Supports: jmake --loop mustang,gilboa,<TAB> to suggest remaining models
+# Supports: jmake --models mustang,gilboa,<TAB> to suggest remaining models
 # No quotes needed!
 _jmake_complete_models() {
     local all_models="$JMAKE_GOLAN_MODELS"
@@ -60,19 +60,14 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -a -m -j -w -c -o -D -l -b"
+    opts="-h -a -j -w -c -o -D -l -b -m -N"
 
     # List of all long options
-    long_opts="--help --all --model --jobs --working-dir --clean --clean-db \
-               --git-clean --build --bear --debug --max-attempt --no-verbose --list --link --loop --loop-all --loop-skip"
+    long_opts="--help --all --jobs --working-dir --clean --clean-db \
+               --git-clean --build --bear --debug --max-attempt --no-verbose --nicx --list --link --models --models-all --models-skip"
 
     # Handle option arguments
     case $prev in
-        -m|--model)
-            # Single model completion
-            COMPREPLY=( $(compgen -W "$JMAKE_GOLAN_MODELS" -- "$cur") )
-            return 0
-            ;;
         -w|--working-dir)
             # Directory completion
             COMPREPLY=( $(compgen -d -- "$cur") )
@@ -90,7 +85,7 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -W "$attempts" -- "$cur") )
             return 0
             ;;
-        --loop|--loop-skip)
+        -m|--models|--models-skip)
             # Multi-model completion with comma separation (e.g., mustang,gilboa,argaman)
             compopt -o nospace  # Don't add space after completion, allow user to type comma
             _jmake_complete_models

@@ -5,13 +5,12 @@
 # Build flags & Options
 fBuildModel=
 fBuildCommand=
-fBuildAll=
-fLoopModels=()
-fLoopSkipModels=()
-fLoopSkippedModels=()
-fLoopVerifiedModels=()
-fLoopCurrentModel=
-fLoopPendingModels=()
+fModels=()
+fModelsSkip=()
+fModelsSkipped=()
+fModelsVerified=()
+fModelsCurrent=
+fModelsPending=()
 fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
 fMaxBuildAttempt=1
@@ -22,15 +21,13 @@ fPrintBuildFlags=
 fClean=
 fGitClean=
 fNoVerbose=
+fNicx=
 fInputCmd=
 fBuildTimeFormatted=
 # Git associated variables
 fCompileCommandsJson="compile_commands.json"
 fRMCompileCommandsJson=
 
-# Common Constants
-SEPARATOR="==================================================="
-SCRIPT_NAME=$(basename $0)
 # Colors
 CYAN='\033[36m'
 RED='\033[31m'
@@ -42,13 +39,54 @@ GREY='\033[90m'
 YELLOW='\033[33m'
 LIGHTYELLOW='\033[93m'
 RESET='\033[0m'
+# Common Constants
 COLOR=$MAGENTA
+SCRIPT_NAME=$(basename $0)
 NOTATION="${CYAN}▸${RESET}"
 PLACEHOLDER=" "
+SEPARATOR="==================================================="
+BUILD_SCRIPT="./build.sh"
 
 # GOLAN supported models
-GOLAN_MODELS="arava viper tamar carmel mustang gilboa argaman alpine"
+# Model to hardware device mapping (ordered by hardware generation)
+declare -A MODEL_HARDWARE=(
+    [arava]="CX6DX"
+    [tamar]="CX6LX"
+    [viper]="BF2"
+    [mustang]="BF3"
+    [carmel]="CX7"
+    [gilboa]="CX8"
+    [argaman]="CX9"
+    [alpine]="CX10"
+)
+
+# GOLAN supported models (same order as MODEL_HARDWARE)
+# GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
+# Due to a compilation bug, carmel must be built immediately before argaman
+GOLAN_MODELS="arava tamar viper mustang gilboa carmel argaman alpine"
 DEFAULT_MODEL="mustang"
+
+# Get model display name with hardware info: "model (HW)"
+getModelDisplayName() {
+    local model="$1"
+    local hw="${MODEL_HARDWARE[$model]}"
+    if [[ -n "$hw" ]]; then
+        echo "$model ($hw)"
+    else
+        echo "$model"
+    fi
+}
+
+# Format array of models with hardware info, comma-separated
+formatModelsWithHardware() {
+    local -n arr=$1
+    local result=""
+    for model in "${arr[@]}"; do
+        [[ -n "$result" ]] && result+=","
+        result+="$(getModelDisplayName "$model")"
+    done
+    echo "$result"
+}
 
 # https://patorjk.com/software/taag/
 showLogo() {
@@ -69,19 +107,18 @@ Build tool for NVIDIA golan_fw firmware.
 
 Build Flags:
     -D, --debug                 Enable debug mode
-    -c, --clean                 Run make clean (./build.sh -C)
+    -c, --clean                 Run make clean ($BUILD_SCRIPT -C)
         --clean-db              Also remove $fCompileCommandsJson during clean
         --git-clean             Deep clean using git clean -fdx (preserves submodules)
     -o, --build                 Run build commands
         --no-verbose            Suppress full compilation output (default: verbose)
 
 Build Options:
-    -a, --all                   Build all models (no -d flag to build.sh)
+    -a, --all, --models-all     Build all models one by one (loop mode)
     -b, --bear                  Generate compile_commands.json (implies -c --clean-db -o)
-    -m, --model                 Set the build model (default: $DEFAULT_MODEL)
-        --loop <models>         Loop build specified models (comma-separated)
-        --loop-all              Loop build all models one by one
-        --loop-skip <models>    Loop build all except these models (comma-separated)
+    -m, --models <models>       Build specified models (comma-separated, loop if multiple)
+        --models-skip <models>  Skip these models when building (comma-separated)
+    -N, --nicx                  Build with NICX=1 flag
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
     --max-attempt               Set max build attempts (default: $fMaxBuildAttempt)
@@ -96,14 +133,14 @@ Supported Models:
 
 Examples:
     $SCRIPT_NAME -o                        # Build mustang (default, verbose)
-    $SCRIPT_NAME -a                        # Build all models (single build.sh invocation)
-    $SCRIPT_NAME --loop-all                 # Loop build all models one by one
-    $SCRIPT_NAME --loop argaman,alpine     # Loop build only argaman and alpine
-    $SCRIPT_NAME --loop-all --loop-skip arava,viper
-                                           # Loop build all except arava and viper
+    $SCRIPT_NAME --models gilboa           # Build gilboa
+    $SCRIPT_NAME --models argaman,alpine   # Build argaman and alpine (loop mode)
+    $SCRIPT_NAME -a                        # Build all models one by one (loop mode)
+    $SCRIPT_NAME -a --models-skip arava,viper
+                                           # Build all except arava and viper
     $SCRIPT_NAME -c -o                     # Clean and build mustang
     $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
-    $SCRIPT_NAME -b -m gilboa              # Build gilboa with compile_commands.json
+    $SCRIPT_NAME -b --models gilboa        # Build gilboa with compile_commands.json
 
 _EOF
     exit 0
@@ -120,8 +157,8 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hcoam:j:w:Dlb"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,model:,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all,loop:,loop-all,loop-skip:"
+SHORTOPTS="hcoaj:w:Dlbm:N"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all,models:,models-all,models-skip:,nicx"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -139,11 +176,6 @@ while true; do
         -D|--debug)
             set -x
             shift
-            ;;
-        -m|--model)
-            fBuildModel="$2"
-            fNeedBuild=true
-            shift 2
             ;;
         -w|--working-dir)
             fWorkingDir="$2"
@@ -189,35 +221,41 @@ while true; do
             fNoVerbose=true
             shift
             ;;
+        -N|--nicx)
+            fNicx=true
+            shift
+            ;;
         -l|--list)
             echo -e "${BOLD}Available models:${RESET}"
-            echo -e "${GREEN}$GOLAN_MODELS${RESET}"
+            for model in $GOLAN_MODELS; do
+                hw="${MODEL_HARDWARE[$model]}"
+                if [[ -n "$hw" ]]; then
+                    printf "  ${GREEN}%-10s${RESET} → ${CYAN}%s${RESET}\n" "$model" "$hw"
+                else
+                    printf "  ${GREEN}%s${RESET}\n" "$model"
+                fi
+            done
             exit 0
             ;;
         --link)
             fLinkCompileDb=true
             shift
             ;;
-        -a|--all)
-            fBuildAll=true
+        -a|--all|--models-all)
+            IFS=' ' read -ra _models <<< "$GOLAN_MODELS"
+            fModels+=("${_models[@]}")
             fNeedBuild=true
             shift
             ;;
-        --loop)
-            IFS=', ' read -ra _loopModels <<< "$2"
-            fLoopModels+=("${_loopModels[@]}")
+        -m|--models)
+            IFS=', ' read -ra _models <<< "$2"
+            fModels+=("${_models[@]}")
             fNeedBuild=true
             shift 2
             ;;
-        --loop-all)
-            IFS=' ' read -ra _loopModels <<< "$GOLAN_MODELS"
-            fLoopModels+=("${_loopModels[@]}")
-            fNeedBuild=true
-            shift
-            ;;
-        --loop-skip)
+        --models-skip)
             IFS=', ' read -ra _skipModels <<< "$2"
-            fLoopSkipModels+=("${_skipModels[@]}")
+            fModelsSkip+=("${_skipModels[@]}")
             fNeedBuild=true
             shift 2
             ;;
@@ -289,14 +327,9 @@ preConfigure() {
     cd "$fWorkingDir" || exit 1
 
     # Verify this is a golan_fw project
-    if [[ ! -x "./build.sh" ]]; then
-        echo -e "$NOTATION ${RED}Error: build.sh not found. Are you in a golan_fw directory?${RESET}"
+    if [[ ! -x "$BUILD_SCRIPT" ]]; then
+        echo -e "$NOTATION ${RED}Error: $BUILD_SCRIPT not found. Are you in a golan_fw directory?${RESET}"
         exit 1
-    fi
-
-    # Skip model configuration if building all
-    if [ -n "$fBuildAll" ]; then
-        return
     fi
 
     # Lower case the build model
@@ -305,6 +338,13 @@ preConfigure() {
         fBuildModel="$DEFAULT_MODEL"
     else
         searchBuildModel "$GOLAN_MODELS" "$fBuildModel"
+    fi
+}
+
+validateArguments() {
+    if [[ ${#fModelsSkip[@]} -gt 0 && ${#fModels[@]} -eq 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: --models-skip requires --models${RESET}"
+        exit 1
     fi
 }
 
@@ -325,18 +365,16 @@ printBuildFlags() {
     if [ -n "$fNeedBuild" ]; then
         echo -e "${BOLD}Build Options:${RESET}"
         COLOR="$RED"
-        if [[ ${#fLoopModels[@]} -gt 0 || ${#fLoopSkipModels[@]} -gt 0 ]]; then
+        if [[ ${#fModels[@]} -gt 0 || ${#fModelsSkip[@]} -gt 0 ]]; then
             echo -e "[L] Build Mode:   ${COLOR}LOOP (models one by one)${RESET}"
-            if [[ ${#fLoopModels[@]} -gt 0 ]]; then
-                echo -e "[I] Include Only: ${GREEN}${fLoopModels[*]}${RESET}"
+            if [[ ${#fModels[@]} -gt 0 ]]; then
+                echo -e "[I] Include Only: ${GREEN}${fModels[*]}${RESET}"
             fi
-            if [[ ${#fLoopSkipModels[@]} -gt 0 ]]; then
-                echo -e "[S] Skip Models:  ${YELLOW}${fLoopSkipModels[*]}${RESET}"
+            if [[ ${#fModelsSkip[@]} -gt 0 ]]; then
+                echo -e "[S] Skip Models:  ${YELLOW}${fModelsSkip[*]}${RESET}"
             fi
-        elif [ -n "$fBuildAll" ]; then
-            echo -e "[a] Build Model:  ${COLOR}ALL${RESET}"
         else
-            echo -e "[m] Build Model:  ${COLOR}$fBuildModel${RESET}"
+            echo -e "[m] Build Model:  ${COLOR}$(getModelDisplayName "$fBuildModel")${RESET}"
         fi
         COLOR="$CYAN"
         echo -e "[w] Build Directory: ${COLOR}$fWorkingDir${RESET}"
@@ -381,7 +419,7 @@ cleanTheRepo() {
         echo -e "$NOTATION ${MAGENTA}Deep clean completed.${RESET}"
     else
         # Standard make clean
-        local cleanCmd="./build.sh -C"
+        local cleanCmd="$BUILD_SCRIPT -C"
         echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
         sleep 1
         COLOR=$MAGENTA
@@ -439,17 +477,17 @@ updateSubmodules() {
 printLoopStatusChart() {
     echo "$SEPARATOR"
     echo -e "$NOTATION ${BOLD}${RED}Build Failed - Loop Status Chart:${RESET}"
-    echo -e "  ${RED}✗ Failed:${RESET}      $fLoopCurrentModel"
-    if [[ ${#fLoopVerifiedModels[@]} -gt 0 ]]; then
-        echo -e "  ${GREEN}✓ Verified:${RESET}    ${fLoopVerifiedModels[*]}"
+    echo -e "  ${RED}✗ Failed:${RESET}      $fModelsCurrent"
+    if [[ ${#fModelsVerified[@]} -gt 0 ]]; then
+        echo -e "  ${GREEN}✓ Verified:${RESET}    $(IFS=','; echo "${fModelsVerified[*]}")"
     else
         echo -e "  ${GREEN}✓ Verified:${RESET}    (none)"
     fi
-    if [[ ${#fLoopSkippedModels[@]} -gt 0 ]]; then
-        echo -e "  ${CYAN}⊘ Skipped:${RESET}     ${fLoopSkippedModels[*]}"
+    if [[ ${#fModelsSkipped[@]} -gt 0 ]]; then
+        echo -e "  ${CYAN}⊘ Skipped:${RESET}     $(IFS=','; echo "${fModelsSkipped[*]}")"
     fi
-    if [[ ${#fLoopPendingModels[@]} -gt 0 ]]; then
-        echo -e "  ${YELLOW}○ Pending:${RESET}     ${fLoopPendingModels[*]}"
+    if [[ ${#fModelsPending[@]} -gt 0 ]]; then
+        echo -e "  ${YELLOW}○ Pending:${RESET}     $(IFS=','; echo "${fModelsPending[*]}")"
     else
         echo -e "  ${YELLOW}○ Pending:${RESET}     (none)"
     fi
@@ -457,11 +495,12 @@ printLoopStatusChart() {
 }
 
 makeBuildCommand() {
-    fBuildCommand="./build.sh"
-    [ -z "$fBuildAll" ] && fBuildCommand+=" -d $fBuildModel"
+    fBuildCommand="$BUILD_SCRIPT"
+    fBuildCommand+=" -d $fBuildModel"
     fBuildCommand+=" -c $fNumOfJobs"
     [ -z "$fNoVerbose" ] && fBuildCommand+=" --verbose"
     [ -n "$fGenerateCompileCmds" ] && fBuildCommand+=" --bear"
+    [ -n "$fNicx" ] && fBuildCommand+=" -D NICX=1"
 }
 
 runBuildCommands() {
@@ -496,7 +535,7 @@ runBuildCommands() {
     if [[ $eval_status -ne 0 ]]; then
         COLOR="$MAGENTA"
         echo -e "$NOTATION ${COLOR}Build failed. Please search for 'error:' in the build output.${RESET}"
-        [[ ${#fLoopModels[@]} -gt 0 || ${#fLoopSkipModels[@]} -gt 0 ]] && printLoopStatusChart
+        [[ ${#fModels[@]} -gt 0 || ${#fModelsSkip[@]} -gt 0 ]] && printLoopStatusChart
         exit 1
     fi
 
@@ -519,7 +558,7 @@ runBuildCommands() {
 
 isModelSkipped() {
     local model="$1"
-    for skip in "${fLoopSkipModels[@]}"; do
+    for skip in "${fModelsSkip[@]}"; do
         [[ "$model" == "$skip" ]] && return 0
     done
     return 1
@@ -527,52 +566,47 @@ isModelSkipped() {
 
 isModelInList() {
     local model="$1"
-    for item in "${fLoopModels[@]}"; do
+    for item in "${fModels[@]}"; do
         [[ "$model" == "$item" ]] && return 0
     done
     return 1
 }
 
 runLoopModels() {
-    # Check that --loop-skip requires --loop or --loop-all
-    if [[ ${#fLoopSkipModels[@]} -gt 0 && ${#fLoopModels[@]} -eq 0 ]]; then
-        echo -e "$NOTATION ${RED}Error: --loop-skip requires --loop or --loop-all${RESET}"
-        exit 1
-    fi
 
-    # Only run if --loop or --loop-all is specified
-    [[ ${#fLoopModels[@]} -eq 0 ]] && return 1
+    # Only run if --models or --models-all is specified
+    [[ ${#fModels[@]} -eq 0 ]] && return 1
 
     local totalStartTime=$(date +%s)
-    fLoopSkippedModels=()
+    fModelsSkipped=()
 
-    # Apply --loop-skip filter to fLoopModels (ignore skip models not in the list)
-    if [[ ${#fLoopSkipModels[@]} -gt 0 ]]; then
+    # Apply --models-skip filter to fModels (ignore skip models not in the list)
+    if [[ ${#fModelsSkip[@]} -gt 0 ]]; then
         local filteredModels=()
-        for model in "${fLoopModels[@]}"; do
+        for model in "${fModels[@]}"; do
             if ! isModelSkipped "$model"; then
                 filteredModels+=("$model")
             else
-                fLoopSkippedModels+=("$model")
+                fModelsSkipped+=("$model")
             fi
         done
-        fLoopModels=("${filteredModels[@]}")
+        fModels=("${filteredModels[@]}")
     fi
 
     # Show what we're building
-    if [[ ${#fLoopSkipModels[@]} -gt 0 ]]; then
-        echo -e "$NOTATION ${BOLD}${CYAN}Starting loop build for: ${GREEN}${fLoopModels[*]}${CYAN} (skipping: ${YELLOW}${fLoopSkipModels[*]}${CYAN})${RESET}"
+    if [[ ${#fModelsSkip[@]} -gt 0 ]]; then
+        echo -e "$NOTATION ${BOLD}${CYAN}Starting loop build for: ${GREEN}${fModels[*]}${CYAN} (skipping: ${YELLOW}${fModelsSkip[*]}${CYAN})${RESET}"
     else
-        echo -e "$NOTATION ${BOLD}${CYAN}Starting loop build for: ${GREEN}${fLoopModels[*]}${RESET}"
+        echo -e "$NOTATION ${BOLD}${CYAN}Starting loop build for: ${GREEN}${fModels[*]}${RESET}"
     fi
     echo "$SEPARATOR"
 
-    for i in "${!fLoopModels[@]}"; do
-        local model="${fLoopModels[$i]}"
+    for i in "${!fModels[@]}"; do
+        local model="${fModels[$i]}"
 
         # Set current model and calculate pending models
-        fLoopCurrentModel="$model"
-        fLoopPendingModels=("${fLoopModels[@]:$((i+1))}")
+        fModelsCurrent="$model"
+        fModelsPending=("${fModels[@]:$((i+1))}")
         fBuildModel="$model"
 
         echo -e "$NOTATION ${BOLD}Current building model: ${GREEN}$model${RESET}"
@@ -580,8 +614,8 @@ runLoopModels() {
         runBuildCommands  # exits on failure with status chart
 
         # If we get here, build succeeded
-        fLoopVerifiedModels+=("$model")
-        echo -e "$NOTATION ${GREEN}✓ $model build succeeded${RESET}"
+        fModelsVerified+=("$model")
+        echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") build succeeded${RESET}"
         echo "$SEPARATOR"
     done
 
@@ -594,20 +628,22 @@ runLoopModels() {
     [[ $minutes -gt 0 ]] && totalTimeFormatted="${minutes}m${totalTimeFormatted}"
     [[ $hours -gt 0 ]] && totalTimeFormatted="${hours}h${totalTimeFormatted}"
 
+    echo "$SEPARATOR"
     echo -e "$NOTATION ${BOLD}Loop Build Summary:${RESET}"
     echo -e "$NOTATION Total time: ${CYAN}$totalTimeFormatted${RESET}"
-    echo -e "$PLACEHOLDER${GREEN}✓ Verified (${#fLoopVerifiedModels[@]}):${RESET} ${fLoopVerifiedModels[*]}"
-    if [[ ${#fLoopSkippedModels[@]} -gt 0 ]]; then
-        echo -e "$PLACEHOLDER${CYAN}⊘ Skipped (${#fLoopSkippedModels[@]}):${RESET} ${fLoopSkippedModels[*]}"
+    echo -e "$PLACEHOLDER${GREEN}✓ Verified (${#fModelsVerified[@]}):${RESET} $(IFS=','; echo "${fModelsVerified[*]}")"
+    if [[ ${#fModelsSkipped[@]} -gt 0 ]]; then
+        echo -e "$PLACEHOLDER${CYAN}⊘ Skipped (${#fModelsSkipped[@]}):${RESET} $(IFS=','; echo "${fModelsSkipped[*]}")"
     fi
+    echo "$SEPARATOR"
     return 0
 }
 
 linkCompileDatabase() {
     [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkCompileDb" ] && return
-    # Skip linking when building all models (no single model-specific database)
-    if [ -n "$fBuildAll" ]; then
-        echo -e "$NOTATION ${GREY}Skipping compile database link (building all models)${RESET}"
+    # Skip linking when in loop mode (multiple models)
+    if [[ ${#fModels[@]} -gt 1 ]]; then
+        echo -e "$NOTATION ${GREY}Skipping compile database link (loop mode with multiple models)${RESET}"
         return
     fi
     cd "$fWorkingDir" || exit
@@ -654,8 +690,8 @@ linkCompileDatabase() {
 
 removeWriteFromJson() {
     [ -z "$fNeedBuild" ] && return
-    # Skip when building all models
-    [ -n "$fBuildAll" ] && return
+    # Skip when in loop mode (multiple models)
+    [[ ${#fModels[@]} -gt 1 ]] && return
     cd "$fWorkingDir" || exit
 
     # Operate on the actual target file, not the symlink
@@ -672,12 +708,13 @@ removeWriteFromJson() {
 
 main() {
     preConfigure "$@"
+    validateArguments
     showLogo
     printBuildFlags
     cleanTheRepo
     updateSubmodules
-    # Handle loop mode (--loop or --loop-skip) or regular build
-    if [[ ${#fLoopModels[@]} -gt 0 || ${#fLoopSkipModels[@]} -gt 0 ]]; then
+    # Handle models mode (--models or --models-skip) or regular build
+    if [[ ${#fModels[@]} -gt 0 || ${#fModelsSkip[@]} -gt 0 ]]; then
         runLoopModels
     else
         runBuildCommands
