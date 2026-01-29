@@ -534,7 +534,8 @@ runBuildCommands() {
 
     if [[ $eval_status -ne 0 ]]; then
         COLOR="$MAGENTA"
-        echo -e "$NOTATION ${COLOR}Build failed. Please search for 'error:' in the build output.${RESET}"
+        echo -e "$NOTATION ${GREEN}✗ $(getModelDisplayName "$model") build failed${RESET}"
+        echo -e "$NOTATION ${COLOR}Please search for 'error:' in the build output.${RESET}"
         [[ ${#fModels[@]} -gt 0 || ${#fModelsSkip[@]} -gt 0 ]] && printLoopStatusChart
         exit 1
     fi
@@ -628,7 +629,6 @@ runLoopModels() {
     [[ $minutes -gt 0 ]] && totalTimeFormatted="${minutes}m${totalTimeFormatted}"
     [[ $hours -gt 0 ]] && totalTimeFormatted="${hours}h${totalTimeFormatted}"
 
-    echo "$SEPARATOR"
     echo -e "$NOTATION ${BOLD}Loop Build Summary:${RESET}"
     echo -e "$NOTATION Total time: ${CYAN}$totalTimeFormatted${RESET}"
     echo -e "$PLACEHOLDER${GREEN}✓ Verified (${#fModelsVerified[@]}):${RESET} $(IFS=','; echo "${fModelsVerified[*]}")"
