@@ -144,10 +144,12 @@ loadLoopState() {
         fModelsVerified+=("$m")
     done
 
+    echo $SEPARATOR
     echo -e "$NOTATION ${CYAN}Resuming from saved state:${RESET}"
     echo -e "$NOTATION ${GREEN}✓ Previously verified:${RESET} ${verified:-none}"
     echo -e "$NOTATION ${YELLOW}○ Resuming from:${RESET} $failed"
     [[ -n "$pending" ]] && echo -e "$NOTATION${GREY}○ Pending:${RESET} $pending"
+    echo $SEPARATOR
 }
 
 # Delete state file
@@ -496,6 +498,7 @@ cleanTheRepo() {
 
         local cleanCmd="git clean -fdx $excludeOpts"
         echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
+        echo $SEPARATOR
         eval "$cleanCmd"
 
         # Also clean submodules
@@ -507,6 +510,7 @@ cleanTheRepo() {
         # Standard make clean
         local cleanCmd="$BUILD_SCRIPT -C"
         echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
+        echo $SEPARATOR
         sleep 1
         COLOR=$MAGENTA
         eval "$cleanCmd"
@@ -667,11 +671,6 @@ runLoopModels() {
         deleteLoopState
     fi
 
-    # Handle --continue: load saved state
-    if [[ -n "$fContinue" ]]; then
-        loadLoopState
-    fi
-
     # Only run if --models or --models-all is specified
     [[ ${#fModels[@]} -eq 0 ]] && return 1
 
@@ -713,7 +712,6 @@ runLoopModels() {
         # If we get here, build succeeded
         fModelsVerified+=("$model")
         echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") build succeeded${RESET}"
-        echo "$SEPARATOR"
     done
 
     local totalEndTime=$(date +%s)
@@ -738,8 +736,12 @@ runLoopModels() {
     fi
     echo "$SEPARATOR"
 
-    # Delete state file on successful completion
-    deleteLoopState
+    # Delete state file only if no models were skipped (all completed)
+    if [[ ${#fModelsSkipped[@]} -eq 0 ]]; then
+        deleteLoopState
+    else
+        echo -e "$NOTATION ${YELLOW}State file kept (skipped models can be built later)${RESET}"
+    fi
     return 0
 }
 
@@ -812,13 +814,14 @@ removeWriteFromJson() {
 
 main() {
     preConfigure "$@"
+    [[ -n "$fContinue" ]] && loadLoopState # load state file to populate fModels
     validateArguments
     showLogo
     printBuildFlags
     cleanTheRepo
     updateSubmodules
-    # Handle models mode (--models or --models-skip) or regular build
-    if [[ ${#fModels[@]} -gt 0 || ${#fModelsSkip[@]} -gt 0 ]]; then
+    # Handle models mode (--models) or regular build
+    if [[ ${#fModels[@]} -gt 0 ]]; then
         runLoopModels
     else
         runBuildCommands
