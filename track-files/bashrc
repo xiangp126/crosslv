@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck disable=SC2155 disable=SC1090 disable=SC1091
+# shellcheck disable=SC2155 disable=SC1090 disable=SC1091 disable=SC2032
 
 # Cache uname result once (avoid repeated forks)
 _UNAME_S=$(uname -s)
@@ -30,6 +30,9 @@ HISTFILESIZE=10000
 # check the window size after each command and, if necessary,
 # update the values of LINES and COLUMNS.
 shopt -s checkwinsize
+
+# NV specific 1
+source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias
 
 # If set, the pattern "**" used in a pathname expansion context will
 # match all files and zero or more directories and subdirectories.
@@ -116,7 +119,8 @@ alias cdd='__cd /data'
 alias cdf='__cd /data/fos'
 alias cdo='__cd /opt'
 alias cds='__cd /opt/src'
-# NV specific
+# NV specific 2
+alias mss='sudo mst status -v'
 alias cdw='__cd /auto/fwgwork1/pexiang/golan_fw'
 alias cdw2='__cd /auto/fwgwork1/pexiang/golan_fw2'
 

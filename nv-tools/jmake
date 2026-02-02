@@ -484,8 +484,8 @@ cleanTheRepo() {
         echo -e "$NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
 
         # Build exclude options
-        # Always exclude *.code-workspace files by default
-        local excludeOpts="--exclude=*.code-workspace"
+        # Always exclude *.code-workspace files and state file by default
+        local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE"
         if [ -z "$fRMCompileCommandsJson" ]; then
             if [ -L "$fCompileCommandsJson" ]; then
                 # It's a symlink, exclude the real file instead of the symlink itself
