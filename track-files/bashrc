@@ -64,7 +64,7 @@ _prompt_shorten_path() {
     pwd2="$result"
 }
 PROMPT_COMMAND='_prompt_shorten_path'
-PS1="\u@${HOSTNAME:0:10}:\${pwd2:0:30}\$ "
+PS1="${USER:0:3}@${HOSTNAME:0:11}:\${pwd2:0:30}\$ "
 
 # Disable XON/XOFF software flow control to make <C-S> work in Vim.
 stty -ixon

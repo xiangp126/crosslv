@@ -145,17 +145,20 @@ _set_vscode_code_path() {
     local pid_file curr_pid commit_id=
     cd "$_code_f_search_path" || return
 
-    # For Cursor: no pid.txt, find the most recent commit directory with code binary
+    # For Cursor: no pid.txt, find the most recent commit directory with cursor binary
+    # Cursor path: ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
     if [[ "$_code_f_is_cursor" == "1" ]]; then
-        # Find the most recently modified directory that has the code binary
-        local code_bin
-        for dir in $(ls -t "$_code_f_search_path" 2>/dev/null); do
-            code_bin="$_code_f_search_path/$dir/bin/remote-cli/code"
-            if [[ -x "$code_bin" ]]; then
-                commit_id="$dir"
-                break
-            fi
-        done
+        local cursor_platform_path="$_code_f_search_path/linux-x64"
+        local code_bin dir
+        if [[ -d "$cursor_platform_path" ]]; then
+            while IFS= read -r -d '' dir; do
+                code_bin="$cursor_platform_path/$dir/bin/remote-cli/cursor"
+                if [[ -x "$code_bin" ]]; then
+                    commit_id="$dir"
+                    break
+                fi
+            done < <(find "$cursor_platform_path" -maxdepth 1 -mindepth 1 -type d -printf '%T@\t%f\0' 2>/dev/null | sort -rzn | cut -z -f2-)
+        fi
     else
         # For VS Code: use pid.txt to find active server
         while IFS= read -r -d $'\0' pid_file; do
@@ -179,8 +182,10 @@ _set_vscode_code_path() {
     fi
 
     # Different path structure for Cursor vs VS Code
+    # Cursor: ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
+    # VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code
     if [[ "$_code_f_is_cursor" == "1" ]]; then
-        VSCODE_BIN_PATH="$_code_f_search_path/$commit_id/bin/remote-cli/code"
+        VSCODE_BIN_PATH="$_code_f_search_path/linux-x64/$commit_id/bin/remote-cli/cursor"
     else
         VSCODE_BIN_PATH="$_code_f_search_path/$commit_id/server/bin/remote-cli/code"
     fi
@@ -284,7 +289,7 @@ code() {
     local _code_f_print=
     # Support both VS Code and Cursor with different paths:
     # - VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code, IPC in /run/user/$UID
-    # - Cursor:  ~/.cursor-server/bin/<commit>/bin/remote-cli/code, IPC in /tmp
+    # - Cursor:  ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor, IPC in /tmp
     local _code_f_sys_path
     local _code_f_search_path
     local _code_f_is_cursor=""
