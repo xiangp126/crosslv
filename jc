@@ -631,11 +631,13 @@ macInstallApps() {
         git
         fontconfig
         yt-dlp
+        autossh
         fzf
         fd
         bat
         vim
         tmux
+        ffmpeg
     )
 
     echo -e "${COLOR}Updating Apps for MacOS${RESET}"
@@ -648,6 +650,15 @@ macInstallApps() {
     # fi
 
     brew install "${appsForMac[@]}"
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}Success!${RESET}"
+        if [ "$appInstallForce" -eq 2 ]; then
+            exit 0
+        fi
+    else
+        echo -e "${RED}Failed!${RESET}"
+        exit 1
+    fi
 }
 
 setTimeZone() {
