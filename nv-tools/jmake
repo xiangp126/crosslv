@@ -66,7 +66,7 @@ declare -A MODEL_HARDWARE=(
 # GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
 # Due to a compilation bug, carmel must be built immediately before argaman
 GOLAN_MODELS="arava tamar viper mustang gilboa carmel argaman alpine"
-DEFAULT_MODEL="mustang"
+DEFAULT_MODEL="gilboa"
 
 # Get model display name with hardware info: "model (HW)"
 getModelDisplayName() {
@@ -194,7 +194,7 @@ Build Options:
     -N, --nicx                  Build with NICX=1 flag
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
-    --max-attempt               Set max build attempts (default: $fMaxBuildAttempt)
+    --attempt                   Set max build attempts (default: $fMaxBuildAttempt)
         --continue              Resume from last failed model (like git rebase --continue)
         --scratch               Clear saved state and start from first model
 
@@ -207,17 +207,15 @@ Supported Models:
     $GOLAN_MODELS
 
 Examples:
-    $SCRIPT_NAME -o                        # Build mustang (default, verbose)
-    $SCRIPT_NAME --models gilboa           # Build gilboa
-    $SCRIPT_NAME --models argaman,alpine   # Build argaman and alpine (loop mode)
-    $SCRIPT_NAME -a                        # Build all models one by one (loop mode)
-    $SCRIPT_NAME -a --models-skip arava,viper
-                                           # Build all except arava and viper
-    $SCRIPT_NAME -a --continue             # Resume from last failed model
-    $SCRIPT_NAME -a --scratch              # Clear state and start fresh
-    $SCRIPT_NAME -c -o                     # Clean and build mustang
-    $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
-    $SCRIPT_NAME -b --models gilboa        # Build gilboa with compile_commands.json
+    $SCRIPT_NAME -o                           # Build ${DEFAULT_MODEL:-} (default, verbose)
+    $SCRIPT_NAME --models argaman,alpine      # Build argaman and alpine (separated by comma)
+    $SCRIPT_NAME -a                           # Build all models one by one
+    $SCRIPT_NAME -a --models-skip arava,viper # Build all except arava and viper
+    $SCRIPT_NAME -a --continue                # Resume from last failed model
+    $SCRIPT_NAME -a --scratch                 # Clear state and start fresh
+    $SCRIPT_NAME -c -o                        # Clean and build the default ${DEFAULT_MODEL:-}
+    $SCRIPT_NAME --no-verbose -o              # Build with quiet mode
+    $SCRIPT_NAME --bear --models gilboa       # Build gilboa with compile_commands.json
 
 _EOF
     exit 0
@@ -235,7 +233,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
 fi
 
 SHORTOPTS="hcoaj:w:Dlbm:N"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,max-attempt:,no-verbose,list,link,all,models:,models-all,models-skip:,nicx,continue,scratch"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,models-all,models-skip:,nicx,continue,scratch"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -264,7 +262,7 @@ while true; do
             fNeedBuild=true
             shift 2
             ;;
-        --max-attempt)
+        --attempt)
             fMaxBuildAttempt="$2"
             fNeedBuild=true
             shift 2

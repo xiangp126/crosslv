@@ -64,7 +64,7 @@ _jmake_complete() {
 
     # List of all long options
     long_opts="--help --all --jobs --working-dir --clean --clean-db \
-               --git-clean --build --bear --debug --max-attempt --no-verbose --nicx --list --link --models --models-all --models-skip --continue --scratch"
+               --git-clean --build --bear --debug --attempt --no-verbose --nicx --list --link --models --models-all --models-skip --continue --scratch"
 
     # Handle option arguments
     case $prev in
@@ -79,7 +79,7 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -W "$jobs" -- "$cur") )
             return 0
             ;;
-        --max-attempt)
+        --attempt)
             # Suggest common numbers for max attempts
             local attempts="1 2 3"
             COMPREPLY=( $(compgen -W "$attempts" -- "$cur") )
