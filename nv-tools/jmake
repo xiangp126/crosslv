@@ -752,6 +752,12 @@ linkCompileDatabase() {
         echo -e "$NOTATION ${GREY}Skipping compile database link (loop mode with multiple models)${RESET}"
         return
     fi
+
+    # Use first model from --models if specified, otherwise use fBuildModel (defaults to mustang)
+    if [[ ${#fModels[@]} -gt 0 ]]; then
+        fBuildModel="${fModels[0]}"
+    fi
+
     cd "$fWorkingDir" || exit
 
     local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
@@ -815,6 +821,13 @@ removeWriteFromJson() {
 main() {
     preConfigure "$@"
     [[ -n "$fContinue" ]] && loadLoopState # load state file to populate fModels
+
+    # Handle --link standalone: link and exit (skip if --bear is also specified)
+    if [[ -n "$fLinkCompileDb" && -z "$fGenerateCompileCmds" ]]; then
+        linkCompileDatabase
+        exit 0
+    fi
+
     validateArguments
     showLogo
     printBuildFlags

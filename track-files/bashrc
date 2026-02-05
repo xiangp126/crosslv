@@ -122,7 +122,10 @@ alias cds='__cd /opt/src'
 # NV specific 2
 alias mss='sudo mst status -v'
 alias cdw='__cd /auto/fwgwork1/pexiang/golan_fw'
-alias cdw2='__cd /auto/fwgwork1/pexiang/golan_fw2'
+for i in {2..3}; do
+    # shellcheck disable=SC2139
+    alias "cdw$i=__cd /auto/fwgwork1/pexiang/golan_fw$i"
+done
 
 # Print entry names without quotation marks
 export QUOTING_STYLE=literal
