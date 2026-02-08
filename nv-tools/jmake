@@ -64,9 +64,9 @@ declare -A MODEL_HARDWARE=(
 
 # GOLAN supported models (same order as MODEL_HARDWARE)
 # GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
-# Due to a compilation bug, carmel must be built immediately before argaman
-GOLAN_MODELS="arava tamar viper mustang gilboa carmel argaman alpine"
-DEFAULT_MODEL="gilboa"
+# Due to a compilation bug, carmel must be built (immediately) before argaman
+GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
+DEFAULT_MODEL="mustang"
 
 # Get model display name with hardware info: "model (HW)"
 getModelDisplayName() {
@@ -429,6 +429,11 @@ validateArguments() {
     if [[ ${#fModelsSkip[@]} -gt 0 && ${#fModels[@]} -eq 0 ]]; then
         echo -e "$NOTATION ${RED}Error: --models-skip requires --models${RESET}"
         exit 1
+    fi
+
+    # Auto-set attempt to 3 when building multiple models (unless explicitly set)
+    if [[ ${#fModels[@]} -gt 1 && $fMaxBuildAttempt -eq 1 ]]; then
+        fMaxBuildAttempt=3
     fi
 }
 
