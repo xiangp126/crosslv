@@ -95,9 +95,10 @@ alias tmux='tmux -u'
 alias yt-dlp='yt-dlp --verbose'
 alias youtube-dl='yt-dlp --external-downloader aria2c --external-downloader-args "-x 16 -s 16" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --write-auto-subs --sub-langs zh-Hans'
 alias rsync='rsync -azPv'
-alias jk='jr --kernel'
 alias jn='jr --no-clipboard'
-alias jm='jr --no-clipboard --kernel'
+# alias jm='jr --no-clipboard --kernel'
+# alias jk='jr --kernel'
+alias jk='jmake'
 
 function __cd () {
     if [ -d "$1" ]; then
@@ -122,6 +123,7 @@ alias cds='__cd /opt/src'
 # NV specific 2
 alias mss='sudo mst status -v'
 alias cdw='__cd /auto/fwgwork1/pexiang/golan_fw'
+alias cdN='__cd /auto/fwgwork1/pexiang/nicx'
 for i in {2..3}; do
     # shellcheck disable=SC2139
     alias "cdw$i=__cd /auto/fwgwork1/pexiang/golan_fw$i"

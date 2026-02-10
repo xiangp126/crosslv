@@ -64,7 +64,8 @@ _jmake_complete() {
 
     # List of all long options
     long_opts="--help --all --jobs --working-dir --clean --clean-db \
-               --git-clean --build --bear --debug --attempt --no-verbose --nicx --list --link --models --models-all --models-skip --continue --scratch"
+               --git-clean --build --bear --debug --attempt --no-verbose --nicx --list --link --models --models-all --models-skip --continue --scratch \
+               --fetch --push --rebase --add"
 
     # Handle option arguments
     case $prev in
@@ -108,3 +109,4 @@ _jmake_complete() {
 
 # Register the completion function for jmake
 complete -F _jmake_complete jmake
+complete -F _jmake_complete jk

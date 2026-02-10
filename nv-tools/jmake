@@ -19,7 +19,6 @@ fLinkCompileDb=
 fNeedBuild=
 fPrintBuildFlags=
 fClean=
-fGitClean=
 fNoVerbose=
 fNicx=
 fContinue=
@@ -29,7 +28,11 @@ fBuildTimeFormatted=
 # Git associated variables
 fCompileCommandsJson="compile_commands.json"
 fRMCompileCommandsJson=
-
+fGitClean=
+fFetch=
+fPush=
+fRebase=
+fAdd=
 # Colors
 CYAN='\033[36m'
 RED='\033[31m'
@@ -182,7 +185,6 @@ Build Flags:
     -D, --debug                 Enable debug mode
     -c, --clean                 Run make clean ($BUILD_SCRIPT -C)
         --clean-db              Also remove $fCompileCommandsJson during clean
-        --git-clean             Deep clean using git clean -fdx (preserves submodules)
     -o, --build                 Run build commands
         --no-verbose            Suppress full compilation output (default: verbose)
 
@@ -197,6 +199,13 @@ Build Options:
     --attempt                   Set max build attempts (default: $fMaxBuildAttempt)
         --continue              Resume from last failed model (like git rebase --continue)
         --scratch               Clear saved state and start from first model
+
+Git Options (require current dir to be a git repo):
+        --fetch                 git fetch origin master_rc
+        --rebase                git rebase origin/master_rc
+        --add                   git add -u and git reset HEAD -- shared/
+        --push                  git push origin HEAD:refs/for/master_rc
+        --git-clean             Deep clean using git clean -fdx (preserves submodules)
 
 Other Options:
     -h, --help                  Print this help message
@@ -233,7 +242,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
 fi
 
 SHORTOPTS="hcoaj:w:Dlbm:N"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,models-all,models-skip:,nicx,continue,scratch"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,models-all,models-skip:,nicx,continue,scratch,fetch,push,rebase,add"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -343,6 +352,22 @@ while true; do
             fNeedBuild=true
             shift 2
             ;;
+        --fetch)
+            fFetch=true
+            shift
+            ;;
+        --push)
+            fPush=true
+            shift
+            ;;
+        --rebase)
+            fRebase=true
+            shift
+            ;;
+        --add)
+            fAdd=true
+            shift
+            ;;
         --)
             shift
             break
@@ -365,6 +390,13 @@ fi
 getCurrentTime() {
     COLOR="$RED"
     echo -e "${COLOR}$(date +"%m/%d/%Y %H:%M:%S")${RESET}"
+}
+
+requireGitRepo() {
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        echo -e "$NOTATION ${RED}Error: Not in a git repository.${RESET}" >&2
+        exit 1
+    fi
 }
 
 # $1: available models, $2: target model
@@ -482,65 +514,36 @@ cleanTheRepo() {
     cd "$fWorkingDir" || exit
     echo -e "$NOTATION ${CYAN}Cleaning the build...${RESET}"
 
-    if [ -n "$fGitClean" ]; then
-        # Deep clean using git clean -fdx
-        echo -e "$NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
-
-        # Build exclude options
-        # Always exclude *.code-workspace files and state file by default
-        local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE"
-        if [ -z "$fRMCompileCommandsJson" ]; then
-            if [ -L "$fCompileCommandsJson" ]; then
-                # It's a symlink, exclude the real file instead of the symlink itself
-                realFile=$(readlink -f "$fCompileCommandsJson")
-                excludeOpts="$excludeOpts --exclude=$(basename "$realFile")"
-            else
-                excludeOpts="$excludeOpts --exclude=$fCompileCommandsJson"
-            fi
-        fi
-
-        local cleanCmd="git clean -fdx $excludeOpts"
-        echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
-        echo $SEPARATOR
-        eval "$cleanCmd"
-
-        # Also clean submodules
-        echo -e "$NOTATION ${CYAN}Cleaning submodules...${RESET}"
-        git submodule foreach --recursive git clean -fdx "$excludeOpts"
-
-        echo -e "$NOTATION ${MAGENTA}Deep clean completed.${RESET}"
+    # Standard make clean
+    local cleanCmd="$BUILD_SCRIPT -C"
+    echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
+    echo $SEPARATOR
+    sleep 1
+    COLOR=$MAGENTA
+    eval "$cleanCmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
+        echo -e "$NOTATION ${RESET}But going on anyway${RESET}"
     else
-        # Standard make clean
-        local cleanCmd="$BUILD_SCRIPT -C"
-        echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
-        echo $SEPARATOR
-        sleep 1
-        COLOR=$MAGENTA
-        eval "$cleanCmd"
-        if [[ $? -ne 0 ]]; then
-            echo -e "$NOTATION ${COLOR}There seems to be some errors during the clean process${RESET}"
-            echo -e "$NOTATION ${RESET}But going on anyway${RESET}"
-        else
-            echo -e "$NOTATION ${COLOR}Cleaned the build successfully.${RESET}"
-        fi
+        echo -e "$NOTATION ${COLOR}Cleaned the build successfully.${RESET}"
+    fi
 
-        # Remove compile_commands.json if requested
-        if [ -n "$fRMCompileCommandsJson" ]; then
-            if [ -L "$fCompileCommandsJson" ]; then
-                # It's a symlink - remove both the symlink and the real file it points to
-                local realFile
-                realFile=$(readlink -f "$fCompileCommandsJson")
-                echo -e "$NOTATION Removing symlink ${CYAN}$fCompileCommandsJson${RESET}"
-                rm -f "$fCompileCommandsJson"
-                if [ -f "$realFile" ]; then
-                    echo -e "$NOTATION Removing real file ${CYAN}$realFile${RESET}"
-                    rm -f "$realFile"
-                fi
-            elif [ -f "$fCompileCommandsJson" ]; then
-                # It's a regular file - just remove it
-                echo -e "$NOTATION Removing ${CYAN}$fCompileCommandsJson${RESET}"
-                rm -f "$fCompileCommandsJson"
+    # Remove compile_commands.json if requested
+    if [ -n "$fRMCompileCommandsJson" ]; then
+        if [ -L "$fCompileCommandsJson" ]; then
+            # It's a symlink - remove both the symlink and the real file it points to
+            local realFile
+            realFile=$(readlink -f "$fCompileCommandsJson")
+            echo -e "$NOTATION Removing symlink ${CYAN}$fCompileCommandsJson${RESET}"
+            rm -f "$fCompileCommandsJson"
+            if [ -f "$realFile" ]; then
+                echo -e "$NOTATION Removing real file ${CYAN}$realFile${RESET}"
+                rm -f "$realFile"
             fi
+        elif [ -f "$fCompileCommandsJson" ]; then
+            # It's a regular file - just remove it
+            echo -e "$NOTATION Removing ${CYAN}$fCompileCommandsJson${RESET}"
+            rm -f "$fCompileCommandsJson"
         fi
     fi
 }
@@ -821,16 +824,65 @@ removeWriteFromJson() {
     fi
 }
 
+# Deep clean using git clean -fdx; caller must cd to repo and call requireGitRepo first
+runGitClean() {
+    echo -e "$NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
+    local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE"
+    if [ -z "$fRMCompileCommandsJson" ]; then
+        if [ -L "$fCompileCommandsJson" ]; then
+            local realFile
+            realFile=$(readlink -f "$fCompileCommandsJson")
+            excludeOpts="$excludeOpts --exclude=$(basename "$realFile")"
+        else
+            excludeOpts="$excludeOpts --exclude=$fCompileCommandsJson"
+        fi
+    fi
+    local cleanCmd="git clean -fdx $excludeOpts"
+    echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
+    echo $SEPARATOR
+    eval "$cleanCmd"
+    echo -e "$NOTATION ${CYAN}Cleaning submodules...${RESET}"
+    git submodule foreach --recursive git clean -fdx "$excludeOpts"
+    echo -e "$NOTATION ${MAGENTA}Deep clean completed.${RESET}"
+}
+
+runGitOptions() {
+    [[ -z "$fFetch" && -z "$fPush" && -z "$fRebase" && -z "$fAdd" && -z "$fGitClean" ]] && return 0
+    fWorkingDir=$(realpath "$fWorkingDir")
+    cd "$fWorkingDir" || exit 1
+    requireGitRepo
+    if [[ -n "$fFetch" ]]; then
+        echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin master_rc${RESET}"
+        git fetch origin master_rc
+        exit $?
+    fi
+    if [[ -n "$fPush" ]]; then
+        echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git push origin HEAD:refs/for/master_rc${RESET}"
+        git push origin HEAD:refs/for/master_rc
+        exit $?
+    fi
+    if [[ -n "$fRebase" ]]; then
+        echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git rebase origin/master_rc${RESET}"
+        git rebase origin/master_rc
+        exit $?
+    fi
+    if [[ -n "$fAdd" ]]; then
+        echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git add -u && git reset HEAD -- shared/${RESET}"
+        git add -u && git reset HEAD -- shared/
+        exit $?
+    fi
+    if [[ -n "$fGitClean" ]]; then
+        runGitClean
+        return 0
+    fi
+}
+
 main() {
+    runGitOptions
     preConfigure "$@"
     [[ -n "$fContinue" ]] && loadLoopState # load state file to populate fModels
-
     # Handle --link standalone: link and exit (skip if --bear is also specified)
-    if [[ -n "$fLinkCompileDb" && -z "$fGenerateCompileCmds" ]]; then
-        linkCompileDatabase
-        exit 0
-    fi
-
+    [[ -n "$fLinkCompileDb" && -z "$fGenerateCompileCmds" ]] && { linkCompileDatabase; exit 0; }
     validateArguments
     showLogo
     printBuildFlags
