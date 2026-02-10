@@ -186,10 +186,10 @@ Build Flags:
         --no-verbose            Suppress full compilation output (default: verbose)
 
 Build Options:
-    -a, --all, --models-all     Build all models one by one (loop mode)
+    -a, --all                   Build all models one by one (loop mode)
     -b, --bear                  Generate compile_commands.json (implies -c --clean-db -o)
     -m, --models <models>       Build specified models (comma-separated, loop if multiple)
-        --models-skip <models>  Skip these models when building (comma-separated)
+        --skip <models>         Skip these models when building (comma-separated)
     -N, --nicx                  Build with NICX=1 flag
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
@@ -219,7 +219,7 @@ Examples:
     $SCRIPT_NAME -o                           # Build ${DEFAULT_MODEL:-} (default, verbose)
     $SCRIPT_NAME --models argaman,alpine      # Build argaman and alpine (separated by comma)
     $SCRIPT_NAME -a                           # Build all models one by one
-    $SCRIPT_NAME -a --models-skip arava,viper # Build all except arava and viper
+    $SCRIPT_NAME -a --skip arava,viper        # Build all except arava and viper
     $SCRIPT_NAME -a --continue                # Resume from last failed model
     $SCRIPT_NAME -a --scratch                 # Clear state and start fresh
     $SCRIPT_NAME -c -o                        # Clean and build the default ${DEFAULT_MODEL:-}
@@ -244,7 +244,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
 fi
 
 SHORTOPTS="hcoaj:w:Dlbm:N"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,models-all,models-skip:,nicx,continue,scratch,fetch,push,rebase,add,stat,show"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,skip:,nicx,continue,scratch,fetch,push,rebase,add,stat,show"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -336,7 +336,7 @@ while true; do
             fLinkCompileDb=true
             shift
             ;;
-        -a|--all|--models-all)
+        -a|--all)
             IFS=' ' read -ra _models <<< "$GOLAN_MODELS"
             fModels+=("${_models[@]}")
             fNeedBuild=true
@@ -348,7 +348,7 @@ while true; do
             fNeedBuild=true
             shift 2
             ;;
-        --models-skip)
+        --skip)
             IFS=', ' read -ra _skipModels <<< "$2"
             fModelsSkip+=("${_skipModels[@]}")
             fNeedBuild=true
@@ -469,7 +469,7 @@ preConfigure() {
 
 validateArguments() {
     if [[ ${#fModelsSkip[@]} -gt 0 && ${#fModels[@]} -eq 0 ]]; then
-        echo -e "$NOTATION ${RED}Error: --models-skip requires --models${RESET}"
+        echo -e "$NOTATION ${RED}Error: --skip requires --models or --all${RESET}"
         exit 1
     fi
 
@@ -687,14 +687,14 @@ runLoopModels() {
         deleteLoopState
     fi
 
-    # Only run if --models or --models-all is specified
+    # Only run if --models or --all is specified
     [[ ${#fModels[@]} -eq 0 ]] && return 1
 
     local totalStartTime=$(date +%s)
     local isLoopMode=$([[ ${#fModels[@]} -gt 1 || ${#fModelsSkip[@]} -gt 0 ]] && echo 1 || echo 0)
     [[ -z "$fContinue" ]] && fModelsSkipped=()
 
-    # Apply --models-skip filter to fModels (ignore skip models not in the list)
+    # Apply --skip filter to fModels (ignore skip models not in the list)
     if [[ ${#fModelsSkip[@]} -gt 0 ]]; then
         local filteredModels=()
         for model in "${fModels[@]}"; do

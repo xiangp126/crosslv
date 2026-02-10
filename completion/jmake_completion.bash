@@ -64,7 +64,7 @@ _jmake_complete() {
 
     # List of all long options
     long_opts="--help --all --jobs --working-dir --clean --clean-db \
-               --git-clean --build --bear --debug --attempt --no-verbose --nicx --list --link --models --models-all --models-skip --continue --scratch \
+               --git-clean --build --bear --debug --attempt --no-verbose --nicx --list --link --models --skip --continue --scratch \
                --fetch --push --rebase --add --stat --show"
 
     # Handle option arguments
@@ -86,7 +86,7 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -W "$attempts" -- "$cur") )
             return 0
             ;;
-        -m|--models|--models-skip)
+        -m|--models|--skip)
             # Multi-model completion with comma separation (e.g., mustang,gilboa,argaman)
             compopt -o nospace  # Don't add space after completion, allow user to type comma
             _jmake_complete_models
