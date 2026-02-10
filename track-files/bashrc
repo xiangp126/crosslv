@@ -31,9 +31,6 @@ HISTFILESIZE=10000
 # update the values of LINES and COLUMNS.
 shopt -s checkwinsize
 
-# NV specific 1
-source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias
-
 # If set, the pattern "**" used in a pathname expansion context will
 # match all files and zero or more directories and subdirectories.
 # shopt -s globstar
@@ -78,6 +75,7 @@ export LS_COLORS=$LS_COLORS:'ex=0;0:ln=36:di=34'
 
 if [[ $_UNAME_S == 'Darwin' ]]; then
     alias ls='ls -G' # Compatible with Mac
+    source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias # NV specific 1
 else
     # Linux
     alias ls='ls --color=auto'

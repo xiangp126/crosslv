@@ -29,10 +29,7 @@ fBuildTimeFormatted=
 fCompileCommandsJson="compile_commands.json"
 fRMCompileCommandsJson=
 fGitClean=
-fFetch=
-fPush=
-fRebase=
-fAdd=
+fGitCmds=()   # Ordered list of git commands to run (cascade mode)
 # Colors
 CYAN='\033[36m'
 RED='\033[31m'
@@ -200,12 +197,15 @@ Build Options:
         --continue              Resume from last failed model (like git rebase --continue)
         --scratch               Clear saved state and start from first model
 
-Git Options (require current dir to be a git repo):
+Git Options (require current dir to be a git repo, can be combined in cascade):
         --fetch                 git fetch origin master_rc
         --rebase                git rebase origin/master_rc
         --add                   git add -u and git reset HEAD -- shared/
         --push                  git push origin HEAD:refs/for/master_rc
+        --stat                  git diff --stat
+        --show                  git show HEAD
         --git-clean             Deep clean using git clean -fdx (preserves submodules)
+    Multiple git options run in the order specified. Aborts on first failure.
 
 Other Options:
     -h, --help                  Print this help message
@@ -225,6 +225,8 @@ Examples:
     $SCRIPT_NAME -c -o                        # Clean and build the default ${DEFAULT_MODEL:-}
     $SCRIPT_NAME --no-verbose -o              # Build with quiet mode
     $SCRIPT_NAME --bear --models gilboa       # Build gilboa with compile_commands.json
+    $SCRIPT_NAME --fetch --rebase             # Fetch then rebase (cascade)
+    $SCRIPT_NAME --fetch --rebase --add --push # Full git workflow in one command
 
 _EOF
     exit 0
@@ -242,7 +244,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
 fi
 
 SHORTOPTS="hcoaj:w:Dlbm:N"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,models-all,models-skip:,nicx,continue,scratch,fetch,push,rebase,add"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,models-all,models-skip:,nicx,continue,scratch,fetch,push,rebase,add,stat,show"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -353,19 +355,27 @@ while true; do
             shift 2
             ;;
         --fetch)
-            fFetch=true
+            fGitCmds+=("fetch")
             shift
             ;;
         --push)
-            fPush=true
+            fGitCmds+=("push")
             shift
             ;;
         --rebase)
-            fRebase=true
+            fGitCmds+=("rebase")
             shift
             ;;
         --add)
-            fAdd=true
+            fGitCmds+=("add")
+            shift
+            ;;
+        --stat)
+            fGitCmds+=("stat")
+            shift
+            ;;
+        --show)
+            fGitCmds+=("show")
             shift
             ;;
         --)
@@ -847,34 +857,60 @@ runGitClean() {
 }
 
 runGitOptions() {
-    [[ -z "$fFetch" && -z "$fPush" && -z "$fRebase" && -z "$fAdd" && -z "$fGitClean" ]] && return 0
+    [[ ${#fGitCmds[@]} -eq 0 && -z "$fGitClean" ]] && return 0
     fWorkingDir=$(realpath "$fWorkingDir")
     cd "$fWorkingDir" || exit 1
     requireGitRepo
-    if [[ -n "$fFetch" ]]; then
-        echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin master_rc${RESET}"
-        git fetch origin master_rc
-        exit $?
-    fi
-    if [[ -n "$fPush" ]]; then
-        echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git push origin HEAD:refs/for/master_rc${RESET}"
-        git push origin HEAD:refs/for/master_rc
-        exit $?
-    fi
-    if [[ -n "$fRebase" ]]; then
-        echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git rebase origin/master_rc${RESET}"
-        git rebase origin/master_rc
-        exit $?
-    fi
-    if [[ -n "$fAdd" ]]; then
-        echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git add -u && git reset HEAD -- shared/${RESET}"
-        git add -u && git reset HEAD -- shared/
-        exit $?
-    fi
-    if [[ -n "$fGitClean" ]]; then
-        runGitClean
-        return 0
-    fi
+
+    # Append git-clean to the cascade queue if requested
+    [[ -n "$fGitClean" ]] && fGitCmds+=("git-clean")
+
+    local gitCmdCount=${#fGitCmds[@]}
+    local isCascade=$(( gitCmdCount > 1 ? 1 : 0 ))
+    local gitStep=0
+
+    # Execute git commands in the exact order specified on the command line
+    for cmd in "${fGitCmds[@]}"; do
+        ((gitStep++))
+        [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${BOLD}[Git $gitStep/$gitCmdCount]${RESET}"
+        case "$cmd" in
+            fetch)
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin master_rc${RESET}"
+                git fetch origin master_rc
+                ;;
+            rebase)
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git rebase origin/master_rc${RESET}"
+                git rebase origin/master_rc
+                ;;
+            add)
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git add -u && git reset HEAD -- shared/${RESET}"
+                git add -u && git reset HEAD -- shared/
+                ;;
+            push)
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git push origin HEAD:refs/for/master_rc${RESET}"
+                git push origin HEAD:refs/for/master_rc
+                ;;
+            stat)
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git diff --stat${RESET}"
+                git diff --stat
+                ;;
+            show)
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git show HEAD${RESET}"
+                git show HEAD
+                ;;
+            git-clean)
+                runGitClean
+                ;;
+        esac
+        if [[ $? -ne 0 ]]; then
+            echo -e "$NOTATION ${RED}$cmd failed, aborting.${RESET}"
+            exit 1
+        fi
+    done
+
+    [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${GREEN}All $gitCmdCount git commands completed successfully.${RESET}"
+    # If only git options were given (no build), exit after completing them
+    [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkCompileDb" ]] && exit 0
 }
 
 main() {
