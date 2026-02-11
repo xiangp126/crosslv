@@ -22,7 +22,7 @@ fPoundPattern='#\s*$'
 # SSH Variables
 fInputCmd=
 fTarget=
-fTargetUser="admin"
+fTargetUser="$(whoami)"
 fTargetPwd="password"
 fTargetPort=22
 fVdom=
@@ -596,6 +596,8 @@ makeSpawnCmd() {
                 checkSSHpass
                 param="-o \"ProxyCommand=sshpass -p $fJumpPwd ssh -W %h:%p $fJumpUser@$fJumpServer\""
             fi
+
+            [ -n "$fIdentityFile" ] && param="$param -i $fIdentityFile"
 
             if [ -n "$fUseWireshark" ]; then
                 # Live Capture with sshpass

@@ -75,11 +75,10 @@ export LS_COLORS=$LS_COLORS:'ex=0;0:ln=36:di=34'
 
 if [[ $_UNAME_S == 'Darwin' ]]; then
     alias ls='ls -G' # Compatible with Mac
-    source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias # NV specific 1
-else
-    # Linux
+elif [[ $_UNAME_S == 'Linux' ]]; then
     alias ls='ls --color=auto'
     alias dir='dir --color=auto'
+    source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias # NV specific 1
 fi
 alias ll='ls -lF'
 alias ll.='ls -alF'
