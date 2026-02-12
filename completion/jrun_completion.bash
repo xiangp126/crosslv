@@ -18,10 +18,9 @@ _jrun_completion() {
     #---------------------------------------------------------------
 
     # Define short and long options
-    opts="-h -s -w -p -f -d -W -O -K -T -I -S -D -V"
+    opts="-h -s -w -p -f -d -W -B"
     longopts="--help --session --window --pane --file --debug --wad-debug \
-              --output-directly --kernel-debug --packet-trace --ips-debug \
-              --scanunit-debug --dns-debug --packet-trace --toggle-vf-cache"
+              --broadcast"
 
     #---------------------------------------------------------------
     # HELPER FUNCTIONS
@@ -140,13 +139,13 @@ _jrun_completion() {
             return 0
             ;;
 
-        # Packet trace address option
-        --packet-trace)
-            # Suggest some common IP addresses
-            local common_ips="192.168.1.1 127.0.0.1 10.0.0.1 172.16.0.1"
-            COMPREPLY=( $(compgen -W "${common_ips}" -- ${cur}) )
+        # Broadcast option - complete with common commands
+        -B|--broadcast)
+            local common_cmds="'source ~/.bashrc' 'source ~/.zshrc'"
+            COMPREPLY=( $(compgen -W "${common_cmds}" -- ${cur}) )
             return 0
             ;;
+
     esac
 
     #---------------------------------------------------------------

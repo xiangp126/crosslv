@@ -887,7 +887,26 @@ linkFile() {
     if [ -f "$dst" ] && [ ! -L "$dst" ]; then
         [ ! -d "$fBackupDir" ] && mkdir -p "$fBackupDir"
         echo -e "${CYAN}Warning: $dst is not a link, backing it up into $fBackupDir${RESET}"
-        mv "$dst" "$fBackupDir/${linkName}.bak"
+        local mvSuccess=false
+        local mvPrefix=
+        for _ in {1..2}; do
+            if $mvPrefix mv "$dst" "$fBackupDir/${linkName}.bak" &> /dev/null; then
+                mvSuccess=true
+                break
+            fi
+            if [ -z "$mvPrefix" ]; then
+                echo -e "   ├─ ${GREY}Info:${RESET}   ${RED}Backup failed! Retrying with sudo...${RESET}"
+                mvPrefix="sudo "
+            else
+                break
+            fi
+        done
+        if [ "$mvSuccess" = true ]; then
+            echo -e "   └─ ${GREY}Backup:${RESET} ✔ ${GREEN}Moved to $fBackupDir/${linkName}.bak${RESET}"
+        else
+            echo -e "   └─ ${GREY}Backup:${RESET} ❌ ${RED}Failed to back up $dst${RESET}"
+            return 1
+        fi
     fi
 
     if [ -L "$dst" ] && [ "$(readlink "$dst")" == "$src" ]; then
@@ -1737,7 +1756,7 @@ installRimeMacOS() {
 
 installLatestPPaFirefox() {
     echo -e "${COLOR}Checking for Firefox (Mozilla PPA)${RESET}"
-    if ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
+    if [ -z "$fFirefoxForce" ] && command -v firefox &>/dev/null && ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
         echo -e "${GREEN}✔${GREY} The current version of Firefox is acceptable.${RESET}"
         return 0
     fi

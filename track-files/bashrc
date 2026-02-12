@@ -78,6 +78,7 @@ if [[ $_UNAME_S == 'Darwin' ]]; then
 elif [[ $_UNAME_S == 'Linux' ]]; then
     alias ls='ls --color=auto'
     alias dir='dir --color=auto'
+    export FWV_PRIVATE_PS1=1  # Prevent .fwvalias from overriding our custom PS1
     source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias # NV specific 1
 fi
 alias ll='ls -lF'

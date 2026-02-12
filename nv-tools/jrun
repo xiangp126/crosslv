@@ -7,15 +7,15 @@ SCRIPT_NAME=$(basename "$0")
 SEPARATOR_LT="=================================="
 SEPARATOR_RT="=================================="
 # Variables
-fSessionId=
+fSessionId=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | head -n 1)
 fTmuxTarget=
-fWinId=1
-fPaneId=1
+fWinId=$(tmux list-windows -t "$fSessionId" -F '#{window_index}' 2>/dev/null | head -n 1)
+fPaneId=$(tmux list-panes -t "$fSessionId:$fWinId" -F '#{pane_index}' 2>/dev/null | head -n 1)
 fSendNewLine=
 fTmuxPrefix="C-x"
 fCleanedCmd=
-fPacketTraceAddr=
 fDebugMode=
+fBroadcastCmd=
 fCmdFile="commands.txt"
 # Colors
 RED='\033[31m'
@@ -33,50 +33,6 @@ declare -r -A DEBUG_CONFIG=(
         diag debug reset
         diag wad debug enable all
         diag debug enable
-    )"
-    ["output"]="Configures console for direct output|(
-        config system console
-        set output standard
-        end
-    )"
-    ["kernel"]="Enables kernel debugging and kmiglogd trace|(
-        diag debug reset
-        diag debug enable
-        diag debug application kmiglogd -1
-    )"
-    ["ptrace"]="Enables packet flow tracing for specific IP|(
-        diag debug reset
-        diag debug flow filter clear
-        diag debug enable
-        diag debug flow filter addr %s
-        diag debug flow show function-name enable
-        diag debug flow trace start 100
-    )"
-    ["ips"]="Enables IPS debugging and filters|(
-        diag debug reset
-        diag wad debug ips-filter all
-        diag ips debug enable all
-        diag wad debug enable all
-        diag debug enable
-    )"
-    ["scanunit"]="Enables scan unit debugging|(
-        diag debug reset
-        diag sys scanunit debug all
-        diag wad debug enable all
-        diag debug enable
-    )"
-    ["dns"]="Enables DNS proxy debugging|(
-        diag debug reset
-        diag debug application dnsproxy -1
-        diag wad debug enable all
-        diag debug enable
-    )"
-    ["vfcache"]="Toggles video filter cache settings|(
-        diag debug enable
-        diag test app wad 2200
-        diag test app wad 328
-        diag test app wad 329
-        diag test app wad 330
     )"
 )
 
@@ -101,26 +57,20 @@ The script parses command files and handles various FortiGate debugging scenario
 
 Options:
     -h, --help               Print this help message
-    -s, --session            Set session ID (default: $fSessionId)
+    -s, --session            Set session ID (default: ${fSessionId:-})
     -w, --window             Set window ID (default: $fWinId)
     -p, --pane               Set pane ID (default: $fPaneId)
     -f, --file               Specify command file (default: $fCmdFile)
     -d, --debug              Enable debug mode with verbose output
     -W, --wad-debug          Send WAD debug commands automatically
-    -O, --output-directly    Configure console to output directly (no pagination)
-    -K, --kernel-debug       Send kernel debug commands automatically
-    -T, --packet-trace       Send packet trace commands automatically
-    -I, --ips-debug          Send IPS debug commands automatically
-    -S, --scanunit-debug     Send scanunit debug commands automatically
-    -D, --dns-debug          Send DNS debug commands automatically
-    -V, --toggle-vf-cache    Toggles video filter cache settings
+    -B, --broadcast CMD      Send CMD to all panes across all tmux sessions
 
 Examples:
     $SCRIPT_NAME --session=log --window=2 --pane=2 --file=\$HOME/commands.txt
     $SCRIPT_NAME log --wad-debug      # Uses default window $fWinId and pane $fPaneId
     $SCRIPT_NAME log:2 --wad-debug    # Uses default pane $fPaneId
     $SCRIPT_NAME log:2.3 --wad-debug  # Specifies all parts
-    $SCRIPT_NAME log --packet-trace 192.168.1.100
+    $SCRIPT_NAME --broadcast 'source ~/.bashrc'   # Send to all tmux panes
 
 Tips:
   For tmux, you can use:
@@ -134,19 +84,6 @@ _EOF
     exit 0
 }
 
-# @return 0 if the IP address is valid, 1 otherwise
-isValidIP() {
-    local ip="$1"
-    local stat=1
-    if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        IFS='.' read -r i1 i2 i3 i4 <<< "$ip"
-        if (( i1 <= 255 && i2 <= 255 && i3 <= 255 && i4 <= 255 )); then
-            stat=0
-        fi
-    fi
-    return $stat
-}
-
 parseOptions() {
     # Detect and use GNU getopt if available (required for long options)
     local GETOPT_BIN="getopt"
@@ -156,9 +93,8 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
     
-    SHORTOPTS="hs:w:p:f:dWOKT:ISDV"
-    LONGOPTS="help,session:,window:,pane:,file:,debug,wad-debug,output-directly,kernel-debug,\
-              ips-debug,scanunit-debug,dns-debug,packet-trace:,toggle-vf-cache"
+    SHORTOPTS="hs:w:p:f:dWB:"
+    LONGOPTS="help,session:,window:,pane:,file:,debug,wad-debug,broadcast:"
     
     if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
         echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
@@ -199,39 +135,9 @@ parseOptions() {
                 fDebugMode="wad"
                 shift
                 ;;
-            -O|--output-directly)
-                fDebugMode="output"
-                shift
-                ;;
-            -K|--kernel-debug)
-                fDebugMode="kernel"
-                shift
-                ;;
-            -T|--packet-trace)
-                fDebugMode="ptrace"
-                fPacketTraceAddr="$2"
-                # In bash, 0 represents true while non-zero represents false
-                if ! isValidIP "$fPacketTraceAddr"; then
-                    echo -e "$USER_NOTATION ${MAGENTA}Invalid IP address for packet trace: $fPacketTraceAddr${RESET}" >&2
-                    exit 1
-                fi
+            -B|--broadcast)
+                fBroadcastCmd="$2"
                 shift 2
-                ;;
-            -I|--ips-debug)
-                fDebugMode="ips"
-                shift
-                ;;
-            -S|--scanunit-debug)
-                fDebugMode="scanunit"
-                shift
-                ;;
-            -D|--dns-debug)
-                fDebugMode="dns"
-                shift
-                ;;
-            --toggle-vf-cache)
-                fDebugMode="vfcache"
-                shift
                 ;;
             --)
                 shift
@@ -244,7 +150,9 @@ parseOptions() {
         esac
     done
 
-    if [ "$#" == 0 ]; then
+    if [ -n "$fBroadcastCmd" ]; then
+        return
+    elif [ "$#" == 0 ]; then
         usage
     elif [ "$#" == 1 ]; then
         local target="$1"
@@ -277,11 +185,7 @@ displayInfo() {
     if [ -n "$fDebugMode" ]; then
         COLOR=$LIGHTYELLOW
         IFS='|' read -r desc cmds <<< "${DEBUG_CONFIG[$fDebugMode]}"
-        if [[ $fDebugMode == "ptrace" ]]; then
-            echo -e "[*] ${COLOR}$desc: ${MAGENTA}$fPacketTraceAddr${RESET}"
-        else
-            echo -e "[*] ${COLOR}$desc${RESET}"
-        fi
+        echo -e "[*] ${COLOR}$desc${RESET}"
     else
         COLOR=$MAGENTA
         if [[ ! -f "$fCmdFile" ]]; then
@@ -371,12 +275,6 @@ sendBuiltinCmds() {
         cmd="${cmd#"${cmd%%[![:space:]]*}"}"
         [ -z "$cmd" ] && continue
 
-        # Replace placeholders
-        if [[ $fDebugMode == "ptrace" ]]; then
-            # shellcheck disable=SC2059
-            printf -v cmd "$cmd" "$fPacketTraceAddr"
-        fi
-
         echo -e "$USER_NOTATION Sending: ${LIGHTGREEN}$cmd${RESET}"
         tmux send-keys -t "$fTmuxTarget" -l "$cmd"
         tmux send-keys -t "$fTmuxTarget" Enter
@@ -424,8 +322,29 @@ sendCmdsFromFile() {
     done
 }
 
+broadcastCmd() {
+    local panes
+    panes=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}')
+    if [[ -z "$panes" ]]; then
+        echo -e "$USER_NOTATION ${RED}No tmux panes found.${RESET}"
+        exit 1
+    fi
+
+    local count=0
+    while IFS= read -r pane; do
+        tmux send-keys -t "$pane" "$fBroadcastCmd" Enter
+        echo -e "$USER_NOTATION Sent to ${LIGHTGREEN}$pane${RESET}: ${CYAN}$fBroadcastCmd${RESET}"
+        ((count++))
+    done <<< "$panes"
+    echo -e "$USER_NOTATION ${LIGHTGREEN}Broadcast complete:${RESET} sent to $count pane(s)"
+}
+
 main() {
     parseOptions "$@"
+    if [ -n "$fBroadcastCmd" ]; then
+        broadcastCmd
+        exit 0
+    fi
     displayInfo
     checkEnvReadiness
     if [ -n "$fDebugMode" ]; then
