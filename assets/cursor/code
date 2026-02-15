@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Bootstrap script for the VS Code / Cursor server CLI wrapper.
+#
+# Bash resolves commands in this order: aliases > functions > builtins > binaries.
+# - Interactive shell (.bashrc already sourced code-function.sh):
+#     The `code` function exists, so typing `code` calls the FUNCTION directly.
+#     This script is never reached.
+# - Non-interactive spawn (e.g. Claude Code runs `spawn("code", ...)`):
+#     No function is loaded, so bash falls through to this BINARY via $PATH.
+#     It sources code-function.sh to define the function, then `code "$@"`
+#     calls the newly defined function (function > binary in resolution order).
+#
+# Sourcing code-function.sh is safe to repeat — it has an early-return guard
+# (checks if _code_pre_check is already defined) so functions are only
+# registered once.
+source "$HOME/Templates/code-function.sh"
+code "$@"

@@ -35,7 +35,8 @@ Description:
 Options:
     -h, --help                       Show this help message and exit
     -d, --debug                      Enable debug mode (set -x)
-    -f, --force                      Force search for the code binary, ignoring \$VSCODE_BIN_PATH
+    -f, --force                      Pass --force to the actual CLI binary (e.g. force extension install)
+    -a, --anyway                     Force search for the code binary, ignoring \$VSCODE_BIN_PATH
     -v, --version                    Show version information
     -s, --status                     Print process usage and diagnostics information
     -c, --clean                      Clean obsolete IPC sockets
@@ -58,8 +59,8 @@ _EOF
 
 # Helper function: parse options
 _code_parse_options() {
-    local shortopts="hdfvpscr"
-    local longopts="help,debug,force,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
+    local shortopts="hdfavpscr"
+    local longopts="help,debug,force,anyway,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
     local script_name="code"
 
     local PARSED
@@ -81,6 +82,10 @@ _code_parse_options() {
                 shift
                 ;;
             -f|--force)
+                _code_f_args+=("--force")
+                shift
+                ;;
+            -a|--anyway)
                 _code_f_force=true
                 shift
                 ;;
@@ -105,7 +110,7 @@ _code_parse_options() {
                 return 2 # Special return code to signal a reload
                 ;;
             --install-extension)
-                _code_f_args=("--install-extension" "$2")
+                _code_f_args+=("--install-extension" "$2")
                 shift 2
                 ;;
             --list-extensions)
@@ -325,9 +330,12 @@ code() {
 
     # Actually run the command
     _code_run_cmd
+    local rc=$?
 
     # Disable debug mode
     [ -n "$_code_f_debug" ] && set +x
+
+    return $rc
 }
 
 # Export the function so it's available in subshells

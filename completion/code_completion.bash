@@ -7,8 +7,8 @@ _code_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define options
-    opts="-h -d -f -v -p -s -c -r"
-    long_opts="--help --debug --force --version --print --status --clean --reload \
+    opts="-h -d -f -a -v -p -s -c -r"
+    long_opts="--help --debug --force --anyway --version --print --status --clean --reload \
                --install-extension \
                --locate-shell-integration-path \
                --list-extensions"
@@ -34,5 +34,6 @@ _code_completion() {
     return 0
 }
 
-# Register the completion function for the jr command
+# Register the completion function for the code/cursor commands
 complete -F _code_completion code
+complete -F _code_completion cursor

@@ -94,13 +94,11 @@ alias yt-dlp='yt-dlp --verbose'
 alias youtube-dl='yt-dlp --external-downloader aria2c --external-downloader-args "-x 16 -s 16" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --write-auto-subs --sub-langs zh-Hans'
 alias rsync='rsync -azPv'
 alias jn='jr --no-clipboard'
-# alias jm='jr --no-clipboard --kernel'
-# alias jk='jr --kernel'
 alias jk='jmake'
 
 function __cd () {
     if [ -d "$1" ]; then
-        cd "$1" || exit
+        cd "$1" || return
     fi
 }
 alias cdg='__cd $HOME/myGit'
@@ -213,8 +211,8 @@ if command -v fd &> /dev/null; then
                          --exclude '.vscode-server' \
                          --exclude '.git' \
                          --exclude '.cache' \
-                         --exclude '*.sw[p|o]' \
-                         --exclude '*.[a|o]' \
+                         --exclude '*.sw[po]' \
+                         --exclude '*.[ao]' \
                          --exclude '*.so' \
                         "
     FZF_DEFAULT_COMMAND=${FZF_DEFAULT_COMMAND//+([[:space:]])/ }
@@ -258,6 +256,16 @@ export FZF_COMPLETION_OPTS='+c -x'
 # Load customized code wrapper (supports both VS Code and Cursor)
 { [ -d "$HOME/.vscode-server/cli/servers" ] || [ -d "$HOME/.cursor-server" ]; } && \
   [ -f "$HOME/Templates/code-function.sh" ] && source ~/Templates/code-function.sh
+
+# Wrapper for Claude Code: refresh Cursor IPC socket inside tmux so that
+# Claude Code can connect to the IDE extension ("Connected").
+if [[ $_UNAME_S == 'Linux' ]] && [ -n "$TMUX" ] && ! declare -f claude &>/dev/null; then
+    claude() {
+        nvm use default &>/dev/null
+        code -p &>/dev/null
+        command claude "$@"
+    }
+fi
 
 # For fzf-tab-completion vim plugin (requires Bash 4.0+)
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then

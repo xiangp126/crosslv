@@ -225,7 +225,7 @@ Git Options (require current dir to be a git repo, can be combined in cascade):
 Other Options:
     -h, --help                  Print this help message
     -l, --list                  List available models
-        --link                  Link $fCompileCommandsJson (use with -m), .clangd, and $CLAUDE_MD
+        --link                  Link $fCompileCommandsJson (use with -m), .clangd, and ~/.claude/$CLAUDE_MD
 
 Supported Models:
     $GOLAN_MODELS
@@ -513,7 +513,7 @@ printBuildFlags() {
         [ -n "$fNoVerbose" ]             && echo -e "[V] ${COLOR}No Verbose${RESET} mode"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} existing $fCompileCommandsJson"
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} $fCompileCommandsJson"
-        [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, $CLAUDE_MD)"
+        [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, ~/.claude/$CLAUDE_MD)"
     fi
 
     if [ -n "$fNeedBuild" ]; then
@@ -851,14 +851,15 @@ linkWorkspaceFiles() {
         echo -e "$NOTATION ${RED}Warning: .clangd config not found: $clangdSource${RESET}"
     fi
 
-    # Link CLAUDE.md for Claude Code
+    # Link CLAUDE.md for Claude Code (global: ~/.claude/CLAUDE.md)
     local claudeMdSource="$SCRIPT_DIR/assets/claude/CLAUDE.md"
-    local claudeMdTarget="$fWorkingDir/$CLAUDE_MD"
+    local claudeMdTarget="$HOME/.claude/$CLAUDE_MD"
     if [[ -L "$claudeMdTarget" && "$(readlink "$claudeMdTarget")" == "$claudeMdSource" ]]; then
-        echo -e "$NOTATION ${GREEN}Link already exists:${RESET} $CLAUDE_MD -> $claudeMdSource"
+        echo -e "$NOTATION ${GREEN}Link already exists:${RESET} ~/.claude/$CLAUDE_MD -> $claudeMdSource"
     elif [[ -f "$claudeMdSource" ]]; then
+        mkdir -p "$HOME/.claude"
         ln -sf "$claudeMdSource" "$claudeMdTarget"
-        echo -e "$NOTATION Created: ${GREEN}$CLAUDE_MD${RESET} -> ${BLUE}$claudeMdSource${RESET}"
+        echo -e "$NOTATION Created: ${GREEN}~/.claude/$CLAUDE_MD${RESET} -> ${BLUE}$claudeMdSource${RESET}"
     else
         echo -e "$NOTATION ${RED}Warning: $CLAUDE_MD not found: $claudeMdSource${RESET}"
     fi
@@ -885,7 +886,7 @@ removeWriteFromJson() {
 # Deep clean using git clean -fdx; caller must cd to repo and call requireGitRepo first
 runGitClean() {
     echo -e "$NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
-    local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE --exclude=$CLAUDE_MD"
+    local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE"
     if [ -z "$fRMCompileCommandsJson" ]; then
         if [ -L "$fCompileCommandsJson" ]; then
             local realFile

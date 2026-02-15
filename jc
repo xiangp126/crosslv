@@ -1199,8 +1199,15 @@ setLinuxDefaultShell() {
     fi
 }
 
-createExtraSymlinks() {
-    echo -e "${COLOR}Creating Extra Symlinks${RESET}"
+createCursorCLISymlinks() {
+    [ ! -d "$HOME/.cursor-server" ] && return
+    echo -e "${COLOR}Creating Cursor CLI Symlinks${RESET}"
+    linkFile "$fMainDir/assets/cursor/code" "$HOME/.local/bin"
+    linkFile "$HOME/.local/bin/code" "$HOME/.local/bin" "cursor"
+}
+
+createDevToolSymlinks() {
+    echo -e "${COLOR}Creating Dev Tool Symlinks${RESET}"
     # The directories are guaranteed to exist when this function is called.
     linkFile "$fTKClangdConfig" "$HOME/.config/clangd"
     linkFile "$fzfTabCompPath" "$HOME/.bash_completion.d" "fzf_tab_completion.bash"
@@ -1208,6 +1215,9 @@ createExtraSymlinks() {
     linkFile "$fJCPath" "$HOME/.usr/bin"
     if [ -d "$HOME"/.vscode-server/data/Machine ]; then
         linkFile "$fMainDir"/assets/vscode/remote.settings.json "$HOME"/.vscode-server/data/Machine "settings.json"
+    fi
+    if [ -d "$HOME/.claude" ]; then
+        linkFile "$fMainDir/assets/claude/CLAUDE.md" "$HOME/.claude"
     fi
 }
 
@@ -2718,7 +2728,8 @@ doCommonJobs() {
     installVimPluginsManager   # Install Vim Plugins Manager
     installTmuxPluginsManager  # Install Tmux Plugins Manager
     createToolsSymlinks        # Create tool symlinks
-    createExtraSymlinks        # Create extra symlinks
+    createCursorCLISymlinks    # Create Cursor CLI symlinks (code/cursor)
+    createDevToolSymlinks      # Create dev tool symlinks (clangd, fzf, jc, vscode)
     buildBatTheme              # Build bat theme
     buildExtraFonts            # Build extra fonts
 }
