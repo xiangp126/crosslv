@@ -118,11 +118,11 @@ alias cdo='__cd /opt'
 alias cds='__cd /opt/src'
 # NV specific 2
 alias mss='sudo mst status -v'
-alias cdw='__cd /auto/fwgwork1/pexiang/golan_fw'
-alias cdN='__cd /auto/fwgwork1/pexiang/nicx'
+alias cdw='__cd /auto/fwgwork1/$USER/golan_fw'
+alias cdN='__cd /auto/fwgwork1/$USER/nicx'
 for i in {2..3}; do
     # shellcheck disable=SC2139
-    alias "cdw$i=__cd /auto/fwgwork1/pexiang/golan_fw$i"
+    alias "cdw$i=__cd /auto/fwgwork1/$USER/golan_fw$i"
 done
 
 # Print entry names without quotation marks
@@ -253,16 +253,29 @@ export FZF_COMPLETION_TRIGGER='*'
 # Options to fzf command
 export FZF_COMPLETION_OPTS='+c -x'
 
+# Bind-mount Cursor server directory from NFS (Linux/NV only, requires
+# NOPASSWD sudoers entry for mount --bind to work silently)
+if [[ $_UNAME_S == 'Linux' && $EUID -ne 0 ]]; then
+    _cs_dst="$HOME/.cursor-server"
+    _cs_src="/auto/fwgwork1/$USER/.cursor-server"
+    [[ -d "$_cs_dst" ]] || mkdir -p "$_cs_dst" 2>/dev/null
+    if [[ -d "$_cs_src" ]] && ! findmnt -M "$_cs_dst" &>/dev/null; then
+        sudo mount --bind "$_cs_src" "$_cs_dst" &>/dev/null
+    fi
+    unset _cs_src _cs_dst
+fi
+
 # Load customized code wrapper (supports both VS Code and Cursor)
 { [ -d "$HOME/.vscode-server/cli/servers" ] || [ -d "$HOME/.cursor-server" ]; } && \
   [ -f "$HOME/Templates/code-function.sh" ] && source ~/Templates/code-function.sh
 
 # Wrapper for Claude Code: refresh Cursor IPC socket inside tmux so that
 # Claude Code can connect to the IDE extension ("Connected").
-if [[ $_UNAME_S == 'Linux' ]] && [ -n "$TMUX" ] && ! declare -f claude &>/dev/null; then
+if [[ $_UNAME_S == 'Linux' ]] && ! declare -f claude &>/dev/null; then
     claude() {
         nvm use default &>/dev/null
-        code -p &>/dev/null
+        unset -f claude
+        [[ -n "$TMUX" ]] && code -p &>/dev/null
         command claude "$@"
     }
 fi
