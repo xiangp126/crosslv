@@ -309,7 +309,6 @@ while true; do
             ;;
         --git-clean)
             fGitClean=true
-            fClean=true
             shift
             ;;
         -b|--bear)
