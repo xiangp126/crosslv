@@ -214,7 +214,8 @@ Git Options (require current dir to be a git repo, can be combined in cascade):
         --fetch                 git fetch origin master_rc
         --rebase                git rebase origin/master_rc
         --add                   git add -u and git reset HEAD -- shared/
-        --cmd                   git commit --amend
+        --commit                git commit --amend --no-edit
+        --edit                  git commit --amend
         --push                  git push origin HEAD:refs/for/master_rc
         --stat                  git diff --stat
         --show                  git show HEAD
@@ -259,7 +260,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
 fi
 
 SHORTOPTS="hcoaj:w:Dlbm:N"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,skip:,nicx,continue,scratch,fetch,push,rebase,add,cmd,stat,show"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,skip:,nicx,continue,scratch,fetch,push,rebase,add,commit,edit,stat,show"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -385,8 +386,12 @@ while true; do
             fGitCmds+=("add")
             shift
             ;;
-        --cmd)
-            fGitCmds+=("cmd")
+        --commit)
+            fGitCmds+=("commit")
+            shift
+            ;;
+        --edit)
+            fGitCmds+=("edit")
             shift
             ;;
         --stat)
@@ -935,7 +940,11 @@ runGitOptions() {
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git add -u && git reset HEAD -- shared/${RESET}"
                 git add -u && git reset HEAD -- shared/
                 ;;
-            cmd)
+            commit)
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git commit --amend --no-edit${RESET}"
+                git commit --amend --no-edit
+                ;;
+            edit)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git commit --amend${RESET}"
                 git commit --amend
                 ;;
@@ -965,7 +974,7 @@ runGitOptions() {
         fi
     done
 
-    [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${GREEN}All $gitCmdCount git commands completed successfully.${RESET}"
+    [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${GREEN}Congratulations! All $gitCmdCount git commands completed successfully.${RESET}"
     # If only git options were given (no build), exit after completing them
     [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkWorkspace" ]] && exit 0
 }

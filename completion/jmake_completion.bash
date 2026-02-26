@@ -65,7 +65,7 @@ _jmake_complete() {
     # List of all long options
     long_opts="--help --all --jobs --working-dir --clean --clean-db \
                --git-clean --clean-submodule --build --bear --debug --attempt --no-verbose --nicx --list --link --models --skip --continue --scratch \
-               --fetch --push --rebase --add --cmd --stat --show"
+               --fetch --push --rebase --add --commit --edit --stat --show"
 
     # Handle option arguments
     case $prev in
