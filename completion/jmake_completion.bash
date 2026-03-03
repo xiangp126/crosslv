@@ -10,7 +10,10 @@
 # rather than options, even if they start with a dash (-).
 
 # GOLAN supported models (same order as jmake)
-JMAKE_GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
+JMAKE_GOLAN_MODELS="alpine arava arava_codecov arava_ethlt aravacov argaman argaman_codecov \
+                     carmel carmel_codecov carmel_ethlt carmelcov gilboa gilboa_codecov gilboacov \
+                     mustang mustang_codecov mustangcov tamar tamar_codecov tamarcov \
+                     viper viper_codecov vipercov"
 
 # Helper function to complete multiple models with comma separation
 # Supports: jmake --models mustang,gilboa,<TAB> to suggest remaining models
@@ -60,11 +63,13 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -a -j -w -c -o -D -l -b -m -N"
+    opts="-h -a -A -j -w -c -o -D -l -b -m -N -p"
 
     # List of all long options
-    long_opts="--help --all --jobs --working-dir --clean --clean-db \
-               --git-clean --clean-submodule --build --bear --debug --attempt --no-verbose --nicx --list --link --models --skip --continue --scratch \
+    long_opts="--help --all --all-extended --jobs --working-dir --clean --clean-db \
+               --git-clean --clean-submodule --build --bear --debug \
+               --attempt --no-verbose --nicx --list --list-extended --link --models \
+               --skip --continue --scratch --patch --ethlt --codecov --cov \
                --fetch --push --rebase --add --commit --edit --stat --show"
 
     # Handle option arguments

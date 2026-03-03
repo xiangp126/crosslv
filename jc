@@ -313,6 +313,20 @@ while true; do
                 echo -e "${COLOR}Upgrading all packages${RESET}"
                 sudo apt upgrade -y
             fi
+            # Upgrade globally installed npm packages
+            nvmSh="$HOME/.nvm/nvm.sh"
+            if [ -s "$nvmSh" ]; then
+                # shellcheck source=/dev/null
+                source "$nvmSh"
+                globalPkgs=$(npm list -g --depth=0 2>/dev/null | grep -oP '── \K(@[^@]+|[^@\s]+)(?=@)')
+                if [ -n "$globalPkgs" ]; then
+                    echo -e "${COLOR}Upgrading globally installed npm packages${RESET}"
+                    for pkg in $globalPkgs; do
+                        echo -e "  ${LIGHTYELLOW}Upgrading ${BLUE}$pkg${RESET}"
+                        npm install -g "${pkg}@latest"
+                    done
+                fi
+            fi
             shift
             exit 0
             ;;

@@ -14,6 +14,7 @@ fNoClipboard=
 fXselTimeout=10
 fQueryFromClipboard=
 fKernelIncluded=  # Include the linux kernel source code in the search
+fAdbIncluded=     # Include .adb files in the search
 # Constants
 SCRIPTNAME=$(basename $0)
 # Cache uname result to avoid repeated calls
@@ -53,6 +54,7 @@ Options:
     -v, --vim                Open the file with vim (default is $fEditor)
     -c, --check-depends      Check if dependencies are installed
     -n, --no-clipboard       Do not use clipboard content as the search term
+    --adb                    Include .adb files in the search
     --rg-only                Only use rg to search, not use fzf to select
     --re-matching            Force regular expression matching in both rg and fzf
 
@@ -74,7 +76,7 @@ parseOptions() {
     fi
 
     SHORTOPTS="hvdkcn"
-    LONGOPTS="help,vim,debug,kernel,rg-only,check-depends,no-clipboard,re-matching"
+    LONGOPTS="help,vim,debug,kernel,rg-only,check-depends,no-clipboard,re-matching,adb"
 
     # Use getopt to parse command-line options
     if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -113,6 +115,10 @@ parseOptions() {
                 ;;
             --re-matching)
                 fREMatching=true
+                shift
+                ;;
+            --adb)
+                fAdbIncluded=true
                 shift
                 ;;
             --rg-only)
@@ -286,6 +292,9 @@ fuzzySearch() {
         "--type" "asm"
         "--type-add" "linkerscript:*.ld,*.lds"
         "--type" "linkerscript"
+    )
+    [ -n "$fAdbIncluded" ] && rgParams+=("--type-add" "adb:*.adb" "--type" "adb")
+    rgParams+=(
         # Exclude directories
         "--glob" "!.git/*"
         "--glob" "!node_modules/*"

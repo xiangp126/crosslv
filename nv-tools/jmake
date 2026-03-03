@@ -24,6 +24,10 @@ fPrintBuildFlags=
 fClean=
 fNoVerbose=
 fNicx=
+fPatchSudo=
+fEthlt=
+fCodecov=
+fCov=
 fContinue=
 fScratch=
 fInputCmd=
@@ -49,8 +53,9 @@ COLOR=$MAGENTA
 NOTATION="${CYAN}▸${RESET}"
 SEPARATOR="==================================================="
 BUILD_SCRIPT="./build.sh"
-STATE_FILE=".${SCRIPT_NAME}_state"
+STATE_FILE=".jk_state"
 CLAUDE_MD="CLAUDE.md"
+GIT_RESET_PATHS="shared/ hca_fw_core_platform/ build.sh .clangd"
 
 # GOLAN supported models
 # Model to hardware device mapping (ordered by hardware generation)
@@ -69,12 +74,33 @@ declare -A MODEL_HARDWARE=(
 # GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
 # Due to a compilation bug, carmel must be built (immediately) before argaman
 GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
+GOLAN_MODELS_EXTENDED="alpine arava arava_codecov arava_ethlt aravacov argaman argaman_codecov \
+carmel carmel_codecov carmel_ethlt carmelcov gilboa gilboa_codecov gilboacov \
+mustang mustang_codecov mustangcov tamar tamar_codecov tamarcov \
+viper viper_codecov vipercov"
+ETHLT_MODELS="arava carmel"
+CODECOV_MODELS="arava argaman carmel gilboa mustang tamar viper"
+COV_MODELS="arava carmel gilboa mustang tamar viper"
 DEFAULT_MODEL="mustang"
 
 # Get model display name with hardware info: "model (HW)"
 getModelDisplayName() {
     local model="$1"
     local hw="${MODEL_HARDWARE[$model]}"
+    if [[ -z "$hw" ]]; then
+        local base suffix
+        if [[ "$model" == *_ethlt ]]; then
+            base="${model%_ethlt}" suffix="Ethlt"
+        elif [[ "$model" == *_codecov ]]; then
+            base="${model%_codecov}" suffix="Codecov"
+        elif [[ "$model" == *cov ]]; then
+            base="${model%cov}" suffix="Cov"
+        fi
+        if [[ -n "$base" ]]; then
+            hw="${MODEL_HARDWARE[$base]}"
+            [[ -n "$hw" ]] && hw="${hw}-${suffix}"
+        fi
+    fi
     if [[ -n "$hw" ]]; then
         echo "$model ($hw)"
     else
@@ -199,21 +225,26 @@ Build Flags:
         --no-verbose            Suppress full compilation output (default: verbose)
 
 Build Options:
-    -a, --all                   Build all models one by one (loop mode)
+    -a, --all                   Build all base models one by one (loop mode)
+    -A, --all-extended          Build all extended models (includes _ethlt, _codecov variants)
     -b, --bear                  Generate $fCompileCommandsJson (implies -c --clean-db -o)
     -m, --models <models>       Build specified models (comma-separated, loop if multiple)
         --skip <models>         Skip these models when building (comma-separated)
-    -N, --nicx                  Build with NICX=1 flag
+    -p, --patch                 Patch 'sudo docker' → 'docker' in build scripts (essential for Claude Code autorun)
+        --ethlt                 Build the _ethlt variant of the model(s)
+        --codecov               Build the _codecov variant of the model(s)
+        --cov                   Build the cov variant of the model(s)
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
-    --attempt                   Set max build attempts (default: $fMaxBuildAttempt)
+        --attempt               Set max build attempts (default: $fMaxBuildAttempt)
         --continue              Resume from last failed model (like git rebase --continue)
         --scratch               Clear saved state and start from first model
+    -N, --nicx                  Build with NICX=1 flag
 
 Git Options (require current dir to be a git repo, can be combined in cascade):
         --fetch                 git fetch origin master_rc
         --rebase                git rebase origin/master_rc
-        --add                   git add -u and git reset HEAD -- shared/
+        --add                   git add -u and git reset HEAD -- $GIT_RESET_PATHS
         --commit                git commit --amend --no-edit
         --edit                  git commit --amend
         --push                  git push origin HEAD:refs/for/master_rc
@@ -225,7 +256,8 @@ Git Options (require current dir to be a git repo, can be combined in cascade):
 
 Other Options:
     -h, --help                  Print this help message
-    -l, --list                  List available models
+    -l, --list                  List base models
+        --list-extended         List all extended models (includes _ethlt, _codecov variants)
         --link                  Link $fCompileCommandsJson (use with -m), .clangd, and ~/.claude/$CLAUDE_MD
 
 Supported Models:
@@ -259,8 +291,13 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hcoaj:w:Dlbm:N"
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,list,link,all,models:,skip:,nicx,continue,scratch,fetch,push,rebase,add,commit,edit,stat,show"
+SHORTOPTS="hcoaAj:w:Dlbm:Np"
+# NOTE: No leading spaces on continuation lines — they become part of the string and break getopt
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
+jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
+all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
+continue,scratch,\
+fetch,push,rebase,add,commit,edit,stat,show"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -326,6 +363,22 @@ while true; do
             fNicx=true
             shift
             ;;
+        -p|--patch)
+            fPatchSudo=true
+            shift
+            ;;
+        --ethlt)
+            fEthlt=true
+            shift
+            ;;
+        --codecov)
+            fCodecov=true
+            shift
+            ;;
+        --cov)
+            fCov=true
+            shift
+            ;;
         --continue)
             fContinue=true
             fNeedBuild=true
@@ -337,10 +390,32 @@ while true; do
             ;;
         -l|--list)
             echo -e "${BOLD}Available models:${RESET}"
+            __maxLen=0
+            for model in $GOLAN_MODELS; do
+                (( ${#model} > __maxLen )) && __maxLen=${#model}
+            done
             for model in $GOLAN_MODELS; do
                 hw="${MODEL_HARDWARE[$model]}"
                 if [[ -n "$hw" ]]; then
-                    printf "  ${GREEN}%-10s${RESET} → ${CYAN}%s${RESET}\n" "$model" "$hw"
+                    printf "  ${GREEN}%-${__maxLen}s${RESET} → ${CYAN}%s${RESET}\n" "$model" "$hw"
+                else
+                    printf "  ${GREEN}%s${RESET}\n" "$model"
+                fi
+            done
+            exit 0
+            ;;
+        --list-extended)
+            echo -e "${BOLD}All supported models:${RESET}"
+            __maxLen=0
+            for model in $GOLAN_MODELS_EXTENDED; do
+                (( ${#model} > __maxLen )) && __maxLen=${#model}
+            done
+            for model in $GOLAN_MODELS_EXTENDED; do
+                __display="$(getModelDisplayName "$model")"
+                if [[ "$__display" == *"("* ]]; then
+                    __hw="${__display#*(}"
+                    __hw="${__hw%)}"
+                    printf "  ${GREEN}%-${__maxLen}s${RESET} → ${CYAN}%s${RESET}\n" "$model" "$__hw"
                 else
                     printf "  ${GREEN}%s${RESET}\n" "$model"
                 fi
@@ -353,6 +428,12 @@ while true; do
             ;;
         -a|--all)
             IFS=' ' read -ra _models <<< "$GOLAN_MODELS"
+            fModels+=("${_models[@]}")
+            fNeedBuild=true
+            shift
+            ;;
+        -A|--all-extended)
+            IFS=' ' read -ra _models <<< "$GOLAN_MODELS_EXTENDED"
             fModels+=("${_models[@]}")
             fNeedBuild=true
             shift
@@ -492,6 +573,18 @@ preConfigure() {
     else
         searchBuildModel "$GOLAN_MODELS" "$fBuildModel"
     fi
+
+    # When variant flags are set, append the corresponding variants to the model list
+    if [[ -n "$fEthlt" || -n "$fCodecov" || -n "$fCov" ]]; then
+        local sourceModels=("${fModels[@]}")
+        [[ ${#sourceModels[@]} -eq 0 ]] && sourceModels=("$fBuildModel")
+        for model in "${sourceModels[@]}"; do
+            [[ -n "$fEthlt"   && " $ETHLT_MODELS "   == *" $model "* ]] && fModels+=("${model}_ethlt")
+            [[ -n "$fCodecov" && " $CODECOV_MODELS " == *" $model "* ]] && fModels+=("${model}_codecov")
+            [[ -n "$fCov"     && " $COV_MODELS "     == *" $model "* ]] && fModels+=("${model}cov")
+        done
+        fNeedBuild=true
+    fi
 }
 
 validateArguments() {
@@ -517,6 +610,10 @@ printBuildFlags() {
         [ -n "$fNoVerbose" ]             && echo -e "[V] ${COLOR}No Verbose${RESET} mode"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} existing $fCompileCommandsJson"
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} $fCompileCommandsJson"
+        [ -n "$fPatchSudo" ]             && echo -e "[p] ${COLOR}Patch${RESET} sudo docker → docker"
+        [ -n "$fEthlt" ]                 && echo -e "[E] ${COLOR}Ethlt${RESET} variant (_ethlt)"
+        [ -n "$fCodecov" ]               && echo -e "[K] ${COLOR}Codecov${RESET} variant (_codecov)"
+        [ -n "$fCov" ]                   && echo -e "[O] ${COLOR}Cov${RESET} variant (cov)"
         [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, ~/.claude/$CLAUDE_MD)"
     fi
 
@@ -604,6 +701,36 @@ updateSubmodules() {
         exit 1
     else
         echo -e "$NOTATION ${GREEN}Submodules updated successfully.${RESET}"
+    fi
+}
+
+patchSudoDocker() {
+    [ -z "$fPatchSudo" ] && return
+    cd "$fWorkingDir" || exit
+    local patched=0
+    local patchedFiles=()
+    local buildScript="$BUILD_SCRIPT"
+    local patchFiles=(
+        "hca_fw_core_platform/virtualization/container/project/golan_fw/build/src/build.py"
+        "hca_fw_core_platform/virtualization/container/common/src/base.py"
+    )
+
+    for f in "$buildScript" "${patchFiles[@]}"; do
+        if [[ ! -f "$f" ]]; then
+            echo -e "$NOTATION ${RED}Error: patch target not found: $f${RESET}"
+            exit 1
+        fi
+        if grep -q 'sudo docker' "$f"; then
+            sed -i 's/sudo docker/docker/g' "$f"
+            patchedFiles+=("$f")
+            ((patched++))
+        fi
+    done
+    if [[ $patched -gt 0 ]]; then
+        echo -e "$NOTATION ${CYAN}Patched 'sudo docker' → 'docker' in $patched file(s):${RESET}"
+        for f in "${patchedFiles[@]}"; do
+            echo -e "         ${GREEN}✓${RESET} $f"
+        done
     fi
 }
 
@@ -763,7 +890,7 @@ runLoopModels() {
                 "$( [[ ${#fModelsPending[@]} -gt 0 ]] \
                     && echo -e "Next up: ${YELLOW}$(getModelDisplayName "${fModelsPending[0]}")${RESET}" \
                     || echo -e "${GREEN}All models built${RESET}" )"
-            echo "$SEPARATOR"
+            [[ ${#fModelsPending[@]} -gt 0 ]] && echo "$SEPARATOR"
             saveLoopState "progress"
         else
             echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") build succeeded${RESET}"
@@ -906,7 +1033,7 @@ runGitClean() {
     eval "$cleanCmd"
     echo -e "$NOTATION ${CYAN}Cleaning submodules...${RESET}"
     git submodule foreach --recursive git clean -fdx "$excludeOpts"
-    echo -e "$NOTATION ${MAGENTA}Deep clean completed.${RESET}"
+    echo -e "$NOTATION ${MAGENTA}Git deep clean completed.${RESET}"
 }
 
 runGitOptions() {
@@ -936,8 +1063,8 @@ runGitOptions() {
                 git rebase origin/master_rc
                 ;;
             add)
-                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git add -u && git reset HEAD -- shared/${RESET}"
-                git add -u && git reset HEAD -- shared/
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git add -u && git reset HEAD -- $GIT_RESET_PATHS${RESET}"
+                git add -u && git reset HEAD -- $GIT_RESET_PATHS
                 ;;
             commit)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git commit --amend --no-edit${RESET}"
@@ -989,6 +1116,7 @@ main() {
     printBuildFlags
     cleanTheRepo
     updateSubmodules
+    patchSudoDocker
     # Handle models mode (--models) or regular build
     if [[ ${#fModels[@]} -gt 0 ]]; then
         runLoopModels
