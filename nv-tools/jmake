@@ -369,14 +369,17 @@ while true; do
             ;;
         --ethlt)
             fEthlt=true
+            fNeedBuild=true
             shift
             ;;
         --codecov)
             fCodecov=true
+            fNeedBuild=true
             shift
             ;;
         --cov)
             fCov=true
+            fNeedBuild=true
             shift
             ;;
         --continue)
@@ -574,15 +577,17 @@ preConfigure() {
         searchBuildModel "$GOLAN_MODELS" "$fBuildModel"
     fi
 
-    # When variant flags are set, append the corresponding variants to the model list
-    if [[ -n "$fEthlt" || -n "$fCodecov" || -n "$fCov" ]]; then
-        local sourceModels=("${fModels[@]}")
-        [[ ${#sourceModels[@]} -eq 0 ]] && sourceModels=("$fBuildModel")
-        for model in "${sourceModels[@]}"; do
-            [[ -n "$fEthlt"   && " $ETHLT_MODELS "   == *" $model "* ]] && fModels+=("${model}_ethlt")
-            [[ -n "$fCodecov" && " $CODECOV_MODELS " == *" $model "* ]] && fModels+=("${model}_codecov")
-            [[ -n "$fCov"     && " $COV_MODELS "     == *" $model "* ]] && fModels+=("${model}cov")
-        done
+    # Variant flags append all available models of that variant type
+    if [[ -n "$fEthlt" ]]; then
+        for model in $ETHLT_MODELS; do fModels+=("${model}_ethlt"); done
+        fNeedBuild=true
+    fi
+    if [[ -n "$fCodecov" ]]; then
+        for model in $CODECOV_MODELS; do fModels+=("${model}_codecov"); done
+        fNeedBuild=true
+    fi
+    if [[ -n "$fCov" ]]; then
+        for model in $COV_MODELS; do fModels+=("${model}cov"); done
         fNeedBuild=true
     fi
 }
