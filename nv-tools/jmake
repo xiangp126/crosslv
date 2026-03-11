@@ -1064,8 +1064,23 @@ runGitOptions() {
                 git fetch origin master_rc
                 ;;
             rebase)
+                local stashed=0
+                if ! git diff --quiet 2>/dev/null; then
+                    echo -e "$NOTATION ${CYAN}Unstaged changes detected, stashing...${RESET}"
+                    git stash push -m "jmake-rebase-autostash" && stashed=1
+                fi
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git rebase origin/master_rc${RESET}"
-                git rebase origin/master_rc
+                if git rebase origin/master_rc; then
+                    if [[ $stashed -eq 1 ]]; then
+                        echo -e "$NOTATION ${CYAN}Rebase succeeded, restoring stashed changes...${RESET}"
+                        git stash pop
+                    fi
+                else
+                    echo -e "$NOTATION ${RED}Rebase failed.${RESET}"
+                    if [[ $stashed -eq 1 ]]; then
+                        echo -e "$NOTATION ${YELLOW}Stashed changes preserved. Run 'git stash pop' after resolving conflicts.${RESET}"
+                    fi
+                fi
                 ;;
             add)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git add -u && git reset HEAD -- $GIT_RESET_PATHS${RESET}"
