@@ -70,7 +70,7 @@ _jmake_complete() {
                --git-clean --clean-submodule --build --bear --debug \
                --attempt --no-verbose --nicx --list --list-extended --link --models \
                --skip --continue --scratch --patch --ethlt --codecov --cov \
-               --fetch --push --rebase --add --commit --edit --stat --show"
+               --fetch --push --rebase --add --commit --amend --stat --show"
 
     # Handle option arguments
     case $prev in

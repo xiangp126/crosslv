@@ -297,7 +297,7 @@ LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
 jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
 all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
 continue,scratch,\
-fetch,push,rebase,add,commit,edit,stat,show"
+fetch,push,rebase,add,commit,amend,stat,show"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -473,8 +473,8 @@ while true; do
             fGitCmds+=("commit")
             shift
             ;;
-        --edit)
-            fGitCmds+=("edit")
+        --amend)
+            fGitCmds+=("amend")
             shift
             ;;
         --stat)
@@ -1090,7 +1090,7 @@ runGitOptions() {
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git commit --amend --no-edit${RESET}"
                 git commit --amend --no-edit
                 ;;
-            edit)
+            amend)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git commit --amend${RESET}"
                 git commit --amend
                 ;;
