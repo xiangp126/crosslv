@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(mkfs*)",
+      "Bash(dd *)"
+    ]
+  },
+  "model": "opus[1m]",
+  "effortLevel": "high",
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "verbose": true
+}
