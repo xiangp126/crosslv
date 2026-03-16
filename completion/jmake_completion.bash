@@ -69,7 +69,7 @@ _jmake_complete() {
     long_opts="--help --all --all-extended --jobs --working-dir --clean --clean-db \
                --git-clean --clean-submodule --build --bear --debug \
                --attempt --no-verbose --nicx --list --list-extended --link --models \
-               --skip --continue --scratch --patch --ethlt --codecov --cov \
+               --skip --scratch --patch --ethlt --codecov --cov \
                --fetch --push --rebase --add --commit --amend --stat --show"
 
     # Handle option arguments

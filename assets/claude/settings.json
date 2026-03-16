@@ -16,7 +16,7 @@
       "Bash(dd *)"
     ]
   },
-  "model": "opus[1m]",
+  "model": "claude-opus-4-6[1m]",
   "effortLevel": "high",
   "sandbox": {
     "enabled": true,

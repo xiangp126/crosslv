@@ -28,7 +28,6 @@ fPatchSudo=
 fEthlt=
 fCodecov=
 fCov=
-fContinue=
 fScratch=
 fInputCmd=
 fBuildTimeFormatted=
@@ -119,7 +118,7 @@ formatModelsWithHardware() {
     echo "$result"
 }
 
-# Save build state to file for --continue support
+# Save build state to file for auto-resume support
 # $1: "fail" (default) saves failure state with resume hint,
 #     "progress" silently updates state after a successful model
 saveLoopState() {
@@ -138,17 +137,14 @@ SKIPPED=${fModelsSkipped[*]}
 EOF
     if [[ "$status" == "fail" ]]; then
         echo -e "$NOTATION State saved to ${CYAN}$stateFile${RESET}"
-        echo -e "$NOTATION Run ${YELLOW}jmake -a --continue${RESET} to resume after fixing the issue"
+        echo -e "$NOTATION Run ${YELLOW}jmake -a${RESET} to resume after fixing the issue"
     fi
 }
 
 # Load build state from file
 loadLoopState() {
     local stateFile="$fWorkingDir/$STATE_FILE"
-    if [[ ! -f "$stateFile" ]]; then
-        echo -e "$NOTATION ${RED}Error: No saved state found. Run jmake -a first.${RESET}"
-        exit 1
-    fi
+    [[ ! -f "$stateFile" ]] && return 1
 
     # Read state file
     local verified failed pending skipped
@@ -225,7 +221,7 @@ Build Flags:
         --no-verbose            Suppress full compilation output (default: verbose)
 
 Build Options:
-    -a, --all                   Build all base models one by one (loop mode)
+    -a, --all                   Build all base models one by one (loop mode, auto-resumes from last failure)
     -A, --all-extended          Build all extended models (includes _ethlt, _codecov variants)
     -b, --bear                  Generate $fCompileCommandsJson (implies -c --clean-db -o)
     -m, --models <models>       Build specified models (comma-separated, loop if multiple)
@@ -237,8 +233,7 @@ Build Options:
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
         --attempt               Set max build attempts (default: $fMaxBuildAttempt)
-        --continue              Resume from last failed model (like git rebase --continue)
-        --scratch               Clear saved state and start from first model
+        --scratch               Ignore saved state and start from first model
     -N, --nicx                  Build with NICX=1 flag
 
 Git Options (require current dir to be a git repo, can be combined in cascade):
@@ -268,8 +263,7 @@ Examples:
     $SCRIPT_NAME --models argaman,alpine      # Build argaman and alpine (separated by comma)
     $SCRIPT_NAME -a                           # Build all models one by one
     $SCRIPT_NAME -a --skip arava,viper        # Build all except arava and viper
-    $SCRIPT_NAME -a --continue                # Resume from last failed model
-    $SCRIPT_NAME -a --scratch                 # Clear state and start fresh
+    $SCRIPT_NAME -a --scratch                 # Ignore saved state and start fresh
     $SCRIPT_NAME -c -o                        # Clean and build the default ${DEFAULT_MODEL:-}
     $SCRIPT_NAME --no-verbose -o              # Build with quiet mode
     $SCRIPT_NAME --bear --models gilboa       # Build gilboa with $fCompileCommandsJson
@@ -296,7 +290,7 @@ SHORTOPTS="hcoaAj:w:Dlbm:Np"
 LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
 jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
 all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
-continue,scratch,\
+scratch,\
 fetch,push,rebase,add,commit,amend,stat,show"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
@@ -379,11 +373,6 @@ while true; do
             ;;
         --cov)
             fCov=true
-            fNeedBuild=true
-            shift
-            ;;
-        --continue)
-            fContinue=true
             fNeedBuild=true
             shift
             ;;
@@ -851,7 +840,7 @@ runLoopModels() {
 
     local totalStartTime=$(date +%s)
     local isLoopMode=$([[ ${#fModels[@]} -gt 1 || ${#fModelsSkip[@]} -gt 0 ]] && echo 1 || echo 0)
-    [[ -z "$fContinue" ]] && fModelsSkipped=()
+    fModelsSkipped=()
 
     # Apply --skip filter to fModels (ignore skip models not in the list)
     if [[ ${#fModelsSkip[@]} -gt 0 ]]; then
@@ -1128,7 +1117,8 @@ runGitOptions() {
 main() {
     runGitOptions
     preConfigure "$@"
-    [[ -n "$fContinue" ]] && loadLoopState # load state file to populate fModels
+    # Auto-resume from saved state if available (use --scratch to override)
+    [[ ${#fModels[@]} -gt 0 ]] && loadLoopState
     # Handle --link standalone: link and exit (skip if --bear is also specified)
     [[ -n "$fLinkWorkspace" && -z "$fGenerateCompileCmds" ]] && { linkWorkspaceFiles; exit 0; }
     validateArguments
