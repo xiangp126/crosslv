@@ -63,13 +63,13 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -a -A -j -w -c -o -D -l -b -m -N -p"
+    opts="-h -a -A -j -w -c -o -D -l -b -m -N -p -T"
 
     # List of all long options
     long_opts="--help --all --all-extended --jobs --working-dir --clean --clean-db \
                --git-clean --clean-submodule --build --bear --debug \
                --attempt --no-verbose --nicx --list --list-extended --link --models \
-               --skip --scratch --patch --ethlt --codecov --cov \
+               --skip --scratch --track --patch --ethlt --codecov --cov \
                --fetch --push --rebase --add --commit --amend --stat --show"
 
     # Handle option arguments
@@ -85,7 +85,7 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -W "$jobs" -- "$cur") )
             return 0
             ;;
-        --attempt)
+        -T|--attempt)
             # Suggest common numbers for max attempts
             local attempts="1 2 3"
             COMPREPLY=( $(compgen -W "$attempts" -- "$cur") )

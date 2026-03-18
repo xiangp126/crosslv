@@ -24,6 +24,7 @@ fPrintBuildFlags=
 fClean=
 fNoVerbose=
 fNicx=
+fTrackIncludes=
 fPatchSudo=
 fEthlt=
 fCodecov=
@@ -232,9 +233,10 @@ Build Options:
         --cov                   Build the cov variant of the model(s)
     -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir           Set working directory (default: current dir)
-        --attempt               Set max build attempts (default: $fMaxBuildAttempt)
+    -T, --attempt               Set max build attempts (default: $fMaxBuildAttempt)
         --scratch               Ignore saved state and start from first model
     -N, --nicx                  Build with NICX=1 flag
+        --track                 Build with -D TRACK_INCLUDES=1
 
 Git Options (require current dir to be a git repo, can be combined in cascade):
         --fetch                 git fetch origin master_rc
@@ -268,7 +270,6 @@ Examples:
     $SCRIPT_NAME --no-verbose -o              # Build with quiet mode
     $SCRIPT_NAME --bear --models gilboa       # Build gilboa with $fCompileCommandsJson
     $SCRIPT_NAME --fetch --rebase             # Fetch then rebase (cascade)
-    $SCRIPT_NAME --fetch --rebase --add --push # Full git workflow in one command
 
 _EOF
     exit 0
@@ -285,13 +286,12 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hcoaAj:w:Dlbm:Np"
+SHORTOPTS="hcoaAj:w:Dlbm:NpT:"
 # NOTE: No leading spaces on continuation lines — they become part of the string and break getopt
 LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
 jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
 all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
-scratch,\
-fetch,push,rebase,add,commit,amend,stat,show"
+scratch,track,fetch,push,rebase,add,commit,amend,stat,show"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -320,7 +320,7 @@ while true; do
             fNeedBuild=true
             shift 2
             ;;
-        --attempt)
+        -T|--attempt)
             fMaxBuildAttempt="$2"
             fNeedBuild=true
             shift 2
@@ -374,6 +374,10 @@ while true; do
         --cov)
             fCov=true
             fNeedBuild=true
+            shift
+            ;;
+        --track)
+            fTrackIncludes=true
             shift
             ;;
         --scratch)
@@ -604,7 +608,8 @@ printBuildFlags() {
         [ -n "$fNoVerbose" ]             && echo -e "[V] ${COLOR}No Verbose${RESET} mode"
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} existing $fCompileCommandsJson"
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} $fCompileCommandsJson"
-        [ -n "$fPatchSudo" ]             && echo -e "[p] ${COLOR}Patch${RESET} sudo docker → docker"
+        [ -n "$fTrackIncludes" ]         && echo -e "[T] ${COLOR}Track Includes${RESET} (-D TRACK_INCLUDES=1)"
+        [ -n "$fPatchSudo" ]             && echo -e "[P] ${COLOR}Patch${RESET} sudo docker → docker"
         [ -n "$fEthlt" ]                 && echo -e "[E] ${COLOR}Ethlt${RESET} variant (_ethlt)"
         [ -n "$fCodecov" ]               && echo -e "[K] ${COLOR}Codecov${RESET} variant (_codecov)"
         [ -n "$fCov" ]                   && echo -e "[O] ${COLOR}Cov${RESET} variant (cov)"
@@ -642,11 +647,11 @@ cleanTheRepo() {
     cd "$fWorkingDir" || exit
     echo -e "$NOTATION ${CYAN}Cleaning the build...${RESET}"
 
-    # Standard make clean
-    local cleanCmd="$BUILD_SCRIPT -C"
+    # Fast clean: run 'make clean' directly, bypassing Docker overhead in build.sh
+    # local cleanCmd="$BUILD_SCRIPT -C"
+    local cleanCmd="DOCKER=DOCKER make clean"
     echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
     echo $SEPARATOR
-    sleep 1
     COLOR=$MAGENTA
     eval "$cleanCmd"
     if [[ $? -ne 0 ]]; then
@@ -755,6 +760,7 @@ makeBuildCommand() {
     [ -z "$fNoVerbose" ] && fBuildCommand+=" --verbose"
     [ -n "$fGenerateCompileCmds" ] && fBuildCommand+=" --bear"
     [ -n "$fNicx" ] && fBuildCommand+=" -D NICX=1"
+    [ -n "$fTrackIncludes" ] && fBuildCommand+=" -D TRACK_INCLUDES=1"
 }
 
 runBuildCommands() {
