@@ -184,7 +184,7 @@ loadLoopState() {
     if [[ -n "$failed" ]]; then
         echo -e "$NOTATION ${YELLOW}○ Resuming from:${RESET} $failed"
     fi
-    [[ -n "$pending" ]] && echo -e "$NOTATION${GREY}○ Pending:${RESET} $pending"
+    [[ -n "$pending" ]] && echo -e "$NOTATION ${GREY}○ Pending:${RESET} $pending"
     echo $SEPARATOR
 }
 
@@ -866,6 +866,9 @@ runLoopModels() {
         echo -e "$NOTATION ${YELLOW}All models were skipped. Nothing to build.${RESET}"
         return 0
     fi
+
+    # Total = previously verified (from resume) + models to build now
+    local totalModels=$(( ${#fModelsVerified[@]} + ${#fModels[@]} ))
     echo "$SEPARATOR"
 
     for i in "${!fModels[@]}"; do
@@ -886,7 +889,7 @@ runLoopModels() {
         if [[ $isLoopMode -eq 1 ]]; then
             echo "$SEPARATOR"
             echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") build succeeded${RESET} ${GREY}(${fBuildTimeFormatted})${RESET}"
-            echo -e "$NOTATION Progress: ${CYAN}[${#fModelsVerified[@]}/${#fModels[@]}]${RESET}" \
+            echo -e "$NOTATION Progress: ${CYAN}[${#fModelsVerified[@]}/$totalModels]${RESET}" \
                 "$( [[ ${#fModelsPending[@]} -gt 0 ]] \
                     && echo -e "Next up: ${YELLOW}$(getModelDisplayName "${fModelsPending[0]}")${RESET}" \
                     || echo -e "${GREEN}All models built${RESET}" )"
