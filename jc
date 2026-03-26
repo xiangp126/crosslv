@@ -1886,28 +1886,6 @@ EOF
         echo -e "${GREY}Snap version of Firefox not found. Skipping removal.${RESET}"
     fi
 
-    # Clean up stale snap AppArmor profiles for Firefox
-    if command -v aa-status &>/dev/null && sudo aa-status --enabled 2>/dev/null; then
-        local firefoxProfiles
-        firefoxProfiles=$(sudo aa-status 2>/dev/null | grep -E "^\s+(firefox|snap\.firefox|snap-update-ns\.firefox)" | awk '{$1=$1};1')
-        if [ -n "$firefoxProfiles" ]; then
-            echo -e "${LIGHTYELLOW}Removing stale Firefox AppArmor profiles${RESET}"
-            sudo aa-disable firefox 2>/dev/null
-            if [ -f /etc/apparmor.d/usr.bin.firefox ]; then
-                sudo ln -sf /etc/apparmor.d/usr.bin.firefox /etc/apparmor.d/disable/usr.bin.firefox
-                sudo apparmor_parser -R /etc/apparmor.d/usr.bin.firefox 2>/dev/null || true
-            fi
-            sudo rm -f /etc/apparmor.d/snap.firefox.* /etc/apparmor.d/snap-update-ns.firefox
-            sudo rm -f /var/lib/snapd/apparmor/profiles/snap.firefox.* \
-                       /var/lib/snapd/apparmor/profiles/snap-update-ns.firefox
-            while IFS= read -r prof; do
-                [ -n "$prof" ] || continue
-                echo -n "$prof" | sudo tee /sys/kernel/security/apparmor/.remove > /dev/null 2>&1 || true
-            done <<< "$firefoxProfiles"
-            echo -e "${GREEN}✔${GREY} Stale Firefox AppArmor profiles removed.${RESET}"
-        fi
-    fi
-
     # 4. Install DEB Firefox
     echo -e "${LIGHTYELLOW}Updating package lists${RESET}"
     if ! sudo apt update; then
