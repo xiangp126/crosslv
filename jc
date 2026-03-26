@@ -1859,7 +1859,7 @@ EOF
         fi
     fi
 
-    # 3. Uninstall Snap Firefox (if present)
+    # 3. Uninstall Snap Firefox (if present) and clean up AppArmor profiles
     if snap list firefox &>/dev/null; then
         echo -e "${LIGHTYELLOW}Uninstalling Snap version of Firefox...${RESET}"
         if ! sudo snap remove firefox; then
@@ -1869,6 +1869,23 @@ EOF
         fi
     else
         echo -e "${GREY}Snap version of Firefox not found. Skipping removal.${RESET}"
+    fi
+
+    # Clean up stale snap AppArmor profiles and disable Firefox AppArmor confinement
+    local staleSnapProfiles
+    staleSnapProfiles=$(ls /etc/apparmor.d/snap.firefox.* /etc/apparmor.d/snap-update-ns.firefox 2>/dev/null)
+    if [ -n "$staleSnapProfiles" ]; then
+        echo -e "${LIGHTYELLOW}Removing stale snap AppArmor profiles for Firefox...${RESET}"
+        for prof in $staleSnapProfiles; do
+            sudo apparmor_parser -R "$prof" 2>/dev/null
+            sudo rm -f "$prof"
+        done
+        echo -e "${GREEN}✔${GREY} Stale snap AppArmor profiles removed.${RESET}"
+    fi
+    if sudo aa-status --enabled 2>/dev/null && sudo aa-status 2>/dev/null | grep -qw "firefox"; then
+        echo -e "${LIGHTYELLOW}Disabling AppArmor profile for PPA Firefox (not needed for deb install)...${RESET}"
+        sudo aa-disable firefox 2>/dev/null
+        echo -e "${GREEN}✔${GREY} Firefox AppArmor profile disabled.${RESET}"
     fi
 
     # 4. Install DEB Firefox
