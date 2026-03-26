@@ -359,12 +359,12 @@ checkSudoPrivilege() {
     if [[ $(uname -s) == 'Linux' ]]; then
         local sudoersFile="/etc/sudoers.d/$USER"
         if id -nG "$USER" | grep -qw "sudo"; then
-            echo -e "${LIGHTYELLOW}User $USER has sudo but requires a password. Configuring passwordless sudo...${RESET}"
+            echo -e "${LIGHTYELLOW}User $USER has sudo but requires a password. Configuring passwordless sudo${RESET}"
             echo "$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee "$sudoersFile" > /dev/null
             sudo chmod 0440 "$sudoersFile"
         else
             echo -e "${RED}✗${GREY} User $USER has no sudo privilege.${RESET}"
-            echo -e "${LIGHTYELLOW}Granting sudo access via root account (root password required)...${RESET}"
+            echo -e "${LIGHTYELLOW}Granting sudo access via root account (root password required)${RESET}"
             su -c "usermod -aG sudo $USER && echo '$USER ALL=(ALL) NOPASSWD:ALL' > $sudoersFile && chmod 0440 $sudoersFile" root
         fi
 
