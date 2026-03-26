@@ -843,19 +843,68 @@ stopUnnecessaryServices() {
     done
 }
 
+disableLidCloseSuspend() {
+    echo -e "${COLOR}Configuring Laptop for Lid-Closed Server Mode${RESET}"
+
+    local logindConf="/etc/systemd/logind.conf"
+    local needRestart=0
+
+    # 1. Set HandleLidSwitch options to ignore in logind.conf
+    local lidSettings=("HandleLidSwitch" "HandleLidSwitchExternalPower" "HandleLidSwitchDocked")
+    for setting in "${lidSettings[@]}"; do
+        local current=$(grep -E "^${setting}=" "$logindConf" 2>/dev/null | cut -d= -f2)
+        if [ "$current" == "ignore" ]; then
+            echo -e "${GREEN}✔${GREY} ${setting}=ignore already set${RESET}"
+        else
+            sudo sed -i "s/^#\?${setting}=.*/${setting}=ignore/" "$logindConf"
+            echo -e "${GREEN}✔${GREY} ${setting}=ignore${RESET}"
+            needRestart=1
+        fi
+    done
+
+    if [ "$needRestart" -eq 1 ]; then
+        sudo systemctl restart systemd-logind
+        echo -e "${GREEN}✔${GREY} systemd-logind restarted${RESET}"
+    fi
+
+    # 2. Mask sleep/suspend/hibernate targets
+    local targets=("sleep.target" "suspend.target" "hibernate.target" "hybrid-sleep.target")
+    for target in "${targets[@]}"; do
+        if systemctl is-enabled "$target" 2>/dev/null | grep -q "masked"; then
+            echo -e "${GREEN}✔${GREY} ${target} already masked${RESET}"
+        else
+            sudo systemctl mask "$target" >/dev/null 2>&1
+            echo -e "${GREEN}✔${GREY} ${target} masked${RESET}"
+        fi
+    done
+
+    # 3. Disable GNOME power manager auto-suspend (if gnome-settings-daemon is installed)
+    if dpkg -l gnome-settings-daemon 2>/dev/null | grep -q '^ii'; then
+        local dbusAddr="unix:path=/run/user/$(id -u)/bus"
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-timeout 0
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-timeout 0
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
+        echo -e "${GREEN}✔${GREY} GNOME power manager auto-suspend disabled${RESET}"
+    fi
+}
+
 installTmuxPluginsManager() {
     echo -e "${COLOR}Installing Tmux Plugins Manager${RESET}"
     if [ -d ~/.tmux/plugins/tpm ]; then
         echo -e "${GREEN}✔${GREY} Tmux Plug Manager is already installed${RESET}"
-        return
-    fi
-    git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Success!${RESET}"
     else
-        echo -e "${RED}Failed!${RESET}"
-        exit 1
+        git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Success!${RESET}"
+        else
+            echo -e "${RED}Failed!${RESET}"
+            exit 1
+        fi
     fi
+    echo -e "${COLOR}Installing Tmux plugins${RESET}"
+    ~/.tmux/plugins/tpm/bin/install_plugins
 }
 
 installVimPluginsManager (){
@@ -2773,6 +2822,7 @@ restartLiteLLMService() {
 }
 
 allowUnprivilegedUserns() {
+    echo -e "${COLOR}Allowing unprivileged user namespaces (required by Firefox, Cursor, etc.)${RESET}"
     local sysctlKey="kernel.apparmor_restrict_unprivileged_userns"
     local sysctlFile="/etc/sysctl.d/99-userns.conf"
     if [ "$(sysctl -n "$sysctlKey" 2>/dev/null)" == "0" ]; then
@@ -2786,6 +2836,7 @@ allowUnprivilegedUserns() {
 }
 
 switchDisplayMode() {
+    echo -e "${COLOR}Switching Display Mode to ${1:-text}${RESET}"
     local currentTarget
     currentTarget=$(systemctl get-default 2>/dev/null)
     case "$1" in
@@ -2841,6 +2892,7 @@ doDebianJobs() {
     configureTcpdumpCaps       # Configure tcpdump for non-root user packet capture
     installLatestGithubClangd  # Install Github Clangd
     stopUnnecessaryServices    # Stop unnecessary services
+    disableLidCloseSuspend     # Disable lid-close suspend for server use
     allowUnprivilegedUserns    # Allow user namespaces for Chromium-based apps (Firefox, Cursor, etc.)
     switchDisplayMode text     # Boot to text mode, use --gdm to start desktop on demand
     changeTMOUTToWritable      # Change TMOUT to writable
