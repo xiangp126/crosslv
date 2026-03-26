@@ -311,7 +311,7 @@ while true; do
             else
                 sudo apt update -y
                 echo -e "${COLOR}Upgrading all packages${RESET}"
-                sudo apt upgrade -y
+                sudo apt upgrade -y --allow-downgrades
             fi
             # Upgrade globally installed npm packages
             nvmSh="$HOME/.nvm/nvm.sh"
@@ -1800,7 +1800,7 @@ installRimeMacOS() {
 
 installLatestPPaFirefox() {
     echo -e "${COLOR}Checking for Firefox (Mozilla PPA)${RESET}"
-    if [ -z "$fFirefoxForce" ] && command -v firefox &>/dev/null && ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
+    if [ -z "$fFirefoxForce" ] && firefox --version &>/dev/null && ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
         echo -e "${GREEN}✔${GREY} The current version of Firefox is acceptable.${RESET}"
         return 0
     fi
@@ -1879,11 +1879,11 @@ EOF
     fi
 
     echo -e "${LIGHTYELLOW}Installing Firefox from Mozilla PPA...${RESET}"
-    if ! sudo apt install -y firefox; then
+    if ! sudo apt install -y --allow-downgrades firefox; then
         echo -e "${RED}Failed to install Firefox from Mozilla PPA.${RESET}"
         echo -e "${LIGHTYELLOW}Attempting to install specific components that might be missing (e.g., language packs)...${RESET}"
-        sudo apt install -y firefox-locale-en # Example for English, adjust if needed
-        if ! sudo apt install -y firefox; then # Retry main installation
+        sudo apt install -y --allow-downgrades firefox-locale-en
+        if ! sudo apt install -y --allow-downgrades firefox; then
              echo -e "${RED}Still failed to install Firefox after attempting component install.${RESET}"
              return 1
         fi
