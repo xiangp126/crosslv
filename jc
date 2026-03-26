@@ -1886,56 +1886,25 @@ EOF
         echo -e "${GREY}Snap version of Firefox not found. Skipping removal.${RESET}"
     fi
 
-    # Clean up AppArmor: disable Firefox profile, remove stale snap profiles,
-    # and allow unprivileged user namespaces for Firefox sandboxing only
+    # Clean up stale snap AppArmor profiles for Firefox
     if command -v aa-status &>/dev/null && sudo aa-status --enabled 2>/dev/null; then
-        # Remove stale snap and system Firefox AppArmor profiles
-        echo -e "${LIGHTYELLOW}Removing Firefox AppArmor profiles${RESET}"
-        sudo aa-disable firefox 2>/dev/null
-
-        # Remove profile files (use disable dir instead of rm for usr.bin.firefox)
-        if [ -f /etc/apparmor.d/usr.bin.firefox ]; then
-            sudo ln -sf /etc/apparmor.d/usr.bin.firefox /etc/apparmor.d/disable/usr.bin.firefox
-            sudo apparmor_parser -R /etc/apparmor.d/usr.bin.firefox 2>/dev/null || true
-        fi
-        sudo rm -f /etc/apparmor.d/snap.firefox.* /etc/apparmor.d/snap-update-ns.firefox
-        sudo rm -f /var/lib/snapd/apparmor/profiles/snap.firefox.* \
-                   /var/lib/snapd/apparmor/profiles/snap-update-ns.firefox
-
-        # Unload any remaining firefox profiles from kernel at runtime
-        while IFS= read -r prof; do
-            [ -n "$prof" ] || continue
-            if [[ "$prof" == firefox* ]] || [[ "$prof" == snap.firefox* ]] || [[ "$prof" == snap-update-ns.firefox ]]; then
-                echo -n "$prof" | sudo tee /sys/kernel/security/apparmor/.remove > /dev/null 2>&1 || true
+        local firefoxProfiles
+        firefoxProfiles=$(sudo aa-status 2>/dev/null | grep -E "^\s+(firefox|snap\.firefox|snap-update-ns\.firefox)" | awk '{$1=$1};1')
+        if [ -n "$firefoxProfiles" ]; then
+            echo -e "${LIGHTYELLOW}Removing stale Firefox AppArmor profiles${RESET}"
+            sudo aa-disable firefox 2>/dev/null
+            if [ -f /etc/apparmor.d/usr.bin.firefox ]; then
+                sudo ln -sf /etc/apparmor.d/usr.bin.firefox /etc/apparmor.d/disable/usr.bin.firefox
+                sudo apparmor_parser -R /etc/apparmor.d/usr.bin.firefox 2>/dev/null || true
             fi
-        done < <(sudo aa-status 2>/dev/null | grep -E "^\s+(firefox|snap\.firefox|snap-update-ns\.firefox)" | awk '{$1=$1};1')
-
-        echo -e "${GREEN}✔${GREY} Firefox AppArmor profiles removed.${RESET}"
-
-        # Grant Firefox access to unprivileged user namespaces (required for sandboxing)
-        # This is scoped to Firefox only — does NOT touch kernel.apparmor_restrict_unprivileged_userns
-        local firefoxUnsprofFile="/etc/apparmor.d/firefox-userns"
-        if [ ! -f "$firefoxUnsprofFile" ]; then
-            echo -e "${LIGHTYELLOW}Creating AppArmor userns profile for Firefox sandboxing${RESET}"
-            sudo bash -c "cat > $firefoxUnsprofFile << 'EOFPROF'
-abi <abi/4.0>,
-include <tunables/global>
-
-profile firefox-userns /usr/lib/firefox/firefox flags=(unconfined) {
-  userns,
-}
-EOFPROF"
-            sudo apparmor_parser -r "$firefoxUnsprofFile" 2>/dev/null || {
-                sudo bash -c "cat > $firefoxUnsprofFile << 'EOFPROF'
-#include <tunables/global>
-
-profile firefox-userns /usr/lib/firefox/firefox flags=(unconfined) {
-  userns,
-}
-EOFPROF"
-                sudo apparmor_parser -r "$firefoxUnsprofFile" 2>/dev/null || true
-            }
-            echo -e "${GREEN}✔${GREY} Firefox userns AppArmor profile installed.${RESET}"
+            sudo rm -f /etc/apparmor.d/snap.firefox.* /etc/apparmor.d/snap-update-ns.firefox
+            sudo rm -f /var/lib/snapd/apparmor/profiles/snap.firefox.* \
+                       /var/lib/snapd/apparmor/profiles/snap-update-ns.firefox
+            while IFS= read -r prof; do
+                [ -n "$prof" ] || continue
+                echo -n "$prof" | sudo tee /sys/kernel/security/apparmor/.remove > /dev/null 2>&1 || true
+            done <<< "$firefoxProfiles"
+            echo -e "${GREEN}✔${GREY} Stale Firefox AppArmor profiles removed.${RESET}"
         fi
     fi
 
@@ -2825,6 +2794,19 @@ restartLiteLLMService() {
     startLiteLLMService
 }
 
+allowUnprivilegedUserns() {
+    local sysctlKey="kernel.apparmor_restrict_unprivileged_userns"
+    local sysctlFile="/etc/sysctl.d/99-userns.conf"
+    if [ "$(sysctl -n "$sysctlKey" 2>/dev/null)" == "0" ]; then
+        echo -e "${GREEN}✔${GREY} Unprivileged user namespaces already allowed.${RESET}"
+        return
+    fi
+    echo -e "${COLOR}Allowing unprivileged user namespaces (required by Firefox, Cursor, etc.)${RESET}"
+    sudo sysctl -w "$sysctlKey=0" > /dev/null
+    echo "$sysctlKey=0" | sudo tee "$sysctlFile" > /dev/null
+    echo -e "${GREEN}✔${GREY} Unprivileged user namespaces enabled (persisted in $sysctlFile).${RESET}"
+}
+
 switchDisplayMode() {
     local currentTarget
     currentTarget=$(systemctl get-default 2>/dev/null)
@@ -2881,6 +2863,7 @@ doDebianJobs() {
     configureTcpdumpCaps       # Configure tcpdump for non-root user packet capture
     installLatestGithubClangd  # Install Github Clangd
     stopUnnecessaryServices    # Stop unnecessary services
+    allowUnprivilegedUserns    # Allow user namespaces for Chromium-based apps (Firefox, Cursor, etc.)
     switchDisplayMode text     # Boot to text mode, use --gdm to start desktop on demand
     changeTMOUTToWritable      # Change TMOUT to writable
     setLinuxDefaultShell       # Set default shell
