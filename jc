@@ -31,6 +31,8 @@ fVncFullPort="590${fVncAbbrePort}"
 fVncResolution=2060x1080
 fVncServer= # 1: start VNC server; 2: kill VNC server 3: restart VNC server
 fVncLockAction=
+# Display Mode | gdm: start gdm3 (graphical), text: stop gdm3 (text mode)
+fDisplayMode=
 # Docker Container: OpenGrok
 fOpenGrokContainer= # 1: start container; 2: stop container 3: restart container 4: start indexer
 OPENGROK_IMAGE_NAME="opengrok/docker:latest" # You can pin to a specific version, e.g., opengrok/docker:1.7.30
@@ -105,6 +107,10 @@ Vnc Server Options:
     --vnc-stop                      Stop VNC server
     --vnc-restart                   Restart VNC server
 
+Display Mode Options:
+    --gdm                           Switch to graphical mode (start gdm3)
+    --text                          Switch to text mode (stop gdm3)
+
 Vnc Lock Options:
     --vnclock                       Effect options: [unlock|lock|status]
     --unlock-vnc                    Unlock VNC, equivalent to --vnclock unlock
@@ -153,7 +159,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
           opengrok-restart,opengrok-indexer,samba,samba-reset-password,wireshark,git-lfs\
-          litellm-start,litellm-stop,litellm-restart,litellm,check-tls::,swap::"
+          litellm-start,litellm-stop,litellm-restart,litellm,check-tls::,swap::,gdm,text"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -249,6 +255,14 @@ while true; do
             ;;
         --lock-vnc)
             fVncLockAction="lock"
+            shift
+            ;;
+        --gdm)
+            fDisplayMode="gdm"
+            shift
+            ;;
+        --text)
+            fDisplayMode="text"
             shift
             ;;
         --litellm|--litellm-start)
@@ -1823,11 +1837,11 @@ installLatestPPaFirefox() {
     fi
 
     # 1. Add the Mozilla PPA
-    echo -e "${LIGHTYELLOW}Checking for Mozilla PPA (ppa:mozillateam/ppa)...${RESET}"
+    echo -e "${LIGHTYELLOW}Checking for Mozilla PPA (ppa:mozillateam/ppa)${RESET}"
     if grep -qr "mozillateam/ppa" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
         echo -e "${GREEN}✔${GREY} Mozilla PPA already configured.${RESET}"
     else
-        echo -e "${LIGHTYELLOW}Adding the Mozilla PPA...${RESET}"
+        echo -e "${LIGHTYELLOW}Adding the Mozilla PPA${RESET}"
         if ! sudo add-apt-repository -y ppa:mozillateam/ppa; then
             echo -e "${RED}Failed to add Mozilla PPA. Aborting Firefox DEB installation.${RESET}"
             return 1
@@ -1847,7 +1861,7 @@ Pin: release o=Ubuntu*
 Pin-Priority: -1
 EOF
 )
-    echo -e "${LIGHTYELLOW}Setting up APT preferences to prioritize Mozilla PPA Firefox...${RESET}"
+    echo -e "${LIGHTYELLOW}Setting up APT preferences to prioritize Mozilla PPA Firefox${RESET}"
     if [ -f "$preferenceFilePath" ] && cmp -s <(echo "$preferenceContent") "$preferenceFilePath"; then
         echo -e "${GREY}APT preference file '$preferenceFilePath' already exists and is correctly configured.${RESET}"
     else
@@ -1862,7 +1876,7 @@ EOF
 
     # 3. Uninstall Snap Firefox (if present) and clean up AppArmor profiles
     if snap list firefox &>/dev/null; then
-        echo -e "${LIGHTYELLOW}Uninstalling Snap version of Firefox...${RESET}"
+        echo -e "${LIGHTYELLOW}Uninstalling Snap version of Firefox${RESET}"
         if ! sudo snap remove firefox; then
             echo -e "${RED}Failed to remove Snap Firefox. This might interfere. Continuing, but manual removal might be needed.${RESET}"
         else
@@ -1876,7 +1890,7 @@ EOF
     # and allow unprivileged user namespaces for Firefox sandboxing only
     if command -v aa-status &>/dev/null && sudo aa-status --enabled 2>/dev/null; then
         # Remove stale snap and system Firefox AppArmor profiles
-        echo -e "${LIGHTYELLOW}Removing Firefox AppArmor profiles...${RESET}"
+        echo -e "${LIGHTYELLOW}Removing Firefox AppArmor profiles${RESET}"
         sudo aa-disable firefox 2>/dev/null
 
         # Remove profile files (use disable dir instead of rm for usr.bin.firefox)
@@ -1902,7 +1916,7 @@ EOF
         # This is scoped to Firefox only — does NOT touch kernel.apparmor_restrict_unprivileged_userns
         local firefoxUnsprofFile="/etc/apparmor.d/firefox-userns"
         if [ ! -f "$firefoxUnsprofFile" ]; then
-            echo -e "${LIGHTYELLOW}Creating AppArmor userns profile for Firefox sandboxing...${RESET}"
+            echo -e "${LIGHTYELLOW}Creating AppArmor userns profile for Firefox sandboxing${RESET}"
             sudo bash -c "cat > $firefoxUnsprofFile << 'EOFPROF'
 abi <abi/4.0>,
 include <tunables/global>
@@ -1926,16 +1940,16 @@ EOFPROF"
     fi
 
     # 4. Install DEB Firefox
-    echo -e "${LIGHTYELLOW}Updating package lists...${RESET}"
+    echo -e "${LIGHTYELLOW}Updating package lists${RESET}"
     if ! sudo apt update; then
         echo -e "${RED}Failed to update apt package list after PPA and preference changes. Aborting Firefox installation.${RESET}"
         return 1
     fi
 
-    echo -e "${LIGHTYELLOW}Installing Firefox from Mozilla PPA...${RESET}"
+    echo -e "${LIGHTYELLOW}Installing Firefox from Mozilla PPA${RESET}"
     if ! sudo apt install -y --allow-downgrades firefox; then
         echo -e "${RED}Failed to install Firefox from Mozilla PPA.${RESET}"
-        echo -e "${LIGHTYELLOW}Attempting to install specific components that might be missing (e.g., language packs)...${RESET}"
+        echo -e "${LIGHTYELLOW}Attempting to install specific components that might be missing (e.g., language packs)${RESET}"
         sudo apt install -y --allow-downgrades firefox-locale-en
         if ! sudo apt install -y --allow-downgrades firefox; then
              echo -e "${RED}Still failed to install Firefox after attempting component install.${RESET}"
@@ -2065,7 +2079,7 @@ startVncServer() {
     [ -d "$HOME"/.vnc ] || mkdir -p "$HOME"/.vnc
     cd "$HOME"/.vnc || exit
     linkFile "$xstartupPath" "$HOME/.vnc" xstartup
-    linkFile "$fMainDir/assets/gdm3/custom.conf" "/etc/gdm3" custom.conf
+    [ -d /etc/gdm3 ] && linkFile "$fMainDir/assets/gdm3/custom.conf" "/etc/gdm3" custom.conf
     echo -e "${GREEN}Starting VNC server...${RESET}"
     local startCmd="tigervncserver :$fVncAbbrePort -geometry $fVncResolution -SecurityTypes None -localhost yes -depth 24 -xstartup $xstartupDest"
     echo -e "${MAGENTA}$startCmd${RESET}"
@@ -2811,6 +2825,37 @@ restartLiteLLMService() {
     startLiteLLMService
 }
 
+switchDisplayMode() {
+    local currentTarget
+    currentTarget=$(systemctl get-default 2>/dev/null)
+    case "$1" in
+        gdm)
+            if [ "$currentTarget" == "graphical.target" ] && systemctl is-active gdm3 &>/dev/null; then
+                echo -e "${GREEN}✔${GREY} Already in graphical mode (gdm3 running).${RESET}"
+                return
+            fi
+            echo -e "${COLOR}Switching to graphical mode${RESET}"
+            sudo systemctl set-default graphical.target
+            if sudo systemctl start gdm3; then
+                echo -e "${GREEN}✔${GREY} gdm3 started. Default boot target set to graphical.${RESET}"
+            else
+                echo -e "${RED}Failed to start gdm3.${RESET}"
+                return 1
+            fi
+            ;;
+        text)
+            if [ "$currentTarget" == "multi-user.target" ] && ! systemctl is-active gdm3 &>/dev/null; then
+                echo -e "${GREEN}✔${GREY} Already in text mode (multi-user.target).${RESET}"
+                return
+            fi
+            echo -e "${COLOR}Switching to text mode${RESET}"
+            sudo systemctl set-default multi-user.target
+            sudo systemctl stop gdm3 2>/dev/null
+            echo -e "${GREEN}✔${GREY} Default boot target set to text mode. Use 'jc --gdm' to start desktop on demand.${RESET}"
+            ;;
+    esac
+}
+
 doCommonJobs() {
     createTKSymlinks           # Create Tracked Files symlinks
     installVimPluginsManager   # Install Vim Plugins Manager
@@ -2836,6 +2881,7 @@ doDebianJobs() {
     configureTcpdumpCaps       # Configure tcpdump for non-root user packet capture
     installLatestGithubClangd  # Install Github Clangd
     stopUnnecessaryServices    # Stop unnecessary services
+    switchDisplayMode text     # Boot to text mode, use --gdm to start desktop on demand
     changeTMOUTToWritable      # Change TMOUT to writable
     setLinuxDefaultShell       # Set default shell
     setTimeZone                # Set timezone
@@ -2854,6 +2900,7 @@ doMacJobs() {
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
+    [ -n "$fDisplayMode" ]         && { switchDisplayMode "$fDisplayMode"; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
     [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
