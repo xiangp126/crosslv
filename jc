@@ -687,6 +687,10 @@ macInstallApps() {
         vim
         tmux
         ffmpeg
+        freerdp
+    )
+    casksForMac=(
+        xquartz
     )
 
     echo -e "${COLOR}Updating Apps for MacOS${RESET}"
@@ -699,6 +703,7 @@ macInstallApps() {
     # fi
 
     brew install "${appsForMac[@]}"
+    brew install --cask "${casksForMac[@]}"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
         if [ "$appInstallForce" -eq 2 ]; then
