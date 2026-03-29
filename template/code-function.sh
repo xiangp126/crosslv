@@ -293,18 +293,17 @@ code() {
     local _code_f_debug=
     local _code_f_print=
     # Support both VS Code and Cursor with different paths:
-    # - VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code, IPC in /run/user/$UID
-    # - Cursor:  ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor, IPC in /tmp
-    local _code_f_sys_path
+    # - VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code
+    # - Cursor:  ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
+    # IPC sockets live under /run/user/$UID for both.
+    local _code_f_sys_path="/run/user/$UID"
     local _code_f_search_path
     local _code_f_is_cursor=""
     if [ -d "$HOME/.cursor-server/bin" ]; then
         _code_f_search_path="$HOME/.cursor-server/bin"
-        _code_f_sys_path="/tmp"
         _code_f_is_cursor="1"
     else
         _code_f_search_path="$HOME/.vscode-server/cli/servers"
-        _code_f_sys_path="/run/user/$UID"
     fi
 
     _code_pre_check "$@" || return 1
