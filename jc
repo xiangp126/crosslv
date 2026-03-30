@@ -886,11 +886,11 @@ disableLidCloseSuspend() {
     # 3. Disable GNOME power manager auto-suspend (if gnome-settings-daemon is installed)
     if dpkg -l gnome-settings-daemon 2>/dev/null | grep -q '^ii'; then
         local dbusAddr="unix:path=/run/user/$(id -u)/bus"
-        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
-        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-timeout 0
-        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
-        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-timeout 0
-        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing' 2>/dev/null
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-timeout 0 2>/dev/null
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing' 2>/dev/null
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-timeout 0 2>/dev/null
+        DBUS_SESSION_BUS_ADDRESS="$dbusAddr" gsettings set org.gnome.settings-daemon.plugins.power idle-dim false 2>/dev/null
         echo -e "${GREEN}✔${GREY} GNOME power manager auto-suspend disabled${RESET}"
     fi
 }
@@ -2830,12 +2830,15 @@ allowUnprivilegedUserns() {
     echo -e "${COLOR}Allowing unprivileged user namespaces (required by Firefox, Cursor, etc.)${RESET}"
     local sysctlKey="kernel.apparmor_restrict_unprivileged_userns"
     local sysctlFile="/etc/sysctl.d/99-userns.conf"
+    if [ ! -e "/proc/sys/kernel/apparmor_restrict_unprivileged_userns" ]; then
+        echo -e "${GREEN}✔${GREY} Kernel does not restrict unprivileged user namespaces (no AppArmor userns restriction).${RESET}"
+        return
+    fi
     if [ "$(sysctl -n "$sysctlKey" 2>/dev/null)" == "0" ]; then
         echo -e "${GREEN}✔${GREY} Unprivileged user namespaces already allowed.${RESET}"
         return
     fi
-    echo -e "${COLOR}Allowing unprivileged user namespaces (required by Firefox, Cursor, etc.)${RESET}"
-    sudo sysctl -w "$sysctlKey=0" > /dev/null
+    sudo sysctl -w "$sysctlKey=0" > /dev/null 2>&1
     echo "$sysctlKey=0" | sudo tee "$sysctlFile" > /dev/null
     echo -e "${GREEN}✔${GREY} Unprivileged user namespaces enabled (persisted in $sysctlFile).${RESET}"
 }
