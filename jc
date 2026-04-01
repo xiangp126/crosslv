@@ -747,8 +747,6 @@ macInstallApps() {
     )
     casksForMac=(
         xquartz                 # X11 server for macOS
-        claude-code             # Anthropic Claude Code CLI
-        codex                   # OpenAI Codex CLI
     )
 
     echo -e "${COLOR}Updating Apps for MacOS${RESET}"
