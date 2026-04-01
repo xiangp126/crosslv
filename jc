@@ -55,9 +55,6 @@ fChinesePinyinForce=
 fSwapReq=
 # Samba Server | 1: Start samba server 2: Start samba server and reset password
 fSambaServerFlag=
-# LiteLLM | 1: Start LiteLLM 2: Stop LiteLLM 3: Restart LiteLLM
-fLiteLLMService=
-LITELLM_DIR="$fDownloads/litellm"
 # Constants
 SCRIPT_NAME=$(basename $0)
 # Colors
@@ -94,6 +91,7 @@ Common Options:
     --auto-remove                   Remove unused packages
     --update                        Update all packages
     --upgrade                       Upgrade all packages
+    --ai                            Install AI coding tools (Claude Code, Codex)
 
 Samba Options:
     --samba                         Install and configure Samba Server
@@ -115,11 +113,6 @@ Vnc Lock Options:
     --vnclock                       Effect options: [unlock|lock|status]
     --unlock-vnc                    Unlock VNC, equivalent to --vnclock unlock
     --lock-vnc                      Lock VNC, equivalent to --vnclock lock
-
-LiteLLM Options:
-    --litellm,--litellm-start       Start LiteLLM Service
-    --litellm-stop                  Stop LiteLLM Service
-    --litellm-restart               Restart LiteLLM Service
 
 OpenGrok Options:
     --opengrok,--opengrok-start     Start OpenGrok Docker container
@@ -153,13 +146,67 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
+installAITools() {
+    echo -e "${COLOR}Installing AI Coding Tools${RESET}"
+
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        local brewCasks=(claude-code codex)
+        for cask in "${brewCasks[@]}"; do
+            if brew list --cask "$cask" &>/dev/null; then
+                echo -e "  ${LIGHTYELLOW}Upgrading ${BLUE}$cask${RESET}"
+                brew upgrade --cask "$cask"
+            else
+                echo -e "  ${LIGHTYELLOW}Installing ${BLUE}$cask${RESET}"
+                brew install --cask "$cask"
+            fi
+        done
+    else
+        local nvmSh="$HOME/.nvm/nvm.sh"
+        if [ ! -s "$nvmSh" ]; then
+            echo -e "${LIGHTYELLOW}NVM not found. Installing NVM and Node.js first...${RESET}"
+            local nvmVersion="v0.40.3"
+            if ! curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/"$nvmVersion"/install.sh | bash; then
+                echo -e "${RED}Error: Failed to install NVM. Cannot install AI tools.${RESET}"
+                return 1
+            fi
+        fi
+
+        if [ -s "$nvmSh" ]; then
+            export NVM_DIR="$HOME/.nvm"
+            # shellcheck source=/dev/null
+            source "$nvmSh"
+        else
+            echo -e "${RED}Error: nvm.sh not found. Cannot install AI tools.${RESET}"
+            return 1
+        fi
+
+        if ! command -v node &>/dev/null; then
+            echo -e "${LIGHTYELLOW}Node.js not found. Installing latest LTS via NVM...${RESET}"
+            nvm install --lts
+            nvm alias default lts/*
+        fi
+
+        local aiPackages=(
+            "@anthropic-ai/claude-code"
+            "@anthropic-ai/sandbox-runtime"
+            "@openai/codex"
+        )
+        for pkg in "${aiPackages[@]}"; do
+            echo -e "  ${LIGHTYELLOW}Installing ${BLUE}$pkg${RESET}"
+            npm install -g "$pkg"
+        done
+    fi
+
+    echo -e "${GREEN}✔${GREY} AI coding tools installation complete.${RESET}"
+}
+
 SHORTOPTS="hdnf"
 # Two colons: The option takes an optional argument
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
           opengrok-restart,opengrok-indexer,samba,samba-reset-password,wireshark,git-lfs\
-          litellm-start,litellm-stop,litellm-restart,litellm,check-tls::,swap::,gdm,text"
+          check-tls::,swap::,gdm,text,ai"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -265,18 +312,6 @@ while true; do
             fDisplayMode="text"
             shift
             ;;
-        --litellm|--litellm-start)
-            fLiteLLMService=1
-            shift
-            ;;
-        --litellm-stop)
-            fLiteLLMService=2
-            shift
-            ;;
-        --litellm-restart)
-            fLiteLLMService=3
-            shift
-            ;;
         --chinese-pinyin)
             fChinesePinyinForce=true
             shift
@@ -341,6 +376,11 @@ while true; do
                     done
                 fi
             fi
+            shift
+            exit 0
+            ;;
+        --ai)
+            installAITools
             shift
             exit 0
             ;;
@@ -669,28 +709,46 @@ macInstallApps() {
     [ -z "$appInstallForce" ] && return
     checkSudoPrivilege
     appsForMac=(
-        bash
-        gnu-getopt
-        gnu-sed
-        gawk
-        grep
-        bash-completion@2
-        coreutils
-        git
-        fontconfig
-        yt-dlp
-        autossh
-        fzf
-        fd
-        bat
-        ripgrep
-        vim
-        tmux
-        ffmpeg
-        freerdp
+        # --- Core Command-Line Tools ---
+        bash                    # GNU Bash (newer than macOS built-in)
+        gnu-getopt              # GNU getopt (long options support)
+        gnu-sed                 # GNU sed (macOS ships BSD sed)
+        gawk                    # GNU awk (macOS ships BSD awk)
+        grep                    # GNU grep (macOS ships BSD grep)
+        coreutils               # GNU core utilities (gdate, gstat, etc.)
+        bash-completion@2       # Bash completion (v2, for Bash 4+)
+        shellcheck              # Shell script static analyzer
+        vim                     # Vi IMproved
+        tmux                    # Terminal multiplexer
+        htop                    # Interactive process viewer
+        dos2unix                # Convert DOS line endings to Unix
+
+        # --- File Finding & Processing ---
+        fd                      # A faster find
+        ripgrep                 # rg, a faster grep
+        bat                     # A cat clone with syntax highlighting
+        fzf                     # Fuzzy finder
+        jq                      # JSON processor
+
+        # --- Version Control & Networking ---
+        git                     # Distributed version control
+        git-lfs                 # Git Large File Storage
+        autossh                 # Auto-reconnecting SSH sessions
+        curl                    # Command-line HTTP client (newer than macOS built-in)
+
+        # --- GUI & Desktop ---
+        fontconfig              # Font configuration library
+        freerdp                 # Remote desktop client (RDP)
+
+        # --- Miscellaneous ---
+        ffmpeg                  # Media processing toolkit
+        yt-dlp                  # Video downloader
+        qrencode                # QR code generator
     )
     casksForMac=(
-        xquartz
+        xquartz                 # X11 server for macOS
+        claude-code             # Anthropic Claude Code CLI
+        codex                   # OpenAI Codex CLI
     )
 
     echo -e "${COLOR}Updating Apps for MacOS${RESET}"
@@ -2741,91 +2799,6 @@ installNvmNodeJs() {
     return 0
 }
 
-# https://claudiuconstantinbogdan.me/articles/litellm-vertexai-continuedev
-startLiteLLMService() {
-    echo -e "${COLOR}Installing/Configuring LiteLLM Proxy Server via Docker Compose${RESET}"
-    if ! command -v docker &> /dev/null || ! docker compose version &> /dev/null; then
-        echo -e "${RED}Error: Docker and Docker Compose are required.${RESET}"; return 1;
-    fi
-
-    local liteLLMComposeFile="$LITELLM_DIR/docker-compose.yml"
-    if [ ! -d "$LITELLM_DIR/.git" ]; then
-        echo -e "${LIGHTYELLOW}Cloning the LiteLLM repository from GitHub...${RESET}"
-        # The directory may exist from a previous failed run or other reasons.
-        # Remove it to ensure a clean clone.
-        rm -rf "$LITELLM_DIR"
-        if ! git clone https://github.com/BerriAI/litellm "$LITELLM_DIR"; then
-            echo -e "${RED}Failed to clone the litellm repository from GitHub.${RESET}"
-            return 1
-        fi
-    else
-        echo -e "${GREEN}✔${GREY} LiteLLM repository already exists in $LITELLM_DIR.${RESET}"
-    fi
-    if [ ! -f "$liteLLMComposeFile" ]; then
-        echo -e "${RED}Error: docker-compose.yml not found in the cloned repository at $LITELLM_DIR.${RESET}"
-        return 1
-    fi
-
-    local envFile="$LITELLM_DIR/.env"
-    local masterKey
-    local saltKey
-    if [ ! -f "$envFile" ]; then
-        echo -e "${LIGHTYELLOW}Creating LiteLLM .env file for environment variables...${RESET}"
-        while true; do
-            read -r -s -p "Enter LiteLLM Master Key (e.g., sk-1234): " masterKey
-            if [ -z "$masterKey" ]; then
-                echo -e "${RED}Master Key cannot be empty. Please try again.${RESET}"
-            else
-                break
-            fi
-        done
-
-        # Auto-generate a random salt key
-        echo -e "${LIGHTYELLOW}Auto generating Salt Key...${RESET}"
-        saltKey=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
-        echo -e "${GREEN}Generated Salt Key: ${BOLD}$saltKey${RESET}"
-        {
-            echo "LITELLM_MASTER_KEY=$masterKey"
-            echo "LITELLM_SALT_KEY=$saltKey"
-        } > "$envFile"
-        echo -e "${GREEN}✔${GREY} LiteLLM .env file created at ${BLUE}$envFile${RESET}"
-    else
-        echo -e "${GREEN}✔${GREY} LiteLLM .env file already exists at ${BLUE}$envFile${GREY}, skipping creation.${RESET}"
-    fi
-
-    echo -e "${LIGHTYELLOW}Starting LiteLLM proxy...${RESET}"
-    if ! (cd "$LITELLM_DIR" && docker compose up -d); then
-        echo -e "${RED}Failed to start LiteLLM. Check logs with: cd $LITELLM_DIR && docker compose logs${RESET}"
-        return 1
-    fi
-
-    echo -e "\n${GREEN}--- LiteLLM proxy started successfully! ---${RESET}"
-    echo -e "  - ${BOLD}Access:${RESET}   ${MAGENTA}http://localhost:4000${RESET}"
-    echo -e "  - ${BOLD}Manage:${RESET}   Run commands from ${BLUE}$LITELLM_DIR${RESET}"
-    echo -e "    - ${GREY}Start/Update: docker compose up -d${RESET}"
-    echo -e "    - ${GREY}Stop:         docker compose down${RESET}"
-    echo -e "    - ${GREY}Logs:         docker compose logs -f${RESET}"
-    echo -e "  - ${BOLD}Investigate:${RESET}   Run commands from ${BLUE}Anywhere${RESET}"
-    echo -e "    - ${GREY}Network:      docker network ls${RESET}"
-    echo -e "    - ${GREY}Volumes:      docker volume ls${RESET}"
-    return 0
-}
-
-stopLiteLLMService() {
-    echo -e "${LIGHTYELLOW}Stopping LiteLLM Proxy...${RESET}"
-    if ! (cd "$LITELLM_DIR" && docker compose down); then
-        echo -e "${RED}Failed to stop LiteLLM. Check logs with: cd $LITELLM_DIR && docker compose logs${RESET}"
-        return 1
-    fi
-    echo -e "${GREEN}✔${GREY} LiteLLM proxy stopped.${RESET}"
-    return 0
-}
-
-restartLiteLLMService() {
-    stopLiteLLMService
-    startLiteLLMService
-}
-
 allowUnprivilegedUserns() {
     echo -e "${COLOR}Allowing unprivileged user namespaces (required by Firefox, Cursor, etc.)${RESET}"
     local sysctlKey="kernel.apparmor_restrict_unprivileged_userns"
@@ -2914,6 +2887,7 @@ doMacJobs() {
     doCommonJobs               # Common setup tasks
     createMacOSBashProfile     # Create macOS bash_profile
     setMacOSDefaultShell       # Set default shell
+    installNvmNodeJs           # Install NVM and Node.js
     installLatestRimePinyin    # Install Rime Pinyin input method
     createFirstTimeFile        # Create first-time file marker
 }
@@ -2935,11 +2909,6 @@ doEarlyExitJobs() {
         2) stopOpenGrokContainer;    exit 0 ;;
         3) restartOpenGrokContainer; exit 0 ;;
         4) startOpenGrokIndexer;     exit 0 ;;
-    esac
-    case "$fLiteLLMService" in
-        1) startLiteLLMService;   exit 0 ;;
-        2) stopLiteLLMService;    exit 0 ;;
-        3) restartLiteLLMService; exit 0 ;;
     esac
 }
 

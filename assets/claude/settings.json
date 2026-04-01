@@ -19,7 +19,14 @@
   "model": "opus[1m]",
   "sandbox": {
     "enabled": true,
-    "autoAllowBashIfSandboxed": true
+    "autoAllowBashIfSandboxed": true,
+    "seccomp": {
+      "bpfPath": "$HOME/.nvm/versions/node/v24.12.0/lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/unix-block.bpf",
+      "applyPath": "$HOME/.nvm/versions/node/v24.12.0/lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp"
+    }
+  },
+  "env": {
+    "USE_BUILTIN_RIPGREP": "0"
   },
   "effortLevel": "high",
   "verbose": true

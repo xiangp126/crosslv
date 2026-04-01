@@ -645,7 +645,7 @@ printBuildFlags() {
 cleanTheRepo() {
     [ -z "$fClean" ] && return
     cd "$fWorkingDir" || exit
-    echo -e "$NOTATION ${CYAN}Cleaning the build...${RESET}"
+    echo -e "$NOTATION ${CYAN}Cleaning the build${RESET}"
 
     # Fast clean: run 'make clean' directly, bypassing Docker overhead in build.sh
     # local cleanCmd="$BUILD_SCRIPT -C"

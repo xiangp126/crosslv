@@ -271,15 +271,21 @@ fi
 { [ -d "$HOME/.vscode-server/cli/servers" ] || [ -d "$HOME/.cursor-server" ]; } && \
   [ -f "$HOME/Templates/code-function.sh" ] && source ~/Templates/code-function.sh
 
-# Wrapper for Claude Code: refresh Cursor IPC socket inside tmux so that
-# Claude Code can connect to the IDE extension ("Connected").
-if [[ $_UNAME_S == 'Linux' ]] && ! declare -f claude &>/dev/null; then
-    claude() {
-        nvm use default &>/dev/null
-        unset -f claude
-        [[ -n "$TMUX" ]] && code -p &>/dev/null
-        command claude "$@"
-    }
+# Lazy wrappers for AI coding tools: ensure NVM-managed Node.js is on
+# PATH before first invocation, then replace with the real command.
+_ai_tools=(claude codex)
+if [[ $_UNAME_S == 'Linux' ]]; then
+    for _ai_cmd in "${_ai_tools[@]}"; do
+        if ! declare -f "$_ai_cmd" &>/dev/null; then
+            eval "$_ai_cmd() {
+                nvm use default &>/dev/null
+                unset -f $_ai_cmd
+                [[ -n \"\$TMUX\" ]] && code -p &>/dev/null
+                command $_ai_cmd \"\$@\"
+            }"
+        fi
+    done
+    unset _ai_cmd
 fi
 
 # For fzf-tab-completion vim plugin (requires Bash 4.0+)
