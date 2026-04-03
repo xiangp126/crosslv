@@ -246,6 +246,7 @@ Git Options (require current dir to be a git repo, can be combined in cascade):
         --edit                  git commit --amend
         --push                  git push origin HEAD:refs/for/master_rc
         --stat                  git diff --stat
+        --diff                  git diff include/ src/
         --show                  git show HEAD
         --git-clean             Deep clean using git clean -fdx (preserves submodules)
         --clean-submodule       Deinit all submodules (git submodule deinit --all -f)
@@ -291,7 +292,7 @@ SHORTOPTS="hcoaAj:w:Dlbm:NpT:"
 LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
 jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
 all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
-scratch,track,fetch,push,rebase,add,commit,amend,stat,show"
+scratch,track,fetch,push,rebase,add,commit,amend,stat,show,diff"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -472,6 +473,10 @@ while true; do
             ;;
         --stat)
             fGitCmds+=("stat")
+            shift
+            ;;
+        --diff)
+            fGitCmds+=("diff")
             shift
             ;;
         --show)
@@ -1099,6 +1104,10 @@ runGitOptions() {
             stat)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git diff --stat${RESET}"
                 git diff --stat
+                ;;
+            diff)
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git diff include/ src/${RESET}"
+                git diff include/ src/
                 ;;
             show)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git show HEAD${RESET}"
