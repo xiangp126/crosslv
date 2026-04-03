@@ -82,13 +82,12 @@ function FindProxyForURL(url, host) {
             return DIRECT;
         }
     }
-    // 3. Subnet matching
-    var myIp = myIpAddress();
-    for (var j = 0; j < DIRECT_SUBNETS.length; j++) {
-        var net  = DIRECT_SUBNETS[j][0];
-        var mask = DIRECT_SUBNETS[j][1];
-        if (isInNet(myIp, net, mask) || isInNet(host, net, mask)) {
-            return DIRECT;
+    // 3. Subnet matching (only when host is a plain IP address)
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+        for (var j = 0; j < DIRECT_SUBNETS.length; j++) {
+            if (isInNet(host, DIRECT_SUBNETS[j][0], DIRECT_SUBNETS[j][1])) {
+                return DIRECT;
+            }
         }
     }
     // 4. Default: route all unmatched traffic through proxy
