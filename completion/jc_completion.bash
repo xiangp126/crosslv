@@ -11,10 +11,9 @@ _jc_complete() {
     long_opts="--help --no-tools --debug --clangd --link-clang-format --nvm --wireshark \
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
-               --firefox --update --opengrok-start --opengrok-stop --opengrok-restart \
-               --opengrok --opengrok-indexer --samba --samba-reset-password --git-lfs \
-               --check-tls \
-               --gdm --text --ai"
+               --firefox --update --samba --samba-reset-password --git-lfs \
+               --check-tls --swap --gdm --text --ai \
+               --rtsp --rtsp-ip --rtsp-stream"
 
     case "${prev}" in
         --vnclock)
@@ -25,6 +24,16 @@ _jc_complete() {
         --check-tls)
             local hosts="google.com deepseek.com claude.ai"
             COMPREPLY=( $(compgen -W "${hosts}" -- ${cur}) )
+            return 0
+            ;;
+        --rtsp-ip)
+            local ips="192.168.10.151 192.168.10.240 192.168.10.250"
+            COMPREPLY=( $(compgen -W "${ips}" -- ${cur}) )
+            return 0
+            ;;
+        --rtsp-stream)
+            local streams="c700_camera_1_raw c700_camera_2_raw"
+            COMPREPLY=( $(compgen -W "${streams}" -- ${cur}) )
             return 0
             ;;
     esac

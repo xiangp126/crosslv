@@ -33,15 +33,6 @@ fVncServer= # 1: start VNC server; 2: kill VNC server 3: restart VNC server
 fVncLockAction=
 # Display Mode | gdm: start gdm3 (graphical), text: stop gdm3 (text mode)
 fDisplayMode=
-# Docker Container: OpenGrok
-fOpenGrokContainer= # 1: start container; 2: stop container 3: restart container 4: start indexer
-OPENGROK_IMAGE_NAME="opengrok/docker:latest" # You can pin to a specific version, e.g., opengrok/docker:1.7.30
-OPENGROK_CONTAINER_NAME="opengrok"
-OPENGROK_SRC_VOLUME="$HOME/.usr/local/opengrok/src" # User puts source code here on the host
-OPENGROK_DATA_VOLUME="$HOME/.usr/local/opengrok/data" # Docker named volume for OpenGrok data/indexes
-OPENGROK_ETC_VOLUME="$HOME/.usr/local/opengrok/etc"   # Docker named volume for OpenGrok configuration
-OPENGROK_HOST_PORT="8080"
-OPENGROK_CONTAINER_PORT="8080"
 fLinkClangFormatPath= # Link clang-format to this path
 # Force Options
 appInstallForce= # 1: install apps and continue; 2: install apps and exit
@@ -53,6 +44,10 @@ fWiresharkForce=
 fFirefoxForce=
 fChinesePinyinForce=
 fSwapReq=
+# RTSP Stream Playback
+fRtspFlag=
+fRtspIp=
+fRtspStream=
 # Samba Server | 1: Start samba server 2: Start samba server and reset password
 fSambaServerFlag=
 # Constants
@@ -113,6 +108,11 @@ Vnc Lock Options:
     --vnclock                       Effect options: [unlock|lock|status]
     --unlock-vnc                    Unlock VNC, equivalent to --vnclock unlock
     --lock-vnc                      Lock VNC, equivalent to --vnclock lock
+
+RTSP Options:
+    --rtsp                          Play RTSP stream with mpv (low-latency)
+    --rtsp-ip <ip>                  Specify RTSP server IP (default: 192.168.10.151)
+    --rtsp-stream <stream>          Specify stream name (default: c700_camera_1_raw)
 
 OpenGrok Options:
     --opengrok,--opengrok-start     Start OpenGrok Docker container
@@ -204,8 +204,7 @@ SHORTOPTS="hdnf"
 # Two colons: The option takes an optional argument
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
-          lock-vnc,vnc-start,vnc,firefox,update,opengrok,opengrok-start,opengrok-stop,\
-          opengrok-restart,opengrok-indexer,samba,samba-reset-password,wireshark,git-lfs\
+          lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,git-lfs,rtsp,rtsp-ip:,rtsp-stream:\
           check-tls::,swap::,gdm,text,ai"
 
 # Use getopt to parse command-line options
@@ -256,21 +255,17 @@ while true; do
             fClangdForce=true
             shift
             ;;
-        --opengrok|--opengrok-start)
-            fOpenGrokContainer=1
+        --rtsp)
+            fRtspFlag=1
             shift
             ;;
-        --opengrok-stop)
-            fOpenGrokContainer=2
-            shift
+        --rtsp-ip)
+            fRtspIp="$2"
+            shift 2
             ;;
-        --opengrok-restart)
-            fOpenGrokContainer=3
-            shift
-            ;;
-        --opengrok-indexer)
-            fOpenGrokContainer=4
-            shift
+        --rtsp-stream)
+            fRtspStream="$2"
+            shift 2
             ;;
         --samba)
             fSambaServerFlag=1
@@ -735,6 +730,7 @@ macInstallApps() {
         git-lfs                 # Git Large File Storage
         autossh                 # Auto-reconnecting SSH sessions
         curl                    # Command-line HTTP client (newer than macOS built-in)
+        rsync                   # Fast incremental file transfer (newer than macOS built-in)
 
         # --- GUI & Desktop ---
         fontconfig              # Font configuration library
@@ -2164,130 +2160,6 @@ restartVncServer() {
     startVncServer
 }
 
-isOpenGrokContainerRunning() {
-    if ! command -v docker &> /dev/null; then
-        echo -e "${RED}Error: Docker is not installed. Please install Docker first.${RESET}"
-        exit 1
-    fi
-    if ! docker info > /dev/null 2>&1; then
-        echo -e "${RED}Error: Docker daemon does not seem to be running or accessible.${RESET}"
-        echo -e "${LIGHTYELLOW}Please ensure Docker is started and you have permissions (e.g., current user in 'docker' group, or running commands with sudo).${RESET}"
-        exit 1
-    fi
-    if docker ps -q --filter "name=^/${OPENGROK_CONTAINER_NAME}$" | grep -q .; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-startOpenGrokIndexer() {
-    # docker exec -it opengrok bash
-    if ! isOpenGrokContainerRunning; then
-        echo -e "${GREEN}✔${GREY} OpenGrok container ('${OPENGROK_CONTAINER_NAME}') is not running.${RESET}"
-        return 0
-    fi
-    echo -e "${MAGENTA}Starting OpenGrok indexer...${RESET}"
-    docker exec $OPENGROK_CONTAINER_NAME java \
-    -Djava.util.logging.config.file=/opengrok/etc/logging.properties \
-    -jar /opengrok/lib/opengrok.jar \
-    -c /usr/local/bin/ctags \
-    -s /opengrok/src \
-    -d /opengrok/data \
-    -H -P -S -G \
-    -W /opengrok/etc/configuration.xml
-}
-
-stopOpenGrokContainer() {
-    if ! isOpenGrokContainerRunning; then
-        echo -e "${GREEN}✔${GREY} OpenGrok container ('${OPENGROK_CONTAINER_NAME}') is not running.${RESET}"
-        return 0
-    fi
-    echo -e "${MAGENTA}Stopping OpenGrok Docker container...${RESET}"
-    docker stop $OPENGROK_CONTAINER_NAME &> /dev/null
-}
-
-startOpenGrokContainer() {
-    if isOpenGrokContainerRunning; then
-        echo -e "${GREEN}✔${GREY} OpenGrok container ('${OPENGROK_CONTAINER_NAME}') is already running.${RESET}"
-        echo -e "${LIGHTYELLOW}Access it at: ${BOLD}http://localhost:${OPENGROK_HOST_PORT}${RESET}"
-        return 0
-    fi
-
-    echo -e "${MAGENTA}Deploying and starting OpenGrok Docker container...${RESET}"
-    for dirPath in $OPENGROK_SRC_VOLUME $OPENGROK_DATA_VOLUME $OPENGROK_ETC_VOLUME; do
-        if [ ! -d "$dirPath" ]; then
-            echo -e "${GREY}Creating directory with sudo: ${BLUE}$dirPath${RESET}"
-            if ! mkdir -p "$dirPath"; then
-                echo -e "${RED}Error: Failed to create host directory ${BLUE}$dirPath${RED} with sudo.${RESET}"
-                return 1
-            fi
-            echo -e "${GREEN}✔${GREY} Directory ${BLUE}$dirPath${GREY} created.${RESET}"
-        fi
-    done
-    echo -e "${GREEN}✔${GREY} Host source directory ensured: ${BLUE}$OPENGROK_SRC_VOLUME${RESET}"
-    echo -e "${LIGHTYELLOW}IMPORTANT: Place your source code repositories inside ${BOLD}$OPENGROK_SRC_VOLUME${LIGHTYELLOW} for OpenGrok to index.${RESET}"
-    echo -e "${GREY}OpenGrok data and configuration will be stored in Docker managed volumes ('${OPENGROK_DATA_VOLUME}', '${OPENGROK_ETC_VOLUME}').${RESET}"
-
-    # Check if container exists (but is stopped) and remove it to avoid conflicts
-    if docker ps -aq --filter "name=^/${OPENGROK_CONTAINER_NAME}$" | grep -q .; then
-        echo -e "${LIGHTYELLOW}Found existing stopped OpenGrok container ('${OPENGROK_CONTAINER_NAME}'). Removing it...${RESET}"
-        if sudo docker rm "$OPENGROK_CONTAINER_NAME"; then
-            echo -e "${GREEN}✔${GREY} Successfully removed existing container '${OPENGROK_CONTAINER_NAME}'.${RESET}"
-        else
-            echo -e "${RED}Error: Failed to remove existing container '${OPENGROK_CONTAINER_NAME}'.${RESET}"
-            return 1
-        fi
-    fi
-
-    # Pull the latest OpenGrok image
-    echo -e "${LIGHTYELLOW}Checking for OpenGrok image (${OPENGROK_IMAGE_NAME})...${RESET}"
-    if docker image inspect "$OPENGROK_IMAGE_NAME" &> /dev/null; then
-        echo -e "${GREEN}✔${GREY} Image '${OPENGROK_IMAGE_NAME}' already exists locally.${RESET}"
-    else
-        echo -e "${LIGHTYELLOW}Pulling the latest OpenGrok image (${OPENGROK_IMAGE_NAME})...${RESET}"
-        if ! docker pull "$OPENGROK_IMAGE_NAME"; then
-            echo -e "${RED}Error: Failed to pull OpenGrok image '${OPENGROK_IMAGE_NAME}'.${RESET}"
-            return 1
-        fi
-    fi
-    echo -e "${GREEN}✔${GREY} Image '${OPENGROK_IMAGE_NAME}' pulled successfully.${RESET}"
-
-    # Start the OpenGrok container
-    echo -e "${LIGHTYELLOW}Starting OpenGrok container ('${OPENGROK_CONTAINER_NAME}')...${RESET}"
-    local params=(
-        run -d
-        --name "$OPENGROK_CONTAINER_NAME"
-        "--restart=unless-stopped"  # Restart the container automatically
-        -e "NOMIRROR=yes"
-        -p "127.0.0.1:${OPENGROK_HOST_PORT}:${OPENGROK_CONTAINER_PORT}/tcp" # Map host port to container port (localhost only)
-        -v "${OPENGROK_SRC_VOLUME}:/opengrok/src:ro"  # Mount host source directory as read-only
-        -v "${OPENGROK_DATA_VOLUME}:/opengrok/data"   # Use a named volume for OpenGrok data (indexes)
-        -v "${OPENGROK_ETC_VOLUME}:/opengrok/etc"     # Use a named volume for OpenGrok configuration
-        "$OPENGROK_IMAGE_NAME"
-    )
-
-    # The current user is in the 'docker' group
-    echo -e "${GREY}Executing: docker ${params[*]}${RESET}"
-    if docker "${params[@]}"; then
-        echo -e "${GREEN}✔${GREY} OpenGrok container '${OPENGROK_CONTAINER_NAME}' started successfully.${RESET}"
-        echo -e "${LIGHTYELLOW}It might take a few minutes for OpenGrok to initialize and index your source code from ${BOLD}$OPENGROK_SRC_VOLUME${LIGHTYELLOW}.${RESET}"
-        echo -e "${LIGHTYELLOW}Once ready, access OpenGrok at: ${BOLD}http://localhost:${OPENGROK_HOST_PORT}${RESET}"
-        echo -e "${LIGHTYELLOW}To view container logs: ${BLUE}docker logs -f ${OPENGROK_CONTAINER_NAME}${RESET}"
-    else
-        echo -e "${RED}Error: Failed to start OpenGrok container '${OPENGROK_CONTAINER_NAME}'.${RESET}"
-        echo -e "${LIGHTYELLOW}Check container logs for details: ${BLUE}sudo docker logs ${OPENGROK_CONTAINER_NAME}${RESET}"
-        return 1
-    fi
-
-    return 0
-}
-
-restartOpenGrokContainer() {
-    stopOpenGrokContainer
-    startOpenGrokContainer
-}
-
 addUserIntoLibvirtGrp() {
     echo -e "${COLOR}Configuring Libvirt Group Membership for Current User${RESET}"
 
@@ -2890,10 +2762,41 @@ doMacJobs() {
     createFirstTimeFile        # Create first-time file marker
 }
 
+playRtspStream() {
+    local stream="${fRtspStream:-c700_camera_1_raw}"
+    local rtspServer="${fRtspIp:-192.168.10.151}"
+    local rtspPort="8554"
+    local rtspUrl="rtsp://${rtspServer}:${rtspPort}/${stream}"
+
+    if ! command -v mpv &> /dev/null; then
+        echo -e "${RED}Error: mpv is not installed.${RESET}"
+        echo -e "${LIGHTYELLOW}Install it with: ${BLUE}brew install mpv${RESET}"
+        return 1
+    fi
+
+    local mpvArgs=(
+        --profile=low-latency
+        --hwdec=videotoolbox
+        --cache=no
+        --demuxer-max-bytes=4MiB
+        --demuxer-readahead-secs=0
+        --vd-lavc-threads=1
+        --vd-lavc-fast
+        --rtsp-transport=tcp
+        --video-sync=desync
+        --audio-buffer=0
+    )
+
+    echo -e "${COLOR}Playing RTSP stream: ${BLUE}${rtspUrl}${RESET}"
+    echo -e "${COLOR}Executing:${RESET} mpv \"${rtspUrl}\" ${mpvArgs[*]}${RESET}"
+    mpv "$rtspUrl" "${mpvArgs[@]}"
+}
+
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     [ -n "$fDisplayMode" ]         && { switchDisplayMode "$fDisplayMode"; exit 0; }
+    [ -n "$fRtspFlag" ]            && { playRtspStream; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
     [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
@@ -2901,12 +2804,6 @@ doEarlyExitJobs() {
         1) startVncServer;       exit 0 ;;
         2) stopVncServer;        exit 0 ;;
         3) restartVncServer;     exit 0 ;;
-    esac
-    case "$fOpenGrokContainer" in
-        1) startOpenGrokContainer;   exit 0 ;;
-        2) stopOpenGrokContainer;    exit 0 ;;
-        3) restartOpenGrokContainer; exit 0 ;;
-        4) startOpenGrokIndexer;     exit 0 ;;
     esac
 }
 
