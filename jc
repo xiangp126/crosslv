@@ -46,8 +46,8 @@ fChinesePinyinForce=
 fSwapReq=
 # RTSP Stream Playback
 fRtspFlag=
-fRtspIp=
-fRtspStream=
+fRtspSrvIp=192.168.10.240
+fRtspStream=c700_01_raw
 # Samba Server | 1: Start samba server 2: Start samba server and reset password
 fSambaServerFlag=
 # Constants
@@ -111,8 +111,8 @@ Vnc Lock Options:
 
 RTSP Options:
     --rtsp                          Play RTSP stream with mpv (low-latency)
-    --rtsp-ip <ip>                  Specify RTSP server IP (default: 192.168.10.151)
-    --rtsp-stream <stream>          Specify stream name (default: c700_camera_1_raw)
+    --rtsp-stream <stream>          Specify stream name (default: ${fRtspStream})
+    --rtsp-ip <ip>                  Specify RTSP server IP (default: ${fRtspSrvIp})
 
 OpenGrok Options:
     --opengrok,--opengrok-start     Start OpenGrok Docker container
@@ -204,8 +204,8 @@ SHORTOPTS="hdnf"
 # Two colons: The option takes an optional argument
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
-          lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,git-lfs,rtsp,rtsp-ip:,rtsp-stream:\
-          check-tls::,swap::,gdm,text,ai"
+          lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
+          git-lfs,rtsp,rtsp-stream:,rtsp-ip:,check-tls::,swap::,gdm,text,ai"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -259,12 +259,13 @@ while true; do
             fRtspFlag=1
             shift
             ;;
-        --rtsp-ip)
-            fRtspIp="$2"
+        --rtsp-stream)
+            fRtspFlag=1
+            fRtspStream="$2"
             shift 2
             ;;
-        --rtsp-stream)
-            fRtspStream="$2"
+        --rtsp-ip)
+            fRtspSrvIp="$2"
             shift 2
             ;;
         --samba)
@@ -397,6 +398,7 @@ while true; do
             ;;
     esac
 done
+
 
 checkSudoPrivilege() {
     echo -e "${COLOR}Checking Sudo Privilege${RESET}"
@@ -2763,18 +2765,16 @@ doMacJobs() {
 }
 
 playRtspStream() {
-    local stream="${fRtspStream:-c700_camera_1_raw}"
-    local rtspServer="${fRtspIp:-192.168.10.151}"
-    local rtspPort="8554"
-    local rtspUrl="rtsp://${rtspServer}:${rtspPort}/${stream}"
-
     if ! command -v mpv &> /dev/null; then
         echo -e "${RED}Error: mpv is not installed.${RESET}"
         echo -e "${LIGHTYELLOW}Install it with: ${BLUE}brew install mpv${RESET}"
         return 1
     fi
 
-    local mpvArgs=(
+    local server="$fRtspSrvIp"
+    local stream="$fRtspStream"
+    local url="rtsp://${server}:8554/${stream}"
+    local args=(
         --profile=low-latency
         --hwdec=videotoolbox
         --cache=no
@@ -2787,9 +2787,9 @@ playRtspStream() {
         --audio-buffer=0
     )
 
-    echo -e "${COLOR}Playing RTSP stream: ${BLUE}${rtspUrl}${RESET}"
-    echo -e "${COLOR}Executing:${RESET} mpv \"${rtspUrl}\" ${mpvArgs[*]}${RESET}"
-    mpv "$rtspUrl" "${mpvArgs[@]}"
+    echo -e "${COLOR}Playing RTSP stream: ${BLUE}${url}${RESET}"
+    echo -e "${COLOR}Executing:${RESET} mpv \"${url}\" ${args[*]}${RESET}"
+    mpv "$url" "${args[@]}"
 }
 
 doEarlyExitJobs() {

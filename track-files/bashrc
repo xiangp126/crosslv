@@ -267,9 +267,8 @@ if [[ $_UNAME_S == 'Linux' && $EUID -ne 0 ]]; then
     unset _cs_src _cs_dst
 fi
 
-# Load customized code wrapper (supports both VS Code and Cursor)
-{ [ -d "$HOME/.vscode-server/cli/servers" ] || [ -d "$HOME/.cursor-server" ]; } && \
-  [ -f "$HOME/Templates/code-function.sh" ] && source ~/Templates/code-function.sh
+# Load customized code wrapper (supports both local and remote VS Code / Cursor)
+[ -f "$HOME/Templates/code-function.sh" ] && source ~/Templates/code-function.sh
 
 # Lazy wrappers for AI coding tools: ensure NVM-managed Node.js is on
 # PATH before first invocation, then replace with the real command.

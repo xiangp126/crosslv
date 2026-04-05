@@ -13,7 +13,7 @@ _jc_complete() {
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs \
                --check-tls --swap --gdm --text --ai \
-               --rtsp --rtsp-ip --rtsp-stream"
+               --rtsp --rtsp-stream --rtsp-ip"
 
     case "${prev}" in
         --vnclock)
@@ -26,14 +26,14 @@ _jc_complete() {
             COMPREPLY=( $(compgen -W "${hosts}" -- ${cur}) )
             return 0
             ;;
-        --rtsp-ip)
-            local ips="192.168.10.151 192.168.10.240 192.168.10.250"
-            COMPREPLY=( $(compgen -W "${ips}" -- ${cur}) )
+        --rtsp-stream)
+            local streams="c700_01_raw c700_02_raw"
+            COMPREPLY=( $(compgen -W "${streams}" -- ${cur}) )
             return 0
             ;;
-        --rtsp-stream)
-            local streams="c700_camera_1_raw c700_camera_2_raw"
-            COMPREPLY=( $(compgen -W "${streams}" -- ${cur}) )
+        --rtsp-ip)
+            local ips="192.168.10.240 192.168.10.150"
+            COMPREPLY=( $(compgen -W "${ips}" -- ${cur}) )
             return 0
             ;;
     esac

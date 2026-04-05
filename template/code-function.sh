@@ -1,7 +1,7 @@
 #!/bin/bash
 # set -x
-# Wrapper for the VS Code / Cursor Server CLI.
-# Supports both VS Code (.vscode-server) and Cursor (.cursor-server).
+# Wrapper for VS Code / Cursor CLI.
+# Works on both local machines (macOS/Linux) and remote servers connected via VS Code / Cursor.
 # To install, add `source /path/to/code-function.sh` to your ~/.bashrc.
 # For usage, run `code --help`.
 
@@ -257,16 +257,36 @@ _code_clean_obsolete_ipc_socks() {
 }
 
 # Helper function: pre-check
+# Detects remote server vs local machine. On local, finds and invokes the
+# native editor binary directly (no IPC socket needed).
 _code_pre_check() {
-    # Check if either VS Code or Cursor server directory exists
-    if [ ! -d "$HOME/.vscode-server/cli/servers" ] && [ ! -d "$HOME/.cursor-server/bin" ]; then
-        local l_code_bin_path="/usr/local/bin/code"
-        if [ -x "$l_code_bin_path" ]; then
-            "$l_code_bin_path" "$@"
-            return $?
-        fi
-        return 1
+    # Remote server: VS Code/Cursor server directories exist
+    if [ -d "$HOME/.vscode-server/cli/servers" ] || [ -d "$HOME/.cursor-server/bin" ]; then
+        _code_f_is_remote=true
+        return 0
     fi
+
+    # Local machine: find the native editor binary
+    # type -P searches PATH for executables, ignoring shell functions/aliases
+    local bin
+    bin=$(type -P cursor 2>/dev/null) || bin=$(type -P code 2>/dev/null)
+
+    # macOS: check app bundle paths as fallback
+    if [[ -z "$bin" && "$(uname -s)" == "Darwin" ]]; then
+        local p
+        for p in "/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
+                 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"; do
+            [[ -x "$p" ]] && { bin="$p"; break; }
+        done
+    fi
+
+    if [[ -n "$bin" ]]; then
+        "$bin" "$@"
+        return $?
+    fi
+
+    echo -e "${RED}Error: No VS Code or Cursor installation found.${RESET}" >&2
+    return 1
 }
 
 _code_self_reload() {
@@ -288,14 +308,18 @@ _code_self_reload() {
 
 # Main code function
 code() {
+    local _code_f_is_remote=
+    _code_pre_check "$@"
+    local rc=$?
+    [[ -z "$_code_f_is_remote" ]] && return $rc
+
+    # Remote server path setup:
+    # - VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code
+    # - Cursor:  ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
     local _code_f_args=()
     local _code_f_force=
     local _code_f_debug=
     local _code_f_print=
-    # Support both VS Code and Cursor with different paths:
-    # - VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code
-    # - Cursor:  ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
-    # IPC sockets may live under /run/user/$UID or /tmp depending on the system.
     local _code_f_sys_path
     if ls /run/user/$UID/vscode-ipc-*.sock &>/dev/null; then
         _code_f_sys_path="/run/user/$UID"
@@ -310,8 +334,6 @@ code() {
     else
         _code_f_search_path="$HOME/.vscode-server/cli/servers"
     fi
-
-    _code_pre_check "$@" || return 1
 
     local parse_result
     _code_parse_options "$@"
