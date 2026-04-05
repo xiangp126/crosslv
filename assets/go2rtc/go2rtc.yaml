@@ -1,0 +1,41 @@
+# ================================================================
+# GO2RTC - 4K Zero-Latency Configuration
+# ================================================================
+
+log:
+  level: info
+
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"
+  candidates:
+    - *.*.*.*:8555
+
+# ================================================================
+# STREAM PIPELINE
+# ================================================================
+
+streams:
+  # 1. Raw streams (H265 4K)
+  # subtype: 0=SD, 1=HD, 2=1080p, 3=4K (highest resolution available)
+  # stream:  0=main stream (high quality), 1=sub stream (lower quality, less bandwidth)
+  #
+  # Camera settings:
+  #   uid:     *********
+  #   region:  cn
+  #   model:   chuangmi.camera.81ac1
+  #   subtype: 3 (4K)
+  #   stream:  0 (main)
+  #
+  # Camera 01: ip=*.*.*.*  did=**********
+  # Camera 02: ip=*.*.*.*  did=**********
+  c700_01_raw: xiaomi://*********:cn@*.*.*.*?did=**********&model=chuangmi.camera.81ac1&subtype=3&stream=0
+  c700_02_raw: xiaomi://*********:cn@*.*.*.*?did=**********&model=chuangmi.camera.81ac1&subtype=3&stream=0
+
+xiaomi:
+  "*********":
