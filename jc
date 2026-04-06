@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2155 disable=SC2120 disable=SC2024
+# shellcheck disable=SC2155 disable=SC2120 disable=SC2024 disable=SC2034
 # set -x
 
 # Tracking directories
@@ -48,11 +48,12 @@ fSwapReq=
 fRtspFlag=
 fRtspMulti=
 fRtspKill=
+fRtspList=
+fRtspFilter=
 fRtspSrvIp=192.168.10.240
-fRtspStreams=("c700_01_raw" "c700_02_raw" "c700_01_raw")
-fRtspStream=${fRtspStreams[0]}
+fRtspStream=
 MAX_RTSP_STREAMS=10
-# 4k Mi Monitor resolution: 3360 x 1890
+# Exp: 4k Mi Monitor resolution 3360 x 1890
 fRtspScreenRes=
 # Samba Server | 1: Start samba server 2: Start samba server and reset password
 fSambaServerFlag=
@@ -81,7 +82,7 @@ usage() {
     cat << _EOF
 Usage: $SCRIPT_NAME [OPTIONS]
 
-This script is used to set up the coding environment in my predefined way.
+Set up coding environment, manage VNC/Samba servers, and play RTSP camera streams.
 
 Common Options:
     -h, --help                      Print this help message
@@ -117,11 +118,14 @@ Vnc Lock Options:
 
 RTSP Options:
     --rtsp                          Play RTSP stream with mpv (low-latency)
-    --rtsp-multi                    Play multiple RTSP streams in tiled layout
+    --rtsp-all                      Play multiple RTSP streams in tiled layout
     --rtsp-kill                     Kill all running mpv instances
-    --rtsp-stream <stream>          Specify stream name (default: ${fRtspStream})
+    --rtsp-list                     List all available streams from go2rtc
+    --rtsp-raw                      Play all *_raw streams in tiled layout
+    --rtsp-h264                     Play all *_h264 streams in tiled layout
+    --rtsp-stream <stream>          Specify stream name (default: first from go2rtc)
     --rtsp-ip <ip>                  Specify RTSP server IP (default: ${fRtspSrvIp})
-    --rtsp-resolution <WxH>        Set screen resolution for tiling (e.g. 3360x1890)
+    --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
 
 OpenGrok Options:
     --opengrok,--opengrok-start     Start OpenGrok Docker container
@@ -214,7 +218,7 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-multi,rtsp-kill,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai"
+          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -268,13 +272,29 @@ while true; do
             fRtspFlag=1
             shift
             ;;
-        --rtsp-multi)
+        --rtsp-all)
             fRtspFlag=1
             fRtspMulti=1
             shift
             ;;
         --rtsp-kill)
             fRtspKill=1
+            shift
+            ;;
+        --rtsp-list)
+            fRtspList=1
+            shift
+            ;;
+        --rtsp-raw)
+            fRtspFlag=1
+            fRtspMulti=1
+            fRtspFilter="_raw"
+            shift
+            ;;
+        --rtsp-h264)
+            fRtspFlag=1
+            fRtspMulti=1
+            fRtspFilter="_h264"
             shift
             ;;
         --rtsp-stream)
@@ -2787,8 +2807,36 @@ doMacJobs() {
     createFirstTimeFile        # Create first-time file marker
 }
 
+listRtspStreams() {
+    local stream_list
+    stream_list=$(getSupportedRtspStreams) || return 1
+    local streams
+    read -ra streams <<< "$stream_list"
+    if (( ${#streams[@]} == 0 )); then
+        echo -e "${LIGHTYELLOW}No streams available from go2rtc.${RESET}"
+        return 0
+    fi
+    echo -e "${COLOR}Streams from go2rtc at ${BLUE}${fRtspSrvIp}:1984${COLOR}:${RESET}"
+    local prev_group=""
+    for s in $(printf '%s\n' "${streams[@]}" | sort); do
+        local group="${s%_*}"
+        local variant="${s##*_}"
+        if [[ "$group" != "$prev_group" ]]; then
+            echo -e "  ${GREEN}${group}${RESET}"
+            prev_group="$group"
+        fi
+        echo -e "    ${GREY}${variant}${RESET}  ${BLUE}${s}${RESET}"
+    done
+}
+
 getSupportedRtspStreams() {
-    echo "${fRtspStreams[@]}"
+    local api_url="http://${fRtspSrvIp}:1984/api/streams"
+    local response
+    response=$(curl -sf --connect-timeout 3 "$api_url") || {
+        echo -e "${RED}Error: failed to reach go2rtc API at ${api_url}${RESET}" >&2
+        return 1
+    }
+    echo "$response" | jq -r 'keys | join(" ")'
 }
 
 killRtspStreams() {
@@ -2934,9 +2982,18 @@ playRtspStream() {
             echo -e "${RED}Error: mpv is already running. Kill existing instances first (${LIGHTYELLOW}jc --rtsp-kill${RED}).${RESET}"
             return 1
         fi
+        local stream_list
+        stream_list=$(getSupportedRtspStreams) || return 1
+        if [[ -n "$fRtspFilter" ]]; then
+            stream_list=$(echo "$stream_list" | tr ' ' '\n' | grep "$fRtspFilter" | tr '\n' ' ')
+        fi
         local streams
-        read -ra streams <<< "$(getSupportedRtspStreams)"
+        read -ra streams <<< "$stream_list"
         local count=${#streams[@]}
+        if (( count == 0 )); then
+            echo -e "${RED}Error: no streams available from go2rtc.${RESET}"
+            return 1
+        fi
         if (( count > MAX_RTSP_STREAMS )); then
             echo -e "${RED}Error: too many streams (${count}). Max supported: ${MAX_RTSP_STREAMS}.${RESET}"
             return 1
@@ -2953,21 +3010,32 @@ playRtspStream() {
             echo -e "${COLOR}Playing ${count} RTSP streams in auto-fit tiled layout (percentage)${RESET}"
         fi
         for i in "${!streams[@]}"; do
-            local geom audio_flag=()
+            local geom mute_flag=()
             if [[ -n "$use_pixel" ]]; then
                 geom=$(computeTileGeometryPixel "$i" "$count" "$sw" "$sh")
             else
                 geom=$(computeTileGeometryPercent "$i" "$count")
             fi
-            (( i > 0 )) && audio_flag=(--no-audio)
-            mpv "rtsp://${server}:8554/${streams[$i]}" "${args[@]}" "${audio_flag[@]}" --geometry="$geom" &
+            (( i > 0 )) && mute_flag=(--mute=yes)
+            mpv "rtsp://${server}:8554/${streams[$i]}" "${args[@]}" "${mute_flag[@]}" --geometry="$geom" \
+                --force-media-title="${streams[$i]}" &
         done
         echo -e "${BLUE}Multi-stream monitoring started. To stop: ${LIGHTYELLOW}pkill mpv${RESET}"
     else
+        if [[ -z "$fRtspStream" ]]; then
+            local available
+            available=$(getSupportedRtspStreams) || return 1
+            read -ra available <<< "$available"
+            if (( ${#available[@]} == 0 )); then
+                echo -e "${RED}Error: no streams available from go2rtc.${RESET}"
+                return 1
+            fi
+            fRtspStream="${available[0]}"
+        fi
         local url="rtsp://${server}:8554/${fRtspStream}"
         echo -e "${COLOR}Playing RTSP stream: ${BLUE}${url}${RESET}"
         echo -e "${COLOR}Executing:${RESET} mpv \"${url}\" ${args[*]}${RESET}"
-        mpv "$url" "${args[@]}"
+        mpv "$url" "${args[@]}" --force-media-title="${fRtspStream}"
     fi
 }
 
@@ -2976,6 +3044,7 @@ doEarlyExitJobs() {
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     [ -n "$fDisplayMode" ]         && { switchDisplayMode "$fDisplayMode"; exit 0; }
     [ -n "$fRtspKill" ]            && { killRtspStreams; exit 0; }
+    [ -n "$fRtspList" ]            && { listRtspStreams; exit 0; }
     [ -n "$fRtspFlag" ]            && { playRtspStream; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
