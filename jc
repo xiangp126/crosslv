@@ -49,7 +49,8 @@ fRtspFlag=
 fRtspMulti=
 fRtspKill=
 fRtspSrvIp=192.168.10.240
-fRtspStream=c700_01_raw
+fRtspStreams=("c700_01_raw" "c700_02_raw")
+fRtspStream=${fRtspStreams[0]}
 # Samba Server | 1: Start samba server 2: Start samba server and reset password
 fSambaServerFlag=
 # Constants
@@ -2778,6 +2779,15 @@ doMacJobs() {
     createFirstTimeFile        # Create first-time file marker
 }
 
+getSupportedRtspStreams() {
+    echo "${fRtspStreams[@]}"
+}
+
+killRtspStreams() {
+    echo -e "${COLOR}Killing all mpv instances.${RESET}"
+    pkill mpv
+}
+
 playRtspStream() {
     if ! command -v mpv &> /dev/null; then
         echo -e "${RED}Error: mpv is not installed.${RESET}"
@@ -2799,14 +2809,18 @@ playRtspStream() {
         --audio-buffer=0
     )
 
+    # --geometry=W%xH%{+|-}X{+|-}Y : W%xH% sets window size as % of screen.
+    #   +X/+Y offsets from left/top edge (window expands right/down);
+    #   -X/-Y offsets from right/bottom edge (window expands left/up).
     if [ -n "$fRtspMulti" ]; then
-        local streams=("c700_01_raw" "c700_02_raw")
+        local streams
+        read -ra streams <<< "$(getSupportedRtspStreams)"
         args+=(--no-border --ontop)
         echo -e "${COLOR}Playing ${#streams[@]} RTSP streams in tiled layout${RESET}"
-        # Top-left (+38 vertical offset to avoid macOS notch)
+        # Left half: 50% width, full height, flush to left edge
         mpv "rtsp://${server}:8554/${streams[0]}" "${args[@]}" --geometry=50%x100%+0+0 &
-        # Right half
-        mpv "rtsp://${server}:8554/${streams[1]}" "${args[@]}" --geometry=50%x100%+100%+0 &
+        # Right half: 50% width, full height, flush to right edge
+        mpv "rtsp://${server}:8554/${streams[1]}" "${args[@]}" --geometry=50%x100%-0+0 &
         echo -e "${LIGHTYELLOW}Multi-stream monitoring started. To stop: ${BLUE}pkill mpv${RESET}"
     else
         local url="rtsp://${server}:8554/${fRtspStream}"
@@ -2820,7 +2834,7 @@ doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     [ -n "$fDisplayMode" ]         && { switchDisplayMode "$fDisplayMode"; exit 0; }
-    [ -n "$fRtspKill" ]            && { echo -e "${COLOR}Killing all mpv instances${RESET}"; pkill mpv; exit 0; }
+    [ -n "$fRtspKill" ]            && { killRtspStreams; exit 0; }
     [ -n "$fRtspFlag" ]            && { playRtspStream; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
@@ -2862,6 +2876,7 @@ main() {
         mac)    doMacJobs    ;;
     esac
     showUfwStatus
+    echo -e "${GREEN}${SCRIPT_NAME} completed successfully in ${SECONDS}s.${RESET}"
 }
 
 main "$@"
