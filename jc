@@ -2942,12 +2942,29 @@ playRtspStream() {
     fi
 
     local server="$fRtspSrvIp"
+    # mpv process architecture:
+    #   ├── Network layer (fetches RTSP data)
+    #   ├── Stream cache (--cache, mpv's own)
+    #   ├── Demuxer (uses FFmpeg's libavformat to parse containers)
+    #   │   └── Demuxer buffer (--demuxer-max-bytes, mpv's own queue)
+    #   ├── Decoder (uses FFmpeg's libavcodec, or HW decoder like videotoolbox)
+    #   └── Video output (renders to screen)
+    #
+    # Data pipeline (all tuned for zero-latency live RTSP):
+    #   Network → [Stream Cache] → Demuxer → [Demuxer Buffer] → Decoder → Display
+    #                --cache=no       ↑         --demuxer-max-bytes=500KiB
+    #               (disabled)        |        (small queue)
+    #                                 |
+    #                        --demuxer-readahead-secs=0
+    #                        (don't read ahead in time)
     local args=(
         --profile=low-latency
         --hwdec=videotoolbox
         --cache=no
-        --demuxer-max-bytes=4MiB
+        --demuxer-max-bytes=500KiB
         --demuxer-readahead-secs=0
+        --demuxer-max-back-bytes=0
+        --framedrop=decoder+vo
         --vd-lavc-threads=1
         --vd-lavc-fast
         --rtsp-transport=tcp
@@ -2978,10 +2995,6 @@ playRtspStream() {
     # Auto-fit tiling: cols=ceil(sqrt(N)), rows=ceil(N/cols), row-major order.
     # Uses pixel geometry when screen resolution is known, otherwise falls back to percentage.
     if [ -n "$fRtspMulti" ]; then
-        if pgrep -x mpv &> /dev/null; then
-            echo -e "${RED}Error: mpv is already running. Kill existing instances first (${LIGHTYELLOW}jc --rtsp-kill${RED}).${RESET}"
-            return 1
-        fi
         local stream_list
         stream_list=$(getSupportedRtspStreams) || return 1
         if [[ -n "$fRtspFilter" ]]; then
@@ -2998,7 +3011,7 @@ playRtspStream() {
             echo -e "${RED}Error: too many streams (${count}). Max supported: ${MAX_RTSP_STREAMS}.${RESET}"
             return 1
         fi
-        local use_pixel= sw sh
+        local use_pixel='' sw sh
         if [[ -n "$screen_res" ]]; then
             read -r sw sh <<< "$screen_res"
             [[ -n "$sw" && -n "$sh" ]] && use_pixel=1
@@ -3009,7 +3022,12 @@ playRtspStream() {
         else
             echo -e "${COLOR}Playing ${count} RTSP streams in auto-fit tiled layout (percentage)${RESET}"
         fi
+        local launched=0
         for i in "${!streams[@]}"; do
+            if pgrep -f "mpv.*${streams[$i]}" &> /dev/null; then
+                echo -e "  ${GREEN}${streams[$i]}${GREY} — already running${RESET}"
+                continue
+            fi
             local geom mute_flag=()
             if [[ -n "$use_pixel" ]]; then
                 geom=$(computeTileGeometryPixel "$i" "$count" "$sw" "$sh")
@@ -3019,8 +3037,14 @@ playRtspStream() {
             (( i > 0 )) && mute_flag=(--mute=yes)
             mpv "rtsp://${server}:8554/${streams[$i]}" "${args[@]}" "${mute_flag[@]}" --geometry="$geom" \
                 --force-media-title="${streams[$i]}" &
+            echo -e "  ${BLUE}${streams[$i]}${GREY} — launched${RESET}"
+            (( launched++ ))
         done
-        echo -e "${BLUE}Multi-stream monitoring started. To stop: ${LIGHTYELLOW}pkill mpv${RESET}"
+        if (( launched == 0 )); then
+            echo -e "${GREEN}All ${count} streams already running.${RESET}"
+        else
+            echo -e "${BLUE}${launched}/${count} stream(s) launched. To stop all: ${LIGHTYELLOW}pkill mpv${RESET}"
+        fi
     else
         if [[ -z "$fRtspStream" ]]; then
             local available
