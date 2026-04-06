@@ -3017,6 +3017,22 @@ playRtspStream() {
             [[ -n "$sw" && -n "$sh" ]] && use_pixel=1
         fi
         args+=(--no-border --ontop)
+        # Compare desired stream set against the last-launched set (stored in marker file).
+        # Same set → selective relaunch of dead streams only (recovery).
+        # Different set → kill all and relaunch with correct geometry.
+        local marker="/tmp/jc_rtsp_streams"
+        local desired_set
+        desired_set=$(printf '%s\n' "${streams[@]}" | sort | tr '\n' ' ')
+        if pgrep -x mpv &> /dev/null && [[ -f "$marker" ]]; then
+            local previous_set
+            previous_set=$(<"$marker")
+            if [[ "$desired_set" != "$previous_set" ]]; then
+                echo -e "${LIGHTYELLOW}Stream set changed — restarting all streams.${RESET}"
+                pkill mpv
+                sleep 0.5
+            fi
+        fi
+        echo "$desired_set" > "$marker"
         if [[ -n "$use_pixel" ]]; then
             echo -e "${COLOR}Playing ${count} RTSP streams in auto-fit tiled layout (${sw}x${sh} pixel)${RESET}"
         else
@@ -3041,9 +3057,9 @@ playRtspStream() {
             (( launched++ ))
         done
         if (( launched == 0 )); then
-            echo -e "${GREEN}All ${count} streams already running.${RESET}"
+            echo -e "${CYAN}All ${count} streams already running.${RESET}"
         else
-            echo -e "${BLUE}${launched}/${count} stream(s) launched. To stop all: ${LIGHTYELLOW}pkill mpv${RESET}"
+            echo -e "${CYAN}${launched}/${count} stream(s) launched.${RESET} ${BLUE}To stop all: ${LIGHTYELLOW}pkill mpv${RESET}"
         fi
     else
         if [[ -z "$fRtspStream" ]]; then
