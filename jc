@@ -3036,7 +3036,7 @@ playRtspStream() {
             fi
             (( i > 0 )) && mute_flag=(--mute=yes)
             mpv "rtsp://${server}:8554/${streams[$i]}" "${args[@]}" "${mute_flag[@]}" --geometry="$geom" \
-                --force-media-title="${streams[$i]}" &
+                --force-media-title="${streams[$i]}" 2>/dev/null &
             echo -e "  ${BLUE}${streams[$i]}${GREY} — launched${RESET}"
             (( launched++ ))
         done
@@ -3059,7 +3059,7 @@ playRtspStream() {
         local url="rtsp://${server}:8554/${fRtspStream}"
         echo -e "${COLOR}Playing RTSP stream: ${BLUE}${url}${RESET}"
         echo -e "${COLOR}Executing:${RESET} mpv \"${url}\" ${args[*]}${RESET}"
-        mpv "$url" "${args[@]}" --force-media-title="${fRtspStream}"
+        mpv "$url" "${args[@]}" --force-media-title="${fRtspStream}" 2>/dev/null
     fi
 }
 
