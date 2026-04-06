@@ -13,7 +13,7 @@ _jc_complete() {
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs \
                --check-tls --swap --gdm --text --ai \
-               --rtsp --rtsp-multi --rtsp-kill --rtsp-stream --rtsp-ip"
+               --rtsp --rtsp-multi --rtsp-kill --rtsp-stream --rtsp-ip --rtsp-resolution"
 
     case "${prev}" in
         --vnclock)
@@ -34,6 +34,19 @@ _jc_complete() {
         --rtsp-ip)
             local ips="192.168.10.240 192.168.10.150"
             COMPREPLY=( $(compgen -W "${ips}" -- ${cur}) )
+            return 0
+            ;;
+        --rtsp-resolution)
+            # 3360x1890  - Mi Monitor 27" (native)
+            # 3456x2234  - Built-in MacBook Pro
+            # 3840x2160  - 4K monitors
+            # 2560x1440  - Common 27" QHD
+            # 2560x1600  - MacBook Pro 14"/16"
+            # 1920x1200  - 16:10 laptops
+            # 1920x1080  - 15" Lenovo / common FHD
+            # 1366x768   - Budget 15" laptops
+            local resolutions="3360x1890 3456x2234 3840x2160 2560x1440 2560x1600 1920x1200 1920x1080 1366x768"
+            COMPREPLY=( $(compgen -W "${resolutions}" -- ${cur}) )
             return 0
             ;;
     esac

@@ -49,8 +49,11 @@ fRtspFlag=
 fRtspMulti=
 fRtspKill=
 fRtspSrvIp=192.168.10.240
-fRtspStreams=("c700_01_raw" "c700_02_raw")
+fRtspStreams=("c700_01_raw" "c700_02_raw" "c700_01_raw")
 fRtspStream=${fRtspStreams[0]}
+MAX_RTSP_STREAMS=10
+# 4k Mi Monitor resolution: 3360 x 1890
+fRtspScreenRes=
 # Samba Server | 1: Start samba server 2: Start samba server and reset password
 fSambaServerFlag=
 # Constants
@@ -118,6 +121,7 @@ RTSP Options:
     --rtsp-kill                     Kill all running mpv instances
     --rtsp-stream <stream>          Specify stream name (default: ${fRtspStream})
     --rtsp-ip <ip>                  Specify RTSP server IP (default: ${fRtspSrvIp})
+    --rtsp-resolution <WxH>        Set screen resolution for tiling (e.g. 3360x1890)
 
 OpenGrok Options:
     --opengrok,--opengrok-start     Start OpenGrok Docker container
@@ -210,7 +214,7 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-multi,rtsp-kill,rtsp-stream:,rtsp-ip:,check-tls::,swap::,gdm,text,ai"
+          git-lfs,rtsp,rtsp-multi,rtsp-kill,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -280,6 +284,10 @@ while true; do
             ;;
         --rtsp-ip)
             fRtspSrvIp="$2"
+            shift 2
+            ;;
+        --rtsp-resolution)
+            fRtspScreenRes="${2//x/ }"
             shift 2
             ;;
         --samba)
@@ -2784,8 +2792,98 @@ getSupportedRtspStreams() {
 }
 
 killRtspStreams() {
+    if ! pgrep -x mpv &> /dev/null; then
+        echo -e "${LIGHTYELLOW}No mpv instances running.${RESET}"
+        return 0
+    fi
     echo -e "${COLOR}Killing all mpv instances.${RESET}"
     pkill mpv
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Error: Failed to kill mpv instances.${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} All mpv instances killed.${RESET}"
+    return 0
+}
+
+# Auto-detect screen resolution. On multi-monitor macOS, prefers the largest
+# external display (has "UI Looks like" in system_profiler output).
+# Falls back to the largest of any display.
+# Outputs: "width height total_monitors external_monitors" or empty on failure.
+getScreenResolution() {
+    local best_w=0 best_h=0 best_area=0 total=0 external=0
+    if [[ "$(uname)" == "Darwin" ]]; then
+        local profiler
+        profiler=$(system_profiler SPDisplaysDataType 2>/dev/null)
+        total=$(echo "$profiler" | grep -c 'Resolution:')
+        external=$(echo "$profiler" | grep -c 'UI Looks like')
+        # External monitors: grab native Resolution preceding "UI Looks like"
+        while IFS=' ' read -r w h; do
+            local area=$(( w * h ))
+            if (( area > best_area )); then
+                best_w=$w best_h=$h best_area=$area
+            fi
+        done < <(echo "$profiler" \
+            | awk '/Resolution:/{w=$2; h=$4} /UI Looks like/{print w, h}')
+        # Fallback: any Resolution line if no external found
+        if (( best_area == 0 )); then
+            while IFS=' ' read -r w h; do
+                local area=$(( w * h ))
+                if (( area > best_area )); then
+                    best_w=$w best_h=$h best_area=$area
+                fi
+            done < <(echo "$profiler" | awk '/Resolution:/{print $2, $4}')
+        fi
+    else
+        while IFS=' ' read -r w h; do
+            local area=$(( w * h ))
+            if (( area > best_area )); then
+                best_w=$w best_h=$h best_area=$area
+            fi
+            (( total++ ))
+        done < <(xdpyinfo 2>/dev/null \
+            | awk '/dimensions:/{split($2,a,"x"); print a[1], a[2]}')
+    fi
+    (( best_area > 0 )) && echo "$best_w $best_h $total $external"
+}
+
+# Pixel-perfect tiling geometry for mpv windows.
+# Args: $1=tile index, $2=total tiles, $3=screen width, $4=screen height
+# Distributes pixels evenly so tiles differ by at most 1px — zero gaps, zero overlaps.
+computeTileGeometryPixel() {
+    local idx=$1 total=$2 sw=$3 sh=$4
+    local cols
+    cols=$(echo "sqrt($total)" | bc -l)
+    cols=$(printf '%.0f' "$cols")
+    (( cols * cols < total )) && (( cols++ ))
+    local rows=$(( (total + cols - 1) / cols ))
+    local col=$(( idx % cols ))
+    local row=$(( idx / cols ))
+    local x=$(( col * sw / cols ))
+    local y=$(( row * sh / rows ))
+    local w=$(( (col + 1) * sw / cols - x ))
+    local h=$(( (row + 1) * sh / rows - y ))
+    echo "${w}x${h}+${x}+${y}"
+}
+
+# Percentage-based tiling fallback when screen resolution is unknown.
+# Args: $1=tile index, $2=total tiles
+# mpv percentage offsets are relative to (screen - window), not screen.
+computeTileGeometryPercent() {
+    local idx=$1 total=$2
+    local cols
+    cols=$(echo "sqrt($total)" | bc -l)
+    cols=$(printf '%.0f' "$cols")
+    (( cols * cols < total )) && (( cols++ ))
+    local rows=$(( (total + cols - 1) / cols ))
+    local w=$(( 100 / cols ))
+    local h=$(( 100 / rows ))
+    local col=$(( idx % cols ))
+    local row=$(( idx / cols ))
+    local x=0 y=0
+    (( cols > 1 )) && x=$(( col * 100 / (cols - 1) ))
+    (( rows > 1 )) && y=$(( row * 100 / (rows - 1) ))
+    echo "${w}%x${h}%+${x}%+${y}%"
 }
 
 playRtspStream() {
@@ -2807,21 +2905,64 @@ playRtspStream() {
         --rtsp-transport=tcp
         --video-sync=desync
         --audio-buffer=0
+        --really-quiet
     )
 
-    # --geometry=W%xH%{+|-}X{+|-}Y : W%xH% sets window size as % of screen.
-    #   +X/+Y offsets from left/top edge (window expands right/down);
-    #   -X/-Y offsets from right/bottom edge (window expands left/up).
+    local screen_res
+    if [[ -n "$fRtspScreenRes" ]]; then
+        screen_res="$fRtspScreenRes"
+        echo -e "${GREY}Screen resolution: ${screen_res// /x} (manual)${RESET}"
+    else
+        screen_res=$(getScreenResolution)
+        if [[ -n "$screen_res" ]]; then
+            local _sw _sh _total _ext
+            read -r _sw _sh _total _ext <<< "$screen_res"
+            screen_res="$_sw $_sh"
+            local monitor_info="${_total} monitor(s)"
+            (( _ext > 0 )) && monitor_info+=", ${_ext} external"
+            echo -e "${GREY}Detected ${monitor_info}: ${_sw}x${_sh} (pixel mode)${RESET}"
+        else
+            echo -e "${LIGHTYELLOW}Screen resolution not detected, falling back to percentage mode.${RESET}"
+            echo -e "${GREY}Tip: use ${BLUE}--rtsp-resolution <WxH>${GREY} to set manually.${RESET}"
+        fi
+    fi
+
+    # Auto-fit tiling: cols=ceil(sqrt(N)), rows=ceil(N/cols), row-major order.
+    # Uses pixel geometry when screen resolution is known, otherwise falls back to percentage.
     if [ -n "$fRtspMulti" ]; then
+        if pgrep -x mpv &> /dev/null; then
+            echo -e "${RED}Error: mpv is already running. Kill existing instances first (${LIGHTYELLOW}jc --rtsp-kill${RED}).${RESET}"
+            return 1
+        fi
         local streams
         read -ra streams <<< "$(getSupportedRtspStreams)"
+        local count=${#streams[@]}
+        if (( count > MAX_RTSP_STREAMS )); then
+            echo -e "${RED}Error: too many streams (${count}). Max supported: ${MAX_RTSP_STREAMS}.${RESET}"
+            return 1
+        fi
+        local use_pixel= sw sh
+        if [[ -n "$screen_res" ]]; then
+            read -r sw sh <<< "$screen_res"
+            [[ -n "$sw" && -n "$sh" ]] && use_pixel=1
+        fi
         args+=(--no-border --ontop)
-        echo -e "${COLOR}Playing ${#streams[@]} RTSP streams in tiled layout${RESET}"
-        # Left half: 50% width, full height, flush to left edge
-        mpv "rtsp://${server}:8554/${streams[0]}" "${args[@]}" --geometry=50%x100%+0+0 &
-        # Right half: 50% width, full height, flush to right edge
-        mpv "rtsp://${server}:8554/${streams[1]}" "${args[@]}" --geometry=50%x100%-0+0 &
-        echo -e "${LIGHTYELLOW}Multi-stream monitoring started. To stop: ${BLUE}pkill mpv${RESET}"
+        if [[ -n "$use_pixel" ]]; then
+            echo -e "${COLOR}Playing ${count} RTSP streams in auto-fit tiled layout (${sw}x${sh} pixel)${RESET}"
+        else
+            echo -e "${COLOR}Playing ${count} RTSP streams in auto-fit tiled layout (percentage)${RESET}"
+        fi
+        for i in "${!streams[@]}"; do
+            local geom audio_flag=()
+            if [[ -n "$use_pixel" ]]; then
+                geom=$(computeTileGeometryPixel "$i" "$count" "$sw" "$sh")
+            else
+                geom=$(computeTileGeometryPercent "$i" "$count")
+            fi
+            (( i > 0 )) && audio_flag=(--no-audio)
+            mpv "rtsp://${server}:8554/${streams[$i]}" "${args[@]}" "${audio_flag[@]}" --geometry="$geom" &
+        done
+        echo -e "${BLUE}Multi-stream monitoring started. To stop: ${LIGHTYELLOW}pkill mpv${RESET}"
     else
         local url="rtsp://${server}:8554/${fRtspStream}"
         echo -e "${COLOR}Playing RTSP stream: ${BLUE}${url}${RESET}"
