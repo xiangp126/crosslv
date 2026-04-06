@@ -13,7 +13,7 @@ _jc_complete() {
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs \
                --check-tls --swap --gdm --text --ai \
-               --rtsp --rtsp-stream --rtsp-ip"
+               --rtsp --rtsp-multi --rtsp-kill --rtsp-stream --rtsp-ip"
 
     case "${prev}" in
         --vnclock)

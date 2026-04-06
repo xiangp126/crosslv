@@ -46,6 +46,8 @@ fChinesePinyinForce=
 fSwapReq=
 # RTSP Stream Playback
 fRtspFlag=
+fRtspMulti=
+fRtspKill=
 fRtspSrvIp=192.168.10.240
 fRtspStream=c700_01_raw
 # Samba Server | 1: Start samba server 2: Start samba server and reset password
@@ -111,6 +113,8 @@ Vnc Lock Options:
 
 RTSP Options:
     --rtsp                          Play RTSP stream with mpv (low-latency)
+    --rtsp-multi                    Play multiple RTSP streams in tiled layout
+    --rtsp-kill                     Kill all running mpv instances
     --rtsp-stream <stream>          Specify stream name (default: ${fRtspStream})
     --rtsp-ip <ip>                  Specify RTSP server IP (default: ${fRtspSrvIp})
 
@@ -205,7 +209,7 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-stream:,rtsp-ip:,check-tls::,swap::,gdm,text,ai"
+          git-lfs,rtsp,rtsp-multi,rtsp-kill,rtsp-stream:,rtsp-ip:,check-tls::,swap::,gdm,text,ai"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -257,6 +261,15 @@ while true; do
             ;;
         --rtsp)
             fRtspFlag=1
+            shift
+            ;;
+        --rtsp-multi)
+            fRtspFlag=1
+            fRtspMulti=1
+            shift
+            ;;
+        --rtsp-kill)
+            fRtspKill=1
             shift
             ;;
         --rtsp-stream)
@@ -2773,8 +2786,6 @@ playRtspStream() {
     fi
 
     local server="$fRtspSrvIp"
-    local stream="$fRtspStream"
-    local url="rtsp://${server}:8554/${stream}"
     local args=(
         --profile=low-latency
         --hwdec=videotoolbox
@@ -2788,15 +2799,28 @@ playRtspStream() {
         --audio-buffer=0
     )
 
-    echo -e "${COLOR}Playing RTSP stream: ${BLUE}${url}${RESET}"
-    echo -e "${COLOR}Executing:${RESET} mpv \"${url}\" ${args[*]}${RESET}"
-    mpv "$url" "${args[@]}"
+    if [ -n "$fRtspMulti" ]; then
+        local streams=("c700_01_raw" "c700_02_raw")
+        args+=(--no-border --ontop)
+        echo -e "${COLOR}Playing ${#streams[@]} RTSP streams in tiled layout${RESET}"
+        # Top-left (+38 vertical offset to avoid macOS notch)
+        mpv "rtsp://${server}:8554/${streams[0]}" "${args[@]}" --geometry=50%x100%+0+0 &
+        # Right half
+        mpv "rtsp://${server}:8554/${streams[1]}" "${args[@]}" --geometry=50%x100%+100%+0 &
+        echo -e "${LIGHTYELLOW}Multi-stream monitoring started. To stop: ${BLUE}pkill mpv${RESET}"
+    else
+        local url="rtsp://${server}:8554/${fRtspStream}"
+        echo -e "${COLOR}Playing RTSP stream: ${BLUE}${url}${RESET}"
+        echo -e "${COLOR}Executing:${RESET} mpv \"${url}\" ${args[*]}${RESET}"
+        mpv "$url" "${args[@]}"
+    fi
 }
 
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     [ -n "$fDisplayMode" ]         && { switchDisplayMode "$fDisplayMode"; exit 0; }
+    [ -n "$fRtspKill" ]            && { echo -e "${COLOR}Killing all mpv instances${RESET}"; pkill mpv; exit 0; }
     [ -n "$fRtspFlag" ]            && { playRtspStream; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
