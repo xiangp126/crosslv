@@ -55,7 +55,7 @@ SEPARATOR="==================================================="
 BUILD_SCRIPT="./build.sh"
 STATE_FILE=".jk_state"
 CLAUDE_MD="CLAUDE.md"
-GIT_RESET_PATHS="shared/ hca_fw_core_platform/ build.sh .clangd"
+GIT_RESET_PATHS="shared/ hca_fw_core_platform/ build.sh .clangd src/ccir/"
 
 # GOLAN supported models
 # Model to hardware device mapping (ordered by hardware generation)
@@ -1087,7 +1087,7 @@ runGitOptions() {
                 ;;
             add)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git add -u && git reset HEAD -- $GIT_RESET_PATHS${RESET}"
-                git add -u && git reset HEAD -- $GIT_RESET_PATHS
+                git add -u && git reset HEAD -- "$GIT_RESET_PATHS"
                 ;;
             commit)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git commit --amend --no-edit${RESET}"
