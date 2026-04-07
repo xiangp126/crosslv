@@ -3076,6 +3076,16 @@ playRtspStream() {
         echo -e "${COLOR}Playing RTSP stream: ${BLUE}${url}${RESET}"
         echo -e "${COLOR}Executing:${RESET} mpv \"${url}\" ${args[*]}${RESET}"
         mpv "$url" "${args[@]}" --force-media-title="${fRtspStream}" 2>/dev/null
+        local rc=$?
+        if (( rc != 0 )); then
+            echo -e "${RED}Error: mpv exited with code ${rc}.${RESET}"
+            echo -e "${GREY}Possible causes:${RESET}"
+            echo -e "${GREY}  - RTSP server not reachable at ${BLUE}${server}:8554${RESET}"
+            echo -e "${GREY}  - Stream ${BLUE}${fRtspStream}${GREY} not available on server${RESET}"
+            echo -e "${GREY}  - go2rtc not running (check: ${BLUE}curl -s http://${server}:1984/api/streams${GREY})${RESET}"
+            echo -e "${GREY}  - Run without ${BLUE}--really-quiet${GREY} for full mpv output:${RESET}"
+            echo -e "${GREY}    mpv \"${url}\" ${args[*]//--really-quiet/}${RESET}\n"
+        fi
     fi
 }
 
