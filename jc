@@ -1746,10 +1746,13 @@ installLatestRimePinyin() {
 
     echo -e "${COLOR}Checking Rime Pinyin Input Method${RESET}"
 
-    # Dispatch to macOS-specific function if on Darwin
+    # Dispatch to macOS-specific function if on Darwin (only when --chinese-pinyin)
     if [[ $(uname -s) == 'Darwin' ]]; then
-        installRimeMacOS
-        return $?
+        if [ -n "$fChinesePinyinForce" ]; then
+            installRimeMacOS
+            return $?
+        fi
+        return 0
     fi
 
     if [ -z "$fChinesePinyinForce" ]; then
