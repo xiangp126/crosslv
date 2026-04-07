@@ -2952,25 +2952,25 @@ playRtspStream() {
     #
     # Data pipeline (all tuned for zero-latency live RTSP):
     #   Network → [Stream Cache] → Demuxer → [Demuxer Buffer] → Decoder → Display
-    #                --cache=no       ↑         --demuxer-max-bytes=500KiB
+    #                --cache=no       ↑         --demuxer-max-bytes=200KiB
     #               (disabled)        |        (small queue)
     #                                 |
     #                        --demuxer-readahead-secs=0
     #                        (don't read ahead in time)
     local args=(
-        --profile=low-latency
-        --hwdec=videotoolbox
-        --cache=no
-        --demuxer-max-bytes=500KiB
-        --demuxer-readahead-secs=0
-        --demuxer-max-back-bytes=0
-        --framedrop=decoder+vo
-        --vd-lavc-threads=1
-        --vd-lavc-fast
-        --rtsp-transport=tcp
-        --video-sync=desync
-        --audio-buffer=0
-        --really-quiet
+        "--profile=low-latency"
+        "--hwdec=videotoolbox"
+        "--cache=no"
+        "--demuxer-max-bytes=200KiB"
+        "--demuxer-readahead-secs=0"
+        "--demuxer-max-back-bytes=0"
+        "--framedrop=decoder+vo"
+        "--vd-lavc-threads=1"
+        "--vd-lavc-fast"
+        "--rtsp-transport=tcp"
+        "--video-sync=desync"
+        "--audio-buffer=0"
+        "--really-quiet"
     )
 
     local screen_res
