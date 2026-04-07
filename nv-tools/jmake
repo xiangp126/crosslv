@@ -597,9 +597,9 @@ validateArguments() {
     fi
 
     # Auto-set attempt to 2 when building multiple models (unless explicitly set)
-    # if [[ ${#fModels[@]} -gt 1 && $fMaxBuildAttempt -eq 1 ]]; then
-    #     fMaxBuildAttempt=2
-    # fi
+    if [[ ${#fModels[@]} -gt 1 && $fMaxBuildAttempt -eq 1 ]]; then
+        fMaxBuildAttempt=2
+    fi
 }
 
 printBuildFlags() {
