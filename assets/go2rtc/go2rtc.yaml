@@ -1,6 +1,19 @@
 # ================================================================
 # GO2RTC - 4K Zero-Latency Configuration
 # ================================================================
+# [Usage Notes]
+# 1. Web UI: http://192.168.10.240:1984 (default: admin / password)
+# 2. RTSP URLs (if rtsp section is enabled):
+#    - 4K stream:  rtsp://admin:password@192.168.10.240:8554/cam_4k
+#    - Standard:   rtsp://admin:password@192.168.10.240:8554/cam_std
+# 3. Parameter notes:
+#    - subtype=3: locks 4K resolution
+#    - subtype=2: locks 1080P/2K resolution
+#    - #audio=pcmu: forces audio decode, fixes no-sound on some devices
+# =================================================================
+
+ffmpeg:
+  bin: "E:\\FFDownloads\\ffmpeg\\bin\\ffmpeg.exe"
 
 log:
   level: info
@@ -14,7 +27,7 @@ rtsp:
 webrtc:
   listen: ":8555"
   candidates:
-    - *.*.*.*:8555
+    - 192.168.10.240:8555
 
 # ================================================================
 # STREAM PIPELINE
@@ -36,6 +49,16 @@ streams:
   # Camera 02: ip=*.*.*.*  did=**********
   c700_01_raw: xiaomi://*********:cn@*.*.*.*?did=**********&model=chuangmi.camera.81ac1&subtype=3&stream=0
   c700_02_raw: xiaomi://*********:cn@*.*.*.*?did=**********&model=chuangmi.camera.81ac1&subtype=3&stream=0
+
+  # 2. WebRTC Output (Transcoded with Hardware Acceleration)
+  # Using #hardware forces go2rtc to find the best available encoder (NVENC)
+  # [Final Optimization]
+  # - #audio=opus: Native WebRTC audio for instant playback.
+  # - #async: Decouples FFmpeg processing to prevent buffer overflow on the server side.
+  c700_01_h264:
+    - "ffmpeg:c700_01_raw#video=h264#hardware#audio=opus#async"
+  c700_02_h264:
+    - "ffmpeg:c700_02_raw#video=h264#hardware#audio=opus#async"
 
 xiaomi:
   "*********":

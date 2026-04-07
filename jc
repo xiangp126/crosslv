@@ -2961,7 +2961,7 @@ playRtspStream() {
         "--profile=low-latency"
         "--hwdec=videotoolbox"
         "--cache=no"
-        "--demuxer-max-bytes=200KiB"
+        "--demuxer-max-bytes=500Kib"
         "--demuxer-readahead-secs=0"
         "--demuxer-max-back-bytes=0"
         "--framedrop=decoder+vo"
