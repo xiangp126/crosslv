@@ -11,6 +11,10 @@ fTKBatThemeDir=$fMainDir/assets/bat-themes
 fTKFontDir=$fMainDir/assets/fonts
 fTKFontConfigDir=$fMainDir/assets/fontconfig
 fTKClangdConfig=$fMainDir/assets/clangd/config.yaml
+fTKCursorDir=$fMainDir/assets/cursor
+fTKCursorLocalSettings=$fTKCursorDir/local.settings.json
+fTKCursorKeybindings=$fTKCursorDir/keybindings.json
+fTKCursorRemoteSettings=$fTKCursorDir/remote.settings.json
 fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/nv-tools
 fDownloads=$HOME/Downloads
@@ -25,6 +29,7 @@ fOSCategory=debian # ubuntu/debian is the default OS type
 fArch=
 fNoInstallTools=
 fCheckTlsConn=
+fCursorAction=
 # VNC server
 fVncAbbrePort=9
 fVncFullPort="590${fVncAbbrePort}"
@@ -92,6 +97,10 @@ Common Options:
     --update                        Update all packages
     --upgrade                       Upgrade all packages
     --ai                            Install AI coding tools (Claude Code, Codex)
+
+Cursor Options:
+    --cursor-backup                 Back up Cursor local, remote, and keybinding JSON files
+    --cursor-restore                Restore Cursor local, remote, and keybinding JSON files
 
 Samba Options:
     --samba                         Install and configure Samba Server
@@ -210,7 +219,7 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai"
+          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai,cursor-backup,cursor-restore"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -413,6 +422,14 @@ while true; do
             installAITools
             shift
             exit 0
+            ;;
+        --cursor-backup)
+            fCursorAction="backup"
+            shift
+            ;;
+        --cursor-restore)
+            fCursorAction="restore"
+            shift
             ;;
         -d|--debug)
             set -x
@@ -1131,6 +1148,66 @@ linkFile() {
     fi
 }
 
+# copyFile: Copies a file into a destination directory.
+#
+# It creates the destination directory if needed and uses rsync to decide
+# whether the destination needs updating, skipping files that are identical.
+#
+# Usage:
+#   copyFile <source_file> <destination_dir> [new_file_name]
+#
+# Returns:
+#   0 on successful copy.
+#   1 if the destination is already up to date.
+#   2 if the source file does not exist.
+#   3 if the copy fails.
+copyFile() {
+    local src="$1"
+    local copyPath="$2"
+    local newCopyName="$3"
+    local rsyncOutput=
+    local rsyncStatus=0
+
+    local filename=$(basename "$src")
+    local copyName=${newCopyName:-$filename}
+    local dst="$copyPath/${copyName}"
+
+    if [ ! -f "$src" ]; then
+        echo -e "${LIGHTYELLOW}Warning: ${BLUE}$src${LIGHTYELLOW} does not exist, skipping.${RESET}"
+        return 2
+    fi
+
+    if [ ! -d "$copyPath" ] && ! mkdir -p "$copyPath"; then
+        echo -e "${RED}Error: Failed to create directory ${BLUE}$copyPath${RESET}"
+        return 3
+    fi
+
+    echo -e "📄 ${LIGHTYELLOW}Copying File${RESET}"
+    echo -e "   ├─ ${GREY}Source:${RESET} ${CYAN}$src${RESET}"
+    echo -e "   └─ ${GREY}Target:${RESET} ${CYAN}$dst${RESET}"
+
+    if ! command -v rsync &> /dev/null; then
+        echo -e "   └─ ${GREY}Status:${RESET} ❌ ${RED}rsync is not installed.${RESET}"
+        return 3
+    fi
+
+    rsyncOutput=$(rsync -ci "$src" "$dst" 2>&1)
+    rsyncStatus=$?
+    if [ $rsyncStatus -eq 0 ]; then
+        if [ -z "$rsyncOutput" ]; then
+            echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Already up to date.${RESET}"
+            return 1
+        fi
+
+        echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Success!${RESET}"
+        return 0
+    fi
+
+    echo -e "   └─ ${GREY}Status:${RESET} ❌ ${RED}Failed!${RESET}"
+    [ -n "$rsyncOutput" ] && echo -e "      ${GREY}${rsyncOutput}${RESET}"
+    return 3
+}
+
 # linkFiles: Creates symbolic links for all files from a source directory to a destination directory.
 #
 # This function iterates through all files in a source directory and creates a
@@ -1391,10 +1468,128 @@ setLinuxDefaultShell() {
     fi
 }
 
+getCursorUserConfigDir() {
+    case "$(uname -s)" in
+        Darwin)
+            echo "$HOME/Library/Application Support/Cursor/User"
+            ;;
+        Linux)
+            echo "$HOME/.config/Cursor/User"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+getCursorRemoteSettingsPath() {
+    echo "$HOME/.cursor-server/data/Machine/settings.json"
+}
+
+backupCursorSettings() {
+    echo -e "${COLOR}Backing up Cursor settings${RESET}"
+
+    local cursorUserDir=
+    local remoteSettingsPath=
+    local processedCount=0
+    local failedCount=0
+    local status=0
+
+    if ! cursorUserDir=$(getCursorUserConfigDir); then
+        echo -e "${RED}Error: Unsupported OS for Cursor settings backup: $(uname -s)${RESET}"
+        return 1
+    fi
+
+    copyFile "$cursorUserDir/settings.json" "$fTKCursorDir" "local.settings.json"
+    status=$?
+    case "$status" in
+        0|1) processedCount=$((processedCount + 1)) ;;
+        3)   failedCount=$((failedCount + 1)) ;;
+    esac
+
+    copyFile "$cursorUserDir/keybindings.json" "$fTKCursorDir"
+    status=$?
+    case "$status" in
+        0|1) processedCount=$((processedCount + 1)) ;;
+        3)   failedCount=$((failedCount + 1)) ;;
+    esac
+
+    remoteSettingsPath=$(getCursorRemoteSettingsPath)
+    if [ -d "$HOME/.cursor-server" ]; then
+        copyFile "$remoteSettingsPath" "$fTKCursorDir" "remote.settings.json"
+        status=$?
+        case "$status" in
+            0|1) processedCount=$((processedCount + 1)) ;;
+            3)   failedCount=$((failedCount + 1)) ;;
+        esac
+    else
+        echo -e "${LIGHTYELLOW}Warning: Cursor Server not found, skipping remote settings backup${RESET}"
+    fi
+
+    if [ $failedCount -gt 0 ]; then
+        return 1
+    fi
+
+    if [ $processedCount -eq 0 ]; then
+        echo -e "${RED}Error: No Cursor settings files were backed up${RESET}"
+        return 1
+    fi
+}
+
+restoreCursorSettings() {
+    echo -e "${COLOR}Restoring Cursor settings${RESET}"
+
+    local cursorUserDir=
+    local remoteSettingsPath=
+    local processedCount=0
+    local failedCount=0
+    local status=0
+
+    if ! cursorUserDir=$(getCursorUserConfigDir); then
+        echo -e "${RED}Error: Unsupported OS for Cursor settings restore: $(uname -s)${RESET}"
+        return 1
+    fi
+
+    copyFile "$fTKCursorLocalSettings" "$cursorUserDir" "settings.json"
+    status=$?
+    case "$status" in
+        0|1) processedCount=$((processedCount + 1)) ;;
+        3)   failedCount=$((failedCount + 1)) ;;
+    esac
+
+    copyFile "$fTKCursorKeybindings" "$cursorUserDir"
+    status=$?
+    case "$status" in
+        0|1) processedCount=$((processedCount + 1)) ;;
+        3)   failedCount=$((failedCount + 1)) ;;
+    esac
+
+    remoteSettingsPath=$(getCursorRemoteSettingsPath)
+    if [ -d "$HOME/.cursor-server" ]; then
+        copyFile "$fTKCursorRemoteSettings" "$(dirname "$remoteSettingsPath")" "settings.json"
+        status=$?
+        case "$status" in
+            0|1) processedCount=$((processedCount + 1)) ;;
+            3)   failedCount=$((failedCount + 1)) ;;
+        esac
+    else
+        echo -e "${LIGHTYELLOW}Warning: Cursor Server not found, skipping remote settings restore${RESET}"
+    fi
+
+    if [ $failedCount -gt 0 ]; then
+        return 1
+    fi
+
+    if [ $processedCount -eq 0 ]; then
+        echo -e "${RED}Error: No Cursor settings files were restored${RESET}"
+        return 1
+    fi
+}
+
 createCursorCLISymlinks() {
     [ ! -d "$HOME/.cursor-server" ] && return
     echo -e "${COLOR}Creating Cursor CLI Symlinks${RESET}"
-    linkFile "$fMainDir/assets/cursor/code" "$HOME/.local/bin"
+    linkFile "$fTKCursorDir/code" "$HOME/.local/bin"
     linkFile "$HOME/.local/bin/code" "$HOME/.local/bin" "cursor"
 }
 
@@ -3087,6 +3282,10 @@ playRtspStream() {
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
+    case "$fCursorAction" in
+        backup)  backupCursorSettings;  exit $? ;;
+        restore) restoreCursorSettings; exit $? ;;
+    esac
     [ -n "$fDisplayMode" ]         && { switchDisplayMode "$fDisplayMode"; exit 0; }
     [ -n "$fRtspKill" ]            && { killRtspStreams; exit 0; }
     [ -n "$fRtspList" ]            && { listRtspStreams; exit 0; }
