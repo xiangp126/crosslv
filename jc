@@ -53,10 +53,8 @@ fRtspFilter=
 fRtspSrvIp=192.168.10.240
 fRtspStream=
 MAX_RTSP_STREAMS=10
-# Exp: 4k Mi Monitor resolution 3360 x 1890
-fRtspScreenRes=
-# Samba Server | 1: Start samba server 2: Start samba server and reset password
-fSambaServerFlag=
+fRtspScreenRes=   # Exp: 4k Mi Monitor resolution 3360 x 1890
+fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset password
 # Constants
 SCRIPT_NAME=$(basename $0)
 # Colors
@@ -126,12 +124,6 @@ RTSP Options:
     --rtsp-stream <stream>          Specify stream name (default: first from go2rtc)
     --rtsp-ip <ip>                  Specify RTSP server IP (default: ${fRtspSrvIp})
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
-
-OpenGrok Options:
-    --opengrok,--opengrok-start     Start OpenGrok Docker container
-    --opengrok-stop                 Stop OpenGrok Docker container
-    --opengrok-restart              Restart OpenGrok Docker container
-    --opengrok-indexer              Start OpenGrok indexer
 
 The following options force updates or re-installation (installed by default):
     --nvm                           Force update NVM
