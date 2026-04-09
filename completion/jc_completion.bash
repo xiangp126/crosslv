@@ -13,6 +13,7 @@ _jc_complete() {
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs \
                --check-tls --swap --gdm --text --ai --cursor-backup --cursor-restore \
+               --singbox \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-h264 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"
 

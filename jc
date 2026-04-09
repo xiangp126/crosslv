@@ -60,6 +60,16 @@ fRtspStream=
 MAX_RTSP_STREAMS=10
 fRtspScreenRes=   # Exp: 4k Mi Monitor resolution 3360 x 1890
 fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset password
+# SSH Tunnel (autossh port forward over VPN)
+fSshTunnelRemoteIp=10.228.132.85
+fSshTunnelRemotePort=57217
+fSshTunnelLocalPort=57217
+fSshTunnelAutosshPid=""
+# Singbox (sing-box proxy)
+fSingbox=
+fSingboxConfig="$HOME/Documents/sing-box-config.json"
+fSingboxMonitorPid=""
+fSingboxCleaning=0
 # Constants
 SCRIPT_NAME=$(basename $0)
 # Colors
@@ -133,6 +143,9 @@ RTSP Options:
     --rtsp-stream <stream>          Specify stream name (default: first from go2rtc)
     --rtsp-ip <ip>                  Specify RTSP server IP (default: ${fRtspSrvIp})
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
+
+Singbox Options:
+    --singbox                       Launch sing-box proxy via SSH tunnel over VPN
 
 The following options force updates or re-installation (installed by default):
     --nvm                           Force update NVM
@@ -219,7 +232,7 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai,cursor-backup,cursor-restore"
+          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai,cursor-backup,cursor-restore,singbox"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -429,6 +442,10 @@ while true; do
             ;;
         --cursor-restore)
             fCursorAction="restore"
+            shift
+            ;;
+        --singbox)
+            fSingbox=1
             shift
             ;;
         -d|--debug)
@@ -3279,6 +3296,136 @@ playRtspStream() {
     fi
 }
 
+detectVpnInterface() {
+    local iface
+    for iface in $(ifconfig -l); do
+        case "$iface" in
+            utun*)
+                if ifconfig "$iface" 2>/dev/null | grep -q 'inet '; then
+                    echo "$iface"
+                    return 0
+                fi
+                ;;
+        esac
+    done
+    return 1
+}
+
+isSshTunnelAlive() {
+    nc -z 127.0.0.1 "$fSshTunnelLocalPort" >/dev/null 2>&1
+}
+
+stopSshTunnel() {
+    if [ -n "$fSshTunnelAutosshPid" ]; then
+        pkill -P "$fSshTunnelAutosshPid" 2>/dev/null || true
+        kill "$fSshTunnelAutosshPid" 2>/dev/null || true
+    fi
+    pkill -f "autossh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" 2>/dev/null || true
+}
+
+startSshTunnel() {
+    echo -e "${COLOR}Establishing SSH Port Forward over VPN${RESET}"
+    local sshTarget="${USER}@${fSshTunnelRemoteIp}"
+
+    if isSshTunnelAlive; then
+        echo -e "${GREEN}✔${GREY} Forward already active on 127.0.0.1:${fSshTunnelLocalPort}.${RESET}"
+        return 0
+    fi
+
+    # Detect VPN interface
+    echo -e "${LIGHTYELLOW}Detecting VPN interface...${RESET}"
+    local vpnInterface
+    vpnInterface="$(detectVpnInterface)" || {
+        echo -e "${RED}Error: No utun* interface with an IPv4 address found.${RESET}"
+        return 1
+    }
+    local vpnIp
+    vpnIp="$(ifconfig "$vpnInterface" | awk '/inet / {print $2}')"
+    echo -e "${GREEN}✔${GREY} Found VPN interface: ${vpnInterface} (${vpnIp})${RESET}"
+
+    # Verify remote is reachable through VPN
+    echo -e "${LIGHTYELLOW}Verifying VPN connectivity...${RESET}"
+    if ! nc -z -G 2 "$fSshTunnelRemoteIp" 22 >/dev/null 2>&1; then
+        echo -e "${RED}Error: Cannot reach ${fSshTunnelRemoteIp}:22 via VPN.${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} Remote SSH reachable via VPN.${RESET}"
+
+    # Establish SSH port forward via autossh
+    echo -e "${LIGHTYELLOW}Setting up SSH port forward (${fSshTunnelLocalPort} → ${fSshTunnelRemoteIp}:${fSshTunnelRemotePort})...${RESET}"
+    autossh -M 0 -f -N \
+        -L "${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" \
+        "$sshTarget" \
+        -o "ServerAliveInterval 30" \
+        -o "ServerAliveCountMax 3" \
+        -o "ExitOnForwardFailure yes"
+    sleep 2
+    if ! isSshTunnelAlive; then
+        echo -e "${RED}Error: Forward failed, port ${fSshTunnelLocalPort} not listening.${RESET}"
+        return 1
+    fi
+    fSshTunnelAutosshPid="$(pgrep -n -f "autossh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" || true)"
+    echo -e "${GREEN}✔${GREY} Forward established.${RESET}"
+}
+
+cleanupSingbox() {
+    [ "$fSingboxCleaning" -eq 1 ] && return
+    fSingboxCleaning=1
+    echo -e "\n${LIGHTYELLOW}Cleaning up sing-box...${RESET}"
+    [ -n "$fSingboxMonitorPid" ] && kill "$fSingboxMonitorPid" 2>/dev/null || true
+    sudo pkill -x sing-box 2>/dev/null || true
+    stopSshTunnel
+    echo -e "${GREEN}✔${GREY} sing-box exited cleanly.${RESET}"
+}
+
+launchSingbox() {
+    echo -e "${COLOR}Launching sing-box${RESET}"
+
+    if ! command -v sing-box &>/dev/null; then
+        echo -e "${RED}Error: sing-box is not installed.${RESET}"
+        return 1
+    fi
+
+    if pgrep -x sing-box >/dev/null 2>&1; then
+        echo -e "${LIGHTYELLOW}sing-box is already running.${RESET}"
+        return 0
+    fi
+
+    startSshTunnel || return 1
+
+    trap cleanupSingbox SIGINT SIGTERM
+
+    # Background monitor: stops sing-box if VPN or forward drops
+    local vpnInterface
+    vpnInterface="$(detectVpnInterface)" || {
+        echo -e "${RED}Error: No utun* interface with an IPv4 address found.${RESET}"
+        return 1
+    }
+    echo -e "${LIGHTYELLOW}Starting background monitor...${RESET}"
+    (
+        while true; do
+            if ! ifconfig "$vpnInterface" 2>/dev/null | grep -q 'inet '; then
+                echo -e "\n${RED}VPN disconnected, stopping sing-box.${RESET}"
+                sudo pkill -x sing-box 2>/dev/null || true
+                break
+            fi
+            if ! isSshTunnelAlive; then
+                echo -e "\n${RED}**** SSH forward lost, stopping sing-box. ****${RESET}"
+                sudo pkill -x sing-box 2>/dev/null || true
+                break
+            fi
+            sleep 5
+        done
+    ) &
+    fSingboxMonitorPid=$!
+
+    # Run sing-box in foreground (Ctrl+C to quit)
+    echo -e "${LIGHTYELLOW}Starting sing-box (Ctrl+C to quit)...${RESET}"
+    sudo sing-box run -c "$fSingboxConfig"
+
+    cleanupSingbox
+}
+
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
@@ -3291,6 +3438,7 @@ doEarlyExitJobs() {
     [ -n "$fRtspList" ]            && { listRtspStreams; exit 0; }
     [ -n "$fRtspFlag" ]            && { playRtspStream; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
+    [ -n "$fSingbox" ]             && { launchSingbox; exit $?; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
     [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
     case "$fVncServer" in
