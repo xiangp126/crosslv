@@ -70,7 +70,9 @@ _jmake_complete() {
                --git-clean --clean-submodule --build --bear --debug \
                --attempt --no-verbose --nicx --list --list-extended --link --models \
                --skip --scratch --track --patch --ethlt --codecov --cov \
-               --fetch --push --rebase --add --commit --amend --stat --diff --show"
+               --fetch --push --rebase --add --commit --amend --stat --df --diff --show \
+               --burn --device --mlxreset --mft-install --ofed-start --ofed-stop \
+               --power-cycle"
 
     # Handle option arguments
     case $prev in
@@ -95,6 +97,13 @@ _jmake_complete() {
             # Multi-model completion with comma separation (e.g., mustang,gilboa,argaman)
             compopt -o nospace  # Don't add space after completion, allow user to type comma
             _jmake_complete_models
+            return 0
+            ;;
+        --device)
+            # Suggest MST device paths from /dev/mst/ if available
+            if [[ -d /dev/mst ]]; then
+                COMPREPLY=( $(compgen -W "$(ls /dev/mst/*pciconf* 2>/dev/null)" -- "$cur") )
+            fi
             return 0
             ;;
     esac

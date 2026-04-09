@@ -30,6 +30,14 @@ fEthlt=
 fCodecov=
 fCov=
 fScratch=
+# MFT (Mellanox Firmware Tools) & OFED options
+fBurn=
+fMlxReset=
+fDevice=
+fMftInstall=
+fOfedStart=
+fOfedStop=
+fPowerCycle=
 fInputCmd=
 fBuildTimeFormatted=
 # Git associated variables
@@ -68,6 +76,18 @@ declare -A MODEL_HARDWARE=(
     [gilboa]="CX8"
     [argaman]="CX9"
     [alpine]="CX10"
+)
+
+# Model to .mlx firmware image filename mapping (from Makefile.exe)
+declare -A MODEL_MLX_FILE=(
+    [arava]="fw-ConnectX6Dx.mlx"
+    [tamar]="fw-ConnectX6Lx.mlx"
+    [viper]="fw-BlueField-2.mlx"
+    [mustang]="fw-BlueField-3.mlx"
+    [carmel]="fw-ConnectX7.mlx"
+    [gilboa]="fw-ConnectX8.mlx"
+    [argaman]="fw-ConnectX9.mlx"
+    [alpine]="fw-ConnectX10.mlx"
 )
 
 # GOLAN supported models (same order as MODEL_HARDWARE)
@@ -238,6 +258,15 @@ Build Options:
     -N, --nicx                  Build with NICX=1 flag
         --track                 Build with -D TRACK_INCLUDES=1
 
+MFT Options (Mellanox Firmware Tools):
+        --burn                      Burn FW image to device (requires --device, uses -m model)
+        --device <mst_device>       MST device path (e.g. /dev/mst/mt4133_pciconf0)
+        --mlxreset                  Reset FW on device after burn (requires --device)
+        --mft-install               Install MFT (Mellanox Firmware Tools)
+        --ofed-start                Start OFED driver (sudo /etc/init.d/openibd start)
+        --ofed-stop                 Stop OFED driver (sudo /etc/init.d/openibd stop)
+        --power-cycle <server>      Power cycle a server via IPMI (e.g. m-fwdev-167)
+
 Git Options (require current dir to be a git repo, can be combined in cascade):
         --fetch                 git fetch origin master_rc
         --rebase                git rebase origin/master_rc
@@ -246,7 +275,7 @@ Git Options (require current dir to be a git repo, can be combined in cascade):
         --edit                  git commit --amend
         --push                  git push origin HEAD:refs/for/master_rc
         --stat                  git diff --stat
-        --diff                  git diff include/ src/
+        --df, --diff            git diff include/ src/
         --show                  git show HEAD
         --git-clean             Deep clean using git clean -fdx (preserves submodules)
         --clean-submodule       Deinit all submodules (git submodule deinit --all -f)
@@ -271,6 +300,8 @@ Examples:
     $SCRIPT_NAME --no-verbose -o              # Build with quiet mode
     $SCRIPT_NAME --bear --models gilboa       # Build gilboa with $fCompileCommandsJson
     $SCRIPT_NAME --fetch --rebase             # Fetch then rebase (cascade)
+    $SCRIPT_NAME --burn --device /dev/mst/mt4133_pciconf0 -m argaman   # Burn argaman FW to device
+    $SCRIPT_NAME --burn --mlxreset --device /dev/mst/mt4133_pciconf0   # Burn and reset FW
 
 _EOF
     exit 0
@@ -292,7 +323,8 @@ SHORTOPTS="hcoaAj:w:Dlbm:NpT:"
 LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
 jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
 all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
-scratch,track,fetch,push,rebase,add,commit,amend,stat,show,diff"
+scratch,track,fetch,push,rebase,add,commit,amend,stat,show,df,diff,\
+burn,device:,mlxreset,mft-install,ofed-start,ofed-stop,power-cycle:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -475,7 +507,7 @@ while true; do
             fGitCmds+=("stat")
             shift
             ;;
-        --diff)
+        --df|--diff)
             fGitCmds+=("diff")
             shift
             ;;
@@ -486,6 +518,34 @@ while true; do
         --clean-submodule)
             fGitCmds+=("clean-submodule")
             shift
+            ;;
+        --burn)
+            fBurn=true
+            shift
+            ;;
+        --device)
+            fDevice="$2"
+            shift 2
+            ;;
+        --mlxreset)
+            fMlxReset=true
+            shift
+            ;;
+        --mft-install)
+            fMftInstall=true
+            shift
+            ;;
+        --ofed-start)
+            fOfedStart=true
+            shift
+            ;;
+        --ofed-stop)
+            fOfedStop=true
+            shift
+            ;;
+        --power-cycle)
+            fPowerCycle="$2"
+            shift 2
             ;;
         --)
             shift
@@ -555,7 +615,7 @@ searchBuildModel() {
 }
 
 preConfigure() {
-    [ -n "$fClean" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] || [ -n "$fLinkWorkspace" ] && fPrintBuildFlags=true
+    [ -n "$fClean" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] || [ -n "$fLinkWorkspace" ] || [ -n "$fBurn" ] || [ -n "$fMlxReset" ] || [ -n "$fMftInstall" ] || [ -n "$fOfedStart" ] || [ -n "$fOfedStop" ] || [ -n "$fPowerCycle" ] && fPrintBuildFlags=true
     [ -z "$fPrintBuildFlags" ] && return
 
     fWorkingDir=$(realpath "$fWorkingDir")
@@ -596,6 +656,21 @@ validateArguments() {
         exit 1
     fi
 
+    if [[ -n "$fBurn" && -z "$fDevice" ]]; then
+        echo -e "$NOTATION ${RED}Error: --burn requires --device <mst_device>${RESET}"
+        exit 1
+    fi
+
+    if [[ -n "$fMlxReset" && -z "$fDevice" ]]; then
+        echo -e "$NOTATION ${RED}Error: --mlxreset requires --device <mst_device>${RESET}"
+        exit 1
+    fi
+
+    if [[ -n "$fBurn" && ${#fModels[@]} -gt 1 ]]; then
+        echo -e "$NOTATION ${RED}Error: --burn does not support multiple models (loop mode)${RESET}"
+        exit 1
+    fi
+
     # Auto-set attempt to 2 when building multiple models (unless explicitly set)
     if [[ ${#fModels[@]} -gt 1 && $fMaxBuildAttempt -eq 1 ]]; then
         fMaxBuildAttempt=2
@@ -619,6 +694,13 @@ printBuildFlags() {
         [ -n "$fCodecov" ]               && echo -e "[K] ${COLOR}Codecov${RESET} variant (_codecov)"
         [ -n "$fCov" ]                   && echo -e "[O] ${COLOR}Cov${RESET} variant (cov)"
         [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, ~/.claude/$CLAUDE_MD)"
+        [ -n "$fBurn" ]                  && echo -e "[B] ${COLOR}Burn${RESET} FW image to device"
+        [ -n "$fMlxReset" ]              && echo -e "[R] ${COLOR}Reset${RESET} FW on device (mlxfwreset)"
+        [ -n "$fDevice" ]                && echo -e "[d] ${COLOR}Device:${RESET} $fDevice"
+        [ -n "$fMftInstall" ]            && echo -e "[M] ${COLOR}MFT Install${RESET}"
+        [ -n "$fOfedStart" ]             && echo -e "[^] ${COLOR}OFED Start${RESET}"
+        [ -n "$fOfedStop" ]              && echo -e "[v] ${COLOR}OFED Stop${RESET}"
+        [ -n "$fPowerCycle" ]            && echo -e "[⏻] ${COLOR}Power Cycle:${RESET} $fPowerCycle"
     fi
 
     if [ -n "$fNeedBuild" ]; then
@@ -1129,7 +1211,236 @@ runGitOptions() {
 
     [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${GREEN}Congratulations! All $gitCmdCount git commands completed successfully.${RESET}"
     # If only git options were given (no build), exit after completing them
-    [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkWorkspace" ]] && exit 0
+    [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkWorkspace" && -z "$fBurn" && -z "$fMlxReset" && -z "$fMftInstall" && -z "$fOfedStart" && -z "$fOfedStop" && -z "$fPowerCycle" ]] && exit 0
+}
+
+runMftInstall() {
+    [[ -z "$fMftInstall" ]] && return
+    local installScript="/mswg/release/mft/last_stable/install.sh"
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Installing MFT...${RESET}"
+    if [[ ! -f "$installScript" ]]; then
+        echo -e "$NOTATION ${RED}Error: MFT install script not found: ${YELLOW}$installScript${RESET}"
+        exit 1
+    fi
+    local cmd="sudo $installScript"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: MFT installation failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ MFT installed successfully${RESET}"
+    echo "$SEPARATOR"
+}
+
+runOfedStart() {
+    [[ -z "$fOfedStart" ]] && return
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Starting OFED driver...${RESET}"
+    local cmd="sudo /etc/init.d/openibd start"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: OFED start failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ OFED driver started${RESET}"
+    echo "$SEPARATOR"
+}
+
+runOfedStop() {
+    [[ -z "$fOfedStop" ]] && return
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Stopping OFED driver...${RESET}"
+    local cmd="sudo /etc/init.d/openibd stop"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: OFED stop failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ OFED driver stopped${RESET}"
+    echo "$SEPARATOR"
+}
+
+runPowerCycle() {
+    [[ -z "$fPowerCycle" ]] && return
+    local server="$fPowerCycle"
+    local ipmiCmd="ipmi_command.sh"
+    local sleepSec=20
+
+    if ! command -v "$ipmiCmd" &>/dev/null; then
+        echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}$ipmiCmd${RESET}"
+        exit 1
+    fi
+
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${BOLD}Power Cycling ${CYAN}$server${RESET}"
+    echo "$SEPARATOR"
+
+    echo -e "$NOTATION ${CYAN}Powering off...${RESET}"
+    echo -e "$NOTATION Running: ${YELLOW}$ipmiCmd $server off${RESET}"
+    $ipmiCmd "$server" off
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: IPMI power off failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Power off sent${RESET}"
+
+    echo -e "$NOTATION ${CYAN}Waiting ${sleepSec}s for shutdown...${RESET}"
+    sleep "$sleepSec"
+
+    echo -e "$NOTATION ${CYAN}Powering on...${RESET}"
+    echo -e "$NOTATION Running: ${YELLOW}$ipmiCmd $server on${RESET}"
+    $ipmiCmd "$server" on
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: IPMI power on failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Power cycle completed for $server${RESET}"
+    echo "$SEPARATOR"
+}
+
+runBurn() {
+    [[ -z "$fBurn" ]] && return
+    cd "$fWorkingDir" || exit 1
+
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${BOLD}Burn Workflow${RESET}"
+    echo "$SEPARATOR"
+
+    # Preflight: verify required tools are available
+    local missingTools=()
+    for tool in mst flint mlxburn; do
+        command -v "$tool" &>/dev/null || missingTools+=("$tool")
+    done
+    if [[ ${#missingTools[@]} -gt 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: Required tool(s) not found: ${YELLOW}${missingTools[*]}${RESET}"
+        exit 1
+    fi
+
+    # Step 1: Verify MST device via mst status
+    local mstCmd="sudo mst status -v"
+    echo -e "$NOTATION ${CYAN}Verifying MST device...${RESET}"
+    echo -e "$NOTATION Running: ${YELLOW}$mstCmd${RESET}"
+    local mstOutput
+    mstOutput=$($mstCmd 2>&1)
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: '$mstCmd' failed${RESET}"
+        echo "$mstOutput"
+        exit 1
+    fi
+    if ! echo "$mstOutput" | grep -q "$fDevice"; then
+        echo -e "$NOTATION ${RED}Error: Device ${YELLOW}$fDevice${RED} not found in mst status output${RESET}"
+        echo "$mstOutput"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Device $fDevice found${RESET}"
+
+    # Step 2: Resolve model and .mlx file
+    # Use first model from --models if specified, otherwise fBuildModel (set by preConfigure)
+    if [[ ${#fModels[@]} -eq 1 ]]; then
+        fBuildModel="${fModels[0]}"
+    fi
+    local mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
+    if [[ -z "$mlxFile" ]]; then
+        echo -e "$NOTATION ${RED}Error: No .mlx mapping for model ${YELLOW}$fBuildModel${RESET}"
+        exit 1
+    fi
+    if [[ ! -f "$mlxFile" ]]; then
+        echo -e "$NOTATION ${RED}Error: .mlx file not found: ${YELLOW}$mlxFile${RESET}"
+        echo -e "$NOTATION Have you built the model first? (jk -o -m $fBuildModel)"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Using .mlx: ${CYAN}$mlxFile${RESET}"
+
+    # Step 3: Query PSID from device
+    echo -e "$NOTATION ${CYAN}Querying PSID from device...${RESET}"
+    echo -e "$NOTATION Running: ${YELLOW}sudo flint -d $fDevice q${RESET}"
+    local flintOutput
+    flintOutput=$(sudo flint -d "$fDevice" q 2>&1)
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: flint query failed${RESET}"
+        echo "$flintOutput"
+        exit 1
+    fi
+    echo "$flintOutput"
+    local psid
+    psid=$(echo "$flintOutput" | grep "PSID:" | grep -v Orig | awk '{print $2}')
+    if [[ -z "$psid" ]]; then
+        echo -e "$NOTATION ${RED}Error: Could not extract PSID from flint output${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ PSID: ${CYAN}$psid${RESET}"
+
+    # Step 4: Find INI file matching the PSID
+    echo -e "$NOTATION ${CYAN}Looking up INI file for PSID $psid...${RESET}"
+    local iniFile
+    iniFile=$(grep -rn "$psid" prs/ 2>/dev/null | grep '\.ini:' | head -1 | awk -F: '{print $1}')
+    if [[ -z "$iniFile" || ! -f "$iniFile" ]]; then
+        echo -e "$NOTATION ${RED}Error: No INI file found for PSID ${YELLOW}$psid${RED} under prs/${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ INI: ${CYAN}$iniFile${RESET}"
+
+    # Step 5: Generate image.bin via mlxburn
+    local imageBin="image.bin"
+    echo -e "$NOTATION ${CYAN}Generating $imageBin...${RESET}"
+    local mlxburnCmd="mlxburn image -f $mlxFile -c $iniFile -o $imageBin"
+    echo -e "$NOTATION Running: ${YELLOW}$mlxburnCmd${RESET}"
+    eval "$mlxburnCmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: mlxburn image generation failed${RESET}"
+        exit 1
+    fi
+    if [[ ! -f "$imageBin" ]]; then
+        echo -e "$NOTATION ${RED}Error: $imageBin was not created${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Image generated: ${CYAN}$imageBin${RESET}"
+
+    # Step 6: Burn image to device
+    echo -e "$NOTATION ${CYAN}Burning $imageBin to $fDevice...${RESET}"
+    local flintBurnCmd="sudo flint -d $fDevice -i $imageBin b"
+    echo -e "$NOTATION Running: ${YELLOW}$flintBurnCmd${RESET}"
+    eval "$flintBurnCmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: flint burn failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Burn completed successfully${RESET}"
+    echo "$SEPARATOR"
+}
+
+runMlxReset() {
+    [[ -z "$fMlxReset" ]] && return
+
+    if ! command -v mlxfwreset &>/dev/null; then
+        echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}mlxfwreset${RESET}"
+        exit 1
+    fi
+
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Resetting FW on $fDevice...${RESET}"
+    local resetCmd="sudo mlxfwreset -d $fDevice -y r"
+    echo -e "$NOTATION Running: ${YELLOW}$resetCmd${RESET}"
+    eval "$resetCmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: mlxfwreset failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ FW reset completed. New firmware is now active.${RESET}"
+    echo "$SEPARATOR"
+}
+
+doEarlyExitJobs() {
+    [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ] && { linkWorkspaceFiles; exit 0; }
+    [ -n "$fMftInstall" ]    && { runMftInstall; exit 0; }
+    [ -n "$fOfedStop" ]      && { runOfedStop; [ -n "$fOfedStart" ] && runOfedStart; exit 0; }
+    [ -n "$fOfedStart" ]     && { runOfedStart; exit 0; }
+    [ -n "$fMlxReset" ] && [ -z "$fBurn" ] && { runMlxReset; exit 0; }
+    [ -n "$fPowerCycle" ]    && { runPowerCycle; exit 0; }
 }
 
 main() {
@@ -1137,8 +1448,7 @@ main() {
     preConfigure "$@"
     # Auto-resume from saved state if available (use --scratch to override)
     [[ ${#fModels[@]} -gt 0 ]] && loadLoopState
-    # Handle --link standalone: link and exit (skip if --bear is also specified)
-    [[ -n "$fLinkWorkspace" && -z "$fGenerateCompileCmds" ]] && { linkWorkspaceFiles; exit 0; }
+    doEarlyExitJobs
     validateArguments
     showLogo
     printBuildFlags
@@ -1153,6 +1463,8 @@ main() {
     fi
     linkWorkspaceFiles
     removeWriteFromJson
+    runBurn
+    runMlxReset
 }
 
 main "$@"
