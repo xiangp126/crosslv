@@ -17,7 +17,6 @@
     "remote.SSH.remotePlatform": {
         "remotedev": "linux"
     },
-    "remote.SSH.maxReconnectionAttempts": 3,
     "remote.SSH.connectTimeout": 20,
     "editor.inlayHints.enabled": "off",
     "editor.accessibilitySupport": "off",
@@ -493,12 +492,9 @@
     "command-runner.terminal.autoClear": false,
     "command-runner.terminal.autoFocus": true,
     "command-runner.commands": {
-        "jr": "cd ${workspaceFolder}; jr",
-        "jk": "cd ${workspaceFolder}; jr --kernel",
+        "jr": "cd ${workspaceFolder}; jr ${selectedText}",
         "jn": "cd ${workspaceFolder}; jr --no-clipboard",
-        "jm": "cd ${workspaceFolder}; jr --no-clipboard --kernel"
     },
-    "leetcode.workspaceFolder": "/home/xiangp/myGit/leetcode",
     "files.eol": "\n",
     "[shellscript]": {
         "editor.defaultFormatter": "mads-hartmann.bash-ide-vscode"
@@ -549,5 +545,5 @@
     "workbench.editor.enablePreview": false,
     "terminal.integrated.stickyScroll.enabled": false,
     "window.zoomLevel": 0.6,
-    "cursor.composer.textSizeScale": 1.15
+    "claudeCode.preferredLocation": "panel"
 }

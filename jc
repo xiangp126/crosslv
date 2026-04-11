@@ -1504,6 +1504,10 @@ getCursorRemoteSettingsPath() {
 }
 
 backupCursorSettings() {
+    if [[ $(uname -s) != 'Darwin' ]]; then
+        echo -e "${RED}Error: --cursor-backup is only supported on macOS.${RESET}"
+        return 1
+    fi
     echo -e "${COLOR}Backing up Cursor settings${RESET}"
 
     local cursorUserDir=
@@ -1554,6 +1558,10 @@ backupCursorSettings() {
 }
 
 restoreCursorSettings() {
+    if [[ $(uname -s) != 'Darwin' ]]; then
+        echo -e "${RED}Error: --cursor-restore is only supported on macOS.${RESET}"
+        return 1
+    fi
     echo -e "${COLOR}Restoring Cursor settings${RESET}"
 
     local cursorUserDir=
