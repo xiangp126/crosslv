@@ -201,15 +201,22 @@ _set_vscode_code_path() {
     fi
 
     # Step 3: Set the VSCODE_IPC_HOOK_CLI
-    # Get the most recently created vscode-ipc-*.sock file, with fallback
+    # Get the most recently created vscode-ipc-*.sock file, with bidirectional fallback
     # shellcheck disable=SC2012 disable=SC2155
+    local _run_path="/run/user/$UID"
     local newIPCHook=$(ls -t "$_code_f_sys_path"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
-    if [[ -z "$newIPCHook" && "$_code_f_sys_path" != "/tmp" ]]; then
-        newIPCHook=$(ls -t /tmp/vscode-ipc-*.sock 2>/dev/null | head -n 1)
-        [[ -n "$newIPCHook" ]] && _code_f_sys_path="/tmp"
+    if [[ -z "$newIPCHook" ]]; then
+        local _fallback
+        if [[ "$_code_f_sys_path" == "/tmp" ]]; then
+            _fallback="$_run_path"
+        else
+            _fallback="/tmp"
+        fi
+        newIPCHook=$(ls -t "$_fallback"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+        [[ -n "$newIPCHook" ]] && _code_f_sys_path="$_fallback"
     fi
     if [ -z "$newIPCHook" ]; then
-        echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $_code_f_sys_path or /tmp${RESET}" >&2
+        echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $_run_path or /tmp${RESET}" >&2
         return 1
     fi
     # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
@@ -237,7 +244,7 @@ _code_run_cmd() {
         if [[ $? -eq 0 ]]; then
             break
         else
-            _set_vscode_code_path
+            _set_vscode_code_path || break
         fi
     done
 }
