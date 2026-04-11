@@ -1,0 +1,209 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "dns-remote",
+        "server": "8.8.8.8",
+        "detour": "proxy"
+      },
+      {
+        "type": "dhcp",
+        "tag": "dns-local",
+        "interface": "en0"
+      },
+      {
+        "type": "udp",
+        "tag": "dns-vpn",
+        "server": "10.19.185.31",
+        "detour": "direct-vpn"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": "nvidia-internal",
+        "server": "dns-vpn"
+      },
+      {
+        "rule_set": "geosite-cn",
+        "server": "dns-local"
+      },
+      {
+        "domain_suffix": [
+          "anthropic.com",
+          "claude.ai",
+          "workos.com"
+        ],
+        "server": "dns-remote"
+      }
+    ],
+    "final": "dns-remote"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "utun10",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "gvisor"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "127.0.0.1",
+      "server_port": 57217,
+      "uuid": "",
+      "flow": "xtls-rprx-vision",
+      "network": [
+        "tcp",
+        "udp"
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "www.amazon.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "",
+          "short_id": ""
+        }
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct-local"
+    },
+    {
+      "type": "direct",
+      "tag": "direct-vpn",
+      "bind_interface": "utun4"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": "dns-local",
+    "rule_set": [
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+        "download_detour": "proxy"
+      },
+      {
+        "tag": "nvidia-internal",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "nvidia.com",
+              "mellanox.com",
+              "nvda.com",
+              "atlassian.net"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "company-subnets",
+        "type": "inline",
+        "rules": [
+          {
+            "ip_cidr": [
+              "10.19.174.0/22",
+              "10.19.176.0/24",
+              "10.19.177.0/24",
+              "10.19.242.0/22",
+              "10.19.244.0/24",
+              "10.19.245.0/24",
+              "10.18.128.0/21",
+              "172.29.224.0/12",
+              "172.29.240.0/21",
+              "172.29.248.0/21"
+            ]
+          }
+        ]
+      }
+    ],
+    "rules": [
+      {
+        "action": "sniff",
+        "sniffer": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        "timeout": "300ms"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "rule_set": "nvidia-internal",
+        "action": "route",
+        "outbound": "direct-vpn"
+      },
+      {
+        "rule_set": "company-subnets",
+        "action": "route",
+        "outbound": "direct-vpn"
+      },
+      {
+        "domain_suffix": [
+          "google.com",
+          "googleapis.com",
+          "gstatic.com",
+          "googlevideo.com",
+          "youtube.com",
+          "ytimg.com",
+          "ggpht.com",
+          "google.co.il"
+        ],
+        "action": "route",
+        "outbound": "proxy"
+      },
+      {
+        "rule_set": "geosite-cn",
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      {
+        "domain_suffix": [
+          "anthropic.com",
+          "claude.ai",
+          "workos.com"
+        ],
+        "action": "route",
+        "outbound": "proxy"
+      },
+      {
+        "action": "route",
+        "outbound": "proxy"
+      }
+    ]
+  }
+}
