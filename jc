@@ -70,6 +70,8 @@ fSingbox=
 fSingboxConfig="$HOME/Documents/sing-box-config.json"
 fSingboxMonitorPid=""
 fSingboxCleaning=0
+fSingboxRetryTimeout=180  # seconds to retry after VPN/tunnel drop
+fSingboxRecoveryMarker=""
 # Constants
 SCRIPT_NAME=$(basename $0)
 # Colors
@@ -3327,12 +3329,14 @@ stopSshTunnel() {
     if [ -n "$fSshTunnelAutosshPid" ]; then
         pkill -P "$fSshTunnelAutosshPid" 2>/dev/null || true
         kill "$fSshTunnelAutosshPid" 2>/dev/null || true
+        fSshTunnelAutosshPid=""
     fi
     pkill -f "autossh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" 2>/dev/null || true
+    pkill -f "ssh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" 2>/dev/null || true
 }
 
 startSshTunnel() {
-    echo -e "${COLOR}Establishing SSH Port Forward over VPN${RESET}"
+    echo -e "${LIGHTYELLOW}☞ Establishing SSH port forward over VPN...${RESET}"
     local sshTarget="${USER}@${fSshTunnelRemoteIp}"
 
     if isSshTunnelAlive; then
@@ -3341,7 +3345,7 @@ startSshTunnel() {
     fi
 
     # Detect VPN interface
-    echo -e "${LIGHTYELLOW}Detecting VPN interface...${RESET}"
+    echo -e "${LIGHTYELLOW}  🔍 Detecting VPN interface...${RESET}"
     local vpnInterface
     vpnInterface="$(detectVpnInterface)" || {
         echo -e "${RED}Error: No utun* interface with an IPv4 address found.${RESET}"
@@ -3349,10 +3353,10 @@ startSshTunnel() {
     }
     local vpnIp
     vpnIp="$(ifconfig "$vpnInterface" | awk '/inet / {print $2}')"
-    echo -e "${GREEN}✔${GREY} Found VPN interface: ${vpnInterface} (${vpnIp})${RESET}"
+    echo -e "${GREEN}  ✔${GREY} Found VPN interface: ${BLUE}${vpnInterface}${GREY} (${vpnIp})${RESET}"
 
     # Verify remote is reachable through VPN
-    echo -e "${LIGHTYELLOW}Verifying VPN connectivity...${RESET}"
+    echo -e "${LIGHTYELLOW}  🔗 Verifying VPN connectivity...${RESET}"
     if ! nc -z -G 2 "$fSshTunnelRemoteIp" 22 >/dev/null 2>&1; then
         echo -e "${RED}Error: Cannot reach ${fSshTunnelRemoteIp}:22 via VPN.${RESET}"
         return 1
@@ -3364,10 +3368,10 @@ startSshTunnel() {
     autossh -M 0 -f -N \
         -L "${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" \
         "$sshTarget" \
-        -o "ServerAliveInterval 30" \
+        -o "ServerAliveInterval 5" \
         -o "ServerAliveCountMax 3" \
         -o "ExitOnForwardFailure yes"
-    sleep 2
+    sleep 5
     if ! isSshTunnelAlive; then
         echo -e "${RED}Error: Forward failed, port ${fSshTunnelLocalPort} not listening.${RESET}"
         return 1
@@ -3379,15 +3383,56 @@ startSshTunnel() {
 cleanupSingbox() {
     [ "$fSingboxCleaning" -eq 1 ] && return
     fSingboxCleaning=1
-    echo -e "\n${LIGHTYELLOW}Cleaning up sing-box...${RESET}"
+    echo -e "\n${LIGHTYELLOW}⏻ Cleaning up sing-box...${RESET}"
     [ -n "$fSingboxMonitorPid" ] && kill "$fSingboxMonitorPid" 2>/dev/null || true
     sudo pkill -x sing-box 2>/dev/null || true
     stopSshTunnel
-    echo -e "${GREEN}✔${GREY} sing-box exited cleanly.${RESET}"
+    [ -n "$fSingboxRecoveryMarker" ] && rm -f "$fSingboxRecoveryMarker"
+    echo -e "${GREEN}✔${GREY} sing-box exited cleanly.${RESET}\n"
+}
+
+startSingboxMonitor() {
+    local vpnInterface="$1"
+    (
+        while true; do
+            if ! ifconfig "$vpnInterface" 2>/dev/null | grep -q 'inet '; then
+                echo "vpn_down" > "$fSingboxRecoveryMarker"
+                echo -e "\n${BOLD}${RED}🔴 VPN interface lost — stopping sing-box and entering recovery.${RESET}"
+                sudo pkill -x sing-box 2>/dev/null || true
+                break
+            fi
+            if ! isSshTunnelAlive; then
+                echo "tunnel_down" > "$fSingboxRecoveryMarker"
+                echo -e "\n${BOLD}${RED}🔴 SSH forward lost — stopping sing-box and entering recovery.${RESET}"
+                sudo pkill -x sing-box 2>/dev/null || true
+                break
+            fi
+            sleep 5
+        done
+    ) &
+    fSingboxMonitorPid=$!
+}
+
+waitForVpnRecovery() {
+    local deadline=$((SECONDS + fSingboxRetryTimeout))
+    echo -e "${LIGHTYELLOW}⏳ Waiting for VPN recovery (timeout ${fSingboxRetryTimeout}s)...${RESET}"
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        local remaining=$((deadline - SECONDS))
+        if detectVpnInterface >/dev/null 2>&1; then
+            if nc -z -G 2 "$fSshTunnelRemoteIp" 22 >/dev/null 2>&1; then
+                echo -e "${GREEN}🟢 VPN recovered, remote SSH reachable.${RESET}"
+                return 0
+            fi
+        fi
+        echo -e "${GREY}  ↻ VPN not ready, retrying... (${remaining}s remaining)${RESET}"
+        sleep 5
+    done
+    echo -e "${RED}Error: VPN did not recover within ${fSingboxRetryTimeout}s. Giving up.${RESET}"
+    return 1
 }
 
 launchSingbox() {
-    echo -e "${COLOR}Launching sing-box${RESET}"
+    echo -e "${COLOR}▶ Launching sing-box${RESET}"
 
     if ! command -v sing-box &>/dev/null; then
         echo -e "${RED}Error: sing-box is not installed.${RESET}"
@@ -3399,39 +3444,109 @@ launchSingbox() {
         return 0
     fi
 
-    startSshTunnel || return 1
+    trap 'cleanupSingbox; exit 0' SIGINT SIGTERM
 
-    trap cleanupSingbox SIGINT SIGTERM
+    fSingboxRecoveryMarker=$(mktemp /tmp/singbox-recovery.XXXXXX)
 
-    # Background monitor: stops sing-box if VPN or forward drops
-    local vpnInterface
-    vpnInterface="$(detectVpnInterface)" || {
-        echo -e "${RED}Error: No utun* interface with an IPv4 address found.${RESET}"
-        return 1
-    }
-    echo -e "${LIGHTYELLOW}Starting background monitor...${RESET}"
-    (
-        while true; do
-            if ! ifconfig "$vpnInterface" 2>/dev/null | grep -q 'inet '; then
-                echo -e "\n${RED}VPN disconnected, stopping sing-box.${RESET}"
-                sudo pkill -x sing-box 2>/dev/null || true
+    # Initial tunnel setup with retry
+    if ! startSshTunnel; then
+        if ! waitForVpnRecovery; then
+            cleanupSingbox
+            return 1
+        fi
+        local deadline=$((SECONDS + fSingboxRetryTimeout))
+        local tunnelOk=0
+        while [ "$SECONDS" -lt "$deadline" ]; do
+            stopSshTunnel
+            sleep 2
+            if startSshTunnel; then
+                tunnelOk=1
                 break
             fi
-            if ! isSshTunnelAlive; then
-                echo -e "\n${RED}**** SSH forward lost, stopping sing-box. ****${RESET}"
-                sudo pkill -x sing-box 2>/dev/null || true
+            local remaining=$((deadline - SECONDS))
+            echo -e "${LIGHTYELLOW}SSH tunnel setup failed, retrying... (${remaining}s remaining)${RESET}"
+            sleep 5
+            if ! waitForVpnRecovery; then
+                cleanupSingbox
+                return 1
+            fi
+        done
+        if [ "$tunnelOk" -ne 1 ]; then
+            echo -e "${RED}Error: Failed to establish SSH tunnel within ${fSingboxRetryTimeout}s.${RESET}"
+            cleanupSingbox
+            return 1
+        fi
+    fi
+
+    while true; do
+        local vpnInterface
+        vpnInterface="$(detectVpnInterface)" || {
+            echo -e "${RED}Error: No utun* interface with an IPv4 address found.${RESET}"
+            cleanupSingbox
+            return 1
+        }
+
+        # Reset marker and cleaning flag for this iteration
+        true > "$fSingboxRecoveryMarker"
+        fSingboxCleaning=0
+
+        startSingboxMonitor "$vpnInterface"
+
+        echo -e "${LIGHTYELLOW}Starting sing-box (Ctrl+C to quit)...${RESET}"
+        sudo sing-box run -c "$fSingboxConfig"
+        local singboxExit=$?
+
+        # sing-box exited — determine why
+        [ -n "$fSingboxMonitorPid" ] && kill "$fSingboxMonitorPid" 2>/dev/null || true
+        fSingboxMonitorPid=""
+
+        if [ ! -s "$fSingboxRecoveryMarker" ]; then
+            # Marker empty: user Ctrl+C or sing-box crashed on its own
+            cleanupSingbox
+            return 0
+        fi
+
+        # Monitor wrote to marker: VPN or tunnel dropped
+        local reasonCode reasonMsg
+        reasonCode=$(cat "$fSingboxRecoveryMarker")
+        case "$reasonCode" in
+            vpn_down)    reasonMsg="VPN interface lost" ;;
+            tunnel_down) reasonMsg="SSH tunnel dropped" ;;
+            *)           reasonMsg="$reasonCode" ;;
+        esac
+        echo -e "\n${LIGHTYELLOW}⟳ Recoverable failure detected: ${reasonMsg}. Attempting recovery...${RESET}"
+
+        stopSshTunnel
+
+        local deadline=$((SECONDS + fSingboxRetryTimeout))
+        local tunnelOk=0
+        while [ "$SECONDS" -lt "$deadline" ]; do
+            if ! waitForVpnRecovery; then
+                cleanupSingbox
+                return 1
+            fi
+
+            # VPN is back — try to re-establish tunnel
+            stopSshTunnel
+            sleep 2
+            if startSshTunnel; then
+                tunnelOk=1
                 break
             fi
+
+            local remaining=$((deadline - SECONDS))
+            echo -e "${LIGHTYELLOW}SSH tunnel setup failed, retrying... (${remaining}s remaining)${RESET}"
             sleep 5
         done
-    ) &
-    fSingboxMonitorPid=$!
 
-    # Run sing-box in foreground (Ctrl+C to quit)
-    echo -e "${LIGHTYELLOW}Starting sing-box (Ctrl+C to quit)...${RESET}"
-    sudo sing-box run -c "$fSingboxConfig"
+        if [ "$tunnelOk" -ne 1 ]; then
+            echo -e "${RED}Error: Failed to re-establish SSH tunnel within ${fSingboxRetryTimeout}s.${RESET}"
+            cleanupSingbox
+            return 1
+        fi
 
-    cleanupSingbox
+        echo -e "${GREEN}✔${GREY} Restarting sing-box...${RESET}"
+    done
 }
 
 doEarlyExitJobs() {
