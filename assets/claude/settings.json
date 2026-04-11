@@ -14,14 +14,26 @@
       "Bash(rm -rf /*)",
       "Bash(mkfs*)",
       "Bash(dd *)"
+    ],
+    "additionalDirectories": [
+      "/auto/fwgwork1/pexiang/golan_fw",
+      "/auto/fwgwork1/pexiang/golan_fw2",
+      "/auto/fwgwork1/pexiang/golan_fw3"
     ]
   },
   "model": "opus[1m]",
   "sandbox": {
     "enabled": true,
+    "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": true,
+    "allowWrite": [
+      "$HOME/myGit",
+      "/auto/fwgwork1",
+      "/tmp"
+    ],
     "network": {
-      "allowAllUnixSockets": true
+      "allowAllUnixSockets": true,
+      "allowLocalBinding": true
     },
     "seccomp": {
       "bpfPath": "$HOME/.nvm/versions/node/v24.12.0/lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/unix-block.bpf",

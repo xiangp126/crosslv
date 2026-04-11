@@ -71,8 +71,8 @@ _jmake_complete() {
                --attempt --no-verbose --nicx --list --list-extended --link --models \
                --skip --scratch --track --patch --ethlt --codecov --cov \
                --fetch --push --rebase --add --commit --amend --stat --df --diff --show \
-               --burn --device --mlxreset --mft-install --ofed-start --ofed-stop \
-               --power-cycle"
+               --burn --firmware --device --fwreset --mft-install --ofed-start --ofed-stop \
+               --power-cycle --docker-group"
 
     # Handle option arguments
     case $prev in
@@ -104,6 +104,11 @@ _jmake_complete() {
             if [[ -d /dev/mst ]]; then
                 COMPREPLY=( $(compgen -W "$(ls /dev/mst/*pciconf* 2>/dev/null)" -- "$cur") )
             fi
+            return 0
+            ;;
+        --firmware)
+            compopt -o filenames
+            COMPREPLY=( $(compgen -G "${cur}*.mlx" -- "$cur") )
             return 0
             ;;
     esac

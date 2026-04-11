@@ -26,18 +26,20 @@ fNoVerbose=
 fNicx=
 fTrackIncludes=
 fPatchSudo=
+fDockerGroup=
 fEthlt=
 fCodecov=
 fCov=
 fScratch=
 # MFT (Mellanox Firmware Tools) & OFED options
 fBurn=
-fMlxReset=
+fFwReset=
 fDevice=
 fMftInstall=
 fOfedStart=
 fOfedStop=
 fPowerCycle=
+fFirmware=
 fInputCmd=
 fBuildTimeFormatted=
 # Git associated variables
@@ -261,14 +263,15 @@ Build Options:
 MFT Options (Mellanox Firmware Tools):
         --burn                      Burn FW image to device (requires --device, uses -m model)
         --device <mst_device>       MST device path (e.g. /dev/mst/mt4133_pciconf0)
-        --mlxreset                  Reset FW on device after burn (requires --device)
+        --fwreset                   Reset FW on device after burn (requires --device)
         --mft-install               Install MFT (Mellanox Firmware Tools)
         --ofed-start                Start OFED driver (sudo /etc/init.d/openibd start)
         --ofed-stop                 Stop OFED driver (sudo /etc/init.d/openibd stop)
         --power-cycle <server>      Power cycle a server via IPMI (e.g. m-fwdev-167)
+        --docker-group              Add current user to docker group (requires sudo)
 
 Git Options (require current dir to be a git repo, can be combined in cascade):
-        --fetch                 git fetch origin master_rc
+        --fetch                 git fetch origin master_rc && git fetch origin --tags
         --rebase                git rebase origin/master_rc
         --add                   git add -u and git reset HEAD -- $GIT_RESET_PATHS
         --commit                git commit --amend --no-edit
@@ -301,7 +304,7 @@ Examples:
     $SCRIPT_NAME --bear --models gilboa       # Build gilboa with $fCompileCommandsJson
     $SCRIPT_NAME --fetch --rebase             # Fetch then rebase (cascade)
     $SCRIPT_NAME --burn --device /dev/mst/mt4133_pciconf0 -m argaman   # Burn argaman FW to device
-    $SCRIPT_NAME --burn --mlxreset --device /dev/mst/mt4133_pciconf0   # Burn and reset FW
+    $SCRIPT_NAME --burn --fwreset --device /dev/mst/mt4133_pciconf0   # Burn and reset FW
 
 _EOF
     exit 0
@@ -324,7 +327,7 @@ LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
 jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
 all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
 scratch,track,fetch,push,rebase,add,commit,amend,stat,show,df,diff,\
-burn,device:,mlxreset,mft-install,ofed-start,ofed-stop,power-cycle:"
+burn,device:,fwreset,mft-install,ofed-start,ofed-stop,power-cycle:,docker-group,firmware:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -527,8 +530,8 @@ while true; do
             fDevice="$2"
             shift 2
             ;;
-        --mlxreset)
-            fMlxReset=true
+        --fwreset)
+            fFwReset=true
             shift
             ;;
         --mft-install)
@@ -545,6 +548,14 @@ while true; do
             ;;
         --power-cycle)
             fPowerCycle="$2"
+            shift 2
+            ;;
+        --docker-group)
+            fDockerGroup=true
+            shift
+            ;;
+        --firmware)
+            fFirmware="$2"
             shift 2
             ;;
         --)
@@ -567,8 +578,7 @@ fi
 # --bear implies -o and -C (already set above)
 
 getCurrentTime() {
-    COLOR="$RED"
-    echo -e "${COLOR}$(date +"%m/%d/%Y %H:%M:%S")${RESET}"
+    echo -e "${RED}$(date +"%m/%d/%Y %H:%M:%S")${RESET}"
 }
 
 requireGitRepo() {
@@ -615,7 +625,7 @@ searchBuildModel() {
 }
 
 preConfigure() {
-    [ -n "$fClean" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] || [ -n "$fLinkWorkspace" ] || [ -n "$fBurn" ] || [ -n "$fMlxReset" ] || [ -n "$fMftInstall" ] || [ -n "$fOfedStart" ] || [ -n "$fOfedStop" ] || [ -n "$fPowerCycle" ] && fPrintBuildFlags=true
+    [ -n "$fClean" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] || [ -n "$fLinkWorkspace" ] || [ -n "$fBurn" ] || [ -n "$fFwReset" ] || [ -n "$fMftInstall" ] || [ -n "$fOfedStart" ] || [ -n "$fOfedStop" ] || [ -n "$fPowerCycle" ] || [ -n "$fDockerGroup" ] && fPrintBuildFlags=true
     [ -z "$fPrintBuildFlags" ] && return
 
     fWorkingDir=$(realpath "$fWorkingDir")
@@ -661,8 +671,8 @@ validateArguments() {
         exit 1
     fi
 
-    if [[ -n "$fMlxReset" && -z "$fDevice" ]]; then
-        echo -e "$NOTATION ${RED}Error: --mlxreset requires --device <mst_device>${RESET}"
+    if [[ -n "$fFwReset" && -z "$fDevice" ]]; then
+        echo -e "$NOTATION ${RED}Error: --fwreset requires --device <mst_device>${RESET}"
         exit 1
     fi
 
@@ -695,12 +705,14 @@ printBuildFlags() {
         [ -n "$fCov" ]                   && echo -e "[O] ${COLOR}Cov${RESET} variant (cov)"
         [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, ~/.claude/$CLAUDE_MD)"
         [ -n "$fBurn" ]                  && echo -e "[B] ${COLOR}Burn${RESET} FW image to device"
-        [ -n "$fMlxReset" ]              && echo -e "[R] ${COLOR}Reset${RESET} FW on device (mlxfwreset)"
+        [ -n "$fFwReset" ]              && echo -e "[R] ${COLOR}Reset${RESET} FW on device (mlxfwreset)"
         [ -n "$fDevice" ]                && echo -e "[d] ${COLOR}Device:${RESET} $fDevice"
+        [ -n "$fFirmware" ]              && echo -e "[F] ${COLOR}Firmware:${RESET} $fFirmware"
         [ -n "$fMftInstall" ]            && echo -e "[M] ${COLOR}MFT Install${RESET}"
         [ -n "$fOfedStart" ]             && echo -e "[^] ${COLOR}OFED Start${RESET}"
         [ -n "$fOfedStop" ]              && echo -e "[v] ${COLOR}OFED Stop${RESET}"
         [ -n "$fPowerCycle" ]            && echo -e "[⏻] ${COLOR}Power Cycle:${RESET} $fPowerCycle"
+        [ -n "$fDockerGroup" ]           && echo -e "[🐳] ${COLOR}Docker Group${RESET} (add $USER to docker group)"
     fi
 
     if [ -n "$fNeedBuild" ]; then
@@ -890,18 +902,7 @@ runBuildCommands() {
     fi
 
     local buildTime=$((buildEndTime - buildStartTime))
-    local hours=$((buildTime / 3600))
-    local minutes=$((buildTime % 3600 / 60))
-    local seconds=$((buildTime % 60))
-    fBuildTimeFormatted="${seconds}s"
-
-    if [[ $minutes -gt 0 ]]; then
-        fBuildTimeFormatted="${minutes}m${fBuildTimeFormatted}"
-    fi
-
-    if [[ $hours -gt 0 ]]; then
-        fBuildTimeFormatted="${hours}h${fBuildTimeFormatted}"
-    fi
+    fBuildTimeFormatted=$(formatElapsed $buildTime)
 
     echo -e "$NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
 }
@@ -989,12 +990,7 @@ runLoopModels() {
 
     local totalEndTime=$(date +%s)
     local totalTime=$((totalEndTime - totalStartTime))
-    local hours=$((totalTime / 3600))
-    local minutes=$((totalTime % 3600 / 60))
-    local seconds=$((totalTime % 60))
-    local totalTimeFormatted="${seconds}s"
-    [[ $minutes -gt 0 ]] && totalTimeFormatted="${minutes}m${totalTimeFormatted}"
-    [[ $hours -gt 0 ]] && totalTimeFormatted="${hours}h${totalTimeFormatted}"
+    local totalTimeFormatted=$(formatElapsed $totalTime)
 
     echo "$SEPARATOR"
     if [[ $isLoopMode -eq 1 ]]; then
@@ -1147,6 +1143,8 @@ runGitOptions() {
             fetch)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin master_rc${RESET}"
                 git fetch origin master_rc
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin --tags${RESET}"
+                git fetch origin --tags
                 ;;
             rebase)
                 local stashed=0
@@ -1211,7 +1209,7 @@ runGitOptions() {
 
     [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${GREEN}Congratulations! All $gitCmdCount git commands completed successfully.${RESET}"
     # If only git options were given (no build), exit after completing them
-    [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkWorkspace" && -z "$fBurn" && -z "$fMlxReset" && -z "$fMftInstall" && -z "$fOfedStart" && -z "$fOfedStop" && -z "$fPowerCycle" ]] && exit 0
+    [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkWorkspace" && -z "$fBurn" && -z "$fFwReset" && -z "$fMftInstall" && -z "$fOfedStart" && -z "$fOfedStop" && -z "$fPowerCycle" && -z "$fDockerGroup" ]] && exit 0
 }
 
 runMftInstall() {
@@ -1302,9 +1300,43 @@ runPowerCycle() {
     echo "$SEPARATOR"
 }
 
+runDockerGroup() {
+    [[ -z "$fDockerGroup" ]] && return
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Adding $USER to docker group...${RESET}"
+    if groups "$USER" 2>/dev/null | grep -qw docker; then
+        echo -e "$NOTATION ${GREEN}✓ $USER is already in the docker group.${RESET}"
+    else
+        local cmd="sudo usermod -aG docker $USER"
+        echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+        eval "$cmd"
+        if [[ $? -ne 0 ]]; then
+            echo -e "$NOTATION ${RED}Error: Failed to add $USER to docker group.${RESET}"
+            exit 1
+        fi
+        echo -e "$NOTATION ${GREEN}✓ Added $USER to docker group.${RESET}"
+    fi
+    echo -e "$NOTATION Activating docker group in current shell..."
+    echo -e "$NOTATION Running: ${YELLOW}newgrp docker${RESET}"
+    newgrp docker
+}
+
+formatElapsed() {
+    local elapsed=$1
+    local h=$((elapsed / 3600))
+    local m=$((elapsed % 3600 / 60))
+    local s=$((elapsed % 60))
+    local fmt="${s}s"
+    [[ $m -gt 0 ]] && fmt="${m}m${fmt}"
+    [[ $h -gt 0 ]] && fmt="${h}h${fmt}"
+    echo "$fmt"
+}
+
 runBurn() {
     [[ -z "$fBurn" ]] && return
     cd "$fWorkingDir" || exit 1
+
+    local burnStartTime=$(date +%s)
 
     echo "$SEPARATOR"
     echo -e "$NOTATION ${BOLD}Burn Workflow${RESET}"
@@ -1343,14 +1375,22 @@ runBurn() {
     if [[ ${#fModels[@]} -eq 1 ]]; then
         fBuildModel="${fModels[0]}"
     fi
-    local mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
-    if [[ -z "$mlxFile" ]]; then
-        echo -e "$NOTATION ${RED}Error: No .mlx mapping for model ${YELLOW}$fBuildModel${RESET}"
-        exit 1
+    local mlxFile
+    if [[ -n "$fFirmware" ]]; then
+        mlxFile="$fFirmware"
+    else
+        mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
+        if [[ -z "$mlxFile" ]]; then
+            echo -e "$NOTATION ${RED}Error: No .mlx mapping for model ${YELLOW}$fBuildModel${RESET}"
+            echo -e "$NOTATION Tip: use --firmware <path> to specify a custom .mlx file"
+            exit 1
+        fi
     fi
     if [[ ! -f "$mlxFile" ]]; then
         echo -e "$NOTATION ${RED}Error: .mlx file not found: ${YELLOW}$mlxFile${RESET}"
-        echo -e "$NOTATION Have you built the model first? (jk -o -m $fBuildModel)"
+        if [[ -z "$fFirmware" ]]; then
+            echo -e "$NOTATION Have you built the model first? (jk -o -m $fBuildModel)"
+        fi
         exit 1
     fi
     echo -e "$NOTATION ${GREEN}✓ Using .mlx: ${CYAN}$mlxFile${RESET}"
@@ -1384,9 +1424,9 @@ runBurn() {
     fi
     echo -e "$NOTATION ${GREEN}✓ INI: ${CYAN}$iniFile${RESET}"
 
-    # Step 5: Generate image.bin via mlxburn
+    # Step 5: Generate flash image via mlxburn
     local imageBin="image.bin"
-    echo -e "$NOTATION ${CYAN}Generating $imageBin...${RESET}"
+    echo -e "$NOTATION ${CYAN}Generating flash image...${RESET}"
     local mlxburnCmd="mlxburn image -f $mlxFile -c $iniFile -o $imageBin"
     echo -e "$NOTATION Running: ${YELLOW}$mlxburnCmd${RESET}"
     eval "$mlxburnCmd"
@@ -1398,29 +1438,31 @@ runBurn() {
         echo -e "$NOTATION ${RED}Error: $imageBin was not created${RESET}"
         exit 1
     fi
-    echo -e "$NOTATION ${GREEN}✓ Image generated: ${CYAN}$imageBin${RESET}"
+    echo -e "$NOTATION ${GREEN}✓ Flash image generated: ${CYAN}$imageBin${RESET}"
 
     # Step 6: Burn image to device
     echo -e "$NOTATION ${CYAN}Burning $imageBin to $fDevice...${RESET}"
-    local flintBurnCmd="sudo flint -d $fDevice -i $imageBin b"
+    local flintBurnCmd="sudo flint -d $fDevice -i $imageBin -y b"
     echo -e "$NOTATION Running: ${YELLOW}$flintBurnCmd${RESET}"
     eval "$flintBurnCmd"
     if [[ $? -ne 0 ]]; then
         echo -e "$NOTATION ${RED}Error: flint burn failed${RESET}"
         exit 1
     fi
-    echo -e "$NOTATION ${GREEN}✓ Burn completed successfully${RESET}"
+    local burnEndTime=$(date +%s)
+    echo -e "$NOTATION ${GREEN}✓ Burn completed successfully${RESET} at $(getCurrentTime) in $(formatElapsed $((burnEndTime - burnStartTime)))"
     echo "$SEPARATOR"
 }
 
 runMlxReset() {
-    [[ -z "$fMlxReset" ]] && return
+    [[ -z "$fFwReset" ]] && return
 
     if ! command -v mlxfwreset &>/dev/null; then
         echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}mlxfwreset${RESET}"
         exit 1
     fi
 
+    local resetStartTime=$(date +%s)
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Resetting FW on $fDevice...${RESET}"
     local resetCmd="sudo mlxfwreset -d $fDevice -y r"
@@ -1430,16 +1472,18 @@ runMlxReset() {
         echo -e "$NOTATION ${RED}Error: mlxfwreset failed${RESET}"
         exit 1
     fi
-    echo -e "$NOTATION ${GREEN}✓ FW reset completed. New firmware is now active.${RESET}"
+    local resetEndTime=$(date +%s)
+    echo -e "$NOTATION FW reset completed at $(getCurrentTime) in $(formatElapsed $((resetEndTime - resetStartTime)))"
     echo "$SEPARATOR"
 }
 
 doEarlyExitJobs() {
+    [ -n "$fDockerGroup" ]   && { runDockerGroup; exit 0; }
     [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ] && { linkWorkspaceFiles; exit 0; }
     [ -n "$fMftInstall" ]    && { runMftInstall; exit 0; }
     [ -n "$fOfedStop" ]      && { runOfedStop; [ -n "$fOfedStart" ] && runOfedStart; exit 0; }
     [ -n "$fOfedStart" ]     && { runOfedStart; exit 0; }
-    [ -n "$fMlxReset" ] && [ -z "$fBurn" ] && { runMlxReset; exit 0; }
+    [ -n "$fFwReset" ] && [ -z "$fBurn" ] && { runMlxReset; exit 0; }
     [ -n "$fPowerCycle" ]    && { runPowerCycle; exit 0; }
 }
 

@@ -201,11 +201,15 @@ _set_vscode_code_path() {
     fi
 
     # Step 3: Set the VSCODE_IPC_HOOK_CLI
-    # Get the most recently created vscode-ipc-*.sock file
+    # Get the most recently created vscode-ipc-*.sock file, with fallback
     # shellcheck disable=SC2012 disable=SC2155
     local newIPCHook=$(ls -t "$_code_f_sys_path"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+    if [[ -z "$newIPCHook" && "$_code_f_sys_path" != "/tmp" ]]; then
+        newIPCHook=$(ls -t /tmp/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+        [[ -n "$newIPCHook" ]] && _code_f_sys_path="/tmp"
+    fi
     if [ -z "$newIPCHook" ]; then
-        echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $_code_f_sys_path${RESET}" >&2
+        echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $_code_f_sys_path or /tmp${RESET}" >&2
         return 1
     fi
     # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
@@ -321,8 +325,19 @@ code() {
     local _code_f_debug=
     local _code_f_print=
     local _code_f_sys_path
-    if ls /run/user/$UID/vscode-ipc-*.sock &>/dev/null; then
-        _code_f_sys_path="/run/user/$UID"
+    local _run_path="/run/user/$UID"
+    local _newest_run _newest_tmp
+    _newest_run=$(ls -t "$_run_path"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+    _newest_tmp=$(ls -t /tmp/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+    if [[ -n "$_newest_run" && -n "$_newest_tmp" ]]; then
+        # Both have sockets — pick whichever has the newer one
+        if [[ "$_newest_run" -nt "$_newest_tmp" ]]; then
+            _code_f_sys_path="$_run_path"
+        else
+            _code_f_sys_path="/tmp"
+        fi
+    elif [[ -n "$_newest_run" ]]; then
+        _code_f_sys_path="$_run_path"
     else
         _code_f_sys_path="/tmp"
     fi
