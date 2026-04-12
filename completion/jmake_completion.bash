@@ -55,6 +55,64 @@ _jmake_complete_models() {
     fi
 }
 
+# Major FW version to device ID mapping (mirrors jmake's FW_MAJOR_TO_DEVID)
+declare -A _JMAKE_FW_MAJOR_TO_DEVID=(
+    [22]="4125" [24]="41686" [26]="4127" [28]="4129"
+    [32]="41692" [40]="4131" [82]="4133"
+)
+_JMAKE_RELEASE_BASE="/mswg/release/host_fw"
+
+# Tiered version completion for --burn-official
+# Tier 1: major (22, 40, 82, ...)
+# Tier 2: major.minor (82.49, 82.42, ...)
+# Tier 3: major.minor.patch (82.49.0050, 82.49.0052, ...)
+_jmake_complete_fw_version() {
+    local typed="$cur"
+    local dots="${typed//[^.]/}"
+    local dot_count=${#dots}
+
+    if [[ $dot_count -eq 0 ]]; then
+        local majors="${!_JMAKE_FW_MAJOR_TO_DEVID[*]}"
+        COMPREPLY=( $(compgen -W "$majors" -- "$typed") )
+        COMPREPLY=( "${COMPREPLY[@]/%/.}" )
+
+    elif [[ $dot_count -eq 1 ]]; then
+        local major="${typed%%.*}"
+        local devId="${_JMAKE_FW_MAJOR_TO_DEVID[$major]}"
+        [[ -z "$devId" ]] && return
+        local relDir="${_JMAKE_RELEASE_BASE}/fw-${devId}"
+        local minors
+        minors=$(ls -d "${relDir}/fw-${devId}-rel-${major}_"*/ 2>/dev/null \
+            | grep -v 'build-\|codecov' \
+            | sed "s|.*/fw-${devId}-rel-${major}_\([0-9]*\)_.*/|\1|" \
+            | sort -un)
+        local candidates=""
+        for m in $minors; do
+            candidates+="${major}.${m} "
+        done
+        COMPREPLY=( $(compgen -W "$candidates" -- "$typed") )
+        COMPREPLY=( "${COMPREPLY[@]/%/.}" )
+
+    elif [[ $dot_count -eq 2 ]]; then
+        local major="${typed%%.*}"
+        local rest="${typed#*.}"
+        local minor="${rest%%.*}"
+        local devId="${_JMAKE_FW_MAJOR_TO_DEVID[$major]}"
+        [[ -z "$devId" ]] && return
+        local relDir="${_JMAKE_RELEASE_BASE}/fw-${devId}"
+        local patches
+        patches=$(ls -d "${relDir}/fw-${devId}-rel-${major}_${minor}_"*/ 2>/dev/null \
+            | grep -v 'build-\|codecov' \
+            | sed "s|.*/fw-${devId}-rel-${major}_${minor}_\([0-9]*\)/|\1|" \
+            | sort -n)
+        local candidates=""
+        for p in $patches; do
+            candidates+="${major}.${minor}.${p} "
+        done
+        COMPREPLY=( $(compgen -W "$candidates" -- "$typed") )
+    fi
+}
+
 # Completion function for jmake
 _jmake_complete() {
     local cur prev opts long_opts
@@ -71,7 +129,7 @@ _jmake_complete() {
                --attempt --no-verbose --nicx --list --list-extended --link --models \
                --skip --scratch --track --patch --ethlt --codecov --cov \
                --fetch --push --rebase --add --commit --amend --stat --df --diff --show \
-               --burn --firmware --device --fwreset --mft-install --ofed-start --ofed-stop \
+               --burn --burn-official --firmware --device --fwreset --mft-install --ofed-start --ofed-stop \
                --power-cycle --docker-group"
 
     # Handle option arguments
@@ -97,6 +155,11 @@ _jmake_complete() {
             # Multi-model completion with comma separation (e.g., mustang,gilboa,argaman)
             compopt -o nospace  # Don't add space after completion, allow user to type comma
             _jmake_complete_models
+            return 0
+            ;;
+        --burn-official)
+            compopt -o nospace
+            _jmake_complete_fw_version
             return 0
             ;;
         --device)

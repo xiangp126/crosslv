@@ -50,6 +50,7 @@ fFirefoxUpdate=
 fChinesePinyinUpdate=
 fXrayUpdate=
 fXrayRemove=
+fXrayPort=
 fSwapReq=
 # RTSP Stream Playback
 fRtspFlag=
@@ -163,6 +164,7 @@ The following options update or re-install (installed by default on first run):
 
 Xray Options:
     --xray                          Install or update Xray from Github
+    --xray-port <port>              Set Xray listen port (default: 443)
     --xray-remove                   Remove Xray from system
 
 Examples:
@@ -240,7 +242,8 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai,cursor-backup,cursor-restore,singbox"
+          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai,cursor-backup,cursor-restore,singbox,\
+          xray,xray-port:,xray-remove"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -447,6 +450,14 @@ while true; do
         --xray)
             fXrayUpdate=true
             shift
+            ;;
+        --xray-port)
+            fXrayPort="$2"
+            if ! [[ "$fXrayPort" =~ ^[0-9]+$ ]] || (( fXrayPort < 1 || fXrayPort > 65535 )); then
+                echo -e "${RED}Error: Invalid Xray port: $fXrayPort${RESET}"
+                exit 1
+            fi
+            shift 2
             ;;
         --xray-remove)
             fXrayRemove=true
@@ -1798,6 +1809,77 @@ installLatestGithubClangd() {
     linkFile "$clangdBinary" "$HOME/.usr/bin"
 }
 
+# Install/update Xray and auto-configure a VLESS-REALITY server.
+#
+#   jc --xray [--xray-port PORT]
+#
+#   +----------------------------------+
+#   | Download + install Xray binary   |
+#   | Install geodata (geoip/geosite)  |
+#   +----------------+-----------------+
+#                    |
+#                    v
+#          +---------+---------+
+#          | Determine install |
+#          |   mode (system    |
+#          |    or user)       |
+#          +---------+---------+
+#           /                 \
+#          v                   v
+#   +-------------+    +--------------+
+#   | System mode |    | User mode    |
+#   | /etc/xray/  |    | ~/.config/   |
+#   | systemd sys |    |  xray/       |
+#   +------+------+    | systemd user |
+#          |           +------+-------+
+#           \                /
+#            v              v
+#          +---------+---------+
+#          | Existing configs? |
+#          +---------+---------+
+#           /                 \
+#         Yes                  No
+#          |                    |
+#          v                    |
+#   +----------------+         |
+#   | Prompt:        |         |
+#   | 1) Keep        |         |
+#   | 2) Regenerate  |         |
+#   +-------+--------+         |
+#    /             \            |
+#   v               v          |
+#  Keep         Regenerate     |
+#   |           (rm old)       |
+#   |               \          |
+#   v                v         v
+#  +----------+    +-------------------+
+#  | Restart  |    | Generate UUID,    |
+#  | service  |    |  x25519, shortId  |
+#  | (binary  |    +---------+---------+
+#  |  update) |              |
+#  +----------+              v
+#                  +-------------------+
+#                  | Write config JSON |
+#                  | VLESS-REALITY-    |
+#                  |  <port>.json      |
+#                  +---------+---------+
+#                            |
+#                            v
+#                  +-------------------+
+#                  | Restart service   |
+#                  +---------+---------+
+#                            |
+#                            v
+#                  +-------------------+
+#                  | Detect public IP  |
+#                  +---------+---------+
+#                            |
+#                            v
+#                  +-------------------+
+#                  | Print config info |
+#                  | + share URL       |
+#                  | + QR code         |
+#                  +-------------------+
 installXray() {
     echo -e "${COLOR}Checking for Xray (Github Release)${RESET}"
     if [ -z "$fXrayUpdate" ] && command -v xray &> /dev/null; then
@@ -1904,6 +1986,147 @@ installXray() {
                     echo -e "${LIGHTYELLOW}Tip: Run ${BLUE}sudo loginctl enable-linger $USER${LIGHTYELLOW} to keep xray running after logout${RESET}"
                 fi
             fi
+        fi
+
+        # --- Auto-configure VLESS-REALITY and start service ---
+        local xrayBin confDir systemctlCmd
+        if [[ "$installMode" == "system" ]]; then
+            xrayBin=/etc/xray/bin/xray
+            confDir=/etc/xray/conf
+            systemctlCmd="sudo systemctl"
+        else
+            xrayBin="$HOME/.usr/bin/xray"
+            confDir="$HOME/.config/xray/conf"
+            systemctlCmd="systemctl --user"
+        fi
+
+        local generateConfig=true
+        if ls "$confDir"/*.json &>/dev/null; then
+            echo -e "\n${LIGHTYELLOW}Existing Xray config(s) found in $confDir:${RESET}"
+            ls -1 "$confDir"/*.json 2>/dev/null | while read -r f; do
+                echo -e "  ${GREY}- $(basename "$f" .json)${RESET}"
+            done
+            echo -e "  ${GREEN}1)${RESET} Keep existing configs (restart service with updated binary)"
+            echo -e "  ${GREEN}2)${RESET} Regenerate fresh config (removes existing configs)"
+            local rerunChoice
+            read -rp "$(echo -e "${CYAN}▸${RESET} Enter choice [1-2]: ")" rerunChoice
+            case "$rerunChoice" in
+                2)
+                    if [[ "$installMode" == "system" ]]; then
+                        sudo rm -f "$confDir"/*.json
+                    else
+                        rm -f "$confDir"/*.json
+                    fi
+                    ;;
+                *)
+                    generateConfig=false
+                    ;;
+            esac
+        fi
+
+        if [[ "$generateConfig" == true ]]; then
+            local port="${fXrayPort:-443}"
+            local sni="www.nvidia.com"
+            local uuid=$("$xrayBin" uuid)
+            local keypair=$("$xrayBin" x25519)
+            local privateKey=$(echo "$keypair" | grep "Private" | awk '{print $3}')
+            local publicKey=$(echo "$keypair" | grep "Public" | awk '{print $3}')
+            local shortId=$(openssl rand -hex 4)
+            local configName="VLESS-REALITY-${port}"
+            local configPath="$confDir/${configName}.json"
+
+            local configJson
+            configJson=$(cat << XEOF
+{
+  "inbounds": [
+    {
+      "port": $port,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "$uuid",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "dest": "$sni:443",
+          "serverNames": ["$sni"],
+          "privateKey": "$privateKey",
+          "shortIds": ["$shortId"]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}
+XEOF
+)
+            if [[ "$installMode" == "system" ]]; then
+                echo "$configJson" | sudo tee "$configPath" > /dev/null
+            else
+                echo "$configJson" > "$configPath"
+            fi
+            echo -e "${GREEN}✔${GREY} Config created: ${CYAN}$configName${GREY} ($installMode mode)${RESET}"
+
+            $systemctlCmd restart xray 2>/dev/null
+            echo -e "${GREEN}✔${GREY} Xray service started${RESET}"
+
+            local ip
+            ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
+            [[ -z "$ip" ]] && ip=$(curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null)
+            [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
+
+            local url="vless://${uuid}@${ip}:${port}?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=${sni}&fp=chrome&pbk=${publicKey}&sid=${shortId}#${configName}"
+
+            echo
+            echo -e "====================================================="
+            echo -e "${CYAN}▸${RESET} ${BOLD}Config: ${CYAN}$configName${RESET} ${GREY}($installMode mode)${RESET}"
+            echo -e "====================================================="
+            echo -e "  ${GREY}Protocol:${RESET}    VLESS"
+            echo -e "  ${GREY}Address:${RESET}     $ip"
+            echo -e "  ${GREY}Port:${RESET}        $port"
+            echo -e "  ${GREY}UUID:${RESET}        $uuid"
+            echo -e "  ${GREY}Flow:${RESET}        xtls-rprx-vision"
+            echo -e "  ${GREY}Security:${RESET}    reality"
+            echo -e "  ${GREY}SNI:${RESET}         $sni"
+            echo -e "  ${GREY}Fingerprint:${RESET} chrome"
+            echo -e "  ${GREY}Public Key:${RESET}  $publicKey"
+            echo -e "  ${GREY}Short ID:${RESET}    $shortId"
+            echo -e "====================================================="
+            echo -e "  ${GREY}URL:${RESET}"
+            echo -e "  ${BLUE}$url${RESET}"
+            echo -e "====================================================="
+
+            echo
+            if command -v qrencode &>/dev/null; then
+                echo -e "${CYAN}▸${RESET} ${BOLD}QR Code:${RESET}"
+                echo
+                qrencode -t ANSI "$url"
+            else
+                echo -e "${LIGHTYELLOW}Tip: Install qrencode for QR code display: ${BLUE}sudo apt install qrencode${RESET}"
+                echo -e "${CYAN}▸${RESET} Online QR code:"
+                echo -e "  ${BLUE}https://233boy.github.io/tools/qr.html#${url}${RESET}"
+            fi
+            echo
+        else
+            $systemctlCmd restart xray 2>/dev/null
+            echo -e "${GREEN}✔${GREY} Xray service restarted with updated binary${RESET}"
         fi
     fi
 }

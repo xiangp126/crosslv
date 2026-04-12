@@ -14,6 +14,7 @@ _jc_complete() {
                --firefox --update --samba --samba-reset-password --git-lfs \
                --check-tls --swap --gdm --text --ai --cursor-backup --cursor-restore \
                --singbox \
+               --xray --xray-port --xray-remove \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-h264 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"
 

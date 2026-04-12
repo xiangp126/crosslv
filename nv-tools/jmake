@@ -40,6 +40,7 @@ fOfedStart=
 fOfedStop=
 fPowerCycle=
 fFirmware=
+fBurnOfficial=
 fInputCmd=
 fBuildTimeFormatted=
 # Git associated variables
@@ -91,6 +92,19 @@ declare -A MODEL_MLX_FILE=(
     [argaman]="fw-ConnectX9.mlx"
     [alpine]="fw-ConnectX10.mlx"
 )
+
+# Major FW version to device ID mapping (from find_fw_version_info.py)
+# Used by --burn-official to resolve official release directory paths
+declare -A FW_MAJOR_TO_DEVID=(
+    [22]="4125"    # arava  (CX6DX)
+    [24]="41686"   # viper  (BF2)
+    [26]="4127"    # tamar  (CX6LX)
+    [28]="4129"    # carmel (CX7)
+    [32]="41692"   # mustang (BF3)
+    [40]="4131"    # gilboa (CX8)
+    [82]="4133"    # argaman (CX9)
+)
+RELEASE_BASE="/mswg/release/host_fw"
 
 # GOLAN supported models (same order as MODEL_HARDWARE)
 # GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
@@ -262,6 +276,7 @@ Build Options:
 
 MFT Options (Mellanox Firmware Tools):
         --burn                      Burn FW image to device (requires --device, uses -m model)
+        --burn-official <version>   Burn official release FW to device (e.g., 82.49.0052)
         --device <mst_device>       MST device path (e.g. /dev/mst/mt4133_pciconf0)
         --fwreset                   Reset FW on device after burn (requires --device)
         --mft-install               Install MFT (Mellanox Firmware Tools)
@@ -305,6 +320,7 @@ Examples:
     $SCRIPT_NAME --fetch --rebase             # Fetch then rebase (cascade)
     $SCRIPT_NAME --burn --device /dev/mst/mt4133_pciconf0 -m argaman   # Burn argaman FW to device
     $SCRIPT_NAME --burn --fwreset --device /dev/mst/mt4133_pciconf0   # Burn and reset FW
+    $SCRIPT_NAME --burn-official 82.49.0052 --fwreset --device /dev/mst/mt4133_pciconf0  # Burn official release + reset
 
 _EOF
     exit 0
@@ -327,7 +343,7 @@ LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
 jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
 all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
 scratch,track,fetch,push,rebase,add,commit,amend,stat,show,df,diff,\
-burn,device:,fwreset,mft-install,ofed-start,ofed-stop,power-cycle:,docker-group,firmware:"
+burn,burn-official:,device:,fwreset,mft-install,ofed-start,ofed-stop,power-cycle:,docker-group,firmware:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -526,6 +542,10 @@ while true; do
             fBurn=true
             shift
             ;;
+        --burn-official)
+            fBurnOfficial="$2"
+            shift 2
+            ;;
         --device)
             fDevice="$2"
             shift 2
@@ -625,11 +645,16 @@ searchBuildModel() {
 }
 
 preConfigure() {
-    [ -n "$fClean" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] || [ -n "$fLinkWorkspace" ] || [ -n "$fBurn" ] || [ -n "$fFwReset" ] || [ -n "$fMftInstall" ] || [ -n "$fOfedStart" ] || [ -n "$fOfedStop" ] || [ -n "$fPowerCycle" ] || [ -n "$fDockerGroup" ] && fPrintBuildFlags=true
+    [ -n "$fClean" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] || [ -n "$fLinkWorkspace" ] || [ -n "$fBurn" ] || [ -n "$fBurnOfficial" ] || [ -n "$fFwReset" ] || [ -n "$fMftInstall" ] || [ -n "$fOfedStart" ] || [ -n "$fOfedStop" ] || [ -n "$fPowerCycle" ] || [ -n "$fDockerGroup" ] && fPrintBuildFlags=true
     [ -z "$fPrintBuildFlags" ] && return
 
     fWorkingDir=$(realpath "$fWorkingDir")
     cd "$fWorkingDir" || exit 1
+
+    # Device-only operations don't need a golan_fw source tree
+    if [[ -z "$fNeedBuild" && -z "$fBurn" && -z "$fClean" && -z "$fGenerateCompileCmds" && -z "$fLinkWorkspace" ]]; then
+        return
+    fi
 
     # Verify this is a golan_fw project
     if [[ ! -x "$BUILD_SCRIPT" ]]; then
@@ -681,6 +706,16 @@ validateArguments() {
         exit 1
     fi
 
+    if [[ -n "$fBurnOfficial" && -z "$fDevice" ]]; then
+        echo -e "$NOTATION ${RED}Error: --burn-official requires --device <mst_device>${RESET}"
+        exit 1
+    fi
+
+    if [[ -n "$fBurnOfficial" && -n "$fBurn" ]]; then
+        echo -e "$NOTATION ${RED}Error: --burn-official and --burn are mutually exclusive${RESET}"
+        exit 1
+    fi
+
     # Auto-set attempt to 2 when building multiple models (unless explicitly set)
     if [[ ${#fModels[@]} -gt 1 && $fMaxBuildAttempt -eq 1 ]]; then
         fMaxBuildAttempt=2
@@ -705,6 +740,7 @@ printBuildFlags() {
         [ -n "$fCov" ]                   && echo -e "[O] ${COLOR}Cov${RESET} variant (cov)"
         [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, ~/.claude/$CLAUDE_MD)"
         [ -n "$fBurn" ]                  && echo -e "[B] ${COLOR}Burn${RESET} FW image to device"
+        [ -n "$fBurnOfficial" ]          && echo -e "[B] ${COLOR}Burn Official:${RESET} $fBurnOfficial"
         [ -n "$fFwReset" ]              && echo -e "[R] ${COLOR}Reset${RESET} FW on device (mlxfwreset)"
         [ -n "$fDevice" ]                && echo -e "[d] ${COLOR}Device:${RESET} $fDevice"
         [ -n "$fFirmware" ]              && echo -e "[F] ${COLOR}Firmware:${RESET} $fFirmware"
@@ -1209,7 +1245,7 @@ runGitOptions() {
 
     [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${GREEN}Congratulations! All $gitCmdCount git commands completed successfully.${RESET}"
     # If only git options were given (no build), exit after completing them
-    [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkWorkspace" && -z "$fBurn" && -z "$fFwReset" && -z "$fMftInstall" && -z "$fOfedStart" && -z "$fOfedStop" && -z "$fPowerCycle" && -z "$fDockerGroup" ]] && exit 0
+    [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkWorkspace" && -z "$fBurn" && -z "$fBurnOfficial" && -z "$fFwReset" && -z "$fMftInstall" && -z "$fOfedStart" && -z "$fOfedStop" && -z "$fPowerCycle" && -z "$fDockerGroup" ]] && exit 0
 }
 
 runMftInstall() {
@@ -1330,6 +1366,36 @@ formatElapsed() {
     [[ $m -gt 0 ]] && fmt="${m}m${fmt}"
     [[ $h -gt 0 ]] && fmt="${h}h${fmt}"
     echo "$fmt"
+}
+
+resolveReleasePath() {
+    local version="$1"
+    local major minor patch
+
+    if [[ "$version" == *.* ]]; then
+        IFS='.' read -r major minor patch <<< "$version"
+    elif [[ "$version" == *_* ]]; then
+        IFS='_' read -r major minor patch <<< "$version"
+    else
+        echo -e "$NOTATION ${RED}Error: Invalid version format: ${YELLOW}$version${RESET}"
+        echo -e "$NOTATION Expected format: XX.YY.ZZZZ (e.g., 82.49.0052)"
+        exit 1
+    fi
+
+    local devId="${FW_MAJOR_TO_DEVID[$major]}"
+    if [[ -z "$devId" ]]; then
+        echo -e "$NOTATION ${RED}Error: Unknown major version ${YELLOW}$major${RESET}"
+        echo -e "$NOTATION Supported: ${CYAN}${!FW_MAJOR_TO_DEVID[*]}${RESET}"
+        exit 1
+    fi
+
+    patch=$(printf "%04d" "$((10#$patch))")
+    fResolvedFwDir="${RELEASE_BASE}/fw-${devId}/fw-${devId}-rel-${major}_${minor}_${patch}"
+
+    if [[ ! -d "$fResolvedFwDir" ]]; then
+        echo -e "$NOTATION ${RED}Error: Release directory not found: ${YELLOW}$fResolvedFwDir${RESET}"
+        exit 1
+    fi
 }
 
 runBurn() {
@@ -1454,6 +1520,46 @@ runBurn() {
     echo "$SEPARATOR"
 }
 
+runBurnOfficial() {
+    [[ -z "$fBurnOfficial" ]] && return
+
+    if [[ -z "$fDevice" ]]; then
+        echo -e "$NOTATION ${RED}Error: --burn-official requires --device <mst_device>${RESET}"
+        exit 1
+    fi
+
+    local burnStartTime=$(date +%s)
+
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${BOLD}Burn Official Release${RESET}"
+    echo "$SEPARATOR"
+
+    if ! command -v mlxburn &>/dev/null; then
+        echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}mlxburn${RESET}"
+        exit 1
+    fi
+
+    resolveReleasePath "$fBurnOfficial"
+    echo -e "$NOTATION ${GREEN}✓ Release dir: ${CYAN}$fResolvedFwDir${RESET}"
+
+    local burnCmd="sudo mlxburn -d $fDevice -fw_dir $fResolvedFwDir/ -y"
+    echo -e "$NOTATION ${CYAN}Burning official FW to $fDevice...${RESET}"
+    echo -e "$NOTATION Running: ${YELLOW}$burnCmd${RESET}"
+    eval "$burnCmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: mlxburn failed${RESET}"
+        echo -e "$NOTATION ${YELLOW}Hint: If MFE_NO_FLASH_DETECTED, try: sudo mst restart${RESET}"
+        exit 1
+    fi
+
+    local burnEndTime=$(date +%s)
+    echo -e "$NOTATION ${GREEN}✓ Official FW burned successfully${RESET} at $(getCurrentTime) in $(formatElapsed $((burnEndTime - burnStartTime)))"
+
+    echo -e "$NOTATION ${CYAN}Verifying burned version...${RESET}"
+    sudo flint -d "$fDevice" q | grep "FW Version"
+    echo "$SEPARATOR"
+}
+
 runMlxReset() {
     [[ -z "$fFwReset" ]] && return
 
@@ -1483,6 +1589,7 @@ doEarlyExitJobs() {
     [ -n "$fMftInstall" ]    && { runMftInstall; exit 0; }
     [ -n "$fOfedStop" ]      && { runOfedStop; [ -n "$fOfedStart" ] && runOfedStart; exit 0; }
     [ -n "$fOfedStart" ]     && { runOfedStart; exit 0; }
+    [ -n "$fBurnOfficial" ]  && { runBurnOfficial; [ -n "$fFwReset" ] && runMlxReset; exit 0; }
     [ -n "$fFwReset" ] && [ -z "$fBurn" ] && { runMlxReset; exit 0; }
     [ -n "$fPowerCycle" ]    && { runPowerCycle; exit 0; }
 }
