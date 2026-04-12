@@ -506,7 +506,7 @@ cmdQr() {
 
     echo -e "\n$NOTATION ${BOLD}$name QR Code:${RESET}\n"
     if command -v qrencode &>/dev/null; then
-        qrencode -t ANSI "$url"
+        qrencode -t ANSIUTF8 -m 1 "$url"
     else
         echo -e "$NOTATION ${YELLOW}qrencode not installed. Install with: ${BLUE}sudo apt install qrencode${RESET}"
         echo -e "$NOTATION Use this link to generate QR code:"

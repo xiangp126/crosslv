@@ -70,7 +70,7 @@ fSshTunnelLocalPort=57217
 fSshTunnelAutosshPid=""
 # Singbox (sing-box proxy)
 fSingbox=
-fSingboxConfig="$HOME/Documents/sing-box-config.jsonc"
+fSingboxConfig="$HOME/Documents/sing-box-config.json.good"
 fSingboxMonitorPid=""
 fSingboxCleaning=0
 fSingboxRetryTimeout=180  # seconds to retry after VPN/tunnel drop
@@ -1932,6 +1932,7 @@ installXray() {
     chmod +x "$xrayBinary"
 
     linkFile "$xrayBinary" "$HOME/.usr/bin"
+    linkFile "$fTKToolsDir/xray-manager" "$HOME/.usr/bin"
 
     # Install geodata files
     local xrayShareDir="$HOME/.usr/share/xray"
@@ -2121,7 +2122,7 @@ XEOF
             if command -v qrencode &>/dev/null; then
                 echo -e "${CYAN}▸${RESET} ${BOLD}QR Code:${RESET}"
                 echo
-                qrencode -t ANSI "$url"
+                qrencode -t ANSIUTF8 -m 1 "$url"
             else
                 echo -e "${LIGHTYELLOW}Tip: Install qrencode for QR code display: ${BLUE}sudo apt install qrencode${RESET}"
                 echo -e "${CYAN}▸${RESET} Online QR code:"
