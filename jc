@@ -2090,10 +2090,13 @@ XEOF
             fi
             echo -e "${GREEN}✔${GREY} Config created: ${CYAN}$configName${GREY} ($installMode mode)${RESET}"
 
-            if $systemctlCmd restart xray; then
+            $systemctlCmd restart xray
+            sleep 1
+            if $systemctlCmd is-active --quiet xray; then
                 echo -e "${GREEN}✔${GREY} Xray service started${RESET}"
             else
                 echo -e "${RED}✗ Xray service failed to start${RESET}"
+                $systemctlCmd status xray --no-pager 2>&1 | tail -5
                 echo -e "${GREY}Check logs with: ${BLUE}$systemctlCmd status xray${RESET}"
             fi
 
@@ -2135,10 +2138,13 @@ XEOF
             fi
             echo
         else
-            if $systemctlCmd restart xray; then
+            $systemctlCmd restart xray
+            sleep 1
+            if $systemctlCmd is-active --quiet xray; then
                 echo -e "${GREEN}✔${GREY} Xray service restarted with updated binary${RESET}"
             else
                 echo -e "${RED}✗ Xray service failed to restart${RESET}"
+                $systemctlCmd status xray --no-pager 2>&1 | tail -5
                 echo -e "${GREY}Check logs with: ${BLUE}$systemctlCmd status xray${RESET}"
             fi
         fi
