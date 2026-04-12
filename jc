@@ -70,7 +70,7 @@ fSshTunnelLocalPort=57217
 fSshTunnelAutosshPid=""
 # Singbox (sing-box proxy)
 fSingbox=
-fSingboxConfig="$HOME/Documents/sing-box-config.json"
+fSingboxConfig="$HOME/Documents/sing-box-config.jsonc"
 fSingboxMonitorPid=""
 fSingboxCleaning=0
 fSingboxRetryTimeout=180  # seconds to retry after VPN/tunnel drop
@@ -721,6 +721,7 @@ ubuntuInstallApps() {
         conntrack               # Connection tracking tools
         nftables                # Netfilter tables
         inetutils-traceroute    # Traceroute
+        nmap                    # Network scanner and security auditing tool
         openssh-server          # SSH server
         sshfs                   # SSH filesystem
         sshpass                 # SSH password authentication
@@ -834,6 +835,9 @@ macInstallApps() {
         # --- GUI & Desktop ---
         fontconfig              # Font configuration library
         freerdp                 # Remote desktop client (RDP)
+
+        # --- Networking ---
+        nmap                    # Network scanner and security auditing tool
 
         # --- Miscellaneous ---
         ffmpeg                  # Media processing toolkit
