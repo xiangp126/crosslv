@@ -2035,8 +2035,14 @@ installXray() {
             local sni="www.nvidia.com"
             local uuid=$("$xrayBin" uuid)
             local keypair=$("$xrayBin" x25519)
-            local privateKey=$(echo "$keypair" | grep "Private" | awk '{print $3}')
-            local publicKey=$(echo "$keypair" | grep "Public" | awk '{print $3}')
+            local privateKey=$(echo "$keypair" | grep -i "private" | awk '{print $NF}')
+            local publicKey=$(echo "$keypair" | grep -i "public" | awk '{print $NF}')
+            if [[ -z "$uuid" || -z "$privateKey" || -z "$publicKey" ]]; then
+                echo -e "${RED}Error: Failed to generate keys (uuid=$uuid, privateKey=${privateKey:+set}, publicKey=${publicKey:+set})${RESET}"
+                echo -e "${GREY}xray x25519 output:${RESET}"
+                echo "$keypair"
+                return 1
+            fi
             local shortId=$(openssl rand -hex 4)
             local configName="VLESS-REALITY-${port}"
             local configPath="$confDir/${configName}.json"
@@ -2090,6 +2096,14 @@ XEOF
             fi
             echo -e "${GREEN}✔${GREY} Config created: ${CYAN}$configName${GREY} ($installMode mode)${RESET}"
 
+            local testCmd="$xrayBin run -test -confdir $confDir"
+            [[ "$installMode" == "system" ]] && testCmd="sudo $testCmd"
+            if ! $testCmd 2>&1; then
+                echo -e "${RED}✗ Xray config test failed${RESET}"
+                return 1
+            fi
+            echo -e "${GREEN}✔${GREY} Config test passed${RESET}"
+
             $systemctlCmd restart xray
             sleep 1
             if $systemctlCmd is-active --quiet xray; then
@@ -2097,7 +2111,7 @@ XEOF
             else
                 echo -e "${RED}✗ Xray service failed to start${RESET}"
                 $systemctlCmd status xray --no-pager 2>&1 | tail -5
-                echo -e "${GREY}Check logs with: ${BLUE}$systemctlCmd status xray${RESET}"
+                echo -e "${GREY}Check full logs with: ${BLUE}sudo journalctl -u xray -n 20 --no-pager${RESET}"
             fi
 
             local ip
