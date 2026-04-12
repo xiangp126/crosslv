@@ -51,6 +51,7 @@ fChinesePinyinUpdate=
 fXrayUpdate=
 fXrayRemove=
 fXrayPort=
+fXrayServer=
 fSwapReq=
 # RTSP Stream Playback
 fRtspFlag=
@@ -70,6 +71,7 @@ fSshTunnelLocalPort=57217
 fSshTunnelAutosshPid=""
 # Singbox (sing-box proxy)
 fSingbox=
+# fSingboxConfig="$HOME/Documents/sing-box-config-autossh.json"
 fSingboxConfig="$HOME/Documents/sing-box-config.json.good"
 fSingboxMonitorPid=""
 fSingboxCleaning=0
@@ -165,6 +167,7 @@ The following options update or re-install (installed by default on first run):
 Xray Options:
     --xray                          Install or update Xray from Github
     --xray-port <port>              Set Xray listen port (default: 443)
+    --xray-server <ip>              Set server IP in share URL (auto-detected if omitted)
     --xray-remove                   Remove Xray from system
 
 Examples:
@@ -243,7 +246,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai,cursor-backup,cursor-restore,singbox,\
-          xray,xray-port:,xray-remove"
+          xray,xray-port:,xray-server:,xray-remove"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -457,6 +460,10 @@ while true; do
                 echo -e "${RED}Error: Invalid Xray port: $fXrayPort${RESET}"
                 exit 1
             fi
+            shift 2
+            ;;
+        --xray-server)
+            fXrayServer="$2"
             shift 2
             ;;
         --xray-remove)
@@ -2114,10 +2121,12 @@ XEOF
                 echo -e "${GREY}Check full logs with: ${BLUE}sudo journalctl -u xray -n 20 --no-pager${RESET}"
             fi
 
-            local ip
-            ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
-            [[ -z "$ip" ]] && ip=$(curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null)
-            [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
+            local ip="${fXrayServer}"
+            if [[ -z "$ip" ]]; then
+                ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
+                [[ -z "$ip" ]] && ip=$(curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null)
+                [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
+            fi
 
             local url="vless://${uuid}@${ip}:${port}?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=${sni}&fp=chrome&pbk=${publicKey}&sid=${shortId}#${configName}"
 
