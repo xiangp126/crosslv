@@ -97,6 +97,7 @@ alias youtube-dl='yt-dlp --external-downloader aria2c --external-downloader-args
 alias rsync='rsync -azPv'
 alias jn='jr --no-clipboard'
 alias jk='jmake'
+alias jx='xray-manager'
 
 function __cd () {
     if [ -d "$1" ]; then

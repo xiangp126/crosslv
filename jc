@@ -39,15 +39,17 @@ fVncLockAction=
 # Display Mode | gdm: start gdm3 (graphical), text: stop gdm3 (text mode)
 fDisplayMode=
 fLinkClangFormatPath= # Link clang-format to this path
-# Force Options
-appInstallForce= # 1: install apps and continue; 2: install apps and exit
-fNVMForce=
-fGitLfsForce=
-fClangdForce=
-fDockerForce=
-fWiresharkForce=
-fFirefoxForce=
-fChinesePinyinForce=
+# Update Options
+appInstallUpdate= # 1: install apps and continue; 2: install apps and exit
+fNVMUpdate=
+fGitLfsUpdate=
+fClangdUpdate=
+fDockerUpdate=
+fWiresharkUpdate=
+fFirefoxUpdate=
+fChinesePinyinUpdate=
+fXrayUpdate=
+fXrayRemove=
 fSwapReq=
 # RTSP Stream Playback
 fRtspFlag=
@@ -149,15 +151,19 @@ RTSP Options:
 Singbox Options:
     --singbox                       Launch sing-box proxy via SSH tunnel over VPN
 
-The following options force updates or re-installation (installed by default):
-    --nvm                           Force update NVM
-    --git-lfs                       Force update Git LFS from PackageCloud
-    --apps                          Force update Apps
-    --chinese-pinyin                Force Update Rime Pinyin
-    --docker                        Force update Docker from Docker PPA
-    --wireshark                     Force update wireshark from Wireshark PPA
-    --firefox                       Force update firefox from Mozilla PPA
-    --clangd                        Force update clangd from Github
+The following options update or re-install (installed by default on first run):
+    --nvm                           Update NVM
+    --git-lfs                       Update Git LFS from PackageCloud
+    --apps                          Update Apps
+    --chinese-pinyin                Update Rime Pinyin
+    --docker                        Update Docker from Docker PPA
+    --wireshark                     Update Wireshark from Wireshark PPA
+    --firefox                       Update Firefox from Mozilla PPA
+    --clangd                        Update Clangd from Github
+
+Xray Options:
+    --xray                          Install or update Xray from Github
+    --xray-remove                   Remove Xray from system
 
 Examples:
     $SCRIPT_NAME -h
@@ -253,35 +259,35 @@ while true; do
             shift
             ;;
         --apps)
-            appInstallForce=1
+            appInstallUpdate=1
             shift
             ;;
         --apps-only)
-            appInstallForce=2
+            appInstallUpdate=2
             shift
             ;;
         --nvm)
-            fNVMForce=true
+            fNVMUpdate=true
             shift
             ;;
         --git-lfs)
-            fGitLfsForce=true
+            fGitLfsUpdate=true
             shift
             ;;
         --docker)
-            fDockerForce=true
+            fDockerUpdate=true
             shift
             ;;
         --wireshark)
-            fWiresharkForce=true
+            fWiresharkUpdate=true
             shift
             ;;
         --firefox)
-            fFirefoxForce=true
+            fFirefoxUpdate=true
             shift
             ;;
         --clangd)
-            fClangdForce=true
+            fClangdUpdate=true
             shift
             ;;
         --rtsp)
@@ -367,7 +373,7 @@ while true; do
             shift
             ;;
         --chinese-pinyin)
-            fChinesePinyinForce=true
+            fChinesePinyinUpdate=true
             shift
             ;;
         --swap)
@@ -438,6 +444,15 @@ while true; do
             shift
             exit 0
             ;;
+        --xray)
+            fXrayUpdate=true
+            shift
+            ;;
+        --xray-remove)
+            fXrayRemove=true
+            shift
+            ;;
+
         --cursor-backup)
             fCursorAction="backup"
             shift
@@ -629,8 +644,8 @@ removeInstalledPackages() {
 }
 
 ubuntuInstallApps() {
-    [ ! -f "$fFirstTimeFile" ] && appInstallForce=1
-    [ -z "$appInstallForce" ] && return
+    [ ! -f "$fFirstTimeFile" ] && appInstallUpdate=1
+    [ -z "$appInstallUpdate" ] && return
     checkSudoPrivilege
     local appsForUbuntu=(
         # --- Core Command-Line Tools ---
@@ -645,7 +660,7 @@ ubuntuInstallApps() {
         expect                  # Expect script interpreter
         shellcheck              # Shell script static analyzer
         bash-completion         # Bash completion
-        qrencode
+        qrencode                # QR code generator
 
         # --- File Finding & Processing ---
         fd-find                 # fd, a faster find
@@ -763,7 +778,7 @@ ubuntuInstallApps() {
     sudo apt autoremove -y
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
-        if [ "$appInstallForce" -eq 2 ]; then
+        if [ "$appInstallUpdate" -eq 2 ]; then
             exit 0
         fi
     else
@@ -773,8 +788,8 @@ ubuntuInstallApps() {
 }
 
 macInstallApps() {
-    [ ! -f "$fFirstTimeFile" ] && appInstallForce=1
-    [ -z "$appInstallForce" ] && return
+    [ ! -f "$fFirstTimeFile" ] && appInstallUpdate=1
+    [ -z "$appInstallUpdate" ] && return
     checkSudoPrivilege
     appsForMac=(
         # --- Core Command-Line Tools ---
@@ -831,7 +846,7 @@ macInstallApps() {
     brew install --cask "${casksForMac[@]}"
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Success!${RESET}"
-        if [ "$appInstallForce" -eq 2 ]; then
+        if [ "$appInstallUpdate" -eq 2 ]; then
             exit 0
         fi
     else
@@ -1664,9 +1679,65 @@ createEssentialPaths() {
     cd "$fMainDir" || exit
 }
 
+# Download and extract a zip from a GitHub release URL.
+# Sets GITHUB_RELEASE_EXTRACT_DIR to the path of the extracted directory.
+# $1: display name (e.g. "Clangd", "Xray")
+# $2: download URL
+downloadGithubRelease() {
+    local name="$1" downloadUrl="$2"
+    GITHUB_RELEASE_EXTRACT_DIR=""
+
+    if ! command -v jq &> /dev/null; then
+        echo -e "${RED}Error: jq is required but not installed. Please install jq first.${RESET}"
+        return 1
+    fi
+
+    echo -e "${LIGHTYELLOW}Downloading $name${RESET}"
+    local fileName=$(basename "$downloadUrl")
+    local downloadDst="$fDownloads/$fileName"
+    if [ -f "$downloadDst" ]; then
+        echo -e "${GREY}File $fileName already exists in $fDownloads, skipping download.${RESET}"
+    else
+        curl -Lo "$downloadDst" "$downloadUrl"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Error: Failed to download $name${RESET}"
+            return 1
+        fi
+    fi
+
+    cd "$fDownloads" || exit 1
+    local peekInfo=$(zipinfo -1 "$downloadDst" | head -n 1)
+    local extractDir="$fDownloads/$(dirname "$peekInfo")"
+    # If top-level entry is a file (no subdir), extract into a named directory
+    if [[ "$extractDir" == "$fDownloads/." ]]; then
+        extractDir="$fDownloads/${fileName%.zip}"
+        if [ -d "$extractDir" ]; then
+            echo -e "${GREY}Directory $extractDir already exists, skipping extraction.${RESET}"
+        else
+            mkdir -p "$extractDir"
+            echo -e "${LIGHTYELLOW}Extracting $name${RESET}"
+            unzip -o "$downloadDst" -d "$extractDir"
+        fi
+    else
+        if [ -d "$extractDir" ]; then
+            echo -e "${GREY}Directory $extractDir already exists, skipping extraction.${RESET}"
+        else
+            echo -e "${LIGHTYELLOW}Extracting $name${RESET}"
+            unzip "$downloadDst"
+            if [ ! -d "$extractDir" ]; then
+                echo -e "${RED}Error: Failed to extract $name${RESET}"
+                return 1
+            fi
+        fi
+    fi
+
+    echo -e "${GREEN}Successfully extracted to $extractDir${RESET}"
+    GITHUB_RELEASE_EXTRACT_DIR="$extractDir"
+}
+
 installLatestGithubClangd() {
     echo -e "${COLOR}Checking for Github Clangd (Github Release)${RESET}"
-    if [ -z "$fClangdForce" ] && command -v clangd &> /dev/null; then
+    if [ -z "$fClangdUpdate" ] && command -v clangd &> /dev/null; then
         echo -e "${GREEN}✔${GREY} Clangd is already installed.${RESET}"
         printf "  "
         clangd --version | head -n 1 | sed 's/ (.*//'
@@ -1694,9 +1765,9 @@ installLatestGithubClangd() {
     fi
 
     # Get the latest stable release version and download URL
-    echo -e "${LIGHTYELLOW}Fetching latest Clangd binary information${RESET}"
     # 20.1.0
     # https://github.com/clangd/clangd/releases/download/20.1.0/clangd-linux-20.1.0.zip
+    echo -e "${LIGHTYELLOW}Fetching latest Clangd binary information${RESET}"
     local output=$(curl -s https://api.github.com/repos/clangd/clangd/releases |
         jq -r '[.[] | select(.prerelease == false)] | .[0] |
                .name, (.assets[] | select(.name | contains("clangd-linux")) | .browser_download_url)')
@@ -1716,42 +1787,195 @@ installLatestGithubClangd() {
         fi
     fi
 
-    echo -e "${LIGHTYELLOW}Downloading latest version of Clangd${RESET}"
-    local fileName=$(basename "$downloadUrl")
-    local downloadDst="$fDownloads/$fileName"
-    if [ -f "$downloadDst" ]; then
-        echo -e "${GREY}File $fileName already exists in $fDownloads, skipping download.${RESET}"
-    else
-        curl -Lo "$downloadDst" "$downloadUrl"
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}Error: Failed to download the latest version${RESET}"
-            return 1
-        fi
-    fi
+    downloadGithubRelease "Clangd" "$downloadUrl" || return 1
 
-    cd "$fDownloads" || exit 1
-    local peekInfo=$(zipinfo -1 "$downloadDst" | head -n 1)
-    local extractDir="$fDownloads/$(dirname "$peekInfo")"
-    if [ -d "$extractDir" ]; then
-        echo -e "${GREY}Directory $extractDir already exists, skipping extraction.${RESET}"
-    else
-        echo -e "${LIGHTYELLOW}Extracting Clangd${RESET}"
-        unzip "$downloadDst"
-        if [ ! -d "$extractDir" ]; then
-            echo -e "${RED}Error: Failed to extract the downloaded file${RESET}"
-            exit 1
-        fi
-        echo -e "${GREEN}Successfully extracted to $extractDir${RESET}"
-    fi
-
-    # find binary named clangd under the extracted directory
-    local clangdBinary=$(find "$extractDir" -type f -name "clangd" -executable | head -n 1)
+    local clangdBinary=$(find "$GITHUB_RELEASE_EXTRACT_DIR" -type f -name "clangd" -executable | head -n 1)
     if [ -z "$clangdBinary" ]; then
         echo -e "${RED}Error: Failed to find the clangd binary in the extracted directory${RESET}"
         return 1
     fi
 
     linkFile "$clangdBinary" "$HOME/.usr/bin"
+}
+
+installXray() {
+    echo -e "${COLOR}Checking for Xray (Github Release)${RESET}"
+    if [ -z "$fXrayUpdate" ] && command -v xray &> /dev/null; then
+        echo -e "${GREEN}✔${GREY} Xray is already installed.${RESET}"
+        printf "  "
+        xray version 2>/dev/null | head -n 1
+        return 0
+    fi
+
+    local arch=${fArch:-$(uname -m)}
+    local xrayArch
+    case "$arch" in
+        x86_64)  xrayArch="64" ;;
+        aarch64) xrayArch="arm64-v8a" ;;
+        *)
+            echo -e "${RED}Error: Unsupported architecture for Xray: $arch${RESET}"
+            return 1
+            ;;
+    esac
+
+    local xrayOS
+    case "$(uname -s)" in
+        Darwin) xrayOS="macos" ;;
+        *)      xrayOS="linux" ;;
+    esac
+
+    echo -e "${LIGHTYELLOW}Fetching latest Xray release information${RESET}"
+    local output=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest |
+        jq -r '.tag_name')
+    if [ -z "$output" ] || [ "$output" == "null" ]; then
+        echo -e "${RED}Error: Failed to get latest Xray version${RESET}"
+        return 1
+    fi
+
+    local latestVersion="$output"
+    echo -e "Latest Xray version: ${COLOR}$latestVersion${RESET}"
+
+    local downloadUrl="https://github.com/XTLS/Xray-core/releases/download/${latestVersion}/Xray-${xrayOS}-${xrayArch}.zip"
+    downloadGithubRelease "Xray" "$downloadUrl" || return 1
+
+    local xrayBinary="$GITHUB_RELEASE_EXTRACT_DIR/xray"
+    if [ ! -f "$xrayBinary" ]; then
+        echo -e "${RED}Error: xray binary not found in extracted directory${RESET}"
+        return 1
+    fi
+    chmod +x "$xrayBinary"
+
+    linkFile "$xrayBinary" "$HOME/.usr/bin"
+
+    # Install geodata files
+    local xrayShareDir="$HOME/.usr/share/xray"
+    mkdir -p "$xrayShareDir"
+    for dat in geoip.dat geosite.dat; do
+        if [ -f "$GITHUB_RELEASE_EXTRACT_DIR/$dat" ]; then
+            cp -f "$GITHUB_RELEASE_EXTRACT_DIR/$dat" "$xrayShareDir/"
+            echo -e "${GREEN}✔${GREY} Installed $dat to $xrayShareDir${RESET}"
+        fi
+    done
+
+    # Set up server environment and systemd service (Linux only)
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        local installMode="system"
+        if sudo -n true 2>/dev/null; then
+            installMode="system"
+        else
+            echo -e "${LIGHTYELLOW}System-level install requires sudo privileges.${RESET}"
+            echo -e "  ${GREEN}1)${RESET} Enter sudo password and continue (system-level)"
+            echo -e "  ${GREEN}2)${RESET} Install user-level instead (no sudo needed)"
+            echo -e "  ${GREEN}3)${RESET} Cancel"
+            local choice
+            read -rp "$(echo -e "${CYAN}▸${RESET} Enter choice [1-3]: ")" choice
+            case "$choice" in
+                1) installMode="system" ;;
+                2) installMode="user" ;;
+                *) echo -e "${GREY}Cancelled.${RESET}"; return 0 ;;
+            esac
+        fi
+
+        if [[ "$installMode" == "system" ]]; then
+            echo -e "${LIGHTYELLOW}Setting up system-level Xray environment...${RESET}"
+            sudo mkdir -p /etc/xray/bin /etc/xray/conf /var/log/xray
+            sudo cp -f "$xrayBinary" /etc/xray/bin/xray
+            sudo chmod +x /etc/xray/bin/xray
+            for dat in geoip.dat geosite.dat; do
+                [[ -f "$GITHUB_RELEASE_EXTRACT_DIR/$dat" ]] && sudo cp -f "$GITHUB_RELEASE_EXTRACT_DIR/$dat" /etc/xray/bin/
+            done
+            local serviceFile="$fMainDir/assets/xray/xray.service"
+            if [[ -f "$serviceFile" ]]; then
+                sudo cp -f "$serviceFile" /etc/systemd/system/xray.service
+                sudo systemctl daemon-reload
+                sudo systemctl enable xray 2>/dev/null
+                echo -e "${GREEN}✔${GREY} System-level systemd service installed and enabled${RESET}"
+            fi
+        else
+            echo -e "${LIGHTYELLOW}Setting up user-level Xray environment...${RESET}"
+            mkdir -p "$HOME/.config/xray/conf" "$HOME/.config/systemd/user"
+            local serviceFile="$fMainDir/assets/xray/xray-user.service"
+            if [[ -f "$serviceFile" ]]; then
+                cp -f "$serviceFile" "$HOME/.config/systemd/user/xray.service"
+                systemctl --user daemon-reload
+                systemctl --user enable xray 2>/dev/null
+                echo -e "${GREEN}✔${GREY} User-level systemd service installed and enabled${RESET}"
+                if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
+                    echo -e "${LIGHTYELLOW}Tip: Run ${BLUE}sudo loginctl enable-linger $USER${LIGHTYELLOW} to keep xray running after logout${RESET}"
+                fi
+            fi
+        fi
+    fi
+}
+
+removeXray() {
+    echo -e "${COLOR}Removing Xray${RESET}"
+    local removed=0
+    local xrayBin="$HOME/.usr/bin/xray"
+    local xrayShareDir="$HOME/.usr/share/xray"
+
+    # Remove user-level binary and geodata
+    if [ -L "$xrayBin" ] || [ -f "$xrayBin" ]; then
+        rm -f "$xrayBin"
+        echo -e "${GREEN}✔${GREY} Removed $xrayBin${RESET}"
+        ((removed++))
+    fi
+    if [ -d "$xrayShareDir" ]; then
+        rm -rf "$xrayShareDir"
+        echo -e "${GREEN}✔${GREY} Removed $xrayShareDir${RESET}"
+        ((removed++))
+    fi
+
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        :
+    elif [[ -d /etc/xray ]]; then
+        # System-level cleanup
+        echo -e "${LIGHTYELLOW}Detected system-level install${RESET}"
+        if systemctl is-active xray &>/dev/null; then
+            sudo systemctl stop xray
+            echo -e "${GREEN}✔${GREY} Stopped xray system service${RESET}"
+            ((removed++))
+        fi
+        if [[ -f /etc/systemd/system/xray.service ]]; then
+            sudo systemctl disable xray 2>/dev/null
+            sudo rm -f /etc/systemd/system/xray.service
+            sudo systemctl daemon-reload
+            echo -e "${GREEN}✔${GREY} Removed system systemd service${RESET}"
+            ((removed++))
+        fi
+        sudo rm -rf /etc/xray
+        echo -e "${GREEN}✔${GREY} Removed /etc/xray${RESET}"
+        ((removed++))
+        if [[ -d /var/log/xray ]]; then
+            sudo rm -rf /var/log/xray
+            echo -e "${GREEN}✔${GREY} Removed /var/log/xray${RESET}"
+            ((removed++))
+        fi
+    elif [[ -d "$HOME/.config/xray" ]]; then
+        # User-level cleanup
+        echo -e "${LIGHTYELLOW}Detected user-level install${RESET}"
+        if systemctl --user is-active xray &>/dev/null; then
+            systemctl --user stop xray
+            echo -e "${GREEN}✔${GREY} Stopped xray user service${RESET}"
+            ((removed++))
+        fi
+        if [[ -f "$HOME/.config/systemd/user/xray.service" ]]; then
+            systemctl --user disable xray 2>/dev/null
+            rm -f "$HOME/.config/systemd/user/xray.service"
+            systemctl --user daemon-reload
+            echo -e "${GREEN}✔${GREY} Removed user systemd service${RESET}"
+            ((removed++))
+        fi
+        rm -rf "$HOME/.config/xray"
+        echo -e "${GREEN}✔${GREY} Removed ~/.config/xray${RESET}"
+        ((removed++))
+    fi
+
+    if [ $removed -eq 0 ]; then
+        echo -e "${GREY}Xray is not installed.${RESET}"
+    else
+        echo -e "${GREEN}✔${GREY} Xray removed successfully.${RESET}"
+    fi
 }
 
 createFirstTimeFile() {
@@ -1762,7 +1986,7 @@ createFirstTimeFile() {
 installLatestGitLfs() {
     echo -e "${COLOR}Checking for Git LFS (PackageCloud)${RESET}"
 
-    if [ -z "$fGitLfsForce" ] && command -v git-lfs &>/dev/null; then
+    if [ -z "$fGitLfsUpdate" ] && command -v git-lfs &>/dev/null; then
         local lfsPolicy
         lfsPolicy=$(apt-cache policy git-lfs)
         local installedVersion candidateVersion
@@ -1848,7 +2072,7 @@ EOF
 
 installLatestPPaDocker() {
     echo -e "${COLOR}Checking for Docker${RESET}"
-    if command -v docker &> /dev/null && [ -z "$fDockerForce" ]; then
+    if command -v docker &> /dev/null && [ -z "$fDockerUpdate" ]; then
         echo -e "${GREEN}✔${GREY} Docker is already installed.${RESET}"
         printf "  "
         docker --version
@@ -1956,20 +2180,20 @@ installLatestPPaDocker() {
 
 installLatestRimePinyin() {
     # Skip if not first time and not explicitly requested
-    [ -f "$fFirstTimeFile" ] && [ -z "$fChinesePinyinForce" ] && return
+    [ -f "$fFirstTimeFile" ] && [ -z "$fChinesePinyinUpdate" ] && return
 
     echo -e "${COLOR}Checking Rime Pinyin Input Method${RESET}"
 
     # Dispatch to macOS-specific function if on Darwin (only when --chinese-pinyin)
     if [[ $(uname -s) == 'Darwin' ]]; then
-        if [ -n "$fChinesePinyinForce" ]; then
+        if [ -n "$fChinesePinyinUpdate" ]; then
             installRimeMacOS
             return $?
         fi
         return 0
     fi
 
-    if [ -z "$fChinesePinyinForce" ]; then
+    if [ -z "$fChinesePinyinUpdate" ]; then
         for cmd in fcitx5 fcitx; do
             if command -v "${cmd}-configtool" &>/dev/null; then
                 echo -e "${GREEN}✔${GREY} Rime Pinyin input method is already installed.${RESET}"
@@ -2114,8 +2338,8 @@ installRimeMacOS() {
         return 1
     fi
 
-    # Check if Squirrel is already installed (skip check if force flag is set)
-    if [ -z "$fChinesePinyinForce" ]; then
+    # Check if Squirrel is already installed (skip check if update flag is set)
+    if [ -z "$fChinesePinyinUpdate" ]; then
         local squirrelPath=""
         if [ -d "/Library/Input Methods/Squirrel.app" ]; then
             squirrelPath="/Library/Input Methods/Squirrel.app"
@@ -2183,13 +2407,13 @@ installRimeMacOS() {
 
 installLatestPPaFirefox() {
     echo -e "${COLOR}Checking for Firefox (Mozilla PPA)${RESET}"
-    if [ -z "$fFirefoxForce" ] && firefox --version &>/dev/null && ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
+    if [ -z "$fFirefoxUpdate" ] && firefox --version &>/dev/null && ! apt-cache show fcitx5-rime > /dev/null 2>&1; then
         echo -e "${GREEN}✔${GREY} The current version of Firefox is acceptable.${RESET}"
         return 0
     fi
 
     # Check if Firefox is installed and if it's the DEB version from Mozilla PPA
-    if [ -z "$fFirefoxForce" ] && command -v firefox &>/dev/null; then
+    if [ -z "$fFirefoxUpdate" ] && command -v firefox &>/dev/null; then
         firefoxPolicy=$(apt-cache policy firefox)
         if echo "$firefoxPolicy" | grep -q "mozillateam/ppa"; then
             installedVersion=$(echo "$firefoxPolicy" | grep "Installed:" | awk '{print $2}')
@@ -2716,7 +2940,7 @@ addSwap() {
 installLatestPPaWireshark() {
     echo -e "${COLOR}Checking for Wireshark (Wireshark PPA)${RESET}"
 
-    if [ -z "$fWiresharkForce" ] && command -v wireshark &>/dev/null; then
+    if [ -z "$fWiresharkUpdate" ] && command -v wireshark &>/dev/null; then
         local wiresharkPolicy
         wiresharkPolicy=$(apt-cache policy wireshark)
         if echo "$wiresharkPolicy" | grep -q "wireshark-dev/stable"; then
@@ -2878,7 +3102,7 @@ installNvmNodeJs() {
     echo -e "${COLOR}Installing NVM (Node Version Manager) and Node.js via official script${RESET}"
     local nvmDir="$HOME/.nvm"
     local nvmSh="$nvmDir/nvm.sh"
-    if [ -z "$fNVMForce" ] && [ -s "$nvmSh" ]; then
+    if [ -z "$fNVMUpdate" ] && [ -s "$nvmSh" ]; then
         echo -e "${GREEN}✔${GREY} NVM is already installed in ${BLUE}$nvmDir${RESET}"
         # shellcheck disable=SC1090
         source "$nvmSh"
@@ -3562,6 +3786,8 @@ doEarlyExitJobs() {
     [ -n "$fRtspFlag" ]            && { playRtspStream; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     [ -n "$fSingbox" ]             && { launchSingbox; exit $?; }
+    [ -n "$fXrayUpdate" ]          && { installXray; exit 0; }
+    [ -n "$fXrayRemove" ]          && { removeXray; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
     [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
     case "$fVncServer" in
