@@ -1231,7 +1231,7 @@ copyFile() {
         return 3
     fi
 
-    echo -e "📄 ${LIGHTYELLOW}Copying File${RESET}"
+    echo -e "📄 ${LIGHTYELLOW}Syncing File${RESET}"
     echo -e "   ├─ ${GREY}Source:${RESET} ${CYAN}$src${RESET}"
     echo -e "   └─ ${GREY}Target:${RESET} ${CYAN}$dst${RESET}"
 
