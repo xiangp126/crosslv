@@ -129,7 +129,7 @@ _jmake_complete() {
                --attempt --no-verbose --nicx --list --list-extended --link --models \
                --skip --scratch --track --patch --ethlt --codecov --cov \
                --fetch --push --rebase --add --commit --amend --stat --df --diff --show \
-               --burn --burn-official --firmware --device --fwreset --mft-install --ofed-start --ofed-stop \
+               --burn --burn-official --firmware --device --fw-query --fw-reset --mft-install --ofed-start --ofed-stop \
                --power-cycle --docker-group"
 
     # Handle option arguments

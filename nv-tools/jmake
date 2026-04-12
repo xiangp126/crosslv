@@ -41,6 +41,7 @@ fOfedStop=
 fPowerCycle=
 fFirmware=
 fBurnOfficial=
+fFwQuery=
 fInputCmd=
 fBuildTimeFormatted=
 # Git associated variables
@@ -278,7 +279,8 @@ MFT Options (Mellanox Firmware Tools):
         --burn                      Burn FW image to device (requires --device, uses -m model)
         --burn-official <version>   Burn official release FW to device (e.g., 82.49.0052)
         --device <mst_device>       MST device path (e.g. /dev/mst/mt4133_pciconf0)
-        --fwreset                   Reset FW on device after burn (requires --device)
+        --fw-query                  Query FW info from device (requires --device)
+        --fw-reset                  Reset FW on device after burn (requires --device)
         --mft-install               Install MFT (Mellanox Firmware Tools)
         --ofed-start                Start OFED driver (sudo /etc/init.d/openibd start)
         --ofed-stop                 Stop OFED driver (sudo /etc/init.d/openibd stop)
@@ -319,8 +321,8 @@ Examples:
     $SCRIPT_NAME --bear --models gilboa       # Build gilboa with $fCompileCommandsJson
     $SCRIPT_NAME --fetch --rebase             # Fetch then rebase (cascade)
     $SCRIPT_NAME --burn --device /dev/mst/mt4133_pciconf0 -m argaman   # Burn argaman FW to device
-    $SCRIPT_NAME --burn --fwreset --device /dev/mst/mt4133_pciconf0   # Burn and reset FW
-    $SCRIPT_NAME --burn-official 82.49.0052 --fwreset --device /dev/mst/mt4133_pciconf0  # Burn official release + reset
+    $SCRIPT_NAME --burn --fw-reset --device /dev/mst/mt4133_pciconf0   # Burn and reset FW
+    $SCRIPT_NAME --burn-official 82.49.0052 --fw-reset --device /dev/mst/mt4133_pciconf0  # Burn official release + reset
 
 _EOF
     exit 0
@@ -343,7 +345,7 @@ LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
 jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
 all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
 scratch,track,fetch,push,rebase,add,commit,amend,stat,show,df,diff,\
-burn,burn-official:,device:,fwreset,mft-install,ofed-start,ofed-stop,power-cycle:,docker-group,firmware:"
+burn,burn-official:,device:,fw-query,fw-reset,mft-install,ofed-start,ofed-stop,power-cycle:,docker-group,firmware:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -550,7 +552,11 @@ while true; do
             fDevice="$2"
             shift 2
             ;;
-        --fwreset)
+        --fw-query)
+            fFwQuery=true
+            shift
+            ;;
+        --fw-reset)
             fFwReset=true
             shift
             ;;
@@ -697,7 +703,7 @@ validateArguments() {
     fi
 
     if [[ -n "$fFwReset" && -z "$fDevice" ]]; then
-        echo -e "$NOTATION ${RED}Error: --fwreset requires --device <mst_device>${RESET}"
+        echo -e "$NOTATION ${RED}Error: --fw-reset requires --device <mst_device>${RESET}"
         exit 1
     fi
 
@@ -1583,12 +1589,23 @@ runMlxReset() {
     echo "$SEPARATOR"
 }
 
+runFwQuery() {
+    [[ -z "$fFwQuery" ]] && return
+    if [[ -z "$fDevice" ]]; then
+        echo -e "$NOTATION ${RED}Error: --fw-query requires --device <mst_device>${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION Running: ${YELLOW}sudo flint -d $fDevice q${RESET}"
+    sudo flint -d "$fDevice" q
+}
+
 doEarlyExitJobs() {
     [ -n "$fDockerGroup" ]   && { runDockerGroup; exit 0; }
     [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ] && { linkWorkspaceFiles; exit 0; }
     [ -n "$fMftInstall" ]    && { runMftInstall; exit 0; }
     [ -n "$fOfedStop" ]      && { runOfedStop; [ -n "$fOfedStart" ] && runOfedStart; exit 0; }
     [ -n "$fOfedStart" ]     && { runOfedStart; exit 0; }
+    [ -n "$fFwQuery" ]       && { runFwQuery; exit 0; }
     [ -n "$fBurnOfficial" ]  && { runBurnOfficial; [ -n "$fFwReset" ] && runMlxReset; exit 0; }
     [ -n "$fFwReset" ] && [ -z "$fBurn" ] && { runMlxReset; exit 0; }
     [ -n "$fPowerCycle" ]    && { runPowerCycle; exit 0; }
