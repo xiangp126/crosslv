@@ -2090,8 +2090,12 @@ XEOF
             fi
             echo -e "${GREEN}✔${GREY} Config created: ${CYAN}$configName${GREY} ($installMode mode)${RESET}"
 
-            $systemctlCmd restart xray 2>/dev/null
-            echo -e "${GREEN}✔${GREY} Xray service started${RESET}"
+            if $systemctlCmd restart xray; then
+                echo -e "${GREEN}✔${GREY} Xray service started${RESET}"
+            else
+                echo -e "${RED}✗ Xray service failed to start${RESET}"
+                echo -e "${GREY}Check logs with: ${BLUE}$systemctlCmd status xray${RESET}"
+            fi
 
             local ip
             ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
@@ -2131,8 +2135,12 @@ XEOF
             fi
             echo
         else
-            $systemctlCmd restart xray 2>/dev/null
-            echo -e "${GREEN}✔${GREY} Xray service restarted with updated binary${RESET}"
+            if $systemctlCmd restart xray; then
+                echo -e "${GREEN}✔${GREY} Xray service restarted with updated binary${RESET}"
+            else
+                echo -e "${RED}✗ Xray service failed to restart${RESET}"
+                echo -e "${GREY}Check logs with: ${BLUE}$systemctlCmd status xray${RESET}"
+            fi
         fi
     fi
 }

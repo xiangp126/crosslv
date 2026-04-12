@@ -39,6 +39,11 @@ _jc_complete() {
             COMPREPLY=( $(compgen -W "${ips}" -- ${cur}) )
             return 0
             ;;
+        --xray-port)
+            local ports="443 5902 8080"
+            COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
+            return 0
+            ;;
         --rtsp-resolution)
             # 3360x1890  - Mi Monitor 27" (native)
             # 3456x2234  - Built-in MacBook Pro
