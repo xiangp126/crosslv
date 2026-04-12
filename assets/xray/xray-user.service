@@ -1,0 +1,12 @@
+[Unit]
+Description=Xray Service
+After=network.target
+
+[Service]
+ExecStart=%h/.usr/bin/xray run -confdir %h/.config/xray/conf
+Restart=on-failure
+RestartSec=3
+Environment=XRAY_LOCATION_ASSET=%h/.usr/share/xray
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Xray Service
+Documentation=https://xtls.github.io
+After=network.target nss-lookup.target
+
+[Service]
+Type=simple
+ExecStart=/etc/xray/bin/xray run -confdir /etc/xray/conf
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+Environment=XRAY_LOCATION_ASSET=/etc/xray/bin
+
+[Install]
+WantedBy=multi-user.target

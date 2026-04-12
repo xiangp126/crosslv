@@ -1,0 +1,607 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2155 disable=SC2034
+# Xray VLESS-REALITY server manager
+# Inspired by 233boy/Xray: https://github.com/233boy/Xray
+# Supports dual-mode: system-level (/etc/xray) or user-level (~/.config/xray)
+
+# Colors
+CYAN='\033[36m'
+RED='\033[31m'
+BOLD='\033[1m'
+GREEN='\033[32m'
+MAGENTA='\033[35m'
+BLUE='\033[34m'
+GREY='\033[90m'
+YELLOW='\033[33m'
+LIGHTYELLOW='\033[93m'
+RESET='\033[0m'
+NOTATION="${CYAN}▸${RESET}"
+
+# SNI candidates
+SNI_LIST=(
+    www.nvidia.com
+    developer.nvidia.com
+    www.amazon.com
+    www.cloudflare.com
+    dash.cloudflare.com
+    aws.amazon.com
+)
+DEFAULT_SNI="${SNI_LIST[0]}"
+DEFAULT_PORT=443
+
+# Mode-dependent variables (set by detectMode)
+XRAY_MODE=
+XRAY_BIN=
+XRAY_CONF_DIR=
+XRAY_SERVICE=xray
+SYSTEMCTL_CMD=
+JOURNALCTL_CMD=
+
+detectMode() {
+    if [[ -d /etc/xray/conf ]]; then
+        XRAY_MODE="system"
+        XRAY_BIN=/etc/xray/bin/xray
+        XRAY_CONF_DIR=/etc/xray/conf
+        SYSTEMCTL_CMD="sudo systemctl"
+        JOURNALCTL_CMD="journalctl -u $XRAY_SERVICE"
+    elif [[ -d "$HOME/.config/xray/conf" ]]; then
+        XRAY_MODE="user"
+        XRAY_BIN="$HOME/.usr/bin/xray"
+        XRAY_CONF_DIR="$HOME/.config/xray/conf"
+        SYSTEMCTL_CMD="systemctl --user"
+        JOURNALCTL_CMD="journalctl --user -u $XRAY_SERVICE"
+    else
+        echo -e "$NOTATION ${RED}Error: Xray is not installed.${RESET}"
+        echo -e "$NOTATION Install with: ${YELLOW}jc --xray${RESET}"
+        exit 1
+    fi
+}
+
+getServerIp() {
+    local ip
+    ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
+    [[ -z "$ip" ]] && ip=$(curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null)
+    [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
+    echo "$ip"
+}
+
+requireRoot() {
+    [[ "$XRAY_MODE" != "system" ]] && return
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: System-level mode requires root privileges.${RESET}"
+        echo -e "$NOTATION Run with: ${YELLOW}sudo jx $*${RESET}"
+        exit 1
+    fi
+}
+
+requireXray() {
+    if [[ ! -x "$XRAY_BIN" ]]; then
+        echo -e "$NOTATION ${RED}Error: Xray binary not found at $XRAY_BIN${RESET}"
+        echo -e "$NOTATION Install with: ${YELLOW}jc --xray${RESET}"
+        exit 1
+    fi
+}
+
+requireJq() {
+    if ! command -v jq &>/dev/null; then
+        echo -e "$NOTATION ${RED}Error: jq is required but not installed.${RESET}"
+        exit 1
+    fi
+}
+
+# Write content to a file, using sudo tee in system mode
+writeFile() {
+    local path="$1"
+    if [[ "$XRAY_MODE" == "system" ]]; then
+        sudo tee "$path" > /dev/null
+    else
+        cat > "$path"
+    fi
+}
+
+# Remove a file, using sudo in system mode
+removeFile() {
+    local path="$1"
+    if [[ "$XRAY_MODE" == "system" ]]; then
+        sudo rm -f "$path"
+    else
+        rm -f "$path"
+    fi
+}
+
+# Create directory, using sudo in system mode
+makeDir() {
+    if [[ "$XRAY_MODE" == "system" ]]; then
+        sudo mkdir -p "$@"
+    else
+        mkdir -p "$@"
+    fi
+}
+
+listConfigs() {
+    local configs=()
+    if [[ -d "$XRAY_CONF_DIR" ]]; then
+        for f in "$XRAY_CONF_DIR"/*.json; do
+            [[ -f "$f" ]] && configs+=("$(basename "$f" .json)")
+        done
+    fi
+    echo "${configs[@]}"
+}
+
+selectConfig() {
+    local prompt="${1:-Select a config}"
+    local configs
+    read -ra configs <<< "$(listConfigs)"
+
+    if [[ ${#configs[@]} -eq 0 || ( ${#configs[@]} -eq 1 && -z "${configs[0]}" ) ]]; then
+        echo -e "$NOTATION ${YELLOW}No configurations found.${RESET}"
+        return 1
+    fi
+
+    if [[ ${#configs[@]} -eq 1 ]]; then
+        SELECTED_CONFIG="${configs[0]}"
+        return 0
+    fi
+
+    echo -e "$NOTATION ${BOLD}$prompt:${RESET}"
+    local i=1
+    for name in "${configs[@]}"; do
+        echo -e "  ${GREEN}$i)${RESET} $name"
+        ((i++))
+    done
+
+    local choice
+    read -rp "$(echo -e "$NOTATION Enter number [1-${#configs[@]}]: ")" choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#configs[@]} )); then
+        SELECTED_CONFIG="${configs[$((choice-1))]}"
+    else
+        echo -e "$NOTATION ${RED}Invalid choice.${RESET}"
+        return 1
+    fi
+}
+
+getConfigPath() {
+    echo "$XRAY_CONF_DIR/${1}.json"
+}
+
+readConfig() {
+    local name="${1:-$SELECTED_CONFIG}"
+    local path
+    path=$(getConfigPath "$name")
+    if [[ ! -f "$path" ]]; then
+        echo -e "$NOTATION ${RED}Error: Config '$name' not found.${RESET}"
+        return 1
+    fi
+    CONFIG_JSON=$(cat "$path")
+}
+
+extractField() {
+    echo "$CONFIG_JSON" | jq -r "$1" 2>/dev/null
+}
+
+generateVlessUrl() {
+    local uuid="$1" ip="$2" port="$3" sni="$4" publicKey="$5" shortId="$6" name="$7"
+    echo "vless://${uuid}@${ip}:${port}?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=${sni}&fp=chrome&pbk=${publicKey}&sid=${shortId}#${name}"
+}
+
+# ─── add ────────────────────────────────────────────────────────────────────
+
+cmdAdd() {
+    requireRoot "add"
+    requireXray
+    requireJq
+    makeDir "$XRAY_CONF_DIR"
+
+    local port="${1:-$DEFAULT_PORT}"
+    local uuid="${2:-$($XRAY_BIN uuid)}"
+    local sni="${3:-$DEFAULT_SNI}"
+
+    [[ "$uuid" == "auto" ]] && uuid=$($XRAY_BIN uuid)
+
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+        echo -e "$NOTATION ${RED}Error: Invalid port: $port${RESET}"
+        return 1
+    fi
+
+    local keypair
+    keypair=$($XRAY_BIN x25519)
+    local privateKey=$(echo "$keypair" | grep "Private" | awk '{print $3}')
+    local publicKey=$(echo "$keypair" | grep "Public" | awk '{print $3}')
+    local shortId=$(openssl rand -hex 4)
+
+    local configName="VLESS-REALITY-${port}"
+    local configPath
+    configPath=$(getConfigPath "$configName")
+
+    if [[ -f "$configPath" ]]; then
+        echo -e "$NOTATION ${YELLOW}Config '$configName' already exists. Overwrite? (y/n)${RESET}"
+        local confirm
+        read -rp "$(echo -e "$NOTATION ")" confirm
+        [[ "${confirm,,}" != "y" ]] && return 0
+    fi
+
+    writeFile "$configPath" << EOF
+{
+  "inbounds": [
+    {
+      "port": $port,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "$uuid",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "dest": "$sni:443",
+          "serverNames": ["$sni"],
+          "privateKey": "$privateKey",
+          "shortIds": ["$shortId"]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}
+EOF
+
+    echo -e "$NOTATION ${GREEN}✓ Config created: ${CYAN}$configName${RESET} ${GREY}($XRAY_MODE mode)${RESET}"
+
+    $SYSTEMCTL_CMD restart "$XRAY_SERVICE" 2>/dev/null
+    echo -e "$NOTATION ${GREEN}✓ Xray service restarted${RESET}"
+
+    echo
+    showConfigInfo "$configName" "$uuid" "$port" "$sni" "$publicKey" "$shortId"
+}
+
+# ─── info ───────────────────────────────────────────────────────────────────
+
+showConfigInfo() {
+    local name="$1" uuid="$2" port="$3" sni="$4" publicKey="$5" shortId="$6"
+    local ip
+    ip=$(getServerIp)
+
+    echo -e "====================================================="
+    echo -e "$NOTATION ${BOLD}Config: ${CYAN}$name${RESET} ${GREY}($XRAY_MODE mode)${RESET}"
+    echo -e "====================================================="
+    echo -e "  ${GREY}Protocol:${RESET}    VLESS"
+    echo -e "  ${GREY}Address:${RESET}     $ip"
+    echo -e "  ${GREY}Port:${RESET}        $port"
+    echo -e "  ${GREY}UUID:${RESET}        $uuid"
+    echo -e "  ${GREY}Flow:${RESET}        xtls-rprx-vision"
+    echo -e "  ${GREY}Security:${RESET}    reality"
+    echo -e "  ${GREY}SNI:${RESET}         $sni"
+    echo -e "  ${GREY}Fingerprint:${RESET} chrome"
+    echo -e "  ${GREY}Public Key:${RESET}  $publicKey"
+    echo -e "  ${GREY}Short ID:${RESET}    $shortId"
+    echo -e "====================================================="
+
+    local url
+    url=$(generateVlessUrl "$uuid" "$ip" "$port" "$sni" "$publicKey" "$shortId" "$name")
+    echo -e "  ${GREY}URL:${RESET}"
+    echo -e "  ${BLUE}$url${RESET}"
+    echo -e "====================================================="
+}
+
+cmdInfo() {
+    requireXray
+    requireJq
+
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        selectConfig "Select config to view" || return 1
+        name="$SELECTED_CONFIG"
+    fi
+
+    readConfig "$name" || return 1
+
+    local uuid=$(extractField '.inbounds[0].settings.clients[0].id')
+    local port=$(extractField '.inbounds[0].port')
+    local sni=$(extractField '.inbounds[0].streamSettings.realitySettings.serverNames[0]')
+    local privateKey=$(extractField '.inbounds[0].streamSettings.realitySettings.privateKey')
+    local shortId=$(extractField '.inbounds[0].streamSettings.realitySettings.shortIds[0]')
+
+    local publicKey
+    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep "Public" | awk '{print $3}')
+
+    showConfigInfo "$name" "$uuid" "$port" "$sni" "$publicKey" "$shortId"
+}
+
+# ─── del ────────────────────────────────────────────────────────────────────
+
+cmdDel() {
+    requireRoot "del"
+    requireXray
+
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        selectConfig "Select config to delete" || return 1
+        name="$SELECTED_CONFIG"
+    fi
+
+    local path
+    path=$(getConfigPath "$name")
+    if [[ ! -f "$path" ]]; then
+        echo -e "$NOTATION ${RED}Error: Config '$name' not found.${RESET}"
+        return 1
+    fi
+
+    echo -e "$NOTATION Delete config ${YELLOW}$name${RESET}? (y/n)"
+    local confirm
+    read -rp "$(echo -e "$NOTATION ")" confirm
+    [[ "${confirm,,}" != "y" ]] && return 0
+
+    removeFile "$path"
+    echo -e "$NOTATION ${GREEN}✓ Config '$name' deleted.${RESET}"
+
+    $SYSTEMCTL_CMD restart "$XRAY_SERVICE" 2>/dev/null
+    echo -e "$NOTATION ${GREEN}✓ Xray service restarted${RESET}"
+}
+
+# ─── change ─────────────────────────────────────────────────────────────────
+
+cmdChange() {
+    requireRoot "change"
+    requireXray
+    requireJq
+
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        selectConfig "Select config to change" || return 1
+        name="$SELECTED_CONFIG"
+    fi
+
+    readConfig "$name" || return 1
+
+    echo -e "$NOTATION ${BOLD}What to change for ${CYAN}$name${RESET}${BOLD}?${RESET}"
+    echo -e "  ${GREEN}1)${RESET} Port"
+    echo -e "  ${GREEN}2)${RESET} UUID"
+    echo -e "  ${GREEN}3)${RESET} SNI (serverName)"
+    echo -e "  ${GREEN}4)${RESET} Keys (regenerate x25519 keypair)"
+    echo -e "  ${GREEN}5)${RESET} Short ID"
+
+    local choice
+    read -rp "$(echo -e "$NOTATION Enter number [1-5]: ")" choice
+
+    local path
+    path=$(getConfigPath "$name")
+
+    case "$choice" in
+        1)
+            local newPort
+            read -rp "$(echo -e "$NOTATION New port: ")" newPort
+            if ! [[ "$newPort" =~ ^[0-9]+$ ]] || (( newPort < 1 || newPort > 65535 )); then
+                echo -e "$NOTATION ${RED}Invalid port.${RESET}"
+                return 1
+            fi
+            CONFIG_JSON=$(echo "$CONFIG_JSON" | jq ".inbounds[0].port = $newPort")
+            ;;
+        2)
+            local newUuid
+            newUuid=$($XRAY_BIN uuid)
+            CONFIG_JSON=$(echo "$CONFIG_JSON" | jq ".inbounds[0].settings.clients[0].id = \"$newUuid\"")
+            echo -e "$NOTATION New UUID: ${CYAN}$newUuid${RESET}"
+            ;;
+        3)
+            echo -e "$NOTATION Available SNIs:"
+            local i=1
+            for s in "${SNI_LIST[@]}"; do
+                echo -e "  ${GREEN}$i)${RESET} $s"
+                ((i++))
+            done
+            local sniChoice
+            read -rp "$(echo -e "$NOTATION Enter number or custom SNI: ")" sniChoice
+            local newSni
+            if [[ "$sniChoice" =~ ^[0-9]+$ ]] && (( sniChoice >= 1 && sniChoice <= ${#SNI_LIST[@]} )); then
+                newSni="${SNI_LIST[$((sniChoice-1))]}"
+            else
+                newSni="$sniChoice"
+            fi
+            CONFIG_JSON=$(echo "$CONFIG_JSON" | jq ".inbounds[0].streamSettings.realitySettings.dest = \"${newSni}:443\" | .inbounds[0].streamSettings.realitySettings.serverNames = [\"$newSni\"]")
+            echo -e "$NOTATION New SNI: ${CYAN}$newSni${RESET}"
+            ;;
+        4)
+            local keypair
+            keypair=$($XRAY_BIN x25519)
+            local newPriv=$(echo "$keypair" | grep "Private" | awk '{print $3}')
+            local newPub=$(echo "$keypair" | grep "Public" | awk '{print $3}')
+            CONFIG_JSON=$(echo "$CONFIG_JSON" | jq ".inbounds[0].streamSettings.realitySettings.privateKey = \"$newPriv\"")
+            echo -e "$NOTATION New Public Key: ${CYAN}$newPub${RESET}"
+            ;;
+        5)
+            local newSid
+            newSid=$(openssl rand -hex 4)
+            CONFIG_JSON=$(echo "$CONFIG_JSON" | jq ".inbounds[0].streamSettings.realitySettings.shortIds = [\"$newSid\"]")
+            echo -e "$NOTATION New Short ID: ${CYAN}$newSid${RESET}"
+            ;;
+        *)
+            echo -e "$NOTATION ${RED}Invalid choice.${RESET}"
+            return 1
+            ;;
+    esac
+
+    echo "$CONFIG_JSON" | jq . | writeFile "$path"
+    echo -e "$NOTATION ${GREEN}✓ Config '$name' updated.${RESET}"
+
+    $SYSTEMCTL_CMD restart "$XRAY_SERVICE" 2>/dev/null
+    echo -e "$NOTATION ${GREEN}✓ Xray service restarted${RESET}"
+
+    cmdInfo "$name"
+}
+
+# ─── url ────────────────────────────────────────────────────────────────────
+
+cmdUrl() {
+    requireXray
+    requireJq
+
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        selectConfig "Select config" || return 1
+        name="$SELECTED_CONFIG"
+    fi
+
+    readConfig "$name" || return 1
+
+    local uuid=$(extractField '.inbounds[0].settings.clients[0].id')
+    local port=$(extractField '.inbounds[0].port')
+    local sni=$(extractField '.inbounds[0].streamSettings.realitySettings.serverNames[0]')
+    local privateKey=$(extractField '.inbounds[0].streamSettings.realitySettings.privateKey')
+    local shortId=$(extractField '.inbounds[0].streamSettings.realitySettings.shortIds[0]')
+    local ip
+    ip=$(getServerIp)
+
+    local publicKey
+    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep "Public" | awk '{print $3}')
+
+    local url
+    url=$(generateVlessUrl "$uuid" "$ip" "$port" "$sni" "$publicKey" "$shortId" "$name")
+    echo -e "\n$NOTATION ${BOLD}$name URL:${RESET}"
+    echo -e "${BLUE}$url${RESET}\n"
+}
+
+# ─── qr ─────────────────────────────────────────────────────────────────────
+
+cmdQr() {
+    requireXray
+    requireJq
+
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        selectConfig "Select config for QR code" || return 1
+        name="$SELECTED_CONFIG"
+    fi
+
+    readConfig "$name" || return 1
+
+    local uuid=$(extractField '.inbounds[0].settings.clients[0].id')
+    local port=$(extractField '.inbounds[0].port')
+    local sni=$(extractField '.inbounds[0].streamSettings.realitySettings.serverNames[0]')
+    local privateKey=$(extractField '.inbounds[0].streamSettings.realitySettings.privateKey')
+    local shortId=$(extractField '.inbounds[0].streamSettings.realitySettings.shortIds[0]')
+    local ip
+    ip=$(getServerIp)
+
+    local publicKey
+    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep "Public" | awk '{print $3}')
+
+    local url
+    url=$(generateVlessUrl "$uuid" "$ip" "$port" "$sni" "$publicKey" "$shortId" "$name")
+
+    echo -e "\n$NOTATION ${BOLD}$name QR Code:${RESET}\n"
+    if command -v qrencode &>/dev/null; then
+        qrencode -t ANSI "$url"
+    else
+        echo -e "$NOTATION ${YELLOW}qrencode not installed. Install with: ${BLUE}sudo apt install qrencode${RESET}"
+        echo -e "$NOTATION Use this link to generate QR code:"
+        echo -e "${BLUE}https://233boy.github.io/tools/qr.html#${url}${RESET}"
+    fi
+    echo -e "\n$NOTATION ${GREY}URL: ${BLUE}$url${RESET}\n"
+}
+
+# ─── service management ────────────────────────────────────────────────────
+
+cmdStart()   { requireRoot "start";   $SYSTEMCTL_CMD start "$XRAY_SERVICE"   && echo -e "$NOTATION ${GREEN}✓ Xray started${RESET} ${GREY}($XRAY_MODE mode)${RESET}"; }
+cmdStop()    { requireRoot "stop";    $SYSTEMCTL_CMD stop "$XRAY_SERVICE"    && echo -e "$NOTATION ${GREEN}✓ Xray stopped${RESET} ${GREY}($XRAY_MODE mode)${RESET}"; }
+cmdRestart() { requireRoot "restart"; $SYSTEMCTL_CMD restart "$XRAY_SERVICE" && echo -e "$NOTATION ${GREEN}✓ Xray restarted${RESET} ${GREY}($XRAY_MODE mode)${RESET}"; }
+
+cmdStatus() {
+    $SYSTEMCTL_CMD status "$XRAY_SERVICE" --no-pager 2>/dev/null
+    echo
+    local configs
+    read -ra configs <<< "$(listConfigs)"
+    local configCount=${#configs[@]}
+    [[ $configCount -eq 1 && -z "${configs[0]}" ]] && configCount=0
+    echo -e "$NOTATION Mode: ${CYAN}$XRAY_MODE${RESET}"
+    echo -e "$NOTATION Configs: ${CYAN}$configCount${RESET} (${configs[*]:-none})"
+    echo -e "$NOTATION Config dir: ${CYAN}$XRAY_CONF_DIR${RESET}"
+}
+
+cmdLog() {
+    $JOURNALCTL_CMD -f --no-pager
+}
+
+# ─── help ───────────────────────────────────────────────────────────────────
+
+cmdHelp() {
+    cat << _EOF
+Usage: jx <command> [args...]
+
+Xray VLESS-REALITY server manager (dual-mode: system-level or user-level).
+
+Config Commands:
+    add [port] [uuid] [sni]     Add a VLESS-REALITY config (default: port=443, sni=www.nvidia.com)
+    change [name]               Change config settings (port/UUID/SNI/keys/shortId)
+    info [name]                 Show config details
+    del [name]                  Delete a config
+    url [name]                  Show share URL
+    qr [name]                   Show QR code
+
+Service Commands:
+    start                       Start xray service
+    stop                        Stop xray service
+    restart                     Restart xray service
+    status                      Show xray service status and mode
+    log                         Follow xray logs (journalctl)
+
+Other:
+    help                        Show this help message
+
+Examples:
+    jx add                      Add config with defaults (port 443, auto UUID, SNI www.nvidia.com)
+    jx add 8443                 Add config on port 8443
+    jx add 443 auto dl.google.com   Custom port and SNI, auto-generated UUID
+    jx info                     Show config info (auto-selects if only one)
+    jx qr                       Show QR code for scanning
+    jx change                   Interactively change config settings
+
+_EOF
+}
+
+# ─── main ───────────────────────────────────────────────────────────────────
+
+main() {
+    local cmd="${1:-help}"
+    shift 2>/dev/null
+
+    [[ "$cmd" == "help" || "$cmd" == "-h" || "$cmd" == "--help" ]] && { cmdHelp; return; }
+
+    detectMode
+
+    case "$cmd" in
+        add)     cmdAdd "$@" ;;
+        change)  cmdChange "$@" ;;
+        info)    cmdInfo "$@" ;;
+        del)     cmdDel "$@" ;;
+        url)     cmdUrl "$@" ;;
+        qr)      cmdQr "$@" ;;
+        start)   cmdStart ;;
+        stop)    cmdStop ;;
+        restart) cmdRestart ;;
+        status)  cmdStatus ;;
+        log)     cmdLog ;;
+        *)
+            echo -e "$NOTATION ${RED}Unknown command: $cmd${RESET}"
+            cmdHelp
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
