@@ -57,12 +57,37 @@ detectMode() {
     fi
 }
 
+getServerIpFile() {
+    if [[ "$XRAY_MODE" == "system" ]]; then
+        echo "/etc/xray/.server_ip"
+    else
+        echo "$HOME/.config/xray/.server_ip"
+    fi
+}
+
 getServerIp() {
+    local ipFile
+    ipFile=$(getServerIpFile)
+    if [[ -f "$ipFile" ]]; then
+        cat "$ipFile"
+        return
+    fi
     local ip
     ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
     [[ -z "$ip" ]] && ip=$(curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null)
     [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
     echo "$ip"
+}
+
+saveServerIp() {
+    local ip="$1"
+    local ipFile
+    ipFile=$(getServerIpFile)
+    if [[ "$XRAY_MODE" == "system" ]]; then
+        echo "$ip" | sudo tee "$ipFile" > /dev/null
+    else
+        echo "$ip" > "$ipFile"
+    fi
 }
 
 requireRoot() {
@@ -205,8 +230,8 @@ cmdAdd() {
 
     local keypair
     keypair=$($XRAY_BIN x25519)
-    local privateKey=$(echo "$keypair" | grep "Private" | awk '{print $3}')
-    local publicKey=$(echo "$keypair" | grep "Public" | awk '{print $3}')
+    local privateKey=$(echo "$keypair" | grep -i "private" | awk '{print $NF}')
+    local publicKey=$(echo "$keypair" | grep -i "public" | awk '{print $NF}')
     local shortId=$(openssl rand -hex 4)
 
     local configName="VLESS-REALITY-${port}"
@@ -318,7 +343,7 @@ cmdInfo() {
     local shortId=$(extractField '.inbounds[0].streamSettings.realitySettings.shortIds[0]')
 
     local publicKey
-    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep "Public" | awk '{print $3}')
+    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep -i "public" | awk '{print $NF}')
 
     showConfigInfo "$name" "$uuid" "$port" "$sni" "$publicKey" "$shortId"
 }
@@ -419,8 +444,8 @@ cmdChange() {
         4)
             local keypair
             keypair=$($XRAY_BIN x25519)
-            local newPriv=$(echo "$keypair" | grep "Private" | awk '{print $3}')
-            local newPub=$(echo "$keypair" | grep "Public" | awk '{print $3}')
+            local newPriv=$(echo "$keypair" | grep -i "private" | awk '{print $NF}')
+            local newPub=$(echo "$keypair" | grep -i "public" | awk '{print $NF}')
             CONFIG_JSON=$(echo "$CONFIG_JSON" | jq ".inbounds[0].streamSettings.realitySettings.privateKey = \"$newPriv\"")
             echo -e "$NOTATION New Public Key: ${CYAN}$newPub${RESET}"
             ;;
@@ -468,7 +493,7 @@ cmdUrl() {
     ip=$(getServerIp)
 
     local publicKey
-    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep "Public" | awk '{print $3}')
+    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep -i "public" | awk '{print $NF}')
 
     local url
     url=$(generateVlessUrl "$uuid" "$ip" "$port" "$sni" "$publicKey" "$shortId" "$name")
@@ -499,7 +524,7 @@ cmdQr() {
     ip=$(getServerIp)
 
     local publicKey
-    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep "Public" | awk '{print $3}')
+    publicKey=$($XRAY_BIN x25519 -i "$privateKey" 2>/dev/null | grep -i "public" | awk '{print $NF}')
 
     local url
     url=$(generateVlessUrl "$uuid" "$ip" "$port" "$sni" "$publicKey" "$shortId" "$name")

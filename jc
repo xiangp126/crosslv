@@ -65,14 +65,15 @@ MAX_RTSP_STREAMS=10
 fRtspScreenRes=   # Exp: 4k Mi Monitor resolution 3360 x 1890
 fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset password
 # SSH Tunnel (autossh port forward over VPN)
-fSshTunnelRemoteIp=10.228.132.85
-fSshTunnelRemotePort=57217
-fSshTunnelLocalPort=57217
+fSshTunnelRemoteIp=10.6.10.221
+# fSshTunnelRemoteIp=10.228.132.85
+fSshTunnelRemotePort=5902
+fSshTunnelLocalPort=5902
 fSshTunnelAutosshPid=""
 # Singbox (sing-box proxy)
 fSingbox=
-# fSingboxConfig="$HOME/Documents/sing-box-config-autossh.json"
-fSingboxConfig="$HOME/Documents/sing-box-config.json.good"
+fSingboxConfig="$HOME/Documents/sing-box-config.jsonc"
+# fSingboxConfig="$HOME/Documents/sing-box-config.json.good"
 fSingboxMonitorPid=""
 fSingboxCleaning=0
 fSingboxRetryTimeout=180  # seconds to retry after VPN/tunnel drop
@@ -2128,6 +2129,16 @@ XEOF
                 [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
             fi
 
+            # Persist server IP so jx info/url/qr uses the same address
+            local ipFile
+            if [[ "$installMode" == "system" ]]; then
+                ipFile="/etc/xray/.server_ip"
+                echo "$ip" | sudo tee "$ipFile" > /dev/null
+            else
+                ipFile="$HOME/.config/xray/.server_ip"
+                echo "$ip" > "$ipFile"
+            fi
+
             local url="vless://${uuid}@${ip}:${port}?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=${sni}&fp=chrome&pbk=${publicKey}&sid=${shortId}#${configName}"
 
             echo
@@ -3855,17 +3866,42 @@ startSshTunnel() {
 
     # Establish SSH port forward via autossh
     echo -e "${LIGHTYELLOW}Setting up SSH port forward (${fSshTunnelLocalPort} → ${fSshTunnelRemoteIp}:${fSshTunnelRemotePort})...${RESET}"
+    # Check if local port is already in use
+    if lsof -i ":${fSshTunnelLocalPort}" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo -e "${RED}Error: Local port ${fSshTunnelLocalPort} is already in use:${RESET}"
+        lsof -i ":${fSshTunnelLocalPort}" -sTCP:LISTEN 2>/dev/null | head -5
+        return 1
+    fi
+
+    local sshLog=$(mktemp /tmp/ssh-tunnel-XXXXXXXX)
     autossh -M 0 -f -N \
         -L "${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" \
         "$sshTarget" \
         -o "ServerAliveInterval 5" \
         -o "ServerAliveCountMax 3" \
-        -o "ExitOnForwardFailure yes"
-    sleep 5
+        -o "ExitOnForwardFailure yes" \
+        -o "StrictHostKeyChecking accept-new" \
+        -o "ConnectTimeout 15" \
+        -v -E "$sshLog"
+    local maxWait=20
+    local waited=0
+    while [ "$waited" -lt "$maxWait" ]; do
+        if isSshTunnelAlive; then
+            break
+        fi
+        sleep 1
+        ((waited++))
+    done
     if ! isSshTunnelAlive; then
-        echo -e "${RED}Error: Forward failed, port ${fSshTunnelLocalPort} not listening.${RESET}"
+        echo -e "${RED}Error: Forward failed, port ${fSshTunnelLocalPort} not listening after ${maxWait}s.${RESET}"
+        if [ -s "$sshLog" ]; then
+            echo -e "${GREY}SSH log (last 20 lines):${RESET}"
+            tail -20 "$sshLog"
+        fi
+        rm -f "$sshLog"
         return 1
     fi
+    rm -f "$sshLog"
     fSshTunnelAutosshPid="$(pgrep -n -f "autossh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" || true)"
     echo -e "${GREEN}✔${GREY} Forward established.${RESET}"
 }
@@ -3938,8 +3974,19 @@ launchSingbox() {
 
     fSingboxRecoveryMarker=$(mktemp /tmp/singbox-recovery.XXXXXX)
 
-    # Initial tunnel setup with retry
-    if ! startSshTunnel; then
+    # Check if config connects directly to a remote server (no autossh needed)
+    local needsTunnel=true
+    if command -v jq &>/dev/null && [ -f "$fSingboxConfig" ]; then
+        local proxyServer
+        proxyServer=$(jq -r '.outbounds[] | select(.tag == "proxy") | .server' "$fSingboxConfig" 2>/dev/null)
+        if [[ -n "$proxyServer" && "$proxyServer" != "127.0.0.1" && "$proxyServer" != "localhost" ]]; then
+            echo -e "${GREEN}✔${GREY} Direct proxy mode (${proxyServer}), skipping SSH tunnel.${RESET}"
+            needsTunnel=false
+        fi
+    fi
+
+    # Initial tunnel setup with retry (only if needed)
+    if [[ "$needsTunnel" == true ]] && ! startSshTunnel; then
         if ! waitForVpnRecovery; then
             cleanupSingbox
             return 1
@@ -3969,18 +4016,19 @@ launchSingbox() {
     fi
 
     while true; do
-        local vpnInterface
-        vpnInterface="$(detectVpnInterface)" || {
-            echo -e "${RED}Error: No utun* interface with an IPv4 address found.${RESET}"
-            cleanupSingbox
-            return 1
-        }
-
         # Reset marker and cleaning flag for this iteration
         true > "$fSingboxRecoveryMarker"
         fSingboxCleaning=0
 
-        startSingboxMonitor "$vpnInterface"
+        if [[ "$needsTunnel" == true ]]; then
+            local vpnInterface
+            vpnInterface="$(detectVpnInterface)" || {
+                echo -e "${RED}Error: No utun* interface with an IPv4 address found.${RESET}"
+                cleanupSingbox
+                return 1
+            }
+            startSingboxMonitor "$vpnInterface"
+        fi
 
         echo -e "${LIGHTYELLOW}Starting sing-box (Ctrl+C to quit)...${RESET}"
         sudo sing-box run -c "$fSingboxConfig"

@@ -59,6 +59,10 @@ patch:
       ascii_mode: true  # Cursor IDE
       no_inline: true  # Use floating window for better terminal compatibility
 
+    # AI desktop apps - default to Chinese
+    com.anthropic.claudefordesktop:
+      ascii_mode: false
+
     # SSH and remote tools - default to English
     com.panic.Transmit:
       ascii_mode: true
@@ -94,7 +98,7 @@ patch:
       ascii_mode: false
     com.hnc.Discord:
       ascii_mode: false
-    com.slack.Slack:
+    com.tinyspeck.slackmacgap:
       ascii_mode: false
     ru.keepcoder.Telegram:
       ascii_mode: false
@@ -104,7 +108,7 @@ patch:
       ascii_mode: false
     md.obsidian:
       ascii_mode: false
-    com.notion.Notion:
+    notion.id:
       ascii_mode: false
 
     # System utilities - default to English
