@@ -651,6 +651,20 @@ checkTlsConnWithCurl() {
     fi
 }
 
+detectDistroFamily() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        case "$ID" in
+            fedora|centos|rhel|rocky|alma) echo "fedora" ; return ;;
+        esac
+        case "$ID_LIKE" in
+            *fedora*|*rhel*) echo "fedora" ; return ;;
+            *debian*)        echo "debian" ; return ;;
+        esac
+    fi
+    echo "debian"
+}
+
 checkOSAndArch() {
     echo -e "${COLOR}Checking OS and Architecture${RESET}"
     fArch=$(uname -m)
@@ -2148,7 +2162,8 @@ XEOF
                 echo
                 qrencode -t ANSIUTF8 -m 1 "$url"
             else
-                echo -e "${LIGHTYELLOW}Tip: Install qrencode for QR code display: ${BLUE}sudo apt install qrencode${RESET}"
+                local _pkgCmd="apt"; command -v dnf &>/dev/null && _pkgCmd="dnf"
+                echo -e "${LIGHTYELLOW}Tip: Install qrencode for QR code display: ${BLUE}sudo $_pkgCmd install qrencode${RESET}"
                 echo -e "${CYAN}▸${RESET} Online QR code:"
                 echo -e "  ${BLUE}https://233boy.github.io/tools/qr.html#${url}${RESET}"
             fi
@@ -2224,7 +2239,7 @@ removeXray() {
 #   jc --wireguard [--wireguard-port PORT] [--wireguard-client NAME]
 #
 #   +----------------------------------+
-#   | apt install wireguard qrencode   |
+#   | Install wireguard + qrencode     |
 #   +----------------+-----------------+
 #                    |
 #                    v
@@ -2301,8 +2316,13 @@ installWireguard() {
     fi
 
     echo -e "${LIGHTYELLOW}Installing WireGuard packages...${RESET}"
-    sudo apt-get update -qq
-    sudo apt-get install -y wireguard wireguard-tools qrencode >/dev/null 2>&1
+    local distro=$(detectDistroFamily)
+    if [[ "$distro" == "fedora" ]]; then
+        sudo dnf install -y wireguard-tools qrencode >/dev/null 2>&1
+    else
+        sudo apt-get update -qq
+        sudo apt-get install -y wireguard wireguard-tools qrencode >/dev/null 2>&1
+    fi
     if ! command -v wg &> /dev/null; then
         echo -e "${RED}Error: WireGuard installation failed${RESET}"
         return 1
@@ -2422,10 +2442,14 @@ PersistentKeepalive = 25"
             echo -e "${GREY}Check full logs with: ${BLUE}sudo journalctl -u wg-quick@wg0 -n 20 --no-pager${RESET}"
         fi
 
-        # Allow port through UFW if active
+        # Allow port through firewall if active
         if command -v ufw &>/dev/null && sudo ufw status | grep -qw "active"; then
             sudo ufw allow "${port}/udp" > /dev/null 2>&1
             echo -e "${GREEN}✔${GREY} UFW rule added: allow ${port}/udp${RESET}"
+        elif command -v firewall-cmd &>/dev/null && sudo firewall-cmd --state 2>/dev/null | grep -q running; then
+            sudo firewall-cmd --permanent --add-port="${port}/udp" > /dev/null 2>&1
+            sudo firewall-cmd --reload > /dev/null 2>&1
+            echo -e "${GREEN}✔${GREY} firewalld rule added: allow ${port}/udp${RESET}"
         fi
 
         # Print summary
@@ -2457,7 +2481,8 @@ PersistentKeepalive = 25"
             echo
             qrencode -t ANSIUTF8 -m 1 "$clientConf"
         else
-            echo -e "${LIGHTYELLOW}Tip: Install qrencode for QR code display: ${BLUE}sudo apt install qrencode${RESET}"
+            local _pkgCmd="apt"; command -v dnf &>/dev/null && _pkgCmd="dnf"
+            echo -e "${LIGHTYELLOW}Tip: Install qrencode for QR code display: ${BLUE}sudo $_pkgCmd install qrencode${RESET}"
         fi
         echo
     else
@@ -2494,9 +2519,12 @@ removeWireguard() {
         ((removed++))
     fi
 
-    # Remove UFW rule if present
+    # Remove firewall rules if present
     if command -v ufw &>/dev/null && sudo ufw status | grep -qw "active"; then
         sudo ufw delete allow 51820/udp > /dev/null 2>&1
+    elif command -v firewall-cmd &>/dev/null && sudo firewall-cmd --state 2>/dev/null | grep -q running; then
+        sudo firewall-cmd --permanent --remove-port=51820/udp > /dev/null 2>&1
+        sudo firewall-cmd --reload > /dev/null 2>&1
     fi
 
     # Revert IP forwarding only if no other tunnel software needs it
