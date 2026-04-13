@@ -279,6 +279,7 @@ MFT Options (Mellanox Firmware Tools):
         --burn                      Burn FW image to device (requires --device, uses -m model)
         --burn-official <version>   Burn official release FW to device (e.g., 82.49.0052)
         --device <mst_device>       MST device path (e.g. /dev/mst/mt4133_pciconf0)
+        --firmware <path>           Custom .mlx firmware file (overrides model lookup)
         --fw-query                  Query FW info from device (requires --device)
         --fw-reset                  Reset FW on device after burn (requires --device)
         --mft-install               Install MFT (Mellanox Firmware Tools)
@@ -747,7 +748,7 @@ printBuildFlags() {
         [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, ~/.claude/$CLAUDE_MD)"
         [ -n "$fBurn" ]                  && echo -e "[B] ${COLOR}Burn${RESET} FW image to device"
         [ -n "$fBurnOfficial" ]          && echo -e "[B] ${COLOR}Burn Official:${RESET} $fBurnOfficial"
-        [ -n "$fFwReset" ]              && echo -e "[R] ${COLOR}Reset${RESET} FW on device (mlxfwreset)"
+        [ -n "$fFwReset" ]               && echo -e "[R] ${COLOR}Reset${RESET} FW on device (mlxfwreset)"
         [ -n "$fDevice" ]                && echo -e "[d] ${COLOR}Device:${RESET} $fDevice"
         [ -n "$fFirmware" ]              && echo -e "[F] ${COLOR}Firmware:${RESET} $fFirmware"
         [ -n "$fMftInstall" ]            && echo -e "[M] ${COLOR}MFT Install${RESET}"
