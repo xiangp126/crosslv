@@ -58,7 +58,11 @@
       ],
       "auto_route": true,
       "strict_route": true,
-      "stack": "gvisor"
+      "stack": "gvisor",
+      "route_exclude_address": [
+        "10.228.132.0/24",
+        "10.6.10.0/24"
+      ]
     }
   ],
   "outbounds": [
@@ -70,12 +74,11 @@
       "uuid": "",
       "flow": "xtls-rprx-vision",
       "network": [
-        "tcp",
-        "udp"
+        "tcp"
       ],
       "tls": {
         "enabled": true,
-        "server_name": "www.amazon.com",
+        "server_name": "www.nvidia.com",
         "utls": {
           "enabled": true,
           "fingerprint": "chrome"

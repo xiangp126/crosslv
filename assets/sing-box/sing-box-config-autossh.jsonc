@@ -72,7 +72,7 @@
       "listen_port": 2080
     },
     // TUN transparent proxy, captures all system traffic
-    // mixed stack: TCP via system kernel, UDP via userspace (better perf than gvisor)
+    // gvisor stack: all packets handled in userspace (avoids mixed stack crash on macOS)
     {
       "type": "tun",
       "tag": "tun-in",
@@ -82,7 +82,15 @@
       ],
       "auto_route": true,
       "strict_route": true,
-      "stack": "mixed"
+      "mtu": 1350,
+      "stack": "gvisor",
+      // Exclude autossh tunnel destination IPs from TUN capture.
+      // Without this, autossh's SSH packets get re-captured by TUN after
+      // sing-box starts (double-TUN), adding latency to every proxy packet.
+      "route_exclude_address": [
+        "10.228.132.0/24",
+        "10.6.10.0/24"
+      ]
     }
   ],
   // ========================
@@ -103,7 +111,7 @@
       ],
       "tls": {
         "enabled": true,
-        "server_name": "www.amazon.com",
+        "server_name": "www.nvidia.com",
         "utls": {
           "enabled": true,
           "fingerprint": "chrome"
@@ -132,24 +140,24 @@
   // ========================
   "route": {
     "auto_detect_interface": true,
-    "default_domain_resolver": "dns-remote",
+    "default_domain_resolver": "dns-local",
     // ---------- Rule Set Definitions ----------
     "rule_set": [
+      // Google domain list (remote, must be before geosite-cn)
+      {
+        "tag": "geosite-google",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-google.srs",
+        "download_detour": "proxy",
+        "update_interval": "7d"
+      },
       // China domain list (remote, downloaded via proxy, refresh weekly)
       {
         "tag": "geosite-cn",
         "type": "remote",
         "format": "binary",
         "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-        "download_detour": "proxy",
-        "update_interval": "7d"
-      },
-      // China IP list (remote, downloaded via proxy, refresh weekly)
-      {
-        "tag": "geoip-cn",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
         "download_detour": "proxy",
         "update_interval": "7d"
       },
@@ -208,7 +216,8 @@
         "action": "sniff",
         "sniffer": [
           "http",
-          "tls"
+          "tls",
+          "quic"
         ],
         "timeout": "300ms"
       },
@@ -234,6 +243,39 @@
         "action": "route",
         "outbound": "nvidia-vpn"
       },
+      // --- NTP (port 123) -> direct, proxy doesn't support UDP ---
+      {
+        "port": 123,
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      // --- Google -> proxy (before geosite-cn to avoid misclassification) ---
+      {
+        "rule_set": "geosite-google",
+        "action": "route",
+        "outbound": "proxy"
+      },
+      // --- AI Services (Claude/ChatGPT) -> force proxy (explicit, skip remaining rule matching) ---
+      {
+        "domain_suffix": [
+          "anthropic.com",
+          "claude.ai",
+          "workos.com",
+          "claudeusercontent.com",
+          "intercom.io",
+          "intercomcdn.com",
+          "sentry.io",
+          "statsigapi.net",
+          "stripe.com",
+          "openai.com",
+          "chatgpt.com",
+          "oaistatic.com",
+          "oaiusercontent.com",
+          "auth0.com"
+        ],
+        "action": "route",
+        "outbound": "proxy"
+      },
       // --- Alibaba DNS IPs direct, prevent dns-local traffic looping into proxy ---
       {
         "ip_cidr": ["223.5.5.5/32", "223.6.6.6/32"],
@@ -246,32 +288,11 @@
         "action": "route",
         "outbound": "direct-local"
       },
-      {
-        "rule_set": "geoip-cn",
-        "action": "route",
-        "outbound": "direct-local"
-      },
       // --- Private IPs -> direct (LAN, Docker, etc.) ---
       {
         "ip_is_private": true,
         "action": "route",
         "outbound": "direct-local"
-      },
-      // --- Anthropic/Claude -> force proxy (explicit, skip remaining rule matching) ---
-      {
-        "domain_suffix": [
-          "anthropic.com",
-          "claude.ai",
-          "workos.com",
-          "claudeusercontent.com",
-          "intercom.io",
-          "intercomcdn.com",
-          "sentry.io",
-          "statsigapi.net",
-          "stripe.com"
-        ],
-        "action": "route",
-        "outbound": "proxy"
       },
       // --- Fallback: all remaining traffic -> proxy ---
       {
