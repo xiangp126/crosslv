@@ -2479,7 +2479,7 @@ PersistentKeepalive = 25"
         if command -v qrencode &>/dev/null; then
             echo -e "${CYAN}▸${RESET} ${BOLD}QR Code (scan with WireGuard app):${RESET}"
             echo
-            qrencode -t ANSIUTF8 -m 1 "$clientConf"
+            qrencode -t ANSIUTF8 -m 1 -s 1 "$clientConf"
         else
             local _pkgCmd="apt"; command -v dnf &>/dev/null && _pkgCmd="dnf"
             echo -e "${LIGHTYELLOW}Tip: Install qrencode for QR code display: ${BLUE}sudo $_pkgCmd install qrencode${RESET}"
