@@ -7,14 +7,6 @@
   // ========================
   "dns": {
     "servers": [
-      // Remote DNS: Cloudflare DoH, resolved via proxy outbound
-      // strategy: ipv4_only to avoid AAAA queries failing through proxy
-      {
-        "type": "https",
-        "tag": "dns-remote",
-        "server": "1.1.1.1",
-        "detour": "proxy"
-      },
       // Local DNS: Alibaba public DoH, direct for China domains
       {
         "type": "https",
@@ -40,25 +32,10 @@
       {
         "rule_set": "geosite-cn",
         "server": "dns-local"
-      },
-      // Anthropic/Claude and related services -> force remote DNS
-      {
-        "domain_suffix": [
-          "anthropic.com",
-          "claude.ai",
-          "workos.com",
-          "claudeusercontent.com",
-          "intercom.io",
-          "intercomcdn.com",
-          "sentry.io",
-          "statsigapi.net",
-          "stripe.com"
-        ],
-        "server": "dns-remote"
       }
     ],
-    // Unmatched domains default to remote DNS
-    "final": "dns-remote"
+    // Unmatched domains default to corporate VPN DNS
+    "final": "nvidia-dns"
   },
   // ========================
   // Inbound Configuration
@@ -82,11 +59,11 @@
       ],
       "auto_route": true,
       "strict_route": true,
-      "mtu": 1350,
+      "mtu": 1400,
       "stack": "gvisor",
-      // Exclude autossh tunnel destination IPs from TUN capture.
-      // Without this, autossh's SSH packets get re-captured by TUN after
-      // sing-box starts (double-TUN), adding latency to every proxy packet.
+      // Exclude proxy server IPs from TUN capture.
+      // Without this, outbound packets to VLESS/xray servers get re-captured
+      // by TUN, causing routing loops.
       "route_exclude_address": [
         "10.228.132.0/24",
         "10.6.10.0/24"
@@ -97,14 +74,13 @@
   // Outbound Configuration
   // ========================
   "outbounds": [
-    // Main proxy: VLESS + REALITY, TLS disguised as amazon.com
-    // Connects to local port 57217 (upstream SSH tunnel or local proxy server)
+    // Main proxy: VLESS + REALITY, TLS disguised as nvidia.com
     {
       "type": "vless",
       "tag": "proxy",
-      "server": "127.0.0.1",
-      "server_port": 57217,
-      "uuid": "",
+      "server": "10.228.132.85",
+      "server_port": 5902,
+      "uuid": "YOUR_UUID",
       "flow": "xtls-rprx-vision",
       "network": [
         "tcp"
@@ -118,8 +94,8 @@
         },
         "reality": {
           "enabled": true,
-          "public_key": "",
-          "short_id": ""
+          "public_key": "YOUR_PUBLIC_KEY",
+          "short_id": "YOUR_SHORT_ID"
         }
       }
     },
@@ -140,7 +116,7 @@
   // ========================
   "route": {
     "auto_detect_interface": true,
-    "default_domain_resolver": "dns-local",
+    "default_domain_resolver": "nvidia-dns",
     // ---------- Rule Set Definitions ----------
     "rule_set": [
       // Google domain list (remote, must be before geosite-cn)
@@ -219,7 +195,7 @@
           "tls",
           "quic"
         ],
-        "timeout": "300ms"
+        "timeout": "100ms"
       },
       // Reject QUIC: force browsers to fall back to TCP (HTTP/2)
       // VLESS + xtls-rprx-vision cannot properly proxy QUIC over TCP
@@ -255,7 +231,7 @@
         "action": "route",
         "outbound": "proxy"
       },
-      // --- AI Services (Claude/ChatGPT) -> force proxy (explicit, skip remaining rule matching) ---
+      // --- AI Services (Claude/ChatGPT) -> proxy (DNS resolved via corporate VPN) ---
       {
         "domain_suffix": [
           "anthropic.com",

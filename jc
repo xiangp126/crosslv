@@ -52,6 +52,10 @@ fXrayUpdate=
 fXrayRemove=
 fXrayPort=
 fXrayServer=
+fWireguardUpdate=
+fWireguardRemove=
+fWireguardPort=
+fWireguardClientName=
 fSwapReq=
 # RTSP Stream Playback
 fRtspFlag=
@@ -171,6 +175,12 @@ Xray Options:
     --xray-server <ip>              Set server IP in share URL (auto-detected if omitted)
     --xray-remove                   Remove Xray from system
 
+WireGuard Options:
+    --wireguard                     Install/configure WireGuard VPN server
+    --wireguard-port <port>         Set WireGuard listen port (default: 51820)
+    --wireguard-client <name>       Set client config name (default: client1)
+    --wireguard-remove              Remove WireGuard from system
+
 Examples:
     $SCRIPT_NAME -h
     $SCRIPT_NAME --link-clang-format \$HOME/crosslv
@@ -247,7 +257,8 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai,cursor-backup,cursor-restore,singbox,\
-          xray,xray-port:,xray-server:,xray-remove"
+          xray,xray-port:,xray-server:,xray-remove,\
+          wireguard,wireguard-port:,wireguard-client:,wireguard-remove"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -469,6 +480,27 @@ while true; do
             ;;
         --xray-remove)
             fXrayRemove=true
+            shift
+            ;;
+
+        --wireguard)
+            fWireguardUpdate=true
+            shift
+            ;;
+        --wireguard-port)
+            fWireguardPort="$2"
+            if ! [[ "$fWireguardPort" =~ ^[0-9]+$ ]] || (( fWireguardPort < 1 || fWireguardPort > 65535 )); then
+                echo -e "${RED}Error: Invalid WireGuard port: $fWireguardPort${RESET}"
+                exit 1
+            fi
+            shift 2
+            ;;
+        --wireguard-client)
+            fWireguardClientName="$2"
+            shift 2
+            ;;
+        --wireguard-remove)
+            fWireguardRemove=true
             shift
             ;;
 
@@ -1831,21 +1863,13 @@ installLatestGithubClangd() {
 #   +----------------+-----------------+
 #                    |
 #                    v
+#          +-------------------+
+#          | System-level      |
+#          | setup (/etc/xray) |
+#          | + systemd service |
 #          +---------+---------+
-#          | Determine install |
-#          |   mode (system    |
-#          |    or user)       |
-#          +---------+---------+
-#           /                 \
-#          v                   v
-#   +-------------+    +--------------+
-#   | System mode |    | User mode    |
-#   | /etc/xray/  |    | ~/.config/   |
-#   | systemd sys |    |  xray/       |
-#   +------+------+    | systemd user |
-#          |           +------+-------+
-#           \                /
-#            v              v
+#                    |
+#                    v
 #          +---------+---------+
 #          | Existing configs? |
 #          +---------+---------+
@@ -1955,69 +1979,42 @@ installXray() {
 
     # Set up server environment and systemd service (Linux only)
     if [[ "$(uname -s)" != "Darwin" ]]; then
-        local installMode="system"
-        if sudo -n true 2>/dev/null; then
-            installMode="system"
-        else
+        if ! sudo -n true 2>/dev/null; then
             echo -e "${LIGHTYELLOW}System-level install requires sudo privileges.${RESET}"
-            echo -e "  ${GREEN}1)${RESET} Enter sudo password and continue (system-level)"
-            echo -e "  ${GREEN}2)${RESET} Install user-level instead (no sudo needed)"
-            echo -e "  ${GREEN}3)${RESET} Cancel"
+            echo -e "  ${GREEN}1)${RESET} Enter sudo password and continue"
+            echo -e "  ${GREEN}2)${RESET} Cancel"
             local choice
-            read -rp "$(echo -e "${CYAN}▸${RESET} Enter choice [1-3]: ")" choice
+            read -rp "$(echo -e "${CYAN}▸${RESET} Enter choice [1-2]: ")" choice
             case "$choice" in
-                1) installMode="system" ;;
-                2) installMode="user" ;;
+                1) ;;
                 *) echo -e "${GREY}Cancelled.${RESET}"; return 0 ;;
             esac
         fi
 
-        if [[ "$installMode" == "system" ]]; then
-            echo -e "${LIGHTYELLOW}Setting up system-level Xray environment...${RESET}"
-            sudo mkdir -p /etc/xray/bin /etc/xray/conf /var/log/xray
-            sudo cp -f "$xrayBinary" /etc/xray/bin/xray
-            sudo chmod +x /etc/xray/bin/xray
-            for dat in geoip.dat geosite.dat; do
-                [[ -f "$GITHUB_RELEASE_EXTRACT_DIR/$dat" ]] && sudo cp -f "$GITHUB_RELEASE_EXTRACT_DIR/$dat" /etc/xray/bin/
-            done
-            local serviceFile="$fMainDir/assets/xray/xray.service"
-            if [[ -f "$serviceFile" ]]; then
-                sudo cp -f "$serviceFile" /etc/systemd/system/xray.service
-                sudo systemctl daemon-reload
-                sudo systemctl enable xray 2>/dev/null
-                echo -e "${GREEN}✔${GREY} System-level systemd service installed and enabled${RESET}"
-            fi
-        else
-            echo -e "${LIGHTYELLOW}Setting up user-level Xray environment...${RESET}"
-            mkdir -p "$HOME/.config/xray/conf" "$HOME/.config/systemd/user"
-            local serviceFile="$fMainDir/assets/xray/xray-user.service"
-            if [[ -f "$serviceFile" ]]; then
-                cp -f "$serviceFile" "$HOME/.config/systemd/user/xray.service"
-                systemctl --user daemon-reload
-                systemctl --user enable xray 2>/dev/null
-                echo -e "${GREEN}✔${GREY} User-level systemd service installed and enabled${RESET}"
-                if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
-                    echo -e "${LIGHTYELLOW}Tip: Run ${BLUE}sudo loginctl enable-linger $USER${LIGHTYELLOW} to keep xray running after logout${RESET}"
-                fi
-            fi
+        echo -e "${LIGHTYELLOW}Setting up system-level Xray environment...${RESET}"
+        sudo mkdir -p /etc/xray/bin /etc/xray/conf /var/log/xray
+        sudo cp -f "$xrayBinary" /etc/xray/bin/xray
+        sudo chmod +x /etc/xray/bin/xray
+        for dat in geoip.dat geosite.dat; do
+            [[ -f "$GITHUB_RELEASE_EXTRACT_DIR/$dat" ]] && sudo cp -f "$GITHUB_RELEASE_EXTRACT_DIR/$dat" /etc/xray/bin/
+        done
+        local serviceFile="$fMainDir/assets/xray/xray.service"
+        if [[ -f "$serviceFile" ]]; then
+            sudo cp -f "$serviceFile" /etc/systemd/system/xray.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable xray 2>/dev/null
+            echo -e "${GREEN}✔${GREY} Systemd service installed and enabled${RESET}"
         fi
 
         # --- Auto-configure VLESS-REALITY and start service ---
-        local xrayBin confDir systemctlCmd
-        if [[ "$installMode" == "system" ]]; then
-            xrayBin=/etc/xray/bin/xray
-            confDir=/etc/xray/conf
-            systemctlCmd="sudo systemctl"
-        else
-            xrayBin="$HOME/.usr/bin/xray"
-            confDir="$HOME/.config/xray/conf"
-            systemctlCmd="systemctl --user"
-        fi
+        local xrayBin=/etc/xray/bin/xray
+        local confDir=/etc/xray/conf
+        local systemctlCmd="sudo systemctl"
 
         local generateConfig=true
         if ls "$confDir"/*.json &>/dev/null; then
             echo -e "\n${LIGHTYELLOW}Existing Xray config(s) found in $confDir:${RESET}"
-            ls -1 "$confDir"/*.json 2>/dev/null | while read -r f; do
+            find "$confDir" -maxdepth 1 -name '*.json' -print0 2>/dev/null | while IFS= read -r -d '' f; do
                 echo -e "  ${GREY}- $(basename "$f" .json)${RESET}"
             done
             echo -e "  ${GREEN}1)${RESET} Keep existing configs (restart service with updated binary)"
@@ -2026,11 +2023,7 @@ installXray() {
             read -rp "$(echo -e "${CYAN}▸${RESET} Enter choice [1-2]: ")" rerunChoice
             case "$rerunChoice" in
                 2)
-                    if [[ "$installMode" == "system" ]]; then
-                        sudo rm -f "$confDir"/*.json
-                    else
-                        rm -f "$confDir"/*.json
-                    fi
+                    sudo rm -f "$confDir"/*.json
                     ;;
                 *)
                     generateConfig=false
@@ -2097,15 +2090,10 @@ installXray() {
 }
 XEOF
 )
-            if [[ "$installMode" == "system" ]]; then
-                echo "$configJson" | sudo tee "$configPath" > /dev/null
-            else
-                echo "$configJson" > "$configPath"
-            fi
-            echo -e "${GREEN}✔${GREY} Config created: ${CYAN}$configName${GREY} ($installMode mode)${RESET}"
+            echo "$configJson" | sudo tee "$configPath" > /dev/null
+            echo -e "${GREEN}✔${GREY} Config created: ${CYAN}$configName${RESET}"
 
-            local testCmd="$xrayBin run -test -confdir $confDir"
-            [[ "$installMode" == "system" ]] && testCmd="sudo $testCmd"
+            local testCmd="sudo $xrayBin run -test -confdir $confDir"
             if ! $testCmd 2>&1; then
                 echo -e "${RED}✗ Xray config test failed${RESET}"
                 return 1
@@ -2130,20 +2118,14 @@ XEOF
             fi
 
             # Persist server IP so jx info/url/qr uses the same address
-            local ipFile
-            if [[ "$installMode" == "system" ]]; then
-                ipFile="/etc/xray/.server_ip"
-                echo "$ip" | sudo tee "$ipFile" > /dev/null
-            else
-                ipFile="$HOME/.config/xray/.server_ip"
-                echo "$ip" > "$ipFile"
-            fi
+            local ipFile="/etc/xray/.server_ip"
+            echo "$ip" | sudo tee "$ipFile" > /dev/null
 
             local url="vless://${uuid}@${ip}:${port}?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=${sni}&fp=chrome&pbk=${publicKey}&sid=${shortId}#${configName}"
 
             echo
             echo -e "====================================================="
-            echo -e "${CYAN}▸${RESET} ${BOLD}Config: ${CYAN}$configName${RESET} ${GREY}($installMode mode)${RESET}"
+            echo -e "${CYAN}▸${RESET} ${BOLD}Config: ${CYAN}$configName${RESET}"
             echo -e "====================================================="
             echo -e "  ${GREY}Protocol:${RESET}    VLESS"
             echo -e "  ${GREY}Address:${RESET}     $ip"
@@ -2191,7 +2173,7 @@ removeXray() {
     local xrayBin="$HOME/.usr/bin/xray"
     local xrayShareDir="$HOME/.usr/share/xray"
 
-    # Remove user-level binary and geodata
+    # Remove local binary symlink and geodata
     if [ -L "$xrayBin" ] || [ -f "$xrayBin" ]; then
         rm -f "$xrayBin"
         echo -e "${GREEN}✔${GREY} Removed $xrayBin${RESET}"
@@ -2228,30 +2210,309 @@ removeXray() {
             echo -e "${GREEN}✔${GREY} Removed /var/log/xray${RESET}"
             ((removed++))
         fi
-    elif [[ -d "$HOME/.config/xray" ]]; then
-        # User-level cleanup
-        echo -e "${LIGHTYELLOW}Detected user-level install${RESET}"
-        if systemctl --user is-active xray &>/dev/null; then
-            systemctl --user stop xray
-            echo -e "${GREEN}✔${GREY} Stopped xray user service${RESET}"
-            ((removed++))
-        fi
-        if [[ -f "$HOME/.config/systemd/user/xray.service" ]]; then
-            systemctl --user disable xray 2>/dev/null
-            rm -f "$HOME/.config/systemd/user/xray.service"
-            systemctl --user daemon-reload
-            echo -e "${GREEN}✔${GREY} Removed user systemd service${RESET}"
-            ((removed++))
-        fi
-        rm -rf "$HOME/.config/xray"
-        echo -e "${GREEN}✔${GREY} Removed ~/.config/xray${RESET}"
-        ((removed++))
     fi
 
     if [ $removed -eq 0 ]; then
         echo -e "${GREY}Xray is not installed.${RESET}"
     else
         echo -e "${GREEN}✔${GREY} Xray removed successfully.${RESET}"
+    fi
+}
+
+# Install/configure a WireGuard VPN server with one client peer.
+#
+#   jc --wireguard [--wireguard-port PORT] [--wireguard-client NAME]
+#
+#   +----------------------------------+
+#   | apt install wireguard qrencode   |
+#   +----------------+-----------------+
+#                    |
+#                    v
+#          +-------------------+
+#          | Enable IP forward |
+#          | (sysctl)          |
+#          +---------+---------+
+#                    |
+#                    v
+#          +---------+---------+
+#          | Existing wg0.conf?|
+#          +---------+---------+
+#           /                 \
+#         Yes                  No
+#          |                    |
+#          v                    |
+#   +----------------+         |
+#   | Prompt:        |         |
+#   | 1) Keep        |         |
+#   | 2) Regenerate  |         |
+#   +-------+--------+         |
+#    /             \            |
+#   v               v          |
+#  Keep         Regenerate     |
+#   |           (rm old)       |
+#   |               \          |
+#   v                v         v
+#  +----------+    +-------------------+
+#  | Restart  |    | Generate server & |
+#  | service  |    |  client key pairs |
+#  +----------+    +---------+---------+
+#                            |
+#                            v
+#                  +-------------------+
+#                  | Write wg0.conf    |
+#                  | + client conf     |
+#                  +---------+---------+
+#                            |
+#                            v
+#                  +-------------------+
+#                  | Enable & start    |
+#                  | wg-quick@wg0      |
+#                  +---------+---------+
+#                            |
+#                            v
+#                  +-------------------+
+#                  | Print client conf |
+#                  | + QR code         |
+#                  +-------------------+
+installWireguard() {
+    echo -e "${COLOR}Checking for WireGuard${RESET}"
+
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo -e "${RED}Error: WireGuard server setup is only supported on Linux${RESET}"
+        return 1
+    fi
+
+    if [ -z "$fWireguardUpdate" ] && command -v wg &> /dev/null && [[ -f /etc/wireguard/wg0.conf ]]; then
+        echo -e "${GREEN}✔${GREY} WireGuard is already installed and configured.${RESET}"
+        sudo wg show wg0 2>/dev/null | head -5
+        return 0
+    fi
+
+    if ! sudo -n true 2>/dev/null; then
+        echo -e "${LIGHTYELLOW}WireGuard installation requires sudo privileges.${RESET}"
+        echo -e "  ${GREEN}1)${RESET} Enter sudo password and continue"
+        echo -e "  ${GREEN}2)${RESET} Cancel"
+        local choice
+        read -rp "$(echo -e "${CYAN}▸${RESET} Enter choice [1-2]: ")" choice
+        case "$choice" in
+            1) ;;
+            *) echo -e "${GREY}Cancelled.${RESET}"; return 0 ;;
+        esac
+    fi
+
+    echo -e "${LIGHTYELLOW}Installing WireGuard packages...${RESET}"
+    sudo apt-get update -qq
+    sudo apt-get install -y wireguard wireguard-tools qrencode >/dev/null 2>&1
+    if ! command -v wg &> /dev/null; then
+        echo -e "${RED}Error: WireGuard installation failed${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} WireGuard packages installed${RESET}"
+
+    # Enable IP forwarding
+    if ! grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null; then
+        echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf > /dev/null
+    fi
+    sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null 2>&1
+    echo -e "${GREEN}✔${GREY} IP forwarding enabled${RESET}"
+
+    local port="${fWireguardPort:-51820}"
+    local clientName="${fWireguardClientName:-client1}"
+    local subnet="10.66.66"
+    local serverAddr="${subnet}.1/24"
+    local clientAddr="${subnet}.2/32"
+    local dnsServer="1.1.1.1, 8.8.8.8"
+
+    sudo mkdir -p /etc/wireguard/clients
+    sudo chmod 700 /etc/wireguard
+
+    local generateConfig=true
+    if [[ -f /etc/wireguard/wg0.conf ]]; then
+        echo -e "\n${LIGHTYELLOW}Existing WireGuard config found: /etc/wireguard/wg0.conf${RESET}"
+        echo -e "  ${GREEN}1)${RESET} Keep existing config (restart service)"
+        echo -e "  ${GREEN}2)${RESET} Regenerate fresh config (removes existing keys & config)"
+        local rerunChoice
+        read -rp "$(echo -e "${CYAN}▸${RESET} Enter choice [1-2]: ")" rerunChoice
+        case "$rerunChoice" in
+            2)
+                sudo systemctl stop wg-quick@wg0 2>/dev/null
+                sudo rm -f /etc/wireguard/wg0.conf
+                sudo rm -f /etc/wireguard/server_private.key /etc/wireguard/server_public.key
+                sudo rm -rf /etc/wireguard/clients
+                sudo mkdir -p /etc/wireguard/clients
+                ;;
+            *)
+                generateConfig=false
+                ;;
+        esac
+    fi
+
+    if [[ "$generateConfig" == true ]]; then
+        # Generate server key pair
+        local serverPrivKey=$(wg genkey)
+        local serverPubKey=$(echo "$serverPrivKey" | wg pubkey)
+        echo "$serverPrivKey" | sudo tee /etc/wireguard/server_private.key > /dev/null
+        echo "$serverPubKey"  | sudo tee /etc/wireguard/server_public.key > /dev/null
+        sudo chmod 600 /etc/wireguard/server_private.key
+
+        # Generate client key pair
+        local clientPrivKey=$(wg genkey)
+        local clientPubKey=$(echo "$clientPrivKey" | wg pubkey)
+        local clientPsk=$(wg genpsk)
+
+        # Detect default network interface
+        local netIf=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
+        if [[ -z "$netIf" ]]; then
+            netIf="eth0"
+            echo -e "${LIGHTYELLOW}Warning: Could not detect default interface, using ${netIf}${RESET}"
+        fi
+
+        # Write server config
+        sudo tee /etc/wireguard/wg0.conf > /dev/null << WGEOF
+[Interface]
+Address = $serverAddr
+ListenPort = $port
+PrivateKey = $serverPrivKey
+PostUp = iptables -t nat -A POSTROUTING -o $netIf -j MASQUERADE; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o $netIf -j MASQUERADE; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT
+
+[Peer]
+# $clientName
+PublicKey = $clientPubKey
+PresharedKey = $clientPsk
+AllowedIPs = ${subnet}.2/32
+WGEOF
+        sudo chmod 600 /etc/wireguard/wg0.conf
+        echo -e "${GREEN}✔${GREY} Server config created: /etc/wireguard/wg0.conf${RESET}"
+
+        # Detect public IP (same method as xray)
+        local ip
+        ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
+        [[ -z "$ip" ]] && ip=$(curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null)
+        [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
+
+        # Build client config
+        local clientConf="[Interface]
+Address = $clientAddr
+DNS = $dnsServer
+PrivateKey = $clientPrivKey
+
+[Peer]
+PublicKey = $serverPubKey
+PresharedKey = $clientPsk
+Endpoint = ${ip}:${port}
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25"
+
+        # Save client config
+        local clientConfPath="/etc/wireguard/clients/${clientName}.conf"
+        echo "$clientConf" | sudo tee "$clientConfPath" > /dev/null
+        sudo chmod 600 "$clientConfPath"
+        echo -e "${GREEN}✔${GREY} Client config saved: ${CYAN}$clientConfPath${RESET}"
+
+        # Enable and start the service
+        sudo systemctl enable wg-quick@wg0 2>/dev/null
+        sudo systemctl restart wg-quick@wg0
+        sleep 1
+        if sudo systemctl is-active --quiet wg-quick@wg0; then
+            echo -e "${GREEN}✔${GREY} wg-quick@wg0 service started${RESET}"
+        else
+            echo -e "${RED}✗ wg-quick@wg0 service failed to start${RESET}"
+            sudo systemctl status wg-quick@wg0 --no-pager 2>&1 | tail -5
+            echo -e "${GREY}Check full logs with: ${BLUE}sudo journalctl -u wg-quick@wg0 -n 20 --no-pager${RESET}"
+        fi
+
+        # Allow port through UFW if active
+        if command -v ufw &>/dev/null && sudo ufw status | grep -qw "active"; then
+            sudo ufw allow "${port}/udp" > /dev/null 2>&1
+            echo -e "${GREEN}✔${GREY} UFW rule added: allow ${port}/udp${RESET}"
+        fi
+
+        # Print summary
+        echo
+        echo -e "====================================================="
+        echo -e "${CYAN}▸${RESET} ${BOLD}WireGuard Server${RESET}"
+        echo -e "====================================================="
+        echo -e "  ${GREY}Endpoint:${RESET}        ${ip}:${port}"
+        echo -e "  ${GREY}Server Address:${RESET}  $serverAddr"
+        echo -e "  ${GREY}Server PubKey:${RESET}   $serverPubKey"
+        echo -e "  ${GREY}Interface:${RESET}       $netIf"
+        echo -e "====================================================="
+        echo -e "${CYAN}▸${RESET} ${BOLD}Client: ${CYAN}$clientName${RESET}"
+        echo -e "====================================================="
+        echo -e "  ${GREY}Address:${RESET}         $clientAddr"
+        echo -e "  ${GREY}DNS:${RESET}             $dnsServer"
+        echo -e "  ${GREY}AllowedIPs:${RESET}      0.0.0.0/0, ::/0"
+        echo -e "  ${GREY}Config file:${RESET}     $clientConfPath"
+        echo -e "====================================================="
+        echo -e "  ${GREY}Client config:${RESET}"
+        echo
+        echo -e "${BLUE}$clientConf${RESET}"
+        echo
+        echo -e "====================================================="
+
+        echo
+        if command -v qrencode &>/dev/null; then
+            echo -e "${CYAN}▸${RESET} ${BOLD}QR Code (scan with WireGuard app):${RESET}"
+            echo
+            qrencode -t ANSIUTF8 -m 1 "$clientConf"
+        else
+            echo -e "${LIGHTYELLOW}Tip: Install qrencode for QR code display: ${BLUE}sudo apt install qrencode${RESET}"
+        fi
+        echo
+    else
+        sudo systemctl restart wg-quick@wg0
+        sleep 1
+        if sudo systemctl is-active --quiet wg-quick@wg0; then
+            echo -e "${GREEN}✔${GREY} wg-quick@wg0 service restarted${RESET}"
+        else
+            echo -e "${RED}✗ wg-quick@wg0 service failed to restart${RESET}"
+            sudo systemctl status wg-quick@wg0 --no-pager 2>&1 | tail -5
+            echo -e "${GREY}Check logs with: ${BLUE}sudo journalctl -u wg-quick@wg0 -n 20 --no-pager${RESET}"
+        fi
+    fi
+}
+
+removeWireguard() {
+    echo -e "${COLOR}Removing WireGuard${RESET}"
+    local removed=0
+
+    if sudo systemctl is-active --quiet wg-quick@wg0 2>/dev/null; then
+        sudo systemctl stop wg-quick@wg0
+        echo -e "${GREEN}✔${GREY} Stopped wg-quick@wg0 service${RESET}"
+        ((removed++))
+    fi
+    if sudo systemctl is-enabled --quiet wg-quick@wg0 2>/dev/null; then
+        sudo systemctl disable wg-quick@wg0 2>/dev/null
+        echo -e "${GREEN}✔${GREY} Disabled wg-quick@wg0 service${RESET}"
+        ((removed++))
+    fi
+
+    if [[ -d /etc/wireguard ]]; then
+        sudo rm -rf /etc/wireguard
+        echo -e "${GREEN}✔${GREY} Removed /etc/wireguard${RESET}"
+        ((removed++))
+    fi
+
+    # Remove UFW rule if present
+    if command -v ufw &>/dev/null && sudo ufw status | grep -qw "active"; then
+        sudo ufw delete allow 51820/udp > /dev/null 2>&1
+    fi
+
+    # Revert IP forwarding only if no other tunnel software needs it
+    if grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf 2>/dev/null; then
+        if ! command -v xray &>/dev/null && ! ip link show wg0 &>/dev/null; then
+            sudo sed -i '/^net.ipv4.ip_forward=1/d' /etc/sysctl.conf
+            sudo sysctl -w net.ipv4.ip_forward=0 > /dev/null 2>&1
+            echo -e "${GREEN}✔${GREY} Reverted IP forwarding${RESET}"
+            ((removed++))
+        fi
+    fi
+
+    if [ $removed -eq 0 ]; then
+        echo -e "${GREY}WireGuard is not installed.${RESET}"
+    else
+        echo -e "${GREEN}✔${GREY} WireGuard removed successfully.${RESET}"
     fi
 }
 
@@ -4102,6 +4363,8 @@ doEarlyExitJobs() {
     [ -n "$fSingbox" ]             && { launchSingbox; exit $?; }
     [ -n "$fXrayUpdate" ]          && { installXray; exit 0; }
     [ -n "$fXrayRemove" ]          && { removeXray; exit 0; }
+    [ -n "$fWireguardUpdate" ]     && { installWireguard; exit 0; }
+    [ -n "$fWireguardRemove" ]     && { removeWireguard; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
     [ -n  "$fVncLockAction" ]      && { vncLock "$fVncLockAction"; exit 0; }
     case "$fVncServer" in

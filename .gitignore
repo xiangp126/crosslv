@@ -9,5 +9,5 @@ recycled/
 downloads/
 __pycache__/
 .DS_Store
-.ycm_extra_conf.py
 .has_been_invoked
+assets/sing-box/secrets.conf
