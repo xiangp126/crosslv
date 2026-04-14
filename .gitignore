@@ -11,3 +11,5 @@ __pycache__/
 .DS_Store
 .has_been_invoked
 assets/sing-box/secrets.conf
+assets/xray/secrets.conf
+assets/wireguard/secrets.conf

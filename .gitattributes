@@ -1,1 +1,2 @@
-assets/sing-box/sing-box-config.jsonc filter=secrets
+assets/xray/sing-box-config.jsonc filter=secrets
+assets/wireguard/sing-box-config.jsonc filter=secrets

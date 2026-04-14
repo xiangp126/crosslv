@@ -55,6 +55,7 @@ fXrayServer=
 fWireguardUpdate=
 fWireguardRemove=
 fWireguardPort=
+fWireguardServer=
 fWireguardClientName=
 fSwapReq=
 # RTSP Stream Playback
@@ -76,8 +77,9 @@ fSshTunnelLocalPort=5902
 fSshTunnelAutosshPid=""
 # Singbox (sing-box proxy)
 fSingbox=
+fSingboxLink=""           # xray | wireguard — which config to symlink
 fSingboxConfig="$HOME/Documents/sing-box-config.jsonc"
-# fSingboxConfig="$HOME/Documents/sing-box-config.json.good"
+fSingboxProxyMode=""      # wireguard | xray-direct | xray-tunnel
 fSingboxMonitorPid=""
 fSingboxCleaning=0
 fSingboxRetryTimeout=180  # seconds to retry after VPN/tunnel drop
@@ -156,7 +158,9 @@ RTSP Options:
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
 
 Singbox Options:
-    --singbox                       Launch sing-box proxy via SSH tunnel over VPN
+    --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
+    --singbox-xray                  Link xray sing-box config to ~/Documents
+    --singbox-wireguard             Link WireGuard sing-box config to ~/Documents
 
 The following options update or re-install (installed by default on first run):
     --nvm                           Update NVM
@@ -175,10 +179,11 @@ Xray Options:
     --xray-remove                   Remove Xray from system
 
 WireGuard Options:
-    --wireguard                     Install/configure WireGuard VPN server
-    --wireguard-port <port>         Set WireGuard listen port (default: 51820)
-    --wireguard-client <name>       Set client config name (default: client1)
-    --wireguard-remove              Remove WireGuard from system
+    --wg                            Install/configure WireGuard VPN server
+    --wg-port <port>                Set WireGuard listen port (default: 51820)
+    --wg-server <ip>                Set server IP in client config (auto-detected if omitted)
+    --wg-client <name>              Set client config name (default: client1)
+    --wg-remove                     Remove WireGuard from system
 
 AI Tools Options:
     --claude                        Install or update Claude Code
@@ -367,8 +372,9 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,\
           rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,codex,claude-remove,\
-          codex-remove,cursor-backup,cursor-restore,singbox,xray,xray-port:,xray-server:,\
-          xray-remove,wireguard,wireguard-port:,wireguard-client:,wireguard-remove"
+          codex-remove,cursor-backup,cursor-restore,singbox,singbox-xray,singbox-wireguard,\
+          xray,xray-port:,xray-server:,\
+          xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -608,11 +614,11 @@ while true; do
             shift
             ;;
 
-        --wireguard)
+        --wg)
             fWireguardUpdate=true
             shift
             ;;
-        --wireguard-port)
+        --wg-port)
             fWireguardPort="$2"
             if ! [[ "$fWireguardPort" =~ ^[0-9]+$ ]] || (( fWireguardPort < 1 || fWireguardPort > 65535 )); then
                 echo -e "${RED}Error: Invalid WireGuard port: $fWireguardPort${RESET}"
@@ -620,11 +626,15 @@ while true; do
             fi
             shift 2
             ;;
-        --wireguard-client)
+        --wg-server)
+            fWireguardServer="$2"
+            shift 2
+            ;;
+        --wg-client)
             fWireguardClientName="$2"
             shift 2
             ;;
-        --wireguard-remove)
+        --wg-remove)
             fWireguardRemove=true
             shift
             ;;
@@ -639,6 +649,14 @@ while true; do
             ;;
         --singbox)
             fSingbox=1
+            shift
+            ;;
+        --singbox-xray)
+            fSingboxLink="xray"
+            shift
+            ;;
+        --singbox-wireguard)
+            fSingboxLink="wireguard"
             shift
             ;;
         -d|--debug)
@@ -2361,7 +2379,7 @@ removeXray() {
 
 # Install/configure a WireGuard VPN server with one client peer.
 #
-#   jc --wireguard [--wireguard-port PORT] [--wireguard-client NAME]
+#   jc --wg [--wg-port PORT] [--wg-server IP] [--wg-client NAME]
 #
 #   +----------------------------------+
 #   | Install wireguard + qrencode     |
@@ -2530,11 +2548,12 @@ WGEOF
         sudo chmod 600 /etc/wireguard/wg0.conf
         echo -e "${GREEN}✔${GREY} Server config created: /etc/wireguard/wg0.conf${RESET}"
 
-        # Detect public IP (same method as xray)
-        local ip
-        ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
-        [[ -z "$ip" ]] && ip=$(curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null)
-        [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
+        local ip="${fWireguardServer}"
+        if [[ -z "$ip" ]]; then
+            ip=$(curl -4 -s --connect-timeout 5 https://one.one.one.one/cdn-cgi/trace 2>/dev/null | grep "ip=" | cut -d= -f2)
+            [[ -z "$ip" ]] && ip=$(curl -4 -s --connect-timeout 5 https://ifconfig.me 2>/dev/null)
+            [[ -z "$ip" ]] && ip=$(hostname -I | awk '{print $1}')
+        fi
 
         # Build client config
         local clientConf="[Interface]
@@ -4320,13 +4339,18 @@ startSshTunnel() {
     echo -e "${GREEN}✔${GREY} Forward established.${RESET}"
 }
 
+linkSingboxConfig() {
+    local target="$fMainDir/assets/$1/sing-box-config.jsonc"
+    linkFile "$target" "$(dirname "$fSingboxConfig")"
+}
+
 cleanupSingbox() {
     [ "$fSingboxCleaning" -eq 1 ] && return
     fSingboxCleaning=1
     echo -e "\n${LIGHTYELLOW}⏻ Cleaning up sing-box...${RESET}"
     [ -n "$fSingboxMonitorPid" ] && kill "$fSingboxMonitorPid" 2>/dev/null || true
     sudo pkill -x sing-box 2>/dev/null || true
-    stopSshTunnel
+    [[ "$fSingboxProxyMode" == "xray-tunnel" ]] && stopSshTunnel
     [ -n "$fSingboxRecoveryMarker" ] && rm -f "$fSingboxRecoveryMarker"
     echo -e "${GREEN}✔${GREY} sing-box exited cleanly.${RESET}\n"
 }
@@ -4388,19 +4412,40 @@ launchSingbox() {
 
     fSingboxRecoveryMarker=$(mktemp /tmp/singbox-recovery.XXXXXX)
 
-    # Check if config connects directly to a remote server (no autossh needed)
-    local needsTunnel=true
+    # Auto-detect proxy mode from config
+    local proxyMode=""
     if command -v jq &>/dev/null && [ -f "$fSingboxConfig" ]; then
-        local proxyServer
-        proxyServer=$(jq -r '.outbounds[] | select(.tag == "proxy") | .server' "$fSingboxConfig" 2>/dev/null)
-        if [[ -n "$proxyServer" && "$proxyServer" != "127.0.0.1" && "$proxyServer" != "localhost" ]]; then
-            echo -e "${GREEN}✔${GREY} Direct proxy mode (${proxyServer}), skipping SSH tunnel.${RESET}"
-            needsTunnel=false
+        local configJson
+        configJson=$(sed '/^[[:space:]]*\/\//d' "$fSingboxConfig")
+
+        local wgEndpoint
+        wgEndpoint=$(echo "$configJson" | jq -r '.endpoints[]? | select(.type == "wireguard") | .tag' 2>/dev/null)
+        if [[ -n "$wgEndpoint" ]]; then
+            proxyMode="wireguard"
+            echo -e "${GREEN}✔${GREY} WireGuard mode detected, no SSH tunnel needed.${RESET}"
+        else
+            local proxyServer
+            proxyServer=$(echo "$configJson" | jq -r '.outbounds[] | select(.tag == "proxy") | .server' 2>/dev/null)
+            if [[ -n "$proxyServer" ]]; then
+                if [[ "$proxyServer" == "127.0.0.1" || "$proxyServer" == "localhost" ]]; then
+                    proxyMode="xray-tunnel"
+                else
+                    proxyMode="xray-direct"
+                    echo -e "${GREEN}✔${GREY} Direct xray mode (${proxyServer}), no SSH tunnel needed.${RESET}"
+                fi
+            fi
         fi
     fi
 
-    # Initial tunnel setup with retry (only if needed)
-    if [[ "$needsTunnel" == true ]] && ! startSshTunnel; then
+    if [[ -z "$proxyMode" ]]; then
+        echo -e "${RED}Error: Could not detect proxy mode from config. Only xray and wireguard are supported.${RESET}"
+        cleanupSingbox
+        return 1
+    fi
+    fSingboxProxyMode="$proxyMode"
+
+    # Initial tunnel setup with retry (only for xray-tunnel mode)
+    if [[ "$proxyMode" == "xray-tunnel" ]] && ! startSshTunnel; then
         if ! waitForVpnRecovery; then
             cleanupSingbox
             return 1
@@ -4434,7 +4479,7 @@ launchSingbox() {
         true > "$fSingboxRecoveryMarker"
         fSingboxCleaning=0
 
-        if [[ "$needsTunnel" == true ]]; then
+        if [[ "$proxyMode" == "xray-tunnel" ]]; then
             local vpnInterface
             vpnInterface="$(detectVpnInterface)" || {
                 echo -e "${RED}Error: No utun* interface with an IPv4 address found.${RESET}"
@@ -4513,6 +4558,10 @@ doEarlyExitJobs() {
     [ -n "$fRtspList" ]            && { listRtspStreams; exit 0; }
     [ -n "$fRtspFlag" ]            && { playRtspStream; exit 0; }
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
+    if [ -n "$fSingboxLink" ]; then
+        linkSingboxConfig "$fSingboxLink" || exit $?
+        [ -z "$fSingbox" ] && exit 0
+    fi
     [ -n "$fSingbox" ]             && { launchSingbox; exit $?; }
     [ -n "$fXrayUpdate" ]          && { installXray; exit 0; }
     [ -n "$fXrayRemove" ]          && { removeXray; exit 0; }

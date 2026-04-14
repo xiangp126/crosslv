@@ -13,8 +13,10 @@ _jc_complete() {
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
                --gdm --text --claude --claude-remove --codex --codex-remove \
-               --cursor-backup --cursor-restore --singbox --xray --xray-port --xray-server --xray-remove \
-               --wireguard --wireguard-port --wireguard-client --wireguard-remove \
+               --cursor-backup --cursor-restore \
+               --singbox --singbox-xray --singbox-wireguard \
+               --xray --xray-port --xray-server --xray-remove \
+               --wg --wg-port --wg-server --wg-client --wg-remove \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-h264 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"
 
@@ -39,17 +41,17 @@ _jc_complete() {
             COMPREPLY=( $(compgen -W "${ips}" -- ${cur}) )
             return 0
             ;;
-        --xray-port|--wireguard-port)
+        --xray-port|--wg-port)
             local ports="443 5902 8080 51820 57217"
             COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
             return 0
             ;;
-        --xray-server)
+        --xray-server|--wg-server)
             local ips=$(hostname -I 2>/dev/null || ipconfig getifaddr en0 2>/dev/null)
             COMPREPLY=( $(compgen -W "${ips}" -- ${cur}) )
             return 0
             ;;
-        --wireguard-client)
+        --wg-client)
             local names="client1 client2 ubuntu01 ubuntu02"
             COMPREPLY=( $(compgen -W "${names}" -- ${cur}) )
             return 0
