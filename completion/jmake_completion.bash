@@ -171,7 +171,7 @@ _jmake_complete() {
             ;;
         --firmware)
             compopt -o filenames
-            COMPREPLY=( $(compgen -G "${cur}*.mlx" -- "$cur") )
+            COMPREPLY=( $(compgen -f -X '!*.mlx' -- "$cur") )
             return 0
             ;;
     esac

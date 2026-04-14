@@ -142,12 +142,10 @@ PATH="/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin"
 if [[ $_UNAME_S == 'Darwin' ]]; then
     PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
 fi
-if [ -d "$HOME/.usr/bin" ] && [[ ":$PATH:" != *":$HOME/.usr/bin:"* ]]; then
-    PATH="$HOME/.usr/bin:$PATH"
-fi
-if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    PATH="$HOME/.local/bin:$PATH"
-fi
+for _d in "$HOME/.usr/bin" "$HOME/.local/bin"; do
+    [ -d "$_d" ] && [[ ":$PATH:" != *":$_d:"* ]] && PATH="$_d:$PATH"
+done
+unset _d
 export PATH
 export PKG_CONFIG_PATH
 export LD_LIBRARY_PATH
