@@ -11,9 +11,9 @@ _jc_complete() {
     long_opts="--help --no-tools --debug --clangd --link-clang-format --nvm --wireshark \
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
-               --firefox --update --samba --samba-reset-password --git-lfs \
-               --check-tls --swap --gdm --text --ai --cursor-backup --cursor-restore \
-               --singbox --xray --xray-port --xray-server --xray-remove \
+               --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
+               --gdm --text --claude --claude-remove --codex --codex-remove \
+               --cursor-backup --cursor-restore --singbox --xray --xray-port --xray-server --xray-remove \
                --wireguard --wireguard-port --wireguard-client --wireguard-remove \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-h264 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"

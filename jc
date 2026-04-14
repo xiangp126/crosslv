@@ -118,7 +118,6 @@ Common Options:
     --auto-remove                   Remove unused packages
     --update                        Update all packages
     --upgrade                       Upgrade all packages
-    --ai                            Install AI coding tools (Claude Code, Codex)
 
 Cursor Options:
     --cursor-backup                 Back up Cursor local, remote, and keybinding JSON files
@@ -181,6 +180,12 @@ WireGuard Options:
     --wireguard-client <name>       Set client config name (default: client1)
     --wireguard-remove              Remove WireGuard from system
 
+AI Tools Options:
+    --claude                        Install or update Claude Code
+    --claude-remove                 Remove Claude Code
+    --codex                         Install or update Codex
+    --codex-remove                  Remove Codex
+
 Examples:
     $SCRIPT_NAME -h
     $SCRIPT_NAME --link-clang-format \$HOME/crosslv
@@ -197,58 +202,162 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-installAITools() {
-    echo -e "${COLOR}Installing AI Coding Tools${RESET}"
-
-    if [[ $(uname -s) == 'Darwin' ]]; then
-        local brewCasks=(claude-code codex)
-        for cask in "${brewCasks[@]}"; do
-            if brew list --cask "$cask" &>/dev/null; then
-                echo -e "  ${LIGHTYELLOW}Upgrading ${BLUE}$cask${RESET}"
-                brew upgrade --cask "$cask"
-            else
-                echo -e "  ${LIGHTYELLOW}Installing ${BLUE}$cask${RESET}"
-                brew install --cask "$cask"
-            fi
-        done
-    else
-        local nvmSh="$HOME/.nvm/nvm.sh"
-        if [ ! -s "$nvmSh" ]; then
-            echo -e "${LIGHTYELLOW}NVM not found. Installing NVM and Node.js first...${RESET}"
-            local nvmVersion="v0.40.3"
-            if ! curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/"$nvmVersion"/install.sh | bash; then
-                echo -e "${RED}Error: Failed to install NVM. Cannot install AI tools.${RESET}"
-                return 1
-            fi
-        fi
-
-        if [ -s "$nvmSh" ]; then
-            export NVM_DIR="$HOME/.nvm"
-            # shellcheck source=/dev/null
-            source "$nvmSh"
-        else
-            echo -e "${RED}Error: nvm.sh not found. Cannot install AI tools.${RESET}"
+_ensureNodeEnv() {
+    local nvmSh="$HOME/.nvm/nvm.sh"
+    if [ ! -s "$nvmSh" ]; then
+        echo -e "${LIGHTYELLOW}NVM not found. Installing NVM and Node.js first...${RESET}"
+        local nvmVersion="v0.40.3"
+        if ! curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/"$nvmVersion"/install.sh | bash; then
+            echo -e "${RED}Error: Failed to install NVM.${RESET}"
             return 1
         fi
-
-        if ! command -v node &>/dev/null; then
-            echo -e "${LIGHTYELLOW}Node.js not found. Installing latest LTS via NVM...${RESET}"
-            nvm install --lts
-            nvm alias default lts/*
-        fi
-
-        local aiPackages=(
-            "@anthropic-ai/claude-code"
-            "@anthropic-ai/sandbox-runtime"
-            "@openai/codex"
-        )
-        for pkg in "${aiPackages[@]}"; do
-            echo -e "  ${LIGHTYELLOW}Installing ${BLUE}$pkg${RESET}"
-            npm install -g "$pkg"
-        done
     fi
 
-    echo -e "${GREEN}✔${GREY} AI coding tools installation complete.${RESET}"
+    if [ -s "$nvmSh" ]; then
+        export NVM_DIR="$HOME/.nvm"
+        # shellcheck source=/dev/null
+        source "$nvmSh"
+    else
+        echo -e "${RED}Error: nvm.sh not found.${RESET}"
+        return 1
+    fi
+
+    if ! command -v node &>/dev/null; then
+        echo -e "${LIGHTYELLOW}Node.js not found. Installing latest LTS via NVM...${RESET}"
+        nvm install --lts
+        nvm alias default lts/*
+    fi
+}
+
+installClaude() {
+    if command -v claude &>/dev/null; then
+        local currentVer
+        currentVer=$(claude -v 2>/dev/null)
+        echo -e "${COLOR}Claude Code${RESET} ${GREY}v${currentVer}${RESET}"
+        echo -e "  ${LIGHTYELLOW}Checking for updates...${RESET}"
+        claude update
+        echo -e "  ${GREY}Binary: $(command -v claude)${RESET}"
+        echo -e "  ${GREY}Config: ~/.claude/${RESET}"
+        return 0
+    fi
+
+    echo -e "${COLOR}Installing Claude Code${RESET}"
+
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}claude-code${RESET}"
+        brew install --cask claude-code
+    else
+        if npm list -g @anthropic-ai/claude-code &>/dev/null; then
+            echo -e "  ${LIGHTYELLOW}Removing npm-installed Claude Code...${RESET}"
+            npm uninstall -g @anthropic-ai/claude-code
+        fi
+        if ! curl -fsSL https://claude.ai/install.sh | sh; then
+            echo -e "${RED}Error: Failed to install Claude Code.${RESET}"
+            return 1
+        fi
+    fi
+
+    echo -e "${GREEN}✔${GREY} Claude Code installation complete.${RESET}"
+    echo -e "  ${GREY}Binary: $(command -v claude 2>/dev/null || echo 'not found')${RESET}"
+    echo -e "  ${GREY}Config: ~/.claude/${RESET}"
+}
+
+installCodex() {
+    if command -v codex &>/dev/null; then
+        local currentVer
+        currentVer=$(codex --version 2>/dev/null)
+        echo -e "${COLOR}Codex${RESET} ${GREY}v${currentVer}${RESET}"
+        echo -e "  ${LIGHTYELLOW}Checking for updates...${RESET}"
+        if [[ $(uname -s) == 'Darwin' ]]; then
+            brew upgrade --cask codex
+        else
+            _ensureNodeEnv || return 1
+            npm update -g @openai/codex
+        fi
+        echo -e "  ${GREY}Binary: $(command -v codex)${RESET}"
+        echo -e "  ${GREY}Config: ~/.codex/${RESET}"
+        return 0
+    fi
+
+    echo -e "${COLOR}Installing Codex${RESET}"
+
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}codex${RESET}"
+        brew install --cask codex
+    else
+        _ensureNodeEnv || return 1
+        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@openai/codex${RESET}"
+        npm install -g @openai/codex
+    fi
+
+    echo -e "${GREEN}✔${GREY} Codex installation complete.${RESET}"
+    echo -e "  ${GREY}Binary: $(command -v codex 2>/dev/null || echo 'not found')${RESET}"
+    echo -e "  ${GREY}Config: ~/.codex/${RESET}"
+}
+
+removeClaude() {
+    echo -e "${COLOR}Removing Claude Code${RESET}"
+
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        if brew list --cask claude-code &>/dev/null; then
+            brew uninstall --cask claude-code
+        else
+            echo -e "  ${GREY}Claude Code is not installed via Homebrew.${RESET}"
+            return 0
+        fi
+    else
+        local removed=false
+        # Source NVM so npm is available
+        if [ -s "$HOME/.nvm/nvm.sh" ]; then
+            export NVM_DIR="$HOME/.nvm"
+            # shellcheck source=/dev/null
+            source "$NVM_DIR/nvm.sh"
+        fi
+        if command -v npm &>/dev/null && npm list -g @anthropic-ai/claude-code &>/dev/null; then
+            echo -e "  ${LIGHTYELLOW}Removing npm-installed Claude Code...${RESET}"
+            npm uninstall -g @anthropic-ai/claude-code
+            removed=true
+        fi
+        if [ -L "$HOME/.local/bin/claude" ] || [ -d "$HOME/.local/share/claude" ]; then
+            echo -e "  ${LIGHTYELLOW}Removing standalone Claude Code...${RESET}"
+            rm -f "$HOME/.local/bin/claude"
+            rm -rf "$HOME/.local/share/claude"
+            removed=true
+        fi
+        if ! $removed; then
+            echo -e "  ${GREY}Claude Code is not installed.${RESET}"
+            return 0
+        fi
+    fi
+
+    echo -e "${GREEN}✔${GREY} Claude Code removed.${RESET}"
+}
+
+removeCodex() {
+    echo -e "${COLOR}Removing Codex${RESET}"
+
+    if [[ $(uname -s) == 'Darwin' ]]; then
+        if brew list --cask codex &>/dev/null; then
+            brew uninstall --cask codex
+        else
+            echo -e "  ${GREY}Codex is not installed via Homebrew.${RESET}"
+            return 0
+        fi
+    else
+        if [ -s "$HOME/.nvm/nvm.sh" ]; then
+            export NVM_DIR="$HOME/.nvm"
+            # shellcheck source=/dev/null
+            source "$NVM_DIR/nvm.sh"
+        fi
+        if command -v npm &>/dev/null && npm list -g @openai/codex &>/dev/null; then
+            npm uninstall -g @openai/codex
+        else
+            echo -e "  ${GREY}Codex is not installed.${RESET}"
+            return 0
+        fi
+    fi
+
+    echo -e "${GREEN}✔${GREY} Codex removed.${RESET}"
 }
 
 SHORTOPTS="hdnf"
@@ -256,9 +365,10 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,ai,cursor-backup,cursor-restore,singbox,\
-          xray,xray-port:,xray-server:,xray-remove,\
-          wireguard,wireguard-port:,wireguard-client:,wireguard-remove"
+          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,\
+          rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,codex,claude-remove,\
+          codex-remove,cursor-backup,cursor-restore,singbox,xray,xray-port:,xray-server:,\
+          xray-remove,wireguard,wireguard-port:,wireguard-client:,wireguard-remove"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -457,8 +567,23 @@ while true; do
             shift
             exit 0
             ;;
-        --ai)
-            installAITools
+        --claude)
+            installClaude
+            shift
+            exit 0
+            ;;
+        --codex)
+            installCodex
+            shift
+            exit 0
+            ;;
+        --claude-remove)
+            removeClaude
+            shift
+            exit 0
+            ;;
+        --codex-remove)
+            removeCodex
             shift
             exit 0
             ;;
