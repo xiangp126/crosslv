@@ -42,7 +42,7 @@ _jc_complete() {
             return 0
             ;;
         --xray-port|--wg-port)
-            local ports="443 5902 8080 51820 57217"
+            local ports="22 443 3389 5900 5902 5903 5904 5905 5906 5907 5908 5909 6000"
             COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
             return 0
             ;;

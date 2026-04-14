@@ -80,7 +80,7 @@
       "tag": "proxy",
       "server": "10.228.132.85",
       "server_port": 5902,
-      "uuid": "YOUR_UUID",
+      "uuid": "1e62d5e2-c5b5-4333-b160-855efba7a544",
       "flow": "xtls-rprx-vision",
       "network": [
         "tcp"
@@ -94,8 +94,8 @@
         },
         "reality": {
           "enabled": true,
-          "public_key": "YOUR_PUBLIC_KEY",
-          "short_id": "YOUR_SHORT_ID"
+          "public_key": "RAYHZiZDGjj_jKlGzEmAbHaGsCD1MX73v9QZQuLKDTo",
+          "short_id": "e0316ab9"
         }
       }
     },

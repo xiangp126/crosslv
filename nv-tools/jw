@@ -9,6 +9,11 @@ BLUE='\033[34m'
 GREY='\033[90m'
 RESET='\033[0m'
 
+# Extract value after first '=' in a config line, preserving '=' in base64 values
+_wg_val() {
+    echo "$1" | awk "/^$2/"'{sub(/^[^=]*=[[:space:]]*/, ""); print}'
+}
+
 showFullConfig() {
     local iface="${1:-wg0}"
     local confFile="/etc/wireguard/${iface}.conf"
@@ -21,10 +26,10 @@ showFullConfig() {
     local confContent
     confContent=$(sudo cat "$confFile")
 
-    local serverPrivKey=$(echo "$confContent" | awk -F= '/^PrivateKey/{gsub(/[[:space:]]/, "", $2); print $2}')
+    local serverPrivKey=$(_wg_val "$confContent" "PrivateKey")
     local serverPubKey=$(echo "$serverPrivKey" | wg pubkey 2>/dev/null)
-    local serverAddr=$(echo "$confContent" | awk -F= '/^Address/{gsub(/[[:space:]]/, "", $2); print $2}')
-    local port=$(echo "$confContent" | awk -F= '/^ListenPort/{gsub(/[[:space:]]/, "", $2); print $2}')
+    local serverAddr=$(_wg_val "$confContent" "Address")
+    local port=$(_wg_val "$confContent" "ListenPort")
     local netIf=$(echo "$confContent" | awk '/PostUp/{match($0, /-o ([^ ]+)/, a); print a[1]}')
     [[ -z "$netIf" ]] && netIf=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
 
@@ -42,29 +47,29 @@ showFullConfig() {
     echo -e "====================================================="
 
     local clientDir="/etc/wireguard/clients"
-    if sudo test -d "$clientDir"; then
-        for clientConf in $(sudo ls "$clientDir"/*.conf 2>/dev/null); do
-            local clientName=$(basename "$clientConf" .conf)
-            local clientContent=$(sudo cat "$clientConf")
+    local clientFiles
+    clientFiles=$(sudo find "$clientDir" -maxdepth 1 -name '*.conf' 2>/dev/null)
+    for clientConf in $clientFiles; do
+        local clientName=$(basename "$clientConf" .conf)
+        local clientContent=$(sudo cat "$clientConf")
 
-            local clientAddr=$(echo "$clientContent" | awk -F= '/^Address/{gsub(/[[:space:]]/, "", $2); print $2}')
-            local clientDns=$(echo "$clientContent" | awk -F= '/^DNS/{gsub(/^[[:space:]]+/, "", $2); print $2}')
-            local clientAllowed=$(echo "$clientContent" | awk '/^\[Peer\]/,0' | awk -F= '/^AllowedIPs/{gsub(/^[[:space:]]+/, "", $2); print $2}')
+        local clientAddr=$(_wg_val "$clientContent" "Address")
+        local clientDns=$(_wg_val "$clientContent" "DNS")
+        local clientAllowed=$(echo "$clientContent" | awk '/^\[Peer\]/,0' | awk '/^AllowedIPs/{sub(/^[^=]*=[[:space:]]*/, ""); print}')
 
-            echo -e "${CYAN}▸${RESET} ${BOLD}Client: ${CYAN}$clientName${RESET}"
-            echo -e "====================================================="
-            echo -e "  ${GREY}Address:${RESET}         $clientAddr"
-            echo -e "  ${GREY}DNS:${RESET}             $clientDns"
-            echo -e "  ${GREY}AllowedIPs:${RESET}      $clientAllowed"
-            echo -e "  ${GREY}Config file:${RESET}     $clientConf"
-            echo -e "====================================================="
-            echo -e "  ${GREY}Client config:${RESET}"
-            echo
-            echo -e "${BLUE}${clientContent}${RESET}"
-            echo
-            echo -e "====================================================="
-        done
-    fi
+        echo -e "${CYAN}▸${RESET} ${BOLD}Client: ${CYAN}$clientName${RESET}"
+        echo -e "====================================================="
+        echo -e "  ${GREY}Address:${RESET}         $clientAddr"
+        echo -e "  ${GREY}DNS:${RESET}             $clientDns"
+        echo -e "  ${GREY}AllowedIPs:${RESET}      $clientAllowed"
+        echo -e "  ${GREY}Config file:${RESET}     $clientConf"
+        echo -e "====================================================="
+        echo -e "  ${GREY}Client config:${RESET}"
+        echo
+        echo -e "${BLUE}${clientContent}${RESET}"
+        echo
+        echo -e "====================================================="
+    done
     echo
 }
 

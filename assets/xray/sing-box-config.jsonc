@@ -80,7 +80,7 @@
       "tag": "proxy",
       "server": "10.228.132.85",
       "server_port": 5902,
-      "uuid": "YOUR_UUID",
+      "uuid": "XRAY_UUID",
       "flow": "xtls-rprx-vision",
       "network": [
         "tcp"
@@ -94,8 +94,8 @@
         },
         "reality": {
           "enabled": true,
-          "public_key": "YOUR_PUBLIC_KEY",
-          "short_id": "YOUR_SHORT_ID"
+          "public_key": "XRAY_PUBLIC_KEY",
+          "short_id": "XRAY_SHORT_ID"
         }
       }
     },
