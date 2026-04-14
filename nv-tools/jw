@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# WireGuard wrapper: enhanced showconf with full server + client summary
+
+CYAN='\033[36m'
+RED='\033[31m'
+BOLD='\033[1m'
+GREEN='\033[32m'
+BLUE='\033[34m'
+GREY='\033[90m'
+RESET='\033[0m'
+
+showFullConfig() {
+    local iface="${1:-wg0}"
+    local confFile="/etc/wireguard/${iface}.conf"
+
+    if [[ ! -f "$confFile" ]]; then
+        echo -e "${RED}Error: Config not found: ${confFile}${RESET}"
+        return 1
+    fi
+
+    local serverPrivKey=$(sudo awk -F= '/^PrivateKey/{gsub(/[[:space:]]/, "", $2); print $2}' "$confFile")
+    local serverPubKey=$(echo "$serverPrivKey" | wg pubkey 2>/dev/null)
+    local serverAddr=$(sudo awk -F= '/^Address/{gsub(/[[:space:]]/, "", $2); print $2}' "$confFile")
+    local port=$(sudo awk -F= '/^ListenPort/{gsub(/[[:space:]]/, "", $2); print $2}' "$confFile")
+    local netIf=$(sudo awk '/PostUp/{match($0, /-o ([^ ]+)/, a); print a[1]}' "$confFile")
+    [[ -z "$netIf" ]] && netIf=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
+
+    local ip
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+
+    echo
+    echo -e "====================================================="
+    echo -e "${CYAN}▸${RESET} ${BOLD}WireGuard Server${RESET}"
+    echo -e "====================================================="
+    echo -e "  ${GREY}Endpoint:${RESET}        ${ip}:${port}"
+    echo -e "  ${GREY}Server Address:${RESET}  $serverAddr"
+    echo -e "  ${GREY}Server PubKey:${RESET}   $serverPubKey"
+    echo -e "  ${GREY}Interface:${RESET}       $netIf"
+    echo -e "====================================================="
+
+    local clientDir="/etc/wireguard/clients"
+    if [[ -d "$clientDir" ]]; then
+        for clientConf in "$clientDir"/*.conf; do
+            [[ ! -f "$clientConf" ]] && continue
+            local clientName=$(basename "$clientConf" .conf)
+            local clientContent=$(sudo cat "$clientConf")
+
+            local clientAddr=$(echo "$clientContent" | awk -F= '/^Address/{gsub(/[[:space:]]/, "", $2); print $2}')
+            local clientDns=$(echo "$clientContent" | awk -F= '/^DNS/{gsub(/^[[:space:]]+/, "", $2); print $2}')
+            local clientAllowed=$(echo "$clientContent" | awk '/^\[Peer\]/,0' | awk -F= '/^AllowedIPs/{gsub(/^[[:space:]]+/, "", $2); print $2}')
+
+            echo -e "${CYAN}▸${RESET} ${BOLD}Client: ${CYAN}$clientName${RESET}"
+            echo -e "====================================================="
+            echo -e "  ${GREY}Address:${RESET}         $clientAddr"
+            echo -e "  ${GREY}DNS:${RESET}             $clientDns"
+            echo -e "  ${GREY}AllowedIPs:${RESET}      $clientAllowed"
+            echo -e "  ${GREY}Config file:${RESET}     $clientConf"
+            echo -e "====================================================="
+            echo -e "  ${GREY}Client config:${RESET}"
+            echo
+            echo -e "${BLUE}${clientContent}${RESET}"
+            echo
+            echo -e "====================================================="
+        done
+    fi
+    echo
+}
+
+if [[ "$1" == "showconf" ]]; then
+    showFullConfig "$2"
+else
+    sudo wg "$@"
+fi

@@ -82,7 +82,7 @@
       "peers": [
         {
           "address": "10.228.132.85",
-          "port": 51820,
+          "port": 443,
           "public_key": "WG_PUBLIC_KEY",
           "pre_shared_key": "WG_PRESHARED_KEY",
           "allowed_ips": [
