@@ -13,16 +13,19 @@ showFullConfig() {
     local iface="${1:-wg0}"
     local confFile="/etc/wireguard/${iface}.conf"
 
-    if [[ ! -f "$confFile" ]]; then
+    if ! sudo test -f "$confFile"; then
         echo -e "${RED}Error: Config not found: ${confFile}${RESET}"
         return 1
     fi
 
-    local serverPrivKey=$(sudo awk -F= '/^PrivateKey/{gsub(/[[:space:]]/, "", $2); print $2}' "$confFile")
+    local confContent
+    confContent=$(sudo cat "$confFile")
+
+    local serverPrivKey=$(echo "$confContent" | awk -F= '/^PrivateKey/{gsub(/[[:space:]]/, "", $2); print $2}')
     local serverPubKey=$(echo "$serverPrivKey" | wg pubkey 2>/dev/null)
-    local serverAddr=$(sudo awk -F= '/^Address/{gsub(/[[:space:]]/, "", $2); print $2}' "$confFile")
-    local port=$(sudo awk -F= '/^ListenPort/{gsub(/[[:space:]]/, "", $2); print $2}' "$confFile")
-    local netIf=$(sudo awk '/PostUp/{match($0, /-o ([^ ]+)/, a); print a[1]}' "$confFile")
+    local serverAddr=$(echo "$confContent" | awk -F= '/^Address/{gsub(/[[:space:]]/, "", $2); print $2}')
+    local port=$(echo "$confContent" | awk -F= '/^ListenPort/{gsub(/[[:space:]]/, "", $2); print $2}')
+    local netIf=$(echo "$confContent" | awk '/PostUp/{match($0, /-o ([^ ]+)/, a); print a[1]}')
     [[ -z "$netIf" ]] && netIf=$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)
 
     local ip
@@ -39,9 +42,8 @@ showFullConfig() {
     echo -e "====================================================="
 
     local clientDir="/etc/wireguard/clients"
-    if [[ -d "$clientDir" ]]; then
-        for clientConf in "$clientDir"/*.conf; do
-            [[ ! -f "$clientConf" ]] && continue
+    if sudo test -d "$clientDir"; then
+        for clientConf in $(sudo ls "$clientDir"/*.conf 2>/dev/null); do
             local clientName=$(basename "$clientConf" .conf)
             local clientContent=$(sudo cat "$clientConf")
 
