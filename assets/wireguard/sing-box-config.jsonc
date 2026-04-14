@@ -7,28 +7,29 @@
   // ========================
   "dns": {
     "servers": [
-      // China domains: Alibaba public DoH, direct
+      // Local DNS: Alibaba public DoH, direct for China domains
       {
         "type": "https",
         "tag": "dns-local",
-        "server": "223.5.5.5",
-        "strategy": "ipv4_only"
+        "server": "223.5.5.5"
       },
       // NVIDIA intranet DNS: via corporate VPN outbound
       {
         "type": "udp",
         "tag": "nvidia-dns",
         "server": "10.19.185.31",
-        "detour": "nvidia-vpn",
-        "strategy": "ipv4_only"
+        "detour": "nvidia-vpn"
       }
     ],
+    "strategy": "ipv4_only",
     "independent_cache": true,
     "rules": [
+      // NVIDIA internal domains -> resolve via intranet DNS
       {
         "rule_set": "nvidia-internal",
         "server": "nvidia-dns"
       },
+      // China domains -> resolve via Alibaba DNS to avoid pollution
       {
         "rule_set": "geosite-cn",
         "server": "dns-local"
@@ -59,11 +60,16 @@
       ],
       "auto_route": true,
       "strict_route": true,
-      "mtu": 1280,
+      // WireGuard uses UDP, so outer packets (payload + ~60B overhead) must fit
+      // within the VPN tunnel MTU (utun4 = 1280). Unlike TCP (used by xray/VLESS),
+      // UDP cannot be segmented by the OS — oversized packets get "message too long".
+      // 1200 + 60 = 1260, safely under the 1280 VPN MTU.
+      "mtu": 1200,
       "stack": "gvisor",
-      // Exclude WireGuard server IP from TUN capture to prevent routing loops.
+      // Exclude proxy server IPs from TUN capture to prevent routing loops.
       "route_exclude_address": [
-        "10.228.132.0/24"
+        "10.228.132.0/24",
+        "10.6.10.0/24"
       ]
     }
   ],
@@ -82,16 +88,17 @@
       "peers": [
         {
           "address": "10.228.132.85",
-          "port": 443,
+          "port": 5903,
           "public_key": "WG_PUBLIC_KEY",
           "pre_shared_key": "WG_PRESHARED_KEY",
           "allowed_ips": [
             "0.0.0.0/0"
           ],
-          "persistent_keepalive_interval": 25
+          "persistent_keepalive_interval": 10
         }
       ],
-      "mtu": 1280
+      // Must match TUN MTU above — same VPN tunnel constraint applies.
+      "mtu": 1200
     }
   ],
   // ========================
@@ -118,6 +125,7 @@
     "default_domain_resolver": "nvidia-dns",
     // ---------- Rule Set Definitions ----------
     "rule_set": [
+      // Google domain list (remote, must be before geosite-cn)
       {
         "tag": "geosite-google",
         "type": "remote",
@@ -126,6 +134,7 @@
         "download_detour": "proxy",
         "update_interval": "7d"
       },
+      // China domain list (remote, downloaded via proxy, refresh weekly)
       {
         "tag": "geosite-cn",
         "type": "remote",
@@ -154,6 +163,31 @@
           }
         ]
       },
+      // AI services (Claude, ChatGPT, etc.) domain matching rules
+      {
+        "tag": "ai-services",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "anthropic.com",
+              "claude.ai",
+              "workos.com",
+              "claudeusercontent.com",
+              "intercom.io",
+              "intercomcdn.com",
+              "sentry.io",
+              "statsigapi.net",
+              "stripe.com",
+              "openai.com",
+              "chatgpt.com",
+              "oaistatic.com",
+              "oaiusercontent.com",
+              "auth0.com"
+            ]
+          }
+        ]
+      },
       // NVIDIA intranet IP ranges
       {
         "tag": "nvidia-subnets",
@@ -161,22 +195,18 @@
         "rules": [
           {
             "ip_cidr": [
-              "10.19.172.0/22",
-              "10.19.176.0/24",
-              "10.19.177.0/24",
-              "10.19.240.0/22",
-              "10.19.244.0/24",
-              "10.19.245.0/24",
-              "10.19.248.0/22",
               "10.18.128.0/21",
               "10.19.160.0/21",
-              "10.19.216.0/23",
+              "10.19.172.0/22",
+              "10.19.176.0/23",
+              "10.19.184.0/21",
               "10.19.210.0/23",
-              "172.29.224.0/20",
-              "172.29.240.0/21",
-              "172.29.248.0/21",
+              "10.19.216.0/23",
+              "10.19.240.0/22",
+              "10.19.244.0/23",
+              "10.19.248.0/22",
               "10.228.132.0/24",
-              "10.19.184.0/21"
+              "172.29.224.0/19"
             ]
           }
         ]
@@ -184,7 +214,7 @@
     ],
     // ---------- Routing Rules (matched top-down by priority) ----------
     "rules": [
-      // Protocol sniffing: detect HTTP/TLS/QUIC traffic
+      // Protocol sniffing: detect HTTP/TLS traffic
       {
         "action": "sniff",
         "sniffer": [
@@ -194,20 +224,27 @@
         ],
         "timeout": "100ms"
       },
+      // Reject QUIC: force browsers to fall back to TCP (HTTP/2).
+      // QUIC (UDP) over WireGuard (UDP) over VPN compounds packet loss —
+      // the VPN drops UDP intermittently, and QUIC's congestion control
+      // backs off aggressively, causing multi-minute stalls.
+      {
+        "protocol": "quic",
+        "action": "reject"
+      },
       // DNS hijack: intercept all DNS queries for sing-box to handle
       {
         "protocol": "dns",
         "action": "hijack-dns"
       },
-      // Loop prevention: Alibaba DNS IPs must go direct before any proxy rules
+      // --- NVIDIA intranet traffic -> corporate VPN ---
       {
-        "ip_cidr": ["223.5.5.5/32", "223.6.6.6/32"],
+        "rule_set": "nvidia-internal",
         "action": "route",
-        "outbound": "direct-local"
+        "outbound": "nvidia-vpn"
       },
-      // --- NVIDIA intranet traffic (domains + IPs) -> corporate VPN ---
       {
-        "rule_set": ["nvidia-internal", "nvidia-subnets"],
+        "rule_set": "nvidia-subnets",
         "action": "route",
         "outbound": "nvidia-vpn"
       },
@@ -223,28 +260,19 @@
         "action": "route",
         "outbound": "proxy"
       },
-      // --- AI Services (Claude/ChatGPT) -> proxy ---
+      // --- AI Services (Claude/ChatGPT) -> proxy (DNS resolved via corporate VPN) ---
       {
-        "domain_suffix": [
-          "anthropic.com",
-          "claude.ai",
-          "workos.com",
-          "claudeusercontent.com",
-          "intercom.io",
-          "intercomcdn.com",
-          "sentry.io",
-          "statsigapi.net",
-          "stripe.com",
-          "openai.com",
-          "chatgpt.com",
-          "oaistatic.com",
-          "oaiusercontent.com",
-          "auth0.com"
-        ],
+        "rule_set": "ai-services",
         "action": "route",
         "outbound": "proxy"
       },
-      // --- China traffic -> direct (domain + IP based) ---
+      // --- Alibaba DNS IPs direct, prevent dns-local traffic looping into proxy ---
+      {
+        "ip_cidr": ["223.5.5.5/32", "223.6.6.6/32"],
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      // --- China traffic -> direct ---
       {
         "rule_set": "geosite-cn",
         "action": "route",

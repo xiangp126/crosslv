@@ -19,6 +19,13 @@
         "tag": "nvidia-dns",
         "server": "10.19.185.31",
         "detour": "nvidia-vpn"
+      },
+      // Remote DNS: Cloudflare DoH via proxy, for non-China non-NVIDIA domains
+      {
+        "type": "https",
+        "tag": "dns-remote",
+        "server": "1.1.1.1",
+        "detour": "proxy"
       }
     ],
     "independent_cache": true,
@@ -34,8 +41,8 @@
         "server": "dns-local"
       }
     ],
-    // Unmatched domains default to corporate VPN DNS
-    "final": "nvidia-dns"
+    // Unmatched domains -> resolve via Cloudflare (privacy-friendly, avoids corporate DNS)
+    "final": "dns-remote"
   },
   // ========================
   // Inbound Configuration
@@ -157,6 +164,31 @@
           }
         ]
       },
+      // AI services (Claude, ChatGPT, etc.) domain matching rules
+      {
+        "tag": "ai-services",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "anthropic.com",
+              "claude.ai",
+              "workos.com",
+              "claudeusercontent.com",
+              "intercom.io",
+              "intercomcdn.com",
+              "sentry.io",
+              "statsigapi.net",
+              "stripe.com",
+              "openai.com",
+              "chatgpt.com",
+              "oaistatic.com",
+              "oaiusercontent.com",
+              "auth0.com"
+            ]
+          }
+        ]
+      },
       // NVIDIA intranet IP ranges
       {
         "tag": "nvidia-subnets",
@@ -164,22 +196,18 @@
         "rules": [
           {
             "ip_cidr": [
-              "10.19.172.0/22",
-              "10.19.176.0/24",
-              "10.19.177.0/24",
-              "10.19.240.0/22",
-              "10.19.244.0/24",
-              "10.19.245.0/24",
-              "10.19.248.0/22",
               "10.18.128.0/21",
               "10.19.160.0/21",
-              "10.19.216.0/23",
+              "10.19.172.0/22",
+              "10.19.176.0/23",
+              "10.19.184.0/21",
               "10.19.210.0/23",
-              "172.29.224.0/20",
-              "172.29.240.0/21",
-              "172.29.248.0/21",
+              "10.19.216.0/23",
+              "10.19.240.0/22",
+              "10.19.244.0/23",
+              "10.19.248.0/22",
               "10.228.132.0/24",
-              "10.19.184.0/21"
+              "172.29.224.0/19"
             ]
           }
         ]
@@ -231,24 +259,9 @@
         "action": "route",
         "outbound": "proxy"
       },
-      // --- AI Services (Claude/ChatGPT) -> proxy (DNS resolved via corporate VPN) ---
+      // --- AI Services (Claude/ChatGPT) -> proxy ---
       {
-        "domain_suffix": [
-          "anthropic.com",
-          "claude.ai",
-          "workos.com",
-          "claudeusercontent.com",
-          "intercom.io",
-          "intercomcdn.com",
-          "sentry.io",
-          "statsigapi.net",
-          "stripe.com",
-          "openai.com",
-          "chatgpt.com",
-          "oaistatic.com",
-          "oaiusercontent.com",
-          "auth0.com"
-        ],
+        "rule_set": "ai-services",
         "action": "route",
         "outbound": "proxy"
       },
