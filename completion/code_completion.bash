@@ -35,5 +35,5 @@ _code_completion() {
 }
 
 # Register the completion function for the code/cursor commands
-complete -F _code_completion code
-complete -F _code_completion cursor
+complete -o filenames -F _code_completion code
+complete -o filenames -F _code_completion cursor
