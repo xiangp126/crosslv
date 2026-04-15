@@ -1057,6 +1057,28 @@ runLoopModels() {
     return 0
 }
 
+# linkFile: Create or verify a symlink (same API as jc's linkFile, lightweight)
+# $1=source_path $2=dest_dir $3=link_name (optional, defaults to basename of source)
+linkFile() {
+    local src="$1"
+    local destDir="$2"
+    local linkName="${3:-$(basename "$src")}"
+    local dst="$destDir/$linkName"
+
+    if [[ -L "$dst" && "$(readlink "$dst")" == "$src" ]]; then
+        echo -e "$NOTATION ${GREEN}Link already exists:${RESET} $linkName -> $src"
+        return 1
+    elif [[ -f "$src" ]]; then
+        mkdir -p "$destDir"
+        ln -sf "$src" "$dst"
+        echo -e "$NOTATION Created: ${GREEN}$linkName${RESET} -> ${BLUE}$src${RESET}"
+        return 0
+    else
+        echo -e "$NOTATION ${RED}Warning: Source not found: $src${RESET}"
+        return 2
+    fi
+}
+
 linkWorkspaceFiles() {
     [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkWorkspace" ] && return
     # Skip linking when in loop mode (multiple models)
@@ -1072,57 +1094,13 @@ linkWorkspaceFiles() {
 
     cd "$fWorkingDir" || exit
 
-    local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
-    local targetLink="$fWorkingDir/$fCompileCommandsJson"
-    local clangdSource="$SCRIPT_DIR/assets/clangd/clangd"
-    local clangdTarget="$fWorkingDir/.clangd"
-
-    # Link $fCompileCommandsJson
-    # Skip if link already exists and points to a valid target (only for --link without -m, not --bear)
-    if [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ]; then
-        if [[ ${#fModels[@]} -eq 0 && -L "$targetLink" && -f "$targetLink" ]]; then
-            echo -e "$NOTATION ${GREEN}Link already exists:${RESET} $fCompileCommandsJson -> $(readlink "$targetLink")"
-        else
-            if [[ -f "$dbFile" ]]; then
-                echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
-                ln -sf "$dbFile" "$targetLink"
-                echo -e "$NOTATION Created: ${GREEN}$fCompileCommandsJson${RESET} -> ${BLUE}$dbFile${RESET}"
-            else
-                echo -e "$NOTATION ${RED}Warning: Compile database not found: $dbFile${RESET}"
-            fi
-        fi
-    else
-        if [[ -f "$dbFile" ]]; then
-            echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
-            ln -sf "$dbFile" "$targetLink"
-            echo -e "$NOTATION Created: ${GREEN}$fCompileCommandsJson${RESET} -> ${BLUE}$dbFile${RESET}"
-        else
-            echo -e "$NOTATION ${RED}Warning: Compile database not found: $dbFile${RESET}"
-        fi
-    fi
-
-    # Link .clangd config
-    if [[ -L "$clangdTarget" && "$(readlink "$clangdTarget")" == "$clangdSource" ]]; then
-        echo -e "$NOTATION ${GREEN}Link already exists:${RESET} .clangd -> $clangdSource"
-    elif [[ -f "$clangdSource" ]]; then
-        ln -sf "$clangdSource" "$clangdTarget"
-        echo -e "$NOTATION Created: ${GREEN}.clangd${RESET} -> ${BLUE}$clangdSource${RESET}"
-    else
-        echo -e "$NOTATION ${RED}Warning: .clangd config not found: $clangdSource${RESET}"
-    fi
-
-    # Link CLAUDE.md for Claude Code (global: ~/.claude/CLAUDE.md)
-    local claudeMdSource="$SCRIPT_DIR/assets/claude/CLAUDE.md"
-    local claudeMdTarget="$HOME/.claude/$CLAUDE_MD"
-    if [[ -L "$claudeMdTarget" && "$(readlink "$claudeMdTarget")" == "$claudeMdSource" ]]; then
-        echo -e "$NOTATION ${GREEN}Link already exists:${RESET} ~/.claude/$CLAUDE_MD -> $claudeMdSource"
-    elif [[ -f "$claudeMdSource" ]]; then
-        mkdir -p "$HOME/.claude"
-        ln -sf "$claudeMdSource" "$claudeMdTarget"
-        echo -e "$NOTATION Created: ${GREEN}~/.claude/$CLAUDE_MD${RESET} -> ${BLUE}$claudeMdSource${RESET}"
-    else
-        echo -e "$NOTATION ${RED}Warning: $CLAUDE_MD not found: $claudeMdSource${RESET}"
-    fi
+    echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
+    linkFile "bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json" \
+             "$fWorkingDir" "$fCompileCommandsJson"
+    linkFile "$SCRIPT_DIR/assets/clangd/clangd" \
+             "$fWorkingDir" ".clangd"
+    linkFile "$SCRIPT_DIR/assets/claude/CLAUDE.md" \
+             "$HOME/.claude" "$CLAUDE_MD"
 }
 
 removeWriteFromJson() {
