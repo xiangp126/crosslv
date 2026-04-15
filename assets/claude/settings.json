@@ -41,7 +41,8 @@
     }
   },
   "env": {
-    "USE_BUILTIN_RIPGREP": "0"
+    "USE_BUILTIN_RIPGREP": "0",
+    "DISABLE_AUTOUPDATER": "1"
   },
   "effortLevel": "high",
   "verbose": true
