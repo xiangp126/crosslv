@@ -186,7 +186,7 @@ WireGuard Options:
     --wg-remove                     Remove WireGuard from system
 
 AI Tools Options:
-    --claude                        Install or update Claude Code
+    --claude                        Install or update Claude Code (CLI)
     --claude-remove                 Remove Claude Code
     --codex                         Install or update Codex
     --codex-remove                  Remove Codex
@@ -371,7 +371,8 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,\
-          rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,codex,claude-remove,\
+          rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,claude-remove,\
+          codex,\
           codex-remove,cursor-backup,cursor-restore,singbox,singbox-xray,singbox-wg,\
           xray,xray-port:,xray-server:,\
           xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove"
@@ -578,13 +579,13 @@ while true; do
             shift
             exit 0
             ;;
-        --codex)
-            installCodex
+        --claude-remove)
+            removeClaude
             shift
             exit 0
             ;;
-        --claude-remove)
-            removeClaude
+        --codex)
+            installCodex
             shift
             exit 0
             ;;
