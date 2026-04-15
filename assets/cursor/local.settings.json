@@ -49,6 +49,7 @@
         "**/.usr/": true
     },
     "terminal.integrated.enableMultiLinePasteWarning": "never",
+    "terminal.integrated.environmentChangesRelaunch": false,
     "terminal.integrated.fontSize": 13,
     "terminal.integrated.copyOnSelection": true,
     "terminal.integrated.focusAfterRun": "terminal",

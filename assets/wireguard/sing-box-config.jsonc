@@ -228,10 +228,11 @@
       // QUIC (UDP) over WireGuard (UDP) over VPN compounds packet loss —
       // the VPN drops UDP intermittently, and QUIC's congestion control
       // backs off aggressively, causing multi-minute stalls.
-      {
-        "protocol": "quic",
-        "action": "reject"
-      },
+      // Uncomment to disable QUIC if experiencing stalls:
+      // {
+      //   "protocol": "quic",
+      //   "action": "reject"
+      // },
       // DNS hijack: intercept all DNS queries for sing-box to handle
       {
         "protocol": "dns",
