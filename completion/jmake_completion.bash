@@ -174,6 +174,11 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -f -X '!*.mlx' -- "$cur") )
             return 0
             ;;
+        --power-cycle)
+            local servers="l-fwdev-107 m-fwdev-167"
+            COMPREPLY=( $(compgen -W "$servers" -- "$cur") )
+            return 0
+            ;;
     esac
 
     # Handle initial options
