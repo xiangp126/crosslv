@@ -264,7 +264,7 @@ Build Options:
     -b, --bear                  Generate $fCompileCommandsJson (implies -c --clean-db -o)
     -m, --models <models>       Build specified models (comma-separated, loop if multiple)
         --skip <models>         Skip these models when building (comma-separated)
-    -p, --patch                 Patch 'sudo docker' → 'docker' in build scripts (essential for Claude Code autorun)
+    -p, --patch                 Patch 'sudo docker' → 'docker' in build scripts (essential for CC autorun)
         --ethlt                 Build the _ethlt variant of the model(s)
         --codecov               Build the _codecov variant of the model(s)
         --cov                   Build the cov variant of the model(s)
@@ -1074,7 +1074,7 @@ linkWorkspaceFiles() {
 
     local dbFile="bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
     local targetLink="$fWorkingDir/$fCompileCommandsJson"
-    local clangdSource="$SCRIPT_DIR/assets/.clangd"
+    local clangdSource="$SCRIPT_DIR/assets/clangd/clangd"
     local clangdTarget="$fWorkingDir/.clangd"
 
     # Link $fCompileCommandsJson
