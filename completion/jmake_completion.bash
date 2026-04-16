@@ -130,7 +130,7 @@ _jmake_complete() {
                --skip --scratch --track --patch --ethlt --codecov --cov \
                --fetch --push --rebase --add --commit --amend --stat --df --diff --show \
                --burn --burn-official --firmware --device --fw-query --fw-reset --mft-install --ofed-start --ofed-stop \
-               --power-cycle --docker-group"
+               --power-cycle --power-on --power-off --docker-group"
 
     # Handle option arguments
     case $prev in
@@ -174,7 +174,7 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -f -X '!*.mlx' -- "$cur") )
             return 0
             ;;
-        --power-cycle)
+        --power-cycle|--power-on|--power-off)
             local servers="l-fwdev-107 m-fwdev-167"
             COMPREPLY=( $(compgen -W "$servers" -- "$cur") )
             return 0

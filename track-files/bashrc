@@ -141,6 +141,8 @@ PATH="/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin"
 # On macOS, add Homebrew paths
 if [[ $_UNAME_S == 'Darwin' ]]; then
     PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+elif [[ $(hostname -s) =~ ^[lm]-fwdev-[0-9]+ ]]; then
+    PATH="$PATH:/mswg/projects/fw/fw_ver/hca_fw_tools"
 fi
 for _d in "$HOME/.usr/bin" "$HOME/.local/bin"; do
     [ -d "$_d" ] && [[ ":$PATH:" != *":$_d:"* ]] && PATH="$_d:$PATH"
@@ -250,16 +252,18 @@ export FZF_COMPLETION_TRIGGER='*'
 # Options to fzf command
 export FZF_COMPLETION_OPTS='+c -x'
 
-# Bind-mount Cursor server directory from NFS (Linux/NV only, requires
-# NOPASSWD sudoers entry for mount --bind to work silently)
+# Bind-mount large dot-directories to NFS work volume (Linux/NV only,
+# requires NOPASSWD sudoers entry for mount --bind to work silently)
 if [[ $_UNAME_S == 'Linux' && $EUID -ne 0 ]]; then
-    _cs_dst="$HOME/.cursor-server"
-    _cs_src="/auto/fwgwork1/$USER/.cursor-server"
-    [[ -d "$_cs_dst" ]] || mkdir -p "$_cs_dst" 2>/dev/null
-    if [[ -d "$_cs_src" ]] && ! findmnt -M "$_cs_dst" &>/dev/null; then
-        sudo mount --bind "$_cs_src" "$_cs_dst" &>/dev/null
-    fi
-    unset _cs_src _cs_dst
+    for _dir in .cursor-server .claude .codex; do
+        _dst="$HOME/$_dir"
+        _src="/auto/fwgwork1/$USER/$_dir"
+        [[ -d "$_dst" ]] || mkdir -p "$_dst" 2>/dev/null
+        if [[ -d "$_src" ]] && ! findmnt -M "$_dst" &>/dev/null; then
+            sudo mount --bind "$_src" "$_dst" &>/dev/null
+        fi
+    done
+    unset _dir _dst _src
 fi
 
 # Load customized code wrapper (supports both local and remote VS Code / Cursor)

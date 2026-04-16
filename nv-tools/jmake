@@ -39,6 +39,8 @@ fMftInstall=
 fOfedStart=
 fOfedStop=
 fPowerCycle=
+fPowerOn=
+fPowerOff=
 fFirmware=
 fBurnOfficial=
 fFwQuery=
@@ -275,6 +277,11 @@ Build Options:
     -N, --nicx                  Build with NICX=1 flag
         --track                 Build with -D TRACK_INCLUDES=1
 
+Power Options (IPMI):
+        --power-cycle <server>      Power cycle a server via IPMI (off → wait → on)
+        --power-on <server>         Power on a server
+        --power-off <server>        Power off a server
+
 MFT Options (Mellanox Firmware Tools):
         --burn                      Burn FW image to device (requires --device, uses -m model)
         --burn-official <version>   Burn official release FW to device (e.g., 82.49.0052)
@@ -285,13 +292,12 @@ MFT Options (Mellanox Firmware Tools):
         --mft-install               Install MFT (Mellanox Firmware Tools)
         --ofed-start                Start OFED driver (sudo /etc/init.d/openibd start)
         --ofed-stop                 Stop OFED driver (sudo /etc/init.d/openibd stop)
-        --power-cycle <server>      Power cycle a server via IPMI (e.g. m-fwdev-167)
         --docker-group              Add current user to docker group (requires sudo)
 
 Git Options (require current dir to be a git repo, can be combined in cascade):
         --fetch                 git fetch origin master_rc && git fetch origin --tags
         --rebase                git rebase origin/master_rc
-        --add                   git add -u and git reset HEAD -- $GIT_RESET_PATHS
+        --add                   git add -u && git reset HEAD -- (submodule paths)
         --commit                git commit --amend --no-edit
         --edit                  git commit --amend
         --push                  git push origin HEAD:refs/for/master_rc
@@ -342,11 +348,10 @@ fi
 
 SHORTOPTS="hcoaAj:w:Dlbm:NpT:"
 # NOTE: No leading spaces on continuation lines — they become part of the string and break getopt
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,\
-jobs:,working-dir:,attempt:,no-verbose,list,list-extended,link,\
-all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,\
-scratch,track,fetch,push,rebase,add,commit,amend,stat,show,df,diff,\
-burn,burn-official:,device:,fw-query,fw-reset,mft-install,ofed-start,ofed-stop,power-cycle:,docker-group,firmware:"
+LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,\
+list,list-extended,link,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,scratch,track,fetch,push,\
+rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,ofed-start,\
+ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -577,6 +582,14 @@ while true; do
             fPowerCycle="$2"
             shift 2
             ;;
+        --power-on)
+            fPowerOn="$2"
+            shift 2
+            ;;
+        --power-off)
+            fPowerOff="$2"
+            shift 2
+            ;;
         --docker-group)
             fDockerGroup=true
             shift
@@ -652,8 +665,24 @@ searchBuildModel() {
 }
 
 preConfigure() {
-    [ -n "$fClean" ] || [ -n "$fNeedBuild" ] || [ -n "$fGenerateCompileCmds" ] || [ -n "$fRMCompileCommandsJson" ] || [ -n "$fLinkWorkspace" ] || [ -n "$fBurn" ] || [ -n "$fBurnOfficial" ] || [ -n "$fFwReset" ] || [ -n "$fMftInstall" ] || [ -n "$fOfedStart" ] || [ -n "$fOfedStop" ] || [ -n "$fPowerCycle" ] || [ -n "$fDockerGroup" ] && fPrintBuildFlags=true
-    [ -z "$fPrintBuildFlags" ] && return
+    if [[ -n "$fClean"                 ]] ||
+       [[ -n "$fNeedBuild"             ]] ||
+       [[ -n "$fGenerateCompileCmds"   ]] ||
+       [[ -n "$fRMCompileCommandsJson" ]] ||
+       [[ -n "$fLinkWorkspace"         ]] ||
+       [[ -n "$fBurn"                  ]] ||
+       [[ -n "$fBurnOfficial"          ]] ||
+       [[ -n "$fFwReset"               ]] ||
+       [[ -n "$fMftInstall"            ]] ||
+       [[ -n "$fOfedStart"             ]] ||
+       [[ -n "$fOfedStop"              ]] ||
+       [[ -n "$fPowerCycle"            ]] ||
+       [[ -n "$fPowerOn"               ]] ||
+       [[ -n "$fPowerOff"              ]] ||
+       [[ -n "$fDockerGroup"           ]]; then
+        fPrintBuildFlags=true
+    fi
+    [[ -z "$fPrintBuildFlags" ]] && return
 
     fWorkingDir=$(realpath "$fWorkingDir")
     cd "$fWorkingDir" || exit 1
@@ -755,6 +784,8 @@ printBuildFlags() {
         [ -n "$fOfedStart" ]             && echo -e "[^] ${COLOR}OFED Start${RESET}"
         [ -n "$fOfedStop" ]              && echo -e "[v] ${COLOR}OFED Stop${RESET}"
         [ -n "$fPowerCycle" ]            && echo -e "[⏻] ${COLOR}Power Cycle:${RESET} $fPowerCycle"
+        [ -n "$fPowerOn" ]               && echo -e "[⏻] ${COLOR}Power On:${RESET} $fPowerOn"
+        [ -n "$fPowerOff" ]              && echo -e "[⏻] ${COLOR}Power Off:${RESET} $fPowerOff"
         [ -n "$fDockerGroup" ]           && echo -e "[🐳] ${COLOR}Docker Group${RESET} (add $USER to docker group)"
     fi
 
@@ -1230,7 +1261,19 @@ runGitOptions() {
 
     [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${GREEN}Congratulations! All $gitCmdCount git commands completed successfully.${RESET}"
     # If only git options were given (no build), exit after completing them
-    [[ -z "$fNeedBuild" && -z "$fClean" && -z "$fLinkWorkspace" && -z "$fBurn" && -z "$fBurnOfficial" && -z "$fFwReset" && -z "$fMftInstall" && -z "$fOfedStart" && -z "$fOfedStop" && -z "$fPowerCycle" && -z "$fDockerGroup" ]] && exit 0
+    [[ -z "$fNeedBuild"    &&
+       -z "$fClean"        &&
+       -z "$fLinkWorkspace" &&
+       -z "$fBurn"         &&
+       -z "$fBurnOfficial" &&
+       -z "$fFwReset"      &&
+       -z "$fMftInstall"   &&
+       -z "$fOfedStart"    &&
+       -z "$fOfedStop"     &&
+       -z "$fPowerCycle"   &&
+       -z "$fPowerOn"      &&
+       -z "$fPowerOff"     &&
+       -z "$fDockerGroup"  ]] && exit 0
 }
 
 runMftInstall() {
@@ -1288,11 +1331,7 @@ runPowerCycle() {
     local server="$fPowerCycle"
     local ipmiCmd="ipmi_command.sh"
     local sleepSec=20
-
-    if ! command -v "$ipmiCmd" &>/dev/null; then
-        echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}$ipmiCmd${RESET}"
-        exit 1
-    fi
+    requireIpmiCmd
 
     echo "$SEPARATOR"
     echo -e "$NOTATION ${BOLD}Power Cycling ${CYAN}$server${RESET}"
@@ -1318,6 +1357,49 @@ runPowerCycle() {
         exit 1
     fi
     echo -e "$NOTATION ${GREEN}✓ Power cycle completed for $server${RESET}"
+    echo "$SEPARATOR"
+}
+
+requireIpmiCmd() {
+    local ipmiCmd="ipmi_command.sh"
+    if ! command -v "$ipmiCmd" &>/dev/null; then
+        echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}$ipmiCmd${RESET}"
+        echo -e "$NOTATION ${GREY}Hint: export PATH=\"\$PATH:/mswg/projects/fw/fw_ver/hca_fw_tools\"${RESET}"
+        exit 1
+    fi
+}
+
+runPowerOn() {
+    [[ -z "$fPowerOn" ]] && return
+    local server="$fPowerOn"
+    requireIpmiCmd
+
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Powering on ${BOLD}$server${RESET}..."
+    echo -e "$NOTATION Running: ${YELLOW}ipmi_command.sh $server on${RESET}"
+    ipmi_command.sh "$server" on
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: IPMI power on failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Power on sent to $server${RESET}"
+    echo "$SEPARATOR"
+}
+
+runPowerOff() {
+    [[ -z "$fPowerOff" ]] && return
+    local server="$fPowerOff"
+    requireIpmiCmd
+
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Powering off ${BOLD}$server${RESET}..."
+    echo -e "$NOTATION Running: ${YELLOW}ipmi_command.sh $server off${RESET}"
+    ipmi_command.sh "$server" off
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: IPMI power off failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Power off sent to $server${RESET}"
     echo "$SEPARATOR"
 }
 
@@ -1588,6 +1670,8 @@ doEarlyExitJobs() {
     [ -n "$fBurnOfficial" ]  && { runBurnOfficial; [ -n "$fFwReset" ] && runMlxReset; exit 0; }
     [ -n "$fFwReset" ] && [ -z "$fBurn" ] && { runMlxReset; exit 0; }
     [ -n "$fPowerCycle" ]    && { runPowerCycle; exit 0; }
+    [ -n "$fPowerOn" ]       && { runPowerOn; exit 0; }
+    [ -n "$fPowerOff" ]      && { runPowerOff; exit 0; }
 }
 
 main() {

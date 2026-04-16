@@ -872,6 +872,7 @@ ubuntuInstallApps() {
         qrencode                # QR code generator
 
         # --- File Finding & Processing ---
+        mlocate                 # locate/updatedb for fast file searching
         fd-find                 # fd, a faster find
         ripgrep                 # rg, a faster grep
         jq                      # JSON processor
