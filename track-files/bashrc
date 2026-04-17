@@ -104,6 +104,8 @@ function __cd () {
         cd "$1" || return
     fi
 }
+alias cdo='__cd /opt'
+alias cds='__cd /opt/src'
 alias cdg='__cd $HOME/myGit'
 alias cdv='__cd $HOME/myGit/crosslv'
 alias cdb='__cd $HOME/.usr/bin'
@@ -112,13 +114,12 @@ alias cdD='__cd $HOME/Downloads'
 alias cdM='__cd $HOME/Media'
 alias cdU='__cd $HOME/Uploads'
 alias cdP='__cd $HOME/Public'
-alias cdL='__cd /auto/fwgwork1/$USER/bugZilla/'
-alias cdo='__cd /opt'
-alias cds='__cd /opt/src'
 # NV specific 2
-alias mss='sudo mst status -v'
 alias cdw='__cd /auto/fwgwork1/$USER/golan_fw'
+alias cdm='__cd /auto/fwgwork1/$USER/mLX/'
+alias cdL='__cd /auto/fwgwork1/$USER/bugZilla/'
 alias cdN='__cd /auto/fwgwork1/$USER/nicx'
+alias mss='sudo mst status -v'
 for i in {2..3}; do
     # shellcheck disable=SC2139
     alias "cdw$i=__cd /auto/fwgwork1/$USER/golan_fw$i"

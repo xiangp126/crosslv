@@ -28,6 +28,7 @@
     dfc = diff --cached
     dfs = diff --stat
     showmsg = show -s --format=%B
+    shows = show --stat
 [push]
     followTags = true
     default = current

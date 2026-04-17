@@ -36,6 +36,7 @@ fBurn=
 fFwReset=
 fDevice=
 fMftInstall=
+fOfedRestart=
 fOfedStart=
 fOfedStop=
 fPowerCycle=
@@ -290,6 +291,7 @@ MFT Options (Mellanox Firmware Tools):
         --fw-query                  Query FW info from device (requires --device)
         --fw-reset                  Reset FW on device after burn (requires --device)
         --mft-install               Install MFT (Mellanox Firmware Tools)
+        --ofed-restart              Restart OFED driver (stop → start)
         --ofed-start                Start OFED driver (sudo /etc/init.d/openibd start)
         --ofed-stop                 Stop OFED driver (sudo /etc/init.d/openibd stop)
         --docker-group              Add current user to docker group (requires sudo)
@@ -350,8 +352,8 @@ SHORTOPTS="hcoaAj:w:Dlbm:NpT:"
 # NOTE: No leading spaces on continuation lines — they become part of the string and break getopt
 LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,\
 list,list-extended,link,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,scratch,track,fetch,push,\
-rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,ofed-start,\
-ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:"
+rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,ofed-restart,\
+ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -570,6 +572,10 @@ while true; do
             fMftInstall=true
             shift
             ;;
+        --ofed-restart)
+            fOfedRestart=true
+            shift
+            ;;
         --ofed-start)
             fOfedStart=true
             shift
@@ -674,6 +680,7 @@ preConfigure() {
        [[ -n "$fBurnOfficial"          ]] ||
        [[ -n "$fFwReset"               ]] ||
        [[ -n "$fMftInstall"            ]] ||
+       [[ -n "$fOfedRestart"           ]] ||
        [[ -n "$fOfedStart"             ]] ||
        [[ -n "$fOfedStop"              ]] ||
        [[ -n "$fPowerCycle"            ]] ||
@@ -781,6 +788,7 @@ printBuildFlags() {
         [ -n "$fDevice" ]                && echo -e "[d] ${COLOR}Device:${RESET} $fDevice"
         [ -n "$fFirmware" ]              && echo -e "[F] ${COLOR}Firmware:${RESET} $fFirmware"
         [ -n "$fMftInstall" ]            && echo -e "[M] ${COLOR}MFT Install${RESET}"
+        [ -n "$fOfedRestart" ]           && echo -e "[↻] ${COLOR}OFED Restart${RESET} (stop → start)"
         [ -n "$fOfedStart" ]             && echo -e "[^] ${COLOR}OFED Start${RESET}"
         [ -n "$fOfedStop" ]              && echo -e "[v] ${COLOR}OFED Stop${RESET}"
         [ -n "$fPowerCycle" ]            && echo -e "[⏻] ${COLOR}Power Cycle:${RESET} $fPowerCycle"
@@ -820,6 +828,16 @@ cleanTheRepo() {
     cd "$fWorkingDir" || exit
     echo -e "$NOTATION ${CYAN}Cleaning the build${RESET}"
 
+    # Preserve .mlx firmware images across clean (make clean removes *.mlx)
+    local mlxBackup
+    mlxBackup=$(mktemp -d)
+    local mlxCount=0
+    for f in *.mlx; do
+        [[ -f "$f" ]] || continue
+        cp "$f" "$mlxBackup/"
+        ((mlxCount++))
+    done
+
     # Fast clean: run 'make clean' directly, bypassing Docker overhead in build.sh
     # local cleanCmd="$BUILD_SCRIPT -C"
     local cleanCmd="DOCKER=DOCKER make clean"
@@ -833,6 +851,13 @@ cleanTheRepo() {
     else
         echo -e "$NOTATION ${COLOR}Cleaned the build successfully.${RESET}"
     fi
+
+    # Restore preserved .mlx files
+    if [[ $mlxCount -gt 0 ]]; then
+        cp "$mlxBackup"/*.mlx .
+        echo -e "$NOTATION ${GREEN}✓ Restored $mlxCount .mlx file(s)${RESET}"
+    fi
+    rm -rf "$mlxBackup"
 
     # Remove $fCompileCommandsJson if requested
     if [ -n "$fRMCompileCommandsJson" ]; then
@@ -979,6 +1004,13 @@ runBuildCommands() {
     fBuildTimeFormatted=$(formatElapsed $buildTime)
 
     echo -e "$NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
+
+    local mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
+    if [[ -n "$mlxFile" && -f "$mlxFile" ]]; then
+        local mlxSize
+        mlxSize=$(du -h "$mlxFile" | cut -f1)
+        echo -e "$NOTATION ${GREEN}✓ .mlx:${RESET} ${CYAN}$mlxFile${RESET} ${GREY}($mlxSize)${RESET}"
+    fi
 }
 
 isModelSkipped() {
@@ -1058,7 +1090,9 @@ runLoopModels() {
             [[ ${#fModelsPending[@]} -gt 0 ]] && echo "$SEPARATOR"
             saveLoopState "progress"
         else
-            echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") build succeeded${RESET}"
+            local mlxFile="${MODEL_MLX_FILE[$model]}"
+            echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") build succeeded${RESET}" \
+                "$( [[ -n "$mlxFile" ]] && echo -e "${GREY}→${RESET} ${CYAN}$mlxFile${RESET}" )"
         fi
     done
 
@@ -1155,7 +1189,7 @@ removeWriteFromJson() {
 # Deep clean using git clean -fdx; caller must cd to repo and call requireGitRepo first
 runGitClean() {
     echo -e "$NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
-    local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE"
+    local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE --exclude=*.mlx"
     if [ -z "$fRMCompileCommandsJson" ]; then
         if [ -L "$fCompileCommandsJson" ]; then
             local realFile
@@ -1268,6 +1302,7 @@ runGitOptions() {
        -z "$fBurnOfficial" &&
        -z "$fFwReset"      &&
        -z "$fMftInstall"   &&
+       -z "$fOfedRestart"  &&
        -z "$fOfedStart"    &&
        -z "$fOfedStop"     &&
        -z "$fPowerCycle"   &&
@@ -1293,6 +1328,21 @@ runMftInstall() {
         exit 1
     fi
     echo -e "$NOTATION ${GREEN}✓ MFT installed successfully${RESET}"
+    echo "$SEPARATOR"
+}
+
+runOfedRestart() {
+    [[ -z "$fOfedRestart" ]] && return
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Restarting OFED driver (stop → start)...${RESET}"
+    local cmd="sudo /etc/init.d/openibd restart"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: OFED restart failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ OFED driver restarted${RESET}"
     echo "$SEPARATOR"
 }
 
@@ -1331,6 +1381,7 @@ runPowerCycle() {
     local server="$fPowerCycle"
     local ipmiCmd="ipmi_command.sh"
     local sleepSec=20
+    rejectSelfTarget "$server"
     requireIpmiCmd
 
     echo "$SEPARATOR"
@@ -1356,16 +1407,31 @@ runPowerCycle() {
         echo -e "$NOTATION ${RED}Error: IPMI power on failed${RESET}"
         exit 1
     fi
+    echo -e "$NOTATION ${CYAN}Pinging $server until it's back...${RESET}"
+    ping "$server" | grep -m 1 "bytes from" &>/dev/null
     echo -e "$NOTATION ${GREEN}✓ Power cycle completed for $server${RESET}"
     echo "$SEPARATOR"
+}
+
+rejectSelfTarget() {
+    local server="$1"
+    local localHost
+    localHost=$(hostname -s 2>/dev/null)
+    if [[ "${server%%.*}" == "$localHost" ]]; then
+        echo -e "$NOTATION ${RED}Error: Refusing to power-off/cycle the local machine (${YELLOW}$localHost${RED})${RESET}"
+        exit 1
+    fi
 }
 
 requireIpmiCmd() {
     local ipmiCmd="ipmi_command.sh"
     if ! command -v "$ipmiCmd" &>/dev/null; then
-        echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}$ipmiCmd${RESET}"
-        echo -e "$NOTATION ${GREY}Hint: export PATH=\"\$PATH:/mswg/projects/fw/fw_ver/hca_fw_tools\"${RESET}"
-        exit 1
+        export PATH="$PATH:/mswg/projects/fw/fw_ver/hca_fw_tools"
+        if ! command -v "$ipmiCmd" &>/dev/null; then
+            echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}$ipmiCmd${RESET}"
+            exit 1
+        fi
+        echo -e "$NOTATION ${GREY}Added /mswg/projects/fw/fw_ver/hca_fw_tools to PATH${RESET}"
     fi
 }
 
@@ -1389,6 +1455,7 @@ runPowerOn() {
 runPowerOff() {
     [[ -z "$fPowerOff" ]] && return
     local server="$fPowerOff"
+    rejectSelfTarget "$server"
     requireIpmiCmd
 
     echo "$SEPARATOR"
@@ -1664,6 +1731,7 @@ doEarlyExitJobs() {
     [ -n "$fDockerGroup" ]   && { runDockerGroup; exit 0; }
     [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ] && { linkWorkspaceFiles; exit 0; }
     [ -n "$fMftInstall" ]    && { runMftInstall; exit 0; }
+    [ -n "$fOfedRestart" ]   && { runOfedRestart; exit 0; }
     [ -n "$fOfedStop" ]      && { runOfedStop; [ -n "$fOfedStart" ] && runOfedStart; exit 0; }
     [ -n "$fOfedStart" ]     && { runOfedStart; exit 0; }
     [ -n "$fFwQuery" ]       && { runFwQuery; exit 0; }

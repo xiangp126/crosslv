@@ -124,13 +124,11 @@ _jmake_complete() {
     opts="-h -a -A -j -w -c -o -D -l -b -m -N -p -T"
 
     # List of all long options
-    long_opts="--help --all --all-extended --jobs --working-dir --clean --clean-db \
-               --git-clean --clean-submodule --build --bear --debug \
-               --attempt --no-verbose --nicx --list --list-extended --link --models \
-               --skip --scratch --track --patch --ethlt --codecov --cov \
-               --fetch --push --rebase --add --commit --amend --stat --df --diff --show \
-               --burn --burn-official --firmware --device --fw-query --fw-reset --mft-install --ofed-start --ofed-stop \
-               --power-cycle --power-on --power-off --docker-group"
+    long_opts="--help --all --all-extended --jobs --working-dir --clean --clean-db --git-clean --clean-submodule \
+               --build --bear --debug --attempt --no-verbose --nicx --list --list-extended --link --models \
+               --skip --scratch --track --patch --ethlt --codecov --cov --fetch --push --rebase --add --commit \
+               --amend --stat --df --diff --show --burn --burn-official --firmware --device --fw-query --fw-reset \
+               --mft-install --ofed-restart --ofed-start --ofed-stop --power-cycle --power-on --power-off --docker-group"
 
     # Handle option arguments
     case $prev in
