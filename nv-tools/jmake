@@ -255,28 +255,28 @@ Usage: $SCRIPT_NAME [OPTIONS]
 Build tool for NVIDIA golan_fw firmware.
 
 Build Flags:
-    -D, --debug                 Enable debug mode
-    -c, --clean                 Run make clean ($BUILD_SCRIPT -C)
-        --clean-db              Also remove $fCompileCommandsJson during clean
-    -o, --build                 Run build commands
-        --no-verbose            Suppress full compilation output (default: verbose)
+    -D, --debug                     Enable debug mode
+    -c, --clean                     Run make clean ($BUILD_SCRIPT -C)
+        --clean-db                  Also remove $fCompileCommandsJson during clean
+    -o, --build                     Run build commands
+        --no-verbose                Suppress full compilation output (default: verbose)
 
 Build Options:
-    -a, --all                   Build all base models one by one (loop mode, auto-resumes from last failure)
-    -A, --all-extended          Build all extended models (includes _ethlt, _codecov variants)
-    -b, --bear                  Generate $fCompileCommandsJson (implies -c --clean-db -o)
-    -m, --models <models>       Build specified models (comma-separated, loop if multiple)
-        --skip <models>         Skip these models when building (comma-separated)
-    -p, --patch                 Patch 'sudo docker' → 'docker' in build scripts (essential for CC autorun)
-        --ethlt                 Build the _ethlt variant of the model(s)
-        --codecov               Build the _codecov variant of the model(s)
-        --cov                   Build the cov variant of the model(s)
-    -j, --jobs                  Set the number of parallel jobs (default: $fNumOfJobs)
-    -w, --working-dir           Set working directory (default: current dir)
-    -T, --attempt               Set max build attempts (default: $fMaxBuildAttempt)
-        --scratch               Ignore saved state and start from first model
-    -N, --nicx                  Build with NICX=1 flag
-        --track                 Build with -D TRACK_INCLUDES=1
+    -a, --all                       Build all base models one by one (loop mode, auto-resumes from last failure)
+    -A, --all-extended              Build all extended models (includes _ethlt, _codecov variants)
+    -b, --bear                      Generate $fCompileCommandsJson (implies -c --clean-db -o)
+    -m, --models <models>           Build specified models (comma-separated, loop if multiple)
+        --skip <models>             Skip these models when building (comma-separated)
+    -p, --patch                     Patch 'sudo docker' → 'docker' in build scripts (essential for CC autorun)
+        --ethlt                     Build the _ethlt variant of the model(s)
+        --codecov                   Build the _codecov variant of the model(s)
+        --cov                       Build the cov variant of the model(s)
+    -j, --jobs                      Set the number of parallel jobs (default: $fNumOfJobs)
+    -w, --working-dir               Set working directory (default: current dir)
+    -T, --attempt                   Set max build attempts (default: $fMaxBuildAttempt)
+        --scratch                   Ignore saved state and start from first model
+    -N, --nicx                      Build with NICX=1 flag
+        --track                     Build with -D TRACK_INCLUDES=1
 
 Power Options (IPMI):
         --power-cycle <server>      Power cycle a server via IPMI (off → wait → on)
@@ -297,41 +297,40 @@ MFT Options (Mellanox Firmware Tools):
         --docker-group              Add current user to docker group (requires sudo)
 
 Git Options (require current dir to be a git repo, can be combined in cascade):
-        --fetch                 git fetch origin master_rc && git fetch origin --tags
-        --rebase                git rebase origin/master_rc
-        --add                   git add -u && git reset HEAD -- (submodule paths)
-        --commit                git commit --amend --no-edit
-        --edit                  git commit --amend
-        --push                  git push origin HEAD:refs/for/master_rc
-        --stat                  git diff --stat
-        --df, --diff            git diff include/ src/
-        --show                  git show HEAD
-        --git-clean             Deep clean using git clean -fdx (preserves submodules)
-        --clean-submodule       Deinit all submodules (git submodule deinit --all -f)
-    (Multiple git options run in the order specified. Aborts on first failure.)
+        --fetch                     git fetch origin master_rc && git fetch origin --tags
+        --rebase                    git rebase origin/master_rc
+        --add                       git add -u && git reset HEAD -- (submodule paths)
+        --commit                    git commit --amend --no-edit
+        --edit                      git commit --amend
+        --push                      git push origin HEAD:refs/for/master_rc
+        --stat                      git diff --stat
+        --df, --diff                git diff include/ src/
+        --show                      git show HEAD
+        --git-clean                 Deep clean using git clean -fdx (preserves submodules)
+        --clean-submodule           Deinit all submodules (git submodule deinit --all -f)
 
 Other Options:
-    -h, --help                  Print this help message
-    -l, --list                  List base models
-        --list-extended         List all extended models (includes _ethlt, _codecov variants)
-        --link                  Link $fCompileCommandsJson (use with -m), .clangd, and ~/.claude/$CLAUDE_MD
+    -h, --help                      Print this help message
+    -l, --list                      List base models
+        --list-extended             List all extended models (includes _ethlt, _codecov variants)
+        --link                      Link $fCompileCommandsJson (use with -m), .clangd, and ~/.claude/$CLAUDE_MD
 
 Supported Models:
     $GOLAN_MODELS
 
 Examples:
-    $SCRIPT_NAME -o                           # Build ${DEFAULT_MODEL:-} (default, verbose)
-    $SCRIPT_NAME --models argaman,alpine      # Build argaman and alpine (separated by comma)
-    $SCRIPT_NAME -a                           # Build all models one by one
-    $SCRIPT_NAME -a --skip arava,viper        # Build all except arava and viper
-    $SCRIPT_NAME -a --scratch                 # Ignore saved state and start fresh
-    $SCRIPT_NAME -c -o                        # Clean and build the default ${DEFAULT_MODEL:-}
-    $SCRIPT_NAME --no-verbose -o              # Build with quiet mode
-    $SCRIPT_NAME --bear --models gilboa       # Build gilboa with $fCompileCommandsJson
-    $SCRIPT_NAME --fetch --rebase             # Fetch then rebase (cascade)
-    $SCRIPT_NAME --burn --device /dev/mst/mt4133_pciconf0 -m argaman   # Burn argaman FW to device
-    $SCRIPT_NAME --burn --fw-reset --device /dev/mst/mt4133_pciconf0   # Burn and reset FW
-    $SCRIPT_NAME --burn-official 82.49.0052 --fw-reset --device /dev/mst/mt4133_pciconf0  # Burn official release + reset
+    $SCRIPT_NAME -o                        # Build ${DEFAULT_MODEL:-} (default, verbose)
+    $SCRIPT_NAME --models argaman,alpine   # Build argaman and alpine (separated by comma)
+    $SCRIPT_NAME -a                        # Build all models one by one
+    $SCRIPT_NAME -a --skip arava,viper     # Build all except arava and viper
+    $SCRIPT_NAME -a --scratch              # Ignore saved state and start fresh
+    $SCRIPT_NAME -c -o                     # Clean and build the default ${DEFAULT_MODEL:-}
+    $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
+    $SCRIPT_NAME --bear --models gilboa    # Build gilboa with $fCompileCommandsJson
+    $SCRIPT_NAME --fetch --rebase          # Fetch then rebase (cascade)
+    $SCRIPT_NAME --burn --device /dev/mst/mt4133_pciconf0 -m argaman # Burn argaman FW to device
+    $SCRIPT_NAME --burn --fw-reset --device /dev/mst/mt4133_pciconf0 # Burn and reset FW
+    $SCRIPT_NAME --burn-official 82.49.0052 --fw-reset --device /dev/mst/mt4133_pciconf0
 
 _EOF
     exit 0

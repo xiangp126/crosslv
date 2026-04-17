@@ -28,6 +28,7 @@
         "detour": "proxy"
       }
     ],
+    "strategy": "ipv4_only",
     "independent_cache": true,
     "rules": [
       // NVIDIA internal domains -> resolve via intranet DNS
@@ -68,9 +69,7 @@
       "strict_route": true,
       "mtu": 1400,
       "stack": "gvisor",
-      // Exclude proxy server IPs from TUN capture.
-      // Without this, outbound packets to VLESS/xray servers get re-captured
-      // by TUN, causing routing loops.
+      // Exclude proxy server IPs from TUN capture to prevent routing loops.
       "route_exclude_address": [
         "10.228.132.0/24",
         "10.6.10.0/24"
@@ -247,7 +246,7 @@
         "action": "route",
         "outbound": "nvidia-vpn"
       },
-      // --- NTP (port 123) -> direct, proxy doesn't support UDP ---
+      // --- NTP (port 123) -> direct for lower latency ---
       {
         "port": 123,
         "action": "route",

@@ -19,6 +19,13 @@
         "tag": "nvidia-dns",
         "server": "10.19.185.31",
         "detour": "nvidia-vpn"
+      },
+      // Remote DNS: Cloudflare DoH via proxy, for non-China non-NVIDIA domains
+      {
+        "type": "https",
+        "tag": "dns-remote",
+        "server": "1.1.1.1",
+        "detour": "proxy"
       }
     ],
     "strategy": "ipv4_only",
@@ -35,8 +42,8 @@
         "server": "dns-local"
       }
     ],
-    // Unmatched domains default to corporate VPN DNS
-    "final": "nvidia-dns"
+    // Unmatched domains -> resolve via Cloudflare (privacy-friendly, avoids corporate DNS)
+    "final": "dns-remote"
   },
   // ========================
   // Inbound Configuration
@@ -94,7 +101,7 @@
           "allowed_ips": [
             "0.0.0.0/0"
           ],
-          "persistent_keepalive_interval": 10
+          "persistent_keepalive_interval": 15
         }
       ],
       // Must match TUN MTU above — same VPN tunnel constraint applies.
@@ -261,7 +268,7 @@
         "action": "route",
         "outbound": "proxy"
       },
-      // --- AI Services (Claude/ChatGPT) -> proxy (DNS resolved via corporate VPN) ---
+      // --- AI Services (Claude/ChatGPT) -> proxy ---
       {
         "rule_set": "ai-services",
         "action": "route",

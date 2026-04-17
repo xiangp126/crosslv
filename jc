@@ -70,19 +70,22 @@ MAX_RTSP_STREAMS=10
 fRtspScreenRes=   # Exp: 4k Mi Monitor resolution 3360 x 1890
 fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset password
 # SSH Tunnel (autossh port forward over VPN)
+# Remote host: the real server autossh connects to. Not derivable from the
+# sing-box config because sing-box only sees 127.0.0.1 in xray-tunnel mode.
 fSshTunnelRemoteIp=10.6.10.221
-# fSshTunnelRemoteIp=10.228.132.85
-fSshTunnelRemotePort=5902
-fSshTunnelLocalPort=5902
+# Ports are populated from .outbounds[proxy].server_port when xray-tunnel
+# mode is detected in launchSingbox; unused in other modes.
+fSshTunnelRemotePort=""
+fSshTunnelLocalPort=""
 fSshTunnelAutosshPid=""
 # Singbox (sing-box proxy)
 fSingbox=
-fSingboxLink=""           # xray | wireguard — which config to symlink
 fSingboxConfig="$HOME/Documents/sing-box-config.jsonc"
+fSingboxLink=""           # xray | wireguard — which config to symlink
 fSingboxProxyMode=""      # wireguard | xray-direct | xray-tunnel
+fSingboxRetryTimeout=180  # seconds to retry after VPN/tunnel drop
 fSingboxMonitorPid=""
 fSingboxCleaning=0
-fSingboxRetryTimeout=180  # seconds to retry after VPN/tunnel drop
 fSingboxRecoveryMarker=""
 # Constants
 SCRIPT_NAME=$(basename $0)
@@ -120,6 +123,16 @@ Common Options:
     --auto-remove                   Remove unused packages
     --update                        Update all packages
     --upgrade                       Upgrade all packages
+
+Update Options (installed by default on first run):
+    --nvm                           Update NVM
+    --git-lfs                       Update Git LFS from PackageCloud
+    --apps                          Update Apps
+    --chinese-pinyin                Update Rime Pinyin
+    --docker                        Update Docker from Docker PPA
+    --wireshark                     Update Wireshark from Wireshark PPA
+    --firefox                       Update Firefox from Mozilla PPA
+    --clangd                        Update Clangd from Github
 
 Cursor Options:
     --cursor-backup                 Back up Cursor local, remote, and keybinding JSON files
@@ -162,23 +175,13 @@ Singbox Options:
     --singbox-xray                  Link xray sing-box config to ~/Documents
     --singbox-wg                    Link WireGuard sing-box config to ~/Documents
 
-The following options update or re-install (installed by default on first run):
-    --nvm                           Update NVM
-    --git-lfs                       Update Git LFS from PackageCloud
-    --apps                          Update Apps
-    --chinese-pinyin                Update Rime Pinyin
-    --docker                        Update Docker from Docker PPA
-    --wireshark                     Update Wireshark from Wireshark PPA
-    --firefox                       Update Firefox from Mozilla PPA
-    --clangd                        Update Clangd from Github
-
-Xray Options:
+Xray Options (server-side only — run on the Xray server host):
     --xray                          Install or update Xray from Github
     --xray-port <port>              Set Xray listen port (default: 443)
     --xray-server <ip>              Set server IP in share URL (auto-detected if omitted)
     --xray-remove                   Remove Xray from system
 
-WireGuard Options:
+WireGuard Options (server-side only — run on the WireGuard server host):
     --wg                            Install/configure WireGuard VPN server
     --wg-port <port>                Set WireGuard listen port (default: 51820)
     --wg-server <ip>                Set server IP in client config (auto-detected if omitted)
@@ -4469,6 +4472,18 @@ launchSingbox() {
             if [[ -n "$proxyServer" ]]; then
                 if [[ "$proxyServer" == "127.0.0.1" || "$proxyServer" == "localhost" ]]; then
                     proxyMode="xray-tunnel"
+                    # Derive SSH tunnel ports from the config's proxy outbound
+                    # so changing the port in one place keeps autossh in sync.
+                    local proxyPort
+                    proxyPort=$(echo "$configJson" | jq -r '.outbounds[] | select(.tag == "proxy") | .server_port' 2>/dev/null)
+                    if ! [[ "$proxyPort" =~ ^[0-9]+$ ]] || (( proxyPort < 1 || proxyPort > 65535 )); then
+                        echo -e "${RED}Error: Invalid proxy.server_port in config: '${proxyPort}'.${RESET}"
+                        cleanupSingbox
+                        return 1
+                    fi
+                    fSshTunnelLocalPort="$proxyPort"
+                    fSshTunnelRemotePort="$proxyPort"
+                    echo -e "${GREEN}✔${GREY} xray-tunnel mode (127.0.0.1:${proxyPort} → ${fSshTunnelRemoteIp}:${proxyPort}).${RESET}"
                 else
                     proxyMode="xray-direct"
                     echo -e "${GREEN}✔${GREY} Direct xray mode (${proxyServer}), no SSH tunnel needed.${RESET}"
