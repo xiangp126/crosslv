@@ -243,7 +243,14 @@ installClaude() {
         currentVer=$(claude -v 2>/dev/null)
         echo -e "${COLOR}Claude Code${RESET} ${GREY}v${currentVer}${RESET}"
         echo -e "  ${LIGHTYELLOW}Checking for updates...${RESET}"
-        claude update
+        # `claude update` is a no-op when Claude is owned by Homebrew (cask)
+        # because it can't write to /opt/homebrew/...; use the matching package
+        # manager per platform, same pattern as installCodex below.
+        if [[ $(uname -s) == 'Darwin' ]]; then
+            brew upgrade --cask claude-code
+        else
+            claude update
+        fi
         echo -e "  ${GREY}Binary: $(command -v claude)${RESET}"
         echo -e "  ${GREY}Config: ~/.claude/${RESET}"
         return 0
