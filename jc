@@ -69,6 +69,11 @@ fRtspStream=
 MAX_RTSP_STREAMS=10
 fRtspScreenRes=   # Exp: 4k Mi Monitor resolution 3360 x 1890
 fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset password
+# Camera ACL (OpenWrt firewall rules Block_C700_NN)
+fGwHost="root@192.168.10.1"
+fGwPort=8822
+fGwAclAction=""    # block | unblock | status
+fGwAclTarget=""    # c700_01 | c700_02 | all
 # SSH Tunnel (autossh port forward over VPN)
 # Remote host: the real server autossh connects to. Not derivable from the
 # sing-box config because sing-box only sees 127.0.0.1 in xray-tunnel mode.
@@ -169,6 +174,11 @@ RTSP Options:
     --rtsp-stream <stream>          Specify stream name (default: first from go2rtc)
     --rtsp-ip <ip>                  Specify RTSP server IP (default: ${fRtspSrvIp})
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
+
+Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
+    --block   <c700_01|c700_02|all>      Enable block rule(s) — camera(s) offline
+    --unblock <c700_01|c700_02|all>      Disable block rule(s) — camera(s) online
+    --status  <c700_01|c700_02|all>      Show current rule state
 
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
@@ -375,6 +385,72 @@ removeCodex() {
     echo -e "${GREEN}✔${GREY} Codex removed.${RESET}"
 }
 
+gwAclControl() {
+    local action="$1" target="$2"
+    local rules="" desired=""
+
+    case "$target" in
+        c700_01) rules="Block_C700_01" ;;
+        c700_02) rules="Block_C700_02" ;;
+        all)     rules="Block_C700_01 Block_C700_02" ;;
+        *)
+            echo -e "${RED}Error: Invalid target '$target'. Valid: c700_01, c700_02, all${RESET}" >&2
+            return 2
+            ;;
+    esac
+
+    case "$action" in
+        block)   desired="1" ;;
+        unblock) desired="0" ;;
+        status)  desired="" ;;
+    esac
+
+    local rc=0 remote_env
+    printf -v remote_env "DESIRED='%s' RULES='%s' sh -s" "$desired" "$rules"
+    ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
+        "$fGwHost" "$remote_env" <<'REMOTE' || rc=$?
+set -e
+missing=0
+changed=0
+for n in $RULES; do
+    sec=$(uci show firewall | awk -F'[.=]' -v n="$n" '
+        tolower($0) ~ "\\.name=\x27" tolower(n) "\x27" { print $2; exit }
+    ')
+    if [ -z "$sec" ]; then
+        echo "ERROR: firewall rule $n not found" >&2
+        missing=1
+        continue
+    fi
+    cur=$(uci -q get firewall.$sec.enabled); [ -z "$cur" ] && cur=1
+    if [ -z "$DESIRED" ]; then
+        echo "$n: enabled=$cur (section=$sec)"
+        continue
+    fi
+    if [ "$cur" != "$DESIRED" ]; then
+        uci set firewall.$sec.enabled="$DESIRED"; changed=1
+        echo "$n: $cur -> $DESIRED"
+    else
+        echo "$n: already $DESIRED"
+    fi
+done
+if [ "$missing" = 1 ]; then
+    echo "ERROR: one or more rules not found; aborting without commit" >&2
+    exit 3
+fi
+if [ "$changed" = 1 ]; then
+    uci commit firewall
+    /etc/init.d/firewall reload >/dev/null 2>&1
+    echo "firewall reloaded"
+fi
+REMOTE
+
+    if [ "$rc" -eq 3 ]; then
+        echo -e "${LIGHTYELLOW}Hint: verify rule names with:${RESET}"
+        echo -e "  ssh -p $fGwPort $fGwHost \"uci show firewall | grep -i '\\.name='\"" >&2
+    fi
+    return "$rc"
+}
+
 SHORTOPTS="hdnf"
 # Two colons: The option takes an optional argument
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
@@ -385,7 +461,8 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           codex,\
           codex-remove,cursor-backup,cursor-restore,singbox,singbox-xray,singbox-wg,\
           xray,xray-port:,xray-server:,\
-          xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove"
+          xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
+          block:,unblock:,status:"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -670,6 +747,23 @@ while true; do
             fSingboxLink="wireguard"
             shift
             ;;
+
+        --block)
+            fGwAclAction="block"
+            fGwAclTarget="$2"
+            shift 2
+            ;;
+        --unblock)
+            fGwAclAction="unblock"
+            fGwAclTarget="$2"
+            shift 2
+            ;;
+        --status)
+            fGwAclAction="status"
+            fGwAclTarget="$2"
+            shift 2
+            ;;
+
         -d|--debug)
             set -x
             echo -e "${COLOR}Debug mode enabled${RESET}"
@@ -688,6 +782,11 @@ while true; do
             ;;
     esac
 done
+
+if [ -n "$fGwAclAction" ]; then
+    gwAclControl "$fGwAclAction" "$fGwAclTarget" || exit $?
+    exit 0
+fi
 
 
 checkSudoPrivilege() {
@@ -807,6 +906,7 @@ checkTlsConnWithCurl() {
 
 detectDistroFamily() {
     if [[ -f /etc/os-release ]]; then
+        # shellcheck source=/dev/null
         . /etc/os-release
         case "$ID" in
             fedora|centos|rhel|rocky|alma) echo "fedora" ; return ;;

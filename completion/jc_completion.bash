@@ -13,9 +13,8 @@ _jc_complete() {
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
                --gdm --text --claude --claude-remove --codex --codex-remove \
-               --cursor-backup --cursor-restore \
-               --singbox --singbox-xray --singbox-wg \
-               --xray --xray-port --xray-server --xray-remove \
+               --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-wg \
+               --xray --xray-port --xray-server --xray-remove --block --unblock --status \
                --wg --wg-port --wg-server --wg-client --wg-remove \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-h264 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"
@@ -67,6 +66,10 @@ _jc_complete() {
             # 1366x768   - Budget 15" laptops
             local resolutions="3360x1890 3456x2234 3840x2160 2560x1440 2560x1600 1920x1200 1920x1080 1366x768"
             COMPREPLY=( $(compgen -W "${resolutions}" -- ${cur}) )
+            return 0
+            ;;
+        --block|--unblock|--status)
+            COMPREPLY=( $(compgen -W "c700_01 c700_02 all" -- ${cur}) )
             return 0
             ;;
     esac

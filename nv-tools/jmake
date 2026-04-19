@@ -365,7 +365,6 @@ while true; do
     case "$1" in
         -h|--help)
             usage
-            shift
             ;;
         -D|--debug)
             set -x
