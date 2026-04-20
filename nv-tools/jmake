@@ -254,14 +254,18 @@ Usage: $SCRIPT_NAME [OPTIONS]
 
 Build tool for NVIDIA golan_fw firmware.
 
-Build Flags:
+Common Options:
+    -h, --help                      Print this help message
+    -l, --list                      List base models
+        --list-extended             List all extended models (includes _ethlt, _codecov variants)
+        --link                      Link $fCompileCommandsJson (use with -m), .clangd, and ~/.claude/$CLAUDE_MD
+
+Build Options:
     -D, --debug                     Enable debug mode
     -c, --clean                     Run make clean ($BUILD_SCRIPT -C)
         --clean-db                  Also remove $fCompileCommandsJson during clean
     -o, --build                     Run build commands
         --no-verbose                Suppress full compilation output (default: verbose)
-
-Build Options:
     -a, --all                       Build all base models one by one (loop mode, auto-resumes from last failure)
     -A, --all-extended              Build all extended models (includes _ethlt, _codecov variants)
     -b, --bear                      Generate $fCompileCommandsJson (implies -c --clean-db -o)
@@ -277,6 +281,19 @@ Build Options:
         --scratch                   Ignore saved state and start from first model
     -N, --nicx                      Build with NICX=1 flag
         --track                     Build with -D TRACK_INCLUDES=1
+
+Git Options (require current dir to be a git repo, can be combined in cascade):
+        --fetch                     git fetch origin master_rc && git fetch origin --tags
+        --rebase                    git rebase origin/master_rc
+        --add                       git add -u && git reset HEAD -- (submodule paths)
+        --commit                    git commit --amend --no-edit
+        --edit                      git commit --amend
+        --push                      git push origin HEAD:refs/for/master_rc
+        --stat                      git diff --stat
+        --df, --diff                git diff include/ src/
+        --show                      git show HEAD
+        --git-clean                 Deep clean using git clean -fdx (preserves submodules)
+        --clean-submodule           Deinit all submodules (git submodule deinit --all -f)
 
 Power Options (IPMI):
         --power-cycle <server>      Power cycle a server via IPMI (off → wait → on)
@@ -295,25 +312,6 @@ MFT Options (Mellanox Firmware Tools):
         --ofed-start                Start OFED driver (sudo /etc/init.d/openibd start)
         --ofed-stop                 Stop OFED driver (sudo /etc/init.d/openibd stop)
         --docker-group              Add current user to docker group (requires sudo)
-
-Git Options (require current dir to be a git repo, can be combined in cascade):
-        --fetch                     git fetch origin master_rc && git fetch origin --tags
-        --rebase                    git rebase origin/master_rc
-        --add                       git add -u && git reset HEAD -- (submodule paths)
-        --commit                    git commit --amend --no-edit
-        --edit                      git commit --amend
-        --push                      git push origin HEAD:refs/for/master_rc
-        --stat                      git diff --stat
-        --df, --diff                git diff include/ src/
-        --show                      git show HEAD
-        --git-clean                 Deep clean using git clean -fdx (preserves submodules)
-        --clean-submodule           Deinit all submodules (git submodule deinit --all -f)
-
-Other Options:
-    -h, --help                      Print this help message
-    -l, --list                      List base models
-        --list-extended             List all extended models (includes _ethlt, _codecov variants)
-        --link                      Link $fCompileCommandsJson (use with -m), .clangd, and ~/.claude/$CLAUDE_MD
 
 Supported Models:
     $GOLAN_MODELS
