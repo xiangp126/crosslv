@@ -1225,8 +1225,8 @@ runGitOptions() {
             fetch)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin master_rc${RESET}"
                 git fetch origin master_rc
-                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin --tags${RESET}"
-                git fetch origin --tags
+                # echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin --tags${RESET}"
+                # git fetch origin --tags
                 ;;
             rebase)
                 local stashed=0
