@@ -370,7 +370,6 @@ while true; do
             ;;
         -w|--working-dir)
             fWorkingDir="$2"
-            fNeedBuild=true
             shift 2
             ;;
         -j|--jobs)
@@ -999,6 +998,7 @@ runBuildCommands() {
     local buildTime=$((buildEndTime - buildStartTime))
     fBuildTimeFormatted=$(formatElapsed $buildTime)
 
+    echo $SEPARATOR
     echo -e "$NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
 
     local mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
@@ -1007,6 +1007,7 @@ runBuildCommands() {
         mlxSize=$(du -h "$mlxFile" | cut -f1)
         echo -e "$NOTATION ${GREEN}✓ .mlx:${RESET} ${CYAN}$mlxFile${RESET} ${GREY}($mlxSize)${RESET}"
     fi
+    echo $SEPARATOR
 }
 
 isModelSkipped() {
@@ -1077,7 +1078,6 @@ runLoopModels() {
 
         # Show progress banner between models in loop mode
         if [[ $isLoopMode -eq 1 ]]; then
-            echo "$SEPARATOR"
             echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") build succeeded${RESET} ${GREY}(${fBuildTimeFormatted})${RESET}"
             echo -e "$NOTATION Progress: ${CYAN}[${#fModelsVerified[@]}/$totalModels]${RESET}" \
                 "$( [[ ${#fModelsPending[@]} -gt 0 ]] \
@@ -1372,6 +1372,30 @@ runOfedStop() {
     echo "$SEPARATOR"
 }
 
+# Run ipmi_command.sh and detect session/auth failures that it may print while
+# still exiting 0 (e.g. "Error: Unable to establish IPMI v2 / RMCP+ session").
+# Usage: runIpmiAction <server> <on|off|cycle|reset|status>
+# Returns:
+#   0  on success
+#   2  on RMCP+/auth session failure (caller may choose a fallback path)
+#   1  on any other failure
+# Streams ipmi_command.sh output to the user.
+runIpmiAction() {
+    local server="$1"
+    local action="$2"
+    local output rc
+    output=$(ipmi_command.sh "$server" "$action" 2>&1)
+    rc=$?
+    echo "$output"
+    if echo "$output" | grep -qiE 'Unable to establish IPMI|RMCP\+|RAKP|Authentication|Invalid password|Unauthorized'; then
+        return 2
+    fi
+    if [[ $rc -ne 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
 runPowerCycle() {
     [[ -z "$fPowerCycle" ]] && return
     local server="$fPowerCycle"
@@ -1386,8 +1410,21 @@ runPowerCycle() {
 
     echo -e "$NOTATION ${CYAN}Powering off...${RESET}"
     echo -e "$NOTATION Running: ${YELLOW}$ipmiCmd $server off${RESET}"
-    $ipmiCmd "$server" off
-    if [[ $? -ne 0 ]]; then
+    runIpmiAction "$server" off
+    local rc=$?
+    if [[ $rc -eq 2 ]]; then
+        # RMCP+/auth failure: skip the off/wait/on dance and power-cycle in-band via ssh.
+        echo -e "$NOTATION ${YELLOW}ipmi_command.sh could not establish IPMI/RMCP+ session.${RESET}"
+        echo -e "$NOTATION ${CYAN}Falling back to: ${YELLOW}ssh $server sudo ipmitool power cycle${RESET}"
+        if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$server" "sudo ipmitool power cycle"; then
+            echo -e "$NOTATION ${RED}Error: ssh fallback (sudo ipmitool power cycle) failed${RESET}"
+            exit 1
+        fi
+        echo -e "$NOTATION ${GREEN}✓ Power cycle sent via ssh${RESET}"
+        echo "$SEPARATOR"
+        return
+    fi
+    if [[ $rc -ne 0 ]]; then
         echo -e "$NOTATION ${RED}Error: IPMI power off failed${RESET}"
         exit 1
     fi
@@ -1398,8 +1435,7 @@ runPowerCycle() {
 
     echo -e "$NOTATION ${CYAN}Powering on...${RESET}"
     echo -e "$NOTATION Running: ${YELLOW}$ipmiCmd $server on${RESET}"
-    $ipmiCmd "$server" on
-    if [[ $? -ne 0 ]]; then
+    if ! runIpmiAction "$server" on; then
         echo -e "$NOTATION ${RED}Error: IPMI power on failed${RESET}"
         exit 1
     fi
@@ -1439,9 +1475,9 @@ runPowerOn() {
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Powering on ${BOLD}$server${RESET}..."
     echo -e "$NOTATION Running: ${YELLOW}ipmi_command.sh $server on${RESET}"
-    ipmi_command.sh "$server" on
-    if [[ $? -ne 0 ]]; then
-        echo -e "$NOTATION ${RED}Error: IPMI power on failed${RESET}"
+    if ! runIpmiAction "$server" on; then
+        echo -e "$NOTATION ${RED}Error: IPMI power on failed (could not establish IPMI/RMCP+ session or tool reported an error)${RESET}"
+        echo -e "$NOTATION ${YELLOW}Hint: verify BMC credentials and that IPMI over LAN is enabled for ${BOLD}${server}-ilo${RESET}"
         exit 1
     fi
     echo -e "$NOTATION ${GREEN}✓ Power on sent to $server${RESET}"
@@ -1457,9 +1493,9 @@ runPowerOff() {
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Powering off ${BOLD}$server${RESET}..."
     echo -e "$NOTATION Running: ${YELLOW}ipmi_command.sh $server off${RESET}"
-    ipmi_command.sh "$server" off
-    if [[ $? -ne 0 ]]; then
-        echo -e "$NOTATION ${RED}Error: IPMI power off failed${RESET}"
+    if ! runIpmiAction "$server" off; then
+        echo -e "$NOTATION ${RED}Error: IPMI power off failed (could not establish IPMI/RMCP+ session or tool reported an error)${RESET}"
+        echo -e "$NOTATION ${YELLOW}Hint: verify BMC credentials and that IPMI over LAN is enabled for ${BOLD}${server}-ilo${RESET}"
         exit 1
     fi
     echo -e "$NOTATION ${GREEN}✓ Power off sent to $server${RESET}"
