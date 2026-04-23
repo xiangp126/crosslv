@@ -75,8 +75,7 @@
       "stack": "gvisor",
       // Exclude proxy server IPs from TUN capture to prevent routing loops.
       "route_exclude_address": [
-        "10.228.132.0/24",
-        "10.6.10.0/24"
+        "10.228.132.0/24"
       ]
     }
   ],
@@ -185,6 +184,8 @@
               "intercomcdn.com",
               "sentry.io",
               "statsigapi.net",
+              "featuregates.org",
+              "segment.com",
               "stripe.com",
               "openai.com",
               "chatgpt.com",
