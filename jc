@@ -220,7 +220,28 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-_ensureNodeEnv() {
+SHORTOPTS="hdnf"
+# Two colons: The option takes an optional argument
+LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
+          upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
+          lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
+          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,\
+          rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,claude-remove,\
+          codex,codex-remove,cursor-backup,cursor-restore,singbox,singbox-xray,singbox-wg,\
+          xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
+          block:,unblock:,status:"
+
+# Use getopt to parse command-line options
+if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+    echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
+    echo -e "${CYAN}Tip: On macOS, install GNU getopt: ${GREY}brew install gnu-getopt${RESET}" >&2
+    exit 1
+fi
+
+# Reset positional parameters to the parsed values
+eval set -- "$PARSED"
+
+checkNodeEnv() {
     local nvmSh="$HOME/.nvm/nvm.sh"
     if [ ! -s "$nvmSh" ]; then
         echo -e "${LIGHTYELLOW}NVM not found. Installing NVM and Node.js first...${RESET}"
@@ -254,16 +275,15 @@ installClaude() {
         currentVer=$(claude -v 2>/dev/null)
         echo -e "${COLOR}Claude Code${RESET} ${GREY}v${currentVer}${RESET}"
         echo -e "  ${LIGHTYELLOW}Checking for updates...${RESET}"
-        # `claude update` is a no-op when Claude is owned by Homebrew (cask)
-        # because it can't write to /opt/homebrew/...; use the matching package
-        # manager per platform, same pattern as installCodex below.
+        # On macOS use Homebrew; on Linux re-run the install script which
+        # handles upgrades in place (`claude update` bus-errors on some systems).
         if [[ $(uname -s) == 'Darwin' ]]; then
             brew upgrade --cask claude-code || {
                 echo -e "  ${RED}Error: brew upgrade failed.${RESET}" >&2
                 return 1
             }
         else
-            claude update || {
+            curl -fsSL https://claude.ai/install.sh | sh || {
                 echo -e "  ${RED}Error: claude update failed.${RESET}" >&2
                 return 1
             }
@@ -326,7 +346,7 @@ installCodex() {
                 return 1
             }
         else
-            _ensureNodeEnv || return 1
+            checkNodeEnv || return 1
             npm update -g @openai/codex || {
                 echo -e "  ${RED}Error: npm update failed.${RESET}" >&2
                 return 1
@@ -353,7 +373,7 @@ installCodex() {
             return 1
         }
     else
-        _ensureNodeEnv || return 1
+        checkNodeEnv || return 1
         echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@openai/codex${RESET}${GREY}...${RESET}"
         npm install -g @openai/codex || {
             echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
@@ -501,29 +521,6 @@ REMOTE
     fi
     return "$rc"
 }
-
-SHORTOPTS="hdnf"
-# Two colons: The option takes an optional argument
-LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
-          upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
-          lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,\
-          rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,claude-remove,\
-          codex,\
-          codex-remove,cursor-backup,cursor-restore,singbox,singbox-xray,singbox-wg,\
-          xray,xray-port:,xray-server:,\
-          xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
-          block:,unblock:,status:"
-
-# Use getopt to parse command-line options
-if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
-    echo -e "${COLOR}Error: Failed to parse command-line options.${RESET}" >&2
-    echo -e "${CYAN}Tip: On macOS, install GNU getopt: ${GREY}brew install gnu-getopt${RESET}" >&2
-    exit 1
-fi
-
-# Reset positional parameters to the parsed values
-eval set -- "$PARSED"
 
 while true; do
     case "$1" in

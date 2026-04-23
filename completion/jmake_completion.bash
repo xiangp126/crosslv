@@ -62,6 +62,9 @@ declare -A _JMAKE_FW_MAJOR_TO_DEVID=(
 )
 _JMAKE_RELEASE_BASE="/mswg/release/host_fw"
 
+_JMAKE_WORKSPACE_BASE="/auto/fwgwork1/$USER"
+_JMAKE_WORKSPACE_MARKER="adabe"
+
 # Tiered version completion for --burn-official
 # Tier 1: major (22, 40, 82, ...)
 # Tier 2: major.minor (82.49, 82.42, ...)
@@ -128,13 +131,21 @@ _jmake_complete() {
                --build --bear --debug --attempt --no-verbose --nicx --list --list-extended --link --models \
                --skip --scratch --track --patch --ethlt --codecov --cov --fetch --push --rebase --add --commit \
                --amend --stat --df --diff --show --burn --burn-official --firmware --device --fw-query --fw-reset \
-               --mft-install --ofed-restart --ofed-start --ofed-stop --power-cycle --power-on --power-off --docker-group"
+               --mft-install --mft-start --mft-stop --mft-restart --ofed-restart --ofed-start --ofed-stop \
+               --power-cycle --power-on --power-off --docker-group"
 
     # Handle option arguments
     case $prev in
         -w|--working-dir)
-            # Directory completion
-            COMPREPLY=( $(compgen -d -- "$cur") )
+            # Suggest workspaces under $_JMAKE_WORKSPACE_BASE that contain an $_JMAKE_WORKSPACE_MARKER/ subdir
+            compopt -o nospace 2>/dev/null
+            local candidates="" match ws
+            for match in "${_JMAKE_WORKSPACE_BASE}"/*/"${_JMAKE_WORKSPACE_MARKER}"/; do
+                [[ -d "$match" ]] || continue
+                ws="${match%${_JMAKE_WORKSPACE_MARKER}/}"
+                candidates+="$ws "
+            done
+            COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
             return 0
             ;;
         -j|--jobs)

@@ -36,6 +36,9 @@ fBurn=
 fFwReset=
 fDevice=
 fMftInstall=
+fMftStart=
+fMftStop=
+fMftRestart=
 fOfedRestart=
 fOfedStart=
 fOfedStop=
@@ -257,6 +260,7 @@ Build tool for NVIDIA golan_fw firmware.
 Common Options:
     -h, --help                      Print this help message
     -l, --list                      List base models
+        --docker-group              Add current user to docker group (requires sudo)
         --list-extended             List all extended models (includes _ethlt, _codecov variants)
         --link                      Link $fCompileCommandsJson (use with -m), .clangd, and ~/.claude/$CLAUDE_MD
 
@@ -301,17 +305,19 @@ Power Options (IPMI):
         --power-off <server>        Power off a server
 
 MFT Options (Mellanox Firmware Tools):
+        --mft-install               Install MFT (Mellanox Firmware Tools)
+        --mft-start                 Start MST service (sudo mst start)
+        --mft-stop                  Stop MST service (sudo mst stop)
+        --mft-restart               Restart MST service (stop → start)
+        --ofed-restart              Restart OFED driver (stop → start)
+        --ofed-start                Start OFED driver (sudo /etc/init.d/openibd start)
+        --ofed-stop                 Stop OFED driver (sudo /etc/init.d/openibd stop)
         --burn                      Burn FW image to device (requires --device, uses -m model)
         --burn-official <version>   Burn official release FW to device (e.g., 82.49.0052)
         --device <mst_device>       MST device path (e.g. /dev/mst/mt4133_pciconf0)
         --firmware <path>           Custom .mlx firmware file (overrides model lookup)
         --fw-query                  Query FW info from device (requires --device)
         --fw-reset                  Reset FW on device after burn (requires --device)
-        --mft-install               Install MFT (Mellanox Firmware Tools)
-        --ofed-restart              Restart OFED driver (stop → start)
-        --ofed-start                Start OFED driver (sudo /etc/init.d/openibd start)
-        --ofed-stop                 Stop OFED driver (sudo /etc/init.d/openibd stop)
-        --docker-group              Add current user to docker group (requires sudo)
 
 Supported Models:
     $GOLAN_MODELS
@@ -349,8 +355,8 @@ SHORTOPTS="hcoaAj:w:Dlbm:NpT:"
 # NOTE: No leading spaces on continuation lines — they become part of the string and break getopt
 LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,\
 list,list-extended,link,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,scratch,track,fetch,push,\
-rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,ofed-restart,\
-ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:"
+rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,mft-start,\
+mft-stop,mft-restart,ofed-restart,ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -567,6 +573,18 @@ while true; do
             fMftInstall=true
             shift
             ;;
+        --mft-start)
+            fMftStart=true
+            shift
+            ;;
+        --mft-stop)
+            fMftStop=true
+            shift
+            ;;
+        --mft-restart)
+            fMftRestart=true
+            shift
+            ;;
         --ofed-restart)
             fOfedRestart=true
             shift
@@ -675,6 +693,9 @@ preConfigure() {
        [[ -n "$fBurnOfficial"          ]] ||
        [[ -n "$fFwReset"               ]] ||
        [[ -n "$fMftInstall"            ]] ||
+       [[ -n "$fMftStart"              ]] ||
+       [[ -n "$fMftStop"               ]] ||
+       [[ -n "$fMftRestart"            ]] ||
        [[ -n "$fOfedRestart"           ]] ||
        [[ -n "$fOfedStart"             ]] ||
        [[ -n "$fOfedStop"              ]] ||
@@ -696,7 +717,8 @@ preConfigure() {
 
     # Verify this is a golan_fw project
     if [[ ! -x "$BUILD_SCRIPT" ]]; then
-        echo -e "$NOTATION ${RED}Error: $BUILD_SCRIPT not found. Are you in a golan_fw directory?${RESET}"
+        echo -e "$NOTATION ${RED}Error: $BUILD_SCRIPT not found in ${YELLOW}$fWorkingDir${RESET}"
+        echo -e "$NOTATION Tip: use ${YELLOW}-w <golan_fw_dir>${RESET} to specify the working directory"
         exit 1
     fi
 
@@ -783,6 +805,9 @@ printBuildFlags() {
         [ -n "$fDevice" ]                && echo -e "[d] ${COLOR}Device:${RESET} $fDevice"
         [ -n "$fFirmware" ]              && echo -e "[F] ${COLOR}Firmware:${RESET} $fFirmware"
         [ -n "$fMftInstall" ]            && echo -e "[M] ${COLOR}MFT Install${RESET}"
+        [ -n "$fMftStart" ]              && echo -e "[M] ${COLOR}MST Start${RESET}"
+        [ -n "$fMftStop" ]               && echo -e "[M] ${COLOR}MST Stop${RESET}"
+        [ -n "$fMftRestart" ]            && echo -e "[M] ${COLOR}MST Restart${RESET} (stop → start)"
         [ -n "$fOfedRestart" ]           && echo -e "[↻] ${COLOR}OFED Restart${RESET} (stop → start)"
         [ -n "$fOfedStart" ]             && echo -e "[^] ${COLOR}OFED Start${RESET}"
         [ -n "$fOfedStop" ]              && echo -e "[v] ${COLOR}OFED Stop${RESET}"
@@ -1298,6 +1323,9 @@ runGitOptions() {
        -z "$fBurnOfficial" &&
        -z "$fFwReset"      &&
        -z "$fMftInstall"   &&
+       -z "$fMftStart"     &&
+       -z "$fMftStop"      &&
+       -z "$fMftRestart"   &&
        -z "$fOfedRestart"  &&
        -z "$fOfedStart"    &&
        -z "$fOfedStop"     &&
@@ -1324,6 +1352,51 @@ runMftInstall() {
         exit 1
     fi
     echo -e "$NOTATION ${GREEN}✓ MFT installed successfully${RESET}"
+    echo "$SEPARATOR"
+}
+
+runMftStart() {
+    [[ -z "$fMftStart" ]] && return
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Starting MST service...${RESET}"
+    local cmd="sudo mst start"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: mst start failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ MST service started${RESET}"
+    echo "$SEPARATOR"
+}
+
+runMftStop() {
+    [[ -z "$fMftStop" ]] && return
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Stopping MST service...${RESET}"
+    local cmd="sudo mst stop"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: mst stop failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ MST service stopped${RESET}"
+    echo "$SEPARATOR"
+}
+
+runMftRestart() {
+    [[ -z "$fMftRestart" ]] && return
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Restarting MST service (stop → start)...${RESET}"
+    local cmd="sudo mst restart"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: mst restart failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ MST service restarted${RESET}"
     echo "$SEPARATOR"
 }
 
@@ -1762,7 +1835,10 @@ runFwQuery() {
 doEarlyExitJobs() {
     [ -n "$fDockerGroup" ]   && { runDockerGroup; exit 0; }
     [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ] && { linkWorkspaceFiles; exit 0; }
-    [ -n "$fMftInstall" ]    && { runMftInstall; exit 0; }
+    [ -n "$fMftInstall" ]    && { runMftInstall; fMftRestart=true; runMftRestart; exit 0; }
+    [ -n "$fMftRestart" ]    && { runMftRestart; exit 0; }
+    [ -n "$fMftStop" ]       && { runMftStop; [ -n "$fMftStart" ] && runMftStart; exit 0; }
+    [ -n "$fMftStart" ]      && { runMftStart; exit 0; }
     [ -n "$fOfedRestart" ]   && { runOfedRestart; exit 0; }
     [ -n "$fOfedStop" ]      && { runOfedStop; [ -n "$fOfedStart" ] && runOfedStart; exit 0; }
     [ -n "$fOfedStart" ]     && { runOfedStart; exit 0; }
