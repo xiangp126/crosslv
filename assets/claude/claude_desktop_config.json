@@ -1,0 +1,45 @@
+{
+  "mcpServers": {
+    "nvidia-redmine": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://maas.prd.astra.nvidia.com/maas/redmine/mcp"
+      ]
+    },
+    "nvidia-gerrit": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://maas.prd.astra.nvidia.com/maas/gerrit/mcp"
+      ]
+    },
+    "nvidia-nvbugs": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
+      ]
+    },
+    "nvidia-jenkins": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
+      ]
+    }
+  },
+  "preferences": {
+    "localAgentModeTrustedFolders": [
+      "~/myGit/crosslv"
+    ],
+    "coworkScheduledTasksEnabled": true,
+    "ccdScheduledTasksEnabled": true,
+    "sidebarMode": "chat",
+    "coworkWebSearchEnabled": true
+  }
+}
