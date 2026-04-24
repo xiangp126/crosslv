@@ -155,10 +155,18 @@ findAiPanes() {
         local pane_pid=$(echo "$line" | cut -d'|' -f1)
         local pane_target=$(echo "$line" | cut -d'|' -f2)
         local cmd=$(echo "$line" | cut -d'|' -f3)
-        if [[ "$cmd" =~ ^(claude|codex)$ ]]; then
-            panes+=("$pane_pid|$pane_target|$cmd")
+        # Direct match on claude or codex. Accept arch-suffixed names
+        # (macOS ships codex as e.g. "codex-aarch64-apple-darwin", which
+        # tmux truncates in pane_current_command to "codex-aarch64-a").
+        if [[ "$cmd" =~ ^claude(-|$) ]]; then
+            panes+=("$pane_pid|$pane_target|claude")
+        elif [[ "$cmd" =~ ^codex(-|$) ]]; then
+            panes+=("$pane_pid|$pane_target|codex")
         elif [[ "$cmd" == "node" ]]; then
-            if ps -o args --ppid "$pane_pid" 2>/dev/null | grep -q 'codex'; then
+            # Some Linux installs run codex as a node script; check child
+            # processes' args. Use portable ps syntax — macOS `ps` has no
+            # `--ppid` flag, so filter with awk on ppid,args output.
+            if ps -Ao ppid,args 2>/dev/null | awk -v p="$pane_pid" '$1==p' | grep -q 'codex'; then
                 panes+=("$pane_pid|$pane_target|codex")
             fi
         fi
@@ -178,14 +186,12 @@ autoDetectTarget() {
     if [ "$count" -eq 0 ]; then
         echo -e "${RED}Error: No pane running claude or codex found${RESET}" >&2
         echo -e "${GREY}Start claude/codex in a tmux pane first, or use -t to specify a target.${RESET}" >&2
-        echo -e "${GREY}Note: Detection relies on pane_current_command matching 'claude' or 'codex'.${RESET}" >&2
         echo -e "${GREY}If the tool runs inside another process (e.g. bash), use -t to specify the pane manually.${RESET}" >&2
         exit 1
     elif [ "$count" -eq 1 ]; then
         local target=$(echo "${panes[0]}" | cut -d'|' -f2)
         local cmd=$(echo "${panes[0]}" | cut -d'|' -f3)
         echo -e "${GREEN}Auto-detected:${RESET} ${CYAN}$cmd${RESET} at ${BLUE}$target${RESET}"
-        echo -e "${GREY}Note: Only panes whose process name is 'claude' or 'codex' are detected.${RESET}"
         echo -e "${GREY}If a session is missing, use -t to specify it manually.${RESET}"
         fTmuxTarget="$target"
         fAiName="$cmd"
@@ -203,7 +209,6 @@ autoDetectTarget() {
             printf "  ${CYAN}[%d]${RESET} %-${cmd_width}s  ${GREY}%s${RESET}\n" "$i" "$cmd" "$target"
             ((i++))
         done
-        echo -e "${GREY}Note: Only panes whose process name is 'claude' or 'codex' are detected.${RESET}"
         echo -e "${GREY}If a session is missing, use -t to specify it manually.${RESET}"
         echo ""
         while true; do
@@ -472,7 +477,15 @@ mainLoop() {
                 [ "$_attempt" -gt 0 ] && _retryNote=" (retry $_attempt)"
                 echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $claudeOption)${_retryNote} [#$approvedCount]"
             fi
-            lastFingerprint="$_postFp"
+            # Track the PRE-send fingerprint, not the post-send one.
+            # Rationale: if Claude finishes the approved command quickly and
+            # shows the next permission prompt during our wait window,
+            # $_postFp captures that new prompt's hash — and the top-of-loop
+            # dedup would then skip it forever. Using $_preSendFp ensures
+            # dedup only fires when the EXACT prompt we just approved is
+            # still on screen (i.e., the keystroke was dropped), while a
+            # brand-new prompt has a different hash and is handled normally.
+            lastFingerprint="$_preSendFp"
             continue
         fi
 
@@ -511,7 +524,6 @@ if [ -n "$fListOnly" ]; then
             _i=$((_i + 1))
         done
     fi
-    echo -e "${GREY}Note: Only panes whose process name is 'claude' or 'codex' are detected.${RESET}"
     exit 0
 fi
 
