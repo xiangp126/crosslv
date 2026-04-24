@@ -25,8 +25,9 @@ RESET='\033[0m'
 # Options
 fTmuxTarget=      # tmux target pane in session[:window[.pane]] format
 fListOnly=        # list detected AI panes and exit
-fApproveDelay=1   # seconds to wait before approving
+fApproveDelay=0   # seconds to wait before approving
 fPollInterval=0.3 # seconds to poll for new prompts
+fAiName=          # AI running in the target pane (claude|codex|...)
 approvedCount=0   # number of prompts approved
 
 usage() {
@@ -124,6 +125,26 @@ validateTarget() {
     fi
 }
 
+# Identify the AI running in a given tmux target. Mirrors findAiPanes's
+# logic — codex shows up as "node" so we look at the child process argv.
+# Prints "claude" / "codex" when recognised, otherwise the raw command
+# (empty if the pane can't be resolved).
+detectAiForTarget() {
+    local target="$1"
+    local info cmd pane_pid
+    info=$(tmux display-message -t "$target" -p '#{pane_current_command}|#{pane_pid}' 2>/dev/null)
+    [ -z "$info" ] && return
+    cmd="${info%%|*}"
+    pane_pid="${info##*|}"
+    if [[ "$cmd" =~ ^(claude|codex)$ ]]; then
+        echo "$cmd"
+    elif [[ "$cmd" == "node" ]] && ps -o args --ppid "$pane_pid" 2>/dev/null | grep -q 'codex'; then
+        echo "codex"
+    else
+        echo "$cmd"
+    fi
+}
+
 # Find panes running claude or codex.
 # Claude shows as "claude" in pane_current_command.
 # Codex shows as "node" — check child processes of the pane for "codex" in argv.
@@ -167,6 +188,7 @@ autoDetectTarget() {
         echo -e "${GREY}Note: Only panes whose process name is 'claude' or 'codex' are detected.${RESET}"
         echo -e "${GREY}If a session is missing, use -t to specify it manually.${RESET}"
         fTmuxTarget="$target"
+        fAiName="$cmd"
     else
         echo -e "${LIGHTYELLOW}Multiple AI sessions found:${RESET}"
         local cmd_width=0
@@ -189,6 +211,7 @@ autoDetectTarget() {
             if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
                 local selected="${panes[$((choice - 1))]}"
                 fTmuxTarget=$(echo "$selected" | cut -d'|' -f2)
+                fAiName=$(echo "$selected" | cut -d'|' -f3)
                 echo -e "${GREEN}Selected:${RESET} ${BLUE}$fTmuxTarget${RESET}"
                 break
             fi
@@ -213,37 +236,144 @@ preApproveGate() {
     fi
 }
 
+# Poll the pane until its hash differs from oldFp, or maxWaitMs elapses.
+# Prints the resulting hash (new on change, old on timeout) to stdout.
+# Returns 0 on change, 1 on timeout.
+#
+# Using a poll instead of a fixed sleep matters because:
+#   - Fast render (<200ms): don't waste the rest of a 1s sleep.
+#   - Slow render (>1s): don't prematurely declare the keystroke lost
+#     and re-send — double-pressing a number key in Claude Code can
+#     jump to a different option and approve the wrong thing.
+waitForScreenChange() {
+    local oldFp="$1"
+    local maxWaitMs="${2:-2000}"
+    local intervalMs=100
+    local elapsedMs=0
+    local post postTail fp
+    while [ "$elapsedMs" -lt "$maxWaitMs" ]; do
+        # Must mirror the loop-start fingerprint computation:
+        # capture -> variable (strips trailing blanks) -> echo | tail | hash.
+        # A direct pipeline leaves trailing blank lines in and produces a
+        # different hash, breaking the compare.
+        post=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null)
+        postTail=$(echo "$post" | tail -20)
+        fp=$(echo "$postTail" | _hash)
+        if [ "$fp" != "$oldFp" ]; then
+            printf '%s' "$fp"
+            return 0
+        fi
+        sleep 0.1
+        elapsedMs=$((elapsedMs + intervalMs))
+    done
+    printf '%s' "$oldFp"
+    return 1
+}
+
 # Check if the pane content contains a blacklisted command
 isBlacklisted() {
     local content="$1"
     echo "$content" | grep -q "rm -rf"
 }
 
-# Path 1: Claude Code — numbered options with context check
-# Returns the option number to send, or empty if no prompt detected
+# Detect a permission prompt in the captured pane tail and return which
+# option number to press. Empty output + non-zero exit means "no prompt".
+#
+# The detector is deliberately STRUCTURAL, not phrase-based: question
+# wording keeps changing across Claude Code / Codex CLI versions
+# ("Do you want to proceed?", "Do you want to make this edit ...",
+# "Allow the <X> MCP server to run tool ...", future variants we can't
+# enumerate). Instead we rely on the one visual invariant shared by
+# every interactive selection prompt in both tools: a block of numbered
+# options with a cursor indicator (❯ or ›) pointing at one of them.
+#
+# Stage A — "is this a permission prompt at all?"
+#   Require BOTH:
+#     • at least one numbered line carrying a cursor glyph
+#       (e.g. "❯ 1. Yes", "› 1. Allow")
+#     • at least two numbered option lines in total (a real menu, not
+#       a stray list item)
+#   Free-form Claude/Codex response text almost never contains a cursor
+#   glyph directly before a numbered line, so this yields ~zero false
+#   positives while being wording-agnostic.
+#
+# Stage B — "which option should we press?"
+#   Still filtered by an affirmative word list (Yes|Allow|Accept|
+#   Approve|Proceed|Confirm|Continue). That's the safety net: if a
+#   future prompt is structurally a menu but has no affirmative option
+#   (e.g. a neutral "pick one of these files"), Stage B returns empty
+#   and ja does nothing instead of blindly pressing "1".
+#
+# Adding a new affirmative word is the only maintenance knob; adding
+# new question phrasings requires no change.
 detectClaudePrompt() {
     local tail="$1"
 
-    # Stage A: must see a known permission context pattern (Claude Code or Codex)
-    # "Allow.*MCP" covers both Claude ("Allow MCP server ...") and Codex
-    # ("Allow the <name> MCP server to run tool ...") MCP permission prompts.
-    if ! echo "$tail" | grep -qE 'Do you want to proceed|I accept|Permission rule|Allow.*MCP|Do you trust|Would you like to run'; then
+    # Stage A: structural gate — cursor + 2+ numbered options.
+    if ! echo "$tail" | grep -qE '^[[:space:]]*[❯›][[:space:]]*[0-9]+\.'; then
+        return 1
+    fi
+    local numOpts
+    numOpts=$(echo "$tail" | grep -cE '^[[:space:]]*[❯›]?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]')
+    if [ "$numOpts" -lt 2 ]; then
         return 1
     fi
 
-    # Stage B: find the best affirmative option
-    # Prefer "don't ask again" (teaches the tool to remember) over plain "Yes"
-    local dontAskOption
-    dontAskOption=$(echo "$tail" | grep -oE '^\s*[❯›]?\s*[0-9]+\.\s*Yes.*(don.t ask again|and don)' | head -1 | grep -oE '[0-9]+')
-    if [ -n "$dontAskOption" ]; then
-        echo "$dontAskOption"
+    # Stage B: pick the best affirmative option, preferring the most
+    # persistent form of approval available. Three priority tiers:
+    #
+    #   Tier 1 — PERMANENT remember. Matches any option whose line
+    #            contains both an affirmative word and a "never ask
+    #            again" marker:
+    #              * "Yes, and don't ask again ..."
+    #              * "Yes, and don't ..."
+    #              * "Always allow" (Codex)
+    #              * "Permanently …", "Forever …"
+    #
+    #   Tier 2 — SESSION remember. An affirmative option that scopes
+    #            itself to the current session:
+    #              * "Yes, and allow ... for this session"
+    #              * "Allow for this session"
+    #
+    #   Tier 3 — PLAIN affirmative. Just "Yes" / "Allow" / etc.
+    #
+    # We walk tiers top-down and stop at the first hit, so for the
+    # Claude settings prompt ("1. Yes" / "2. Yes, and allow ... for this
+    # session" / "3. No") we correctly pick #2 rather than #1.
+    local affirmRe='(Yes|Allow|Accept|Approve|Proceed|Confirm|Continue)'
+    local optLineRe='^[[:space:]]*[❯›]?[[:space:]]*[0-9]+\.[[:space:]]+'
+    local permanentRe='(don.t ask again|and don|always|permanently|forever)'
+    local sessionRe='(for this session|this session|for this)'
+
+    local line
+    # Tier 1 — permanent remember
+    line=$(echo "$tail" \
+        | grep -E "$optLineRe" \
+        | grep -iE "$permanentRe" \
+        | grep -iE "$affirmRe" \
+        | head -1)
+    if [ -n "$line" ] && [[ "$line" =~ [0-9]+ ]]; then
+        echo "${BASH_REMATCH[0]}"
         return 0
     fi
 
-    local option
-    option=$(echo "$tail" | grep -oE '^\s*[❯›]?\s*[0-9]+\.\s*(Yes|Allow|Accept)' | head -1 | grep -oE '[0-9]+')
-    if [ -n "$option" ]; then
-        echo "$option"
+    # Tier 2 — session scope
+    line=$(echo "$tail" \
+        | grep -E "$optLineRe" \
+        | grep -iE "$sessionRe" \
+        | grep -iE "$affirmRe" \
+        | head -1)
+    if [ -n "$line" ] && [[ "$line" =~ [0-9]+ ]]; then
+        echo "${BASH_REMATCH[0]}"
+        return 0
+    fi
+
+    # Tier 3 — plain affirmative
+    line=$(echo "$tail" \
+        | grep -oE "${optLineRe}${affirmRe}" \
+        | head -1)
+    if [ -n "$line" ] && [[ "$line" =~ [0-9]+ ]]; then
+        echo "${BASH_REMATCH[0]}"
         return 0
     fi
     return 1
@@ -255,13 +385,12 @@ detectClaudePrompt() {
 mainLoop() {
     local lastFingerprint=""
 
-    local delayInfo=""
-    [ "$fApproveDelay" != "0" ] && delayInfo=" | delay ${fApproveDelay}s"
-
     echo ""
     echo -e "${MAGENTA}━━━ ja (AUTO-APPROVE) ━━━${RESET}"
+    [ -n "$fAiName" ] && echo -e "${GREY}AI:${RESET}        ${CYAN}$fAiName${RESET}"
     echo -e "${GREY}Target:${RESET}    ${BLUE}$fTmuxTarget${RESET}"
-    echo -e "${GREY}Interval:${RESET}  ${fPollInterval}s${delayInfo}"
+    echo -e "${GREY}Polling:${RESET}   ${fPollInterval}s"
+    [ "$fApproveDelay" != "0" ] && echo -e "${GREY}Delay:${RESET}     ${fApproveDelay}s"
     echo -e "${GREY}Blacklist:${RESET} rm -rf"
     echo -e "${GREY}Stop:${RESET}      Ctrl+C"
     echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
@@ -301,17 +430,49 @@ mainLoop() {
             # option number as a hotkey in the permission prompt. Sending
             # the number selects + submits in one shot, which avoids any
             # dependence on detecting the currently highlighted row.
-            tmux send-keys -t "$fTmuxTarget" "$claudeOption"
-            approvedCount=$((approvedCount + 1))
-            echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $claudeOption) [#$approvedCount]"
-            sleep 1
-            # Must compute the same way as the loop-start fingerprint:
-            # capture -> variable (strips trailing blanks) -> echo | tail | hash.
-            # A direct pipeline would leave trailing blank lines in and produce
-            # a different hash, breaking dedup and causing repeated Enters.
-            local _post
-            _post=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null)
-            lastFingerprint=$(echo "$_post" | tail -20 | _hash)
+            #
+            # A single send-keys can be lost (pane mid-render, app not yet
+            # accepting input, tmux race). Poll waitForScreenChange after
+            # each send: react as soon as the pane updates, but wait a full
+            # 2s before declaring the key lost. Only then retry, because
+            # double-pressing a number key in Claude Code can silently jump
+            # to a different option.
+            local _preSendFp="$fingerprint"
+            local _maxRetries=3
+            local _attempt=0
+            local _postFp="$_preSendFp"
+            while true; do
+                tmux send-keys -t "$fTmuxTarget" "$claudeOption"
+                _postFp=$(waitForScreenChange "$_preSendFp" 2000)
+                [ "$_postFp" != "$_preSendFp" ] && break
+
+                # Timeout: before re-sending, confirm the prompt is
+                # still on-screen. If detectClaudePrompt returns empty,
+                # the keystroke took effect and we only missed the hash
+                # change (stable header, tiny diff); treat as success.
+                # Only retry when the prompt truly is still visible —
+                # this is what prevents a second digit key from landing
+                # in a different state and approving the wrong option.
+                local _verifyContent _verifyTail
+                _verifyContent=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null)
+                _verifyTail=$(echo "$_verifyContent" | tail -20)
+                if [ -z "$(detectClaudePrompt "$_verifyTail")" ]; then
+                    _postFp=$(echo "$_verifyTail" | _hash)
+                    break
+                fi
+
+                _attempt=$((_attempt + 1))
+                [ "$_attempt" -ge "$_maxRetries" ] && break
+            done
+            if [ "$_postFp" = "$_preSendFp" ]; then
+                echo -e "${GREY}[$(timestamp)]${RESET} ${RED}⚠ Keystroke dropped (option $claudeOption) after $_maxRetries attempts${RESET}"
+            else
+                approvedCount=$((approvedCount + 1))
+                local _retryNote=""
+                [ "$_attempt" -gt 0 ] && _retryNote=" (retry $_attempt)"
+                echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $claudeOption)${_retryNote} [#$approvedCount]"
+            fi
+            lastFingerprint="$_postFp"
             continue
         fi
 
@@ -358,6 +519,7 @@ if [ -z "$fTmuxTarget" ]; then
     autoDetectTarget
 else
     validateTarget "$fTmuxTarget"
+    fAiName=$(detectAiForTarget "$fTmuxTarget")
 fi
 
 # Prevent two ja instances from targeting the same pane
