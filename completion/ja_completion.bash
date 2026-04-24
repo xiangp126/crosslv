@@ -89,7 +89,7 @@ _ja_complete() {
 
     case "${prev}" in
         -w|--wait)
-            COMPREPLY=( $(compgen -W "1 2 3 5 8 10" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "0 1 2 3 5 8 10" -- "${cur}") )
             return 0
             ;;
     esac

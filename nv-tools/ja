@@ -23,11 +23,11 @@ BLUE='\033[34m'
 RESET='\033[0m'
 
 # Options
-fTmuxTarget=
-fListOnly=
-fApproveDelay=0
-fPollInterval=0.3
-approvedCount=0
+fTmuxTarget=      # tmux target pane in session[:window[.pane]] format
+fListOnly=        # list detected AI panes and exit
+fApproveDelay=1   # seconds to wait before approving
+fPollInterval=0.3 # seconds to poll for new prompts
+approvedCount=0   # number of prompts approved
 
 usage() {
     cat << _EOF
@@ -206,10 +206,9 @@ else
     _hash() { md5 -r | cut -c1-12; }
 fi
 
-# Wait or prompt before approving. Returns 1 if user aborts in interactive mode.
+# Wait (silently) before approving so Ctrl+C still has a window to abort.
 preApproveGate() {
     if [ "$fApproveDelay" != "0" ]; then
-        echo -e "${GREY}[$(timestamp)]${RESET} ${LIGHTYELLOW}⏳ Waiting ${fApproveDelay}s... (Ctrl+C to abort)${RESET}"
         sleep "$fApproveDelay"
     fi
 }
@@ -226,7 +225,9 @@ detectClaudePrompt() {
     local tail="$1"
 
     # Stage A: must see a known permission context pattern (Claude Code or Codex)
-    if ! echo "$tail" | grep -qE 'Do you want to proceed|I accept|Permission rule|Allow MCP|Do you trust|Would you like to run'; then
+    # "Allow.*MCP" covers both Claude ("Allow MCP server ...") and Codex
+    # ("Allow the <name> MCP server to run tool ...") MCP permission prompts.
+    if ! echo "$tail" | grep -qE 'Do you want to proceed|I accept|Permission rule|Allow.*MCP|Do you trust|Would you like to run'; then
         return 1
     fi
 
@@ -296,26 +297,11 @@ mainLoop() {
                 continue
             fi
             preApproveGate
-            # Recent Claude Code versions ignore number-key shortcuts in the
-            # permission prompt; only Up/Down + Enter navigation is accepted.
-            # Parse the actual ❯ position from the pane instead of assuming
-            # option 1 is highlighted, so this works even if a stray keystroke
-            # or version quirk moved the cursor.
-            local currentOption
-            currentOption=$(echo "$tail" | grep -oE '^\s*[❯›]\s*[0-9]+\.' | head -1 | grep -oE '[0-9]+')
-            [ -z "$currentOption" ] && currentOption=1
-            local delta=$((claudeOption - currentOption))
-            local _i _navKey
-            if [ "$delta" -gt 0 ]; then
-                _navKey="Down"
-            else
-                _navKey="Up"
-                delta=$((-delta))
-            fi
-            for ((_i = 0; _i < delta; _i++)); do
-                tmux send-keys -t "$fTmuxTarget" "$_navKey"
-            done
-            tmux send-keys -t "$fTmuxTarget" Enter
+            # Both Claude Code and Codex CLI (macOS + Linux) accept the
+            # option number as a hotkey in the permission prompt. Sending
+            # the number selects + submits in one shot, which avoids any
+            # dependence on detecting the currently highlighted row.
+            tmux send-keys -t "$fTmuxTarget" "$claudeOption"
             approvedCount=$((approvedCount + 1))
             echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $claudeOption) [#$approvedCount]"
             sleep 1
