@@ -1,5 +1,6 @@
-model = "gpt-5.4"
+model = "gpt-5.5"
 service_tier = "fast"
+model_reasoning_effort = "high"
 [projects."/auto/fwgwork1/pexiang/golan_fw"]
 trust_level = "trusted"
 
@@ -17,6 +18,22 @@ trust_level = "trusted"
 
 [projects."/auto/fwgwork1/pexiang/bugZilla/bug_4950555_degardation_on_argaman/new_fix"]
 trust_level = "trusted"
+
+[mcp_servers.nvidia-redmine]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/redmine/mcp"
+
+[mcp_servers.nvidia-gerrit]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/gerrit/mcp"
+
+[mcp_servers.nvidia-nvbugs]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
+
+[mcp_servers.nvidia-jenkins]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
 
 [notice.model_migrations]
 "gpt-5.3-codex" = "gpt-5.4"

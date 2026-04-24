@@ -23,7 +23,7 @@ fTKClaudeDesktopConfig=$fTKClaudeDir/claude_desktop_config.json
 fTKClaudeMcpJson=$fTKClaudeDir/.mcp.json
 fTKCodexDir=$fMainDir/assets/codex
 fTKCodexConfig=$fTKCodexDir/config.toml
-fTKCodexRules=$fTKCodexDir/rules/default.rules
+
 fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/nv-tools
 fDownloads=$HOME/Downloads
@@ -226,7 +226,7 @@ Codex Options:
     --codex                         Install or upgrade Codex (CLI)
     --codex-remove                  Remove Codex
     --codex-backup                  Back up Codex CLI settings
-                                    (config.toml, rules/default.rules)
+                                    (config.toml)
     --codex-restore                 Restore Codex CLI settings
 
 Examples:
@@ -2109,9 +2109,7 @@ backupCodexSettings() {
         return 0
     fi
 
-    syncFile "$srcDir/config.toml"         "$fTKCodexDir"
-    _trackSyncResult $? processedCount failedCount
-    syncFile "$srcDir/rules/default.rules" "$fTKCodexDir/rules"
+    syncFile "$srcDir/config.toml" "$fTKCodexDir"
     _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then
@@ -2128,12 +2126,9 @@ restoreCodexSettings() {
     local dstDir=$(getCodexDir)
     local processedCount=0 failedCount=0
 
-    [ ! -d "$dstDir" ]        && mkdir -p "$dstDir"
-    [ ! -d "$dstDir/rules" ]  && mkdir -p "$dstDir/rules"
+    [ ! -d "$dstDir" ] && mkdir -p "$dstDir"
 
     syncFile "$fTKCodexConfig" "$dstDir"
-    _trackSyncResult $? processedCount failedCount
-    syncFile "$fTKCodexRules"  "$dstDir/rules"
     _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then

@@ -6,6 +6,9 @@
   "permissions": {
     "allow": [
       "Bash",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(rsync:*)",
       "Read",
       "Edit",
       "Write",
@@ -15,9 +18,10 @@
       "WebSearch"
     ],
     "deny": [
-      "Bash(rm -rf /*)",
-      "Bash(mkfs*)",
-      "Bash(dd *)"
+      "Bash(rm:*)",
+      "Bash(mkfs:*)",
+      "Bash(dd:*)",
+      "Bash(sudo:*)"
     ],
     "additionalDirectories": [
       "/auto/fwgwork1/pexiang/golan_fw",
@@ -25,26 +29,22 @@
       "/auto/fwgwork1/pexiang/golan_fw3"
     ]
   },
-  "model": "opus[1m]",
-  "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true,
-    "autoAllowBashIfSandboxed": true,
-    "network": {
-      "allowAllUnixSockets": true,
-      "allowLocalBinding": true
-    },
-    "allowWrite": [
-      "$HOME/myGit",
-      "/auto/fwgwork1",
-      "/tmp"
-    ],
-    "seccomp": {
-      "bpfPath": "$HOME/.nvm/versions/node/v24.12.0/lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/unix-block.bpf",
-      "applyPath": "$HOME/.nvm/versions/node/v24.12.0/lib/node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp"
-    }
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/labhome/pexiang/myGit/crosslv/assets/claude/hooks/auto-approve.sh"
+          }
+        ]
+      }
+    ]
   },
-  "effortLevel": "high",
-  "verbose": true,
-  "mcpServers": {}
+  "sandbox": {
+    "enabled": false
+  },
+  "mcpServers": {},
+  "skipDangerousModePermissionPrompt": true
 }

@@ -1,0 +1,349 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2155,SC2168
+#
+# ja — Auto-approve confirmation prompts for Claude Code and Codex CLI
+#
+# Monitors a tmux pane and sends the affirmative option whenever a known
+# permission prompt is detected. Blacklists rm -rf (falls through to manual).
+#
+# Usage:
+#   ja                        # auto-detect the pane running claude/codex
+#   ja -t myses:0.1           # explicit tmux target (session:window.pane)
+
+SCRIPT_NAME=$(basename "$0")
+
+# Colors
+RED='\033[31m'
+GREEN='\033[32m'
+MAGENTA='\033[35m'
+CYAN='\033[36m'
+LIGHTYELLOW='\033[93m'
+GREY='\033[90m'
+BLUE='\033[34m'
+RESET='\033[0m'
+
+# Options
+fTmuxTarget=
+fListOnly=
+fApproveDelay=0
+fPollInterval=0.3
+approvedCount=0
+
+usage() {
+    cat << _EOF
+Usage: $SCRIPT_NAME [-t session[:window[.pane]]] [OPTIONS]
+
+Auto-approve confirmation prompts for Claude Code and Codex CLI running in a
+tmux pane. Monitors the pane screen and sends the affirmative option when a
+known permission prompt is detected.
+
+Options:
+    -h, --help       Show this help message
+    -t TARGET        Tmux target pane in session[:window[.pane]] format
+                     (default: auto-detect the pane running claude or codex)
+    -w, --wait SEC   Wait before approving (default: 0, approve immediately)
+    -l, --list       List detected AI panes and exit
+
+Supports:
+    Claude Code      Numbered options (1. Yes / 2. No) — sends the number
+    Codex CLI        Numbered options (1. Yes, proceed) — sends the number
+
+Blacklist:
+    Commands containing 'rm -rf' are never auto-approved.
+
+Examples:
+    $SCRIPT_NAME                    # auto-detect, approve immediately
+    $SCRIPT_NAME -t main:0.1       # target specific pane
+    $SCRIPT_NAME -w 3              # wait 3s before each approval (Ctrl+C to abort)
+
+
+Stop:
+    Press Ctrl+C or run: pkill -f '$SCRIPT_NAME'
+
+_EOF
+    exit 0
+}
+
+parseOptions() {
+    local GETOPT_BIN="getopt"
+    if command -v /opt/homebrew/opt/gnu-getopt/bin/getopt &> /dev/null; then
+        GETOPT_BIN="/opt/homebrew/opt/gnu-getopt/bin/getopt"
+    elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
+        GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
+    fi
+
+    local SHORTOPTS="ht:w:l"
+    local LONGOPTS="help,wait:,list"
+
+    local PARSED
+    if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
+        echo -e "${RED}Failed to parse arguments.${RESET}" >&2
+        echo -e "${CYAN}Tip: On macOS, install GNU getopt: ${GREY}brew install gnu-getopt${RESET}" >&2
+        exit 1
+    fi
+
+    eval set -- "$PARSED"
+
+    while true; do
+        case "$1" in
+            -h|--help)
+                usage
+                ;;
+            -t)
+                fTmuxTarget="$2"
+                shift 2
+                ;;
+            -w|--wait)
+                fApproveDelay="$2"
+                shift 2
+                ;;
+            -l|--list)
+                fListOnly=1
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                echo -e "${RED}Error: Unknown option: $1${RESET}" >&2
+                echo "Use $SCRIPT_NAME -h for help." >&2
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Validate a tmux target exists
+validateTarget() {
+    local target="$1"
+    if ! tmux has-session -t "${target%%.*}" 2>/dev/null && \
+       ! tmux has-session -t "${target%%:*}" 2>/dev/null; then
+        echo -e "${RED}Error: tmux target '$target' not found${RESET}" >&2
+        exit 1
+    fi
+}
+
+# Find panes running claude or codex.
+# Claude shows as "claude" in pane_current_command.
+# Codex shows as "node" — check child processes of the pane for "codex" in argv.
+findAiPanes() {
+    local panes=()
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local pane_pid=$(echo "$line" | cut -d'|' -f1)
+        local pane_target=$(echo "$line" | cut -d'|' -f2)
+        local cmd=$(echo "$line" | cut -d'|' -f3)
+        if [[ "$cmd" =~ ^(claude|codex)$ ]]; then
+            panes+=("$pane_pid|$pane_target|$cmd")
+        elif [[ "$cmd" == "node" ]]; then
+            if ps -o args --ppid "$pane_pid" 2>/dev/null | grep -q 'codex'; then
+                panes+=("$pane_pid|$pane_target|codex")
+            fi
+        fi
+    done < <(tmux list-panes -a -F '#{pane_pid}|#{session_name}:#{window_index}.#{pane_index}|#{pane_current_command}' 2>/dev/null)
+    printf '%s\n' "${panes[@]}"
+}
+
+# Auto-detect or prompt user to pick a target pane
+autoDetectTarget() {
+    local panes=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && panes+=("$line")
+    done < <(findAiPanes)
+
+    local count=${#panes[@]}
+
+    if [ "$count" -eq 0 ]; then
+        echo -e "${RED}Error: No pane running claude or codex found${RESET}" >&2
+        echo -e "${GREY}Start claude/codex in a tmux pane first, or use -t to specify a target.${RESET}" >&2
+        echo -e "${GREY}Note: Detection relies on pane_current_command matching 'claude' or 'codex'.${RESET}" >&2
+        echo -e "${GREY}If the tool runs inside another process (e.g. bash), use -t to specify the pane manually.${RESET}" >&2
+        exit 1
+    elif [ "$count" -eq 1 ]; then
+        local target=$(echo "${panes[0]}" | cut -d'|' -f2)
+        local cmd=$(echo "${panes[0]}" | cut -d'|' -f3)
+        echo -e "${GREEN}Auto-detected:${RESET} ${CYAN}$cmd${RESET} at ${BLUE}$target${RESET}"
+        echo -e "${GREY}Note: Only panes whose process name is 'claude' or 'codex' are detected.${RESET}"
+        echo -e "${GREY}If a session is missing, use -t to specify it manually.${RESET}"
+        fTmuxTarget="$target"
+    else
+        echo -e "${LIGHTYELLOW}Multiple AI sessions found:${RESET}"
+        local i=1
+        for pane in "${panes[@]}"; do
+            local target=$(echo "$pane" | cut -d'|' -f2)
+            local cmd=$(echo "$pane" | cut -d'|' -f3)
+            echo -e "  ${CYAN}[$i]${RESET} $cmd  ${GREY}$target${RESET}"
+            ((i++))
+        done
+        echo -e "${GREY}Note: Only panes whose process name is 'claude' or 'codex' are detected.${RESET}"
+        echo -e "${GREY}If a session is missing, use -t to specify it manually.${RESET}"
+        echo ""
+        while true; do
+            read -rp "Select target (1-$count): " choice || { echo ""; exit 0; }
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
+                local selected="${panes[$((choice - 1))]}"
+                fTmuxTarget=$(echo "$selected" | cut -d'|' -f2)
+                echo -e "${GREEN}Selected:${RESET} ${BLUE}$fTmuxTarget${RESET}"
+                break
+            fi
+            echo -e "${RED}Invalid choice. Enter a number between 1 and $count.${RESET}"
+        done
+    fi
+}
+
+timestamp() { date '+%H:%M:%S'; }
+
+# Wait or prompt before approving. Returns 1 if user aborts in interactive mode.
+preApproveGate() {
+    if [ "$fApproveDelay" != "0" ]; then
+        echo -e "${GREY}[$(timestamp)]${RESET} ${LIGHTYELLOW}⏳ Waiting ${fApproveDelay}s... (Ctrl+C to abort)${RESET}"
+        sleep "$fApproveDelay"
+    fi
+}
+
+# Check if the pane content contains a blacklisted command
+isBlacklisted() {
+    local content="$1"
+    echo "$content" | grep -q "rm -rf"
+}
+
+# Path 1: Claude Code — numbered options with context check
+# Returns the option number to send, or empty if no prompt detected
+detectClaudePrompt() {
+    local tail="$1"
+
+    # Stage A: must see a known permission context pattern (Claude Code or Codex)
+    if ! echo "$tail" | grep -qE 'Do you want to proceed|I accept|Permission rule|Allow MCP|Do you trust|Would you like to run'; then
+        return 1
+    fi
+
+    # Stage B: find the best affirmative option
+    # Prefer "don't ask again" (teaches the tool to remember) over plain "Yes"
+    local dontAskOption
+    dontAskOption=$(echo "$tail" | grep -oE '^\s*[❯›]?\s*[0-9]+\.\s*Yes.*(don.t ask again|and don)' | head -1 | grep -oE '[0-9]+')
+    if [ -n "$dontAskOption" ]; then
+        echo "$dontAskOption"
+        return 0
+    fi
+
+    local option
+    option=$(echo "$tail" | grep -oE '^\s*[❯›]?\s*[0-9]+\.\s*(Yes|Allow|Accept)' | head -1 | grep -oE '[0-9]+')
+    if [ -n "$option" ]; then
+        echo "$option"
+        return 0
+    fi
+    return 1
+}
+
+
+
+
+mainLoop() {
+    local lastFingerprint=""
+
+    local delayInfo=""
+    [ "$fApproveDelay" != "0" ] && delayInfo=" | delay ${fApproveDelay}s"
+
+    echo ""
+    echo -e "${MAGENTA}━━━ ja (AUTO-APPROVE) ━━━${RESET}"
+    echo -e "${GREY}Target:${RESET}    ${BLUE}$fTmuxTarget${RESET}"
+    echo -e "${GREY}Interval:${RESET}  ${fPollInterval}s${delayInfo}"
+    echo -e "${GREY}Blacklist:${RESET} rm -rf"
+    echo -e "${GREY}Stop:${RESET}      Ctrl+C"
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+
+    while true; do
+        local content
+        content=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null)
+        if [ $? -ne 0 ]; then
+            echo -e "${GREY}[$(timestamp)]${RESET} ${RED}Target pane gone. Exiting.${RESET}"
+            break
+        fi
+
+        local tail
+        tail=$(echo "$content" | tail -20)
+
+        # Fingerprint to avoid double-pressing
+        local fingerprint
+        fingerprint=$(echo "$tail" | md5sum | cut -c1-12)
+        if [ "$fingerprint" = "$lastFingerprint" ]; then
+            sleep "$fPollInterval"
+            continue
+        fi
+
+        # Path 1: Claude Code
+        local claudeOption
+        claudeOption=$(detectClaudePrompt "$tail")
+        if [ -n "$claudeOption" ]; then
+            if isBlacklisted "$content"; then
+                echo -e "${GREY}[$(timestamp)]${RESET} ${RED}⚠ BLACKLISTED (rm -rf) — skipping${RESET}"
+                lastFingerprint="$fingerprint"
+                sleep "$fPollInterval"
+                continue
+            fi
+            preApproveGate
+            tmux send-keys -t "$fTmuxTarget" "$claudeOption" Enter
+            approvedCount=$((approvedCount + 1))
+            echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $claudeOption) [#$approvedCount]"
+            sleep 1
+            lastFingerprint=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null | tail -20 | md5sum | cut -c1-12)
+            continue
+        fi
+
+        sleep "$fPollInterval"
+    done
+}
+
+# --- Main ---
+
+parseOptions "$@"
+
+if ! command -v tmux &>/dev/null; then
+    echo -e "${RED}Error: tmux is required but not found${RESET}" >&2
+    exit 1
+fi
+
+if [ -n "$fListOnly" ]; then
+    _panes=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && _panes+=("$line")
+    done < <(findAiPanes)
+    if [ ${#_panes[@]} -eq 0 ]; then
+        echo -e "${RED}No pane running claude or codex found${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}AI sessions found:${RESET}"
+        _i=1
+        for _p in "${_panes[@]}"; do
+            echo -e "  ${CYAN}[$_i]${RESET} $(echo "$_p" | cut -d'|' -f3)  ${GREY}$(echo "$_p" | cut -d'|' -f2)${RESET}"
+            _i=$((_i + 1))
+        done
+    fi
+    echo -e "${GREY}Note: Only panes whose process name is 'claude' or 'codex' are detected.${RESET}"
+    exit 0
+fi
+
+if [ -z "$fTmuxTarget" ]; then
+    autoDetectTarget
+else
+    validateTarget "$fTmuxTarget"
+fi
+
+# Prevent two ja instances from targeting the same pane
+LOCKFILE="/tmp/ja-${fTmuxTarget//[:.]/-}.lock"
+if [ -f "$LOCKFILE" ]; then
+    local_pid=$(cat "$LOCKFILE" 2>/dev/null)
+    if kill -0 "$local_pid" 2>/dev/null; then
+        _monitor_tty=$(ps -o tty= -p "$local_pid" 2>/dev/null | sed 's|^|/dev/|')
+        _monitor_pane=$(tmux list-panes -a -F '#{pane_tty} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null \
+            | awk -v tty="$_monitor_tty" '$1==tty{print $2; exit}')
+        echo -e "${GREY}ja is already monitoring ${BLUE}$fTmuxTarget${GREY} (pid ${CYAN}$local_pid${GREY}${_monitor_pane:+, in pane ${CYAN}$_monitor_pane${GREY}}).${RESET}"
+        echo -e "${GREY}Kill it first:${RESET} kill $local_pid"
+        exit 1
+    fi
+fi
+echo $$ > "$LOCKFILE"
+trap 'rm -f "$LOCKFILE"; echo -e "\n${GREY}[$(timestamp)]${RESET} Stopped. Approved ${GREEN}$approvedCount${RESET} prompts."; exit 0' INT TERM EXIT
+
+mainLoop

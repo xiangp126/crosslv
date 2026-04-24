@@ -4,7 +4,8 @@
       "mcp__nvidia-jenkins__get_failed_build_logs",
       "mcp__nvidia-jenkins__get_blueocean_run_stages",
       "mcp__nvidia-jenkins__analyze_failed_build",
-      "mcp__nvidia-jenkins__check_jenkins_connectivity"
+      "mcp__nvidia-jenkins__check_jenkins_connectivity",
+      "Skill(update-config)"
     ]
   }
 }
