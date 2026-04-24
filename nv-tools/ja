@@ -169,11 +169,16 @@ autoDetectTarget() {
         fTmuxTarget="$target"
     else
         echo -e "${LIGHTYELLOW}Multiple AI sessions found:${RESET}"
+        local cmd_width=0
+        for pane in "${panes[@]}"; do
+            local c=$(echo "$pane" | cut -d'|' -f3)
+            [ ${#c} -gt "$cmd_width" ] && cmd_width=${#c}
+        done
         local i=1
         for pane in "${panes[@]}"; do
             local target=$(echo "$pane" | cut -d'|' -f2)
             local cmd=$(echo "$pane" | cut -d'|' -f3)
-            echo -e "  ${CYAN}[$i]${RESET} $cmd  ${GREY}$target${RESET}"
+            printf "  ${CYAN}[%d]${RESET} %-${cmd_width}s  ${GREY}%s${RESET}\n" "$i" "$cmd" "$target"
             ((i++))
         done
         echo -e "${GREY}Note: Only panes whose process name is 'claude' or 'codex' are detected.${RESET}"
@@ -193,6 +198,13 @@ autoDetectTarget() {
 }
 
 timestamp() { date '+%H:%M:%S'; }
+
+# Portable hash: Linux has md5sum; macOS has `md5 -r` (GNU-like output).
+if command -v md5sum &>/dev/null; then
+    _hash() { md5sum | cut -c1-12; }
+else
+    _hash() { md5 -r | cut -c1-12; }
+fi
 
 # Wait or prompt before approving. Returns 1 if user aborts in interactive mode.
 preApproveGate() {
@@ -267,7 +279,7 @@ mainLoop() {
 
         # Fingerprint to avoid double-pressing
         local fingerprint
-        fingerprint=$(echo "$tail" | md5sum | cut -c1-12)
+        fingerprint=$(echo "$tail" | _hash)
         if [ "$fingerprint" = "$lastFingerprint" ]; then
             sleep "$fPollInterval"
             continue
@@ -284,11 +296,36 @@ mainLoop() {
                 continue
             fi
             preApproveGate
-            tmux send-keys -t "$fTmuxTarget" "$claudeOption" Enter
+            # Recent Claude Code versions ignore number-key shortcuts in the
+            # permission prompt; only Up/Down + Enter navigation is accepted.
+            # Parse the actual ❯ position from the pane instead of assuming
+            # option 1 is highlighted, so this works even if a stray keystroke
+            # or version quirk moved the cursor.
+            local currentOption
+            currentOption=$(echo "$tail" | grep -oE '^\s*[❯›]\s*[0-9]+\.' | head -1 | grep -oE '[0-9]+')
+            [ -z "$currentOption" ] && currentOption=1
+            local delta=$((claudeOption - currentOption))
+            local _i _navKey
+            if [ "$delta" -gt 0 ]; then
+                _navKey="Down"
+            else
+                _navKey="Up"
+                delta=$((-delta))
+            fi
+            for ((_i = 0; _i < delta; _i++)); do
+                tmux send-keys -t "$fTmuxTarget" "$_navKey"
+            done
+            tmux send-keys -t "$fTmuxTarget" Enter
             approvedCount=$((approvedCount + 1))
             echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $claudeOption) [#$approvedCount]"
             sleep 1
-            lastFingerprint=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null | tail -20 | md5sum | cut -c1-12)
+            # Must compute the same way as the loop-start fingerprint:
+            # capture -> variable (strips trailing blanks) -> echo | tail | hash.
+            # A direct pipeline would leave trailing blank lines in and produce
+            # a different hash, breaking dedup and causing repeated Enters.
+            local _post
+            _post=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null)
+            lastFingerprint=$(echo "$_post" | tail -20 | _hash)
             continue
         fi
 
@@ -314,9 +351,16 @@ if [ -n "$fListOnly" ]; then
         echo -e "${RED}No pane running claude or codex found${RESET}"
     else
         echo -e "${LIGHTYELLOW}AI sessions found:${RESET}"
+        _cmd_width=0
+        for _p in "${_panes[@]}"; do
+            _c=$(echo "$_p" | cut -d'|' -f3)
+            [ ${#_c} -gt "$_cmd_width" ] && _cmd_width=${#_c}
+        done
         _i=1
         for _p in "${_panes[@]}"; do
-            echo -e "  ${CYAN}[$_i]${RESET} $(echo "$_p" | cut -d'|' -f3)  ${GREY}$(echo "$_p" | cut -d'|' -f2)${RESET}"
+            _cmd=$(echo "$_p" | cut -d'|' -f3)
+            _target=$(echo "$_p" | cut -d'|' -f2)
+            printf "  ${CYAN}[%d]${RESET} %-${_cmd_width}s  ${GREY}%s${RESET}\n" "$_i" "$_cmd" "$_target"
             _i=$((_i + 1))
         done
     fi
@@ -344,6 +388,15 @@ if [ -f "$LOCKFILE" ]; then
     fi
 fi
 echo $$ > "$LOCKFILE"
-trap 'rm -f "$LOCKFILE"; echo -e "\n${GREY}[$(timestamp)]${RESET} Stopped. Approved ${GREEN}$approvedCount${RESET} prompts."; exit 0' INT TERM EXIT
+# Clear the trap before exiting to avoid re-entry: INT calls _cleanup which
+# exits, but exiting also fires EXIT — if the trap is still armed, the
+# "Stopped" message prints twice.
+_cleanup() {
+    rm -f "$LOCKFILE"
+    echo -e "\n${GREY}[$(timestamp)]${RESET} Stopped. Approved ${GREEN}$approvedCount${RESET} prompts."
+    trap - INT TERM EXIT
+    exit 0
+}
+trap '_cleanup' INT TERM EXIT
 
 mainLoop
