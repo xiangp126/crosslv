@@ -272,7 +272,7 @@ fi
 
 # Lazy wrappers for AI coding tools: ensure NVM-managed Node.js is on
 # PATH before first invocation, then replace with the real command.
-_ai_nvm_tools=(codex)
+_ai_nvm_tools=(codex claude)
 if [[ $_UNAME_S == 'Linux' ]]; then
     for _ai_cmd in "${_ai_nvm_tools[@]}"; do
         if ! declare -f "$_ai_cmd" &>/dev/null; then

@@ -15,6 +15,15 @@ fTKCursorDir=$fMainDir/assets/cursor
 fTKCursorLocalSettings=$fTKCursorDir/local.settings.json
 fTKCursorKeybindings=$fTKCursorDir/keybindings.json
 fTKCursorRemoteSettings=$fTKCursorDir/remote.settings.json
+fTKClaudeDir=$fMainDir/assets/claude
+fTKClaudeCodeSettings=$fTKClaudeDir/settings.json
+fTKClaudeCodeLocalSettings=$fTKClaudeDir/settings.local.json
+fTKClaudeCodeMd=$fTKClaudeDir/CLAUDE.md
+fTKClaudeDesktopConfig=$fTKClaudeDir/claude_desktop_config.json
+fTKClaudeMcpJson=$fTKClaudeDir/.mcp.json
+fTKCodexDir=$fMainDir/assets/codex
+fTKCodexConfig=$fTKCodexDir/config.toml
+fTKCodexRules=$fTKCodexDir/rules/default.rules
 fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/nv-tools
 fDownloads=$HOME/Downloads
@@ -30,6 +39,10 @@ fArch=
 fNoInstallTools=
 fCheckTlsConn=
 fCursorAction=
+fClaudeAction=
+fClaudeDesktopAction=
+fClaudeLinkMcpJson=
+fCodexAction=
 # VNC server
 fVncAbbrePort=9
 fVncFullPort="590${fVncAbbrePort}"
@@ -176,9 +189,9 @@ RTSP Options:
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
 
 Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
-    --block   <c700_01|c700_02|all>      Enable block rule(s) — camera(s) offline
-    --unblock <c700_01|c700_02|all>      Disable block rule(s) — camera(s) online
-    --status  <c700_01|c700_02|all>      Show current rule state
+    --acl-block   <c700_01|c700_02|all>  Enable block rule(s) — camera(s) offline
+    --acl-unblock <c700_01|c700_02|all>  Disable block rule(s) — camera(s) online
+    --acl-status  <c700_01|c700_02|all>  Show current rule state
 
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
@@ -198,11 +211,23 @@ WireGuard Options (server-side only — run on the WireGuard server host):
     --wg-client <name>              Set client config name (default: client1)
     --wg-remove                     Remove WireGuard from system
 
-AI Tools Options:
-    --claude                        Install or update Claude Code (CLI)
+Claude Options:
+    --claude                        Install or upgrade Claude Code (CLI)
     --claude-remove                 Remove Claude Code
-    --codex                         Install or update Codex
+    --claude-backup                 Back up Claude Code CLI settings
+                                    (settings.json, settings.local.json, CLAUDE.md)
+    --claude-restore                Restore Claude Code CLI settings
+    --claude-link-mcp               Symlink tracked .mcp.json into current directory
+    --claude-desktop-backup         Back up macOS Claude Desktop config
+                                    (claude_desktop_config.json)
+    --claude-desktop-restore        Restore macOS Claude Desktop config
+
+Codex Options:
+    --codex                         Install or upgrade Codex (CLI)
     --codex-remove                  Remove Codex
+    --codex-backup                  Back up Codex CLI settings
+                                    (config.toml, rules/default.rules)
+    --codex-restore                 Restore Codex CLI settings
 
 Examples:
     $SCRIPT_NAME -h
@@ -227,9 +252,11 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,\
           rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,claude-remove,\
-          codex,codex-remove,cursor-backup,cursor-restore,singbox,singbox-xray,singbox-wg,\
+          claude-backup,claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
+          codex,codex-remove,codex-backup,codex-restore,cursor-backup,cursor-restore,\
+          singbox,singbox-xray,singbox-wg,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
-          block:,unblock:,status:"
+          acl-block:,acl-unblock:,acl-status:"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -269,106 +296,43 @@ checkNodeEnv() {
 }
 
 installClaude() {
-    local claudeBin
-    if command -v claude &>/dev/null; then
-        local currentVer newVer
-        currentVer=$(claude -v 2>/dev/null)
-        echo -e "${COLOR}Claude Code${RESET} ${GREY}v${currentVer}${RESET}"
-        echo -e "  ${LIGHTYELLOW}Checking for updates...${RESET}"
-        # On macOS use Homebrew; on Linux re-run the install script which
-        # handles upgrades in place (`claude update` bus-errors on some systems).
-        if [[ $(uname -s) == 'Darwin' ]]; then
-            brew upgrade --cask claude-code || {
-                echo -e "  ${RED}Error: brew upgrade failed.${RESET}" >&2
-                return 1
-            }
-        else
-            curl -fsSL https://claude.ai/install.sh | sh || {
-                echo -e "  ${RED}Error: claude update failed.${RESET}" >&2
-                return 1
-            }
-        fi
-        newVer=$(claude -v 2>/dev/null)
-        claudeBin=$(command -v claude); claudeBin=${claudeBin/#$HOME/\~}
-        if [[ "$newVer" == "$currentVer" ]]; then
-            echo -e "  ${GREY}Already up to date${RESET}"
-        else
-            echo -e "  ${GREEN}✔ Updated ${GREY}v${currentVer}${RESET} → ${GREEN}v${newVer}${RESET}"
-        fi
-        echo -e "├─ ${GREY}Binary${RESET}   ${CYAN}${claudeBin}${RESET}"
-        echo -e "└─ ${GREY}Config${RESET}   ${CYAN}~/.claude${RESET}"
-        return 0
-    fi
+    local bin ver
 
     echo -e "${BOLD}${COLOR}Installing Claude Code${RESET}"
 
     if [[ $(uname -s) == 'Darwin' ]]; then
         echo -e "  ${LIGHTYELLOW}Installing ${BLUE}claude-code${RESET}${GREY}...${RESET}"
-        brew install --cask claude-code || {
+        brew install --cask claude-code || brew upgrade --cask claude-code || {
             echo -e "  ${RED}Error: brew install failed.${RESET}" >&2
             return 1
         }
     else
-        if npm list -g @anthropic-ai/claude-code &>/dev/null; then
-            echo -e "  ${LIGHTYELLOW}Removing npm-installed Claude Code...${RESET}"
-            npm uninstall -g @anthropic-ai/claude-code || {
-                echo -e "  ${RED}Error: npm uninstall failed.${RESET}" >&2
-                return 1
-            }
-        fi
-        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}claude${RESET}${GREY}...${RESET}"
-        if ! curl -fsSL https://claude.ai/install.sh | sh; then
-            echo -e "  ${RED}Error: Failed to install Claude Code.${RESET}" >&2
+        checkNodeEnv || return 1
+        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@anthropic-ai/claude-code${RESET}${GREY}...${RESET}"
+        npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime || {
+            echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
             return 1
-        fi
+        }
+        hash -r
     fi
 
-    claudeBin=$(command -v claude 2>/dev/null || echo 'not found')
-    claudeBin=${claudeBin/#$HOME/\~}
-    local claudeVer
-    claudeVer=$(claude -v 2>/dev/null)
-    echo -e "  ${GREEN}✔${RESET} ${GREEN}Installed${RESET}"
-    echo -e "├─ ${GREY}Version${RESET}  ${CYAN}${claudeVer:-unknown}${RESET}"
-    echo -e "├─ ${GREY}Binary${RESET}   ${CYAN}${claudeBin}${RESET}"
-    echo -e "└─ ${GREY}Config${RESET}   ${CYAN}~/.claude${RESET}"
+    ver=$(claude -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    bin=$(command -v claude 2>/dev/null || echo 'not found')
+    bin=${bin/#$HOME/\~}
+
+    echo -e "${GREEN}✔ Installed${RESET} ${GREY}v${ver:-unknown}${RESET}"
+    echo -e "${GREEN}✔${RESET} ${GREY}Binary${RESET}: ${CYAN}${bin}${RESET}"
+    echo -e "${GREEN}✔${RESET} ${GREY}Config${RESET}: ${CYAN}~/.claude${RESET}"
 }
 
 installCodex() {
-    local codexBin
-    if command -v codex &>/dev/null; then
-        local currentVer newVer
-        currentVer=$(codex --version 2>/dev/null)
-        echo -e "${COLOR}Codex${RESET} ${GREY}v${currentVer}${RESET}"
-        echo -e "  ${LIGHTYELLOW}Checking for updates...${RESET}"
-        if [[ $(uname -s) == 'Darwin' ]]; then
-            brew upgrade --cask codex || {
-                echo -e "  ${RED}Error: brew upgrade failed.${RESET}" >&2
-                return 1
-            }
-        else
-            checkNodeEnv || return 1
-            npm update -g @openai/codex || {
-                echo -e "  ${RED}Error: npm update failed.${RESET}" >&2
-                return 1
-            }
-        fi
-        newVer=$(codex --version 2>/dev/null)
-        codexBin=$(command -v codex); codexBin=${codexBin/#$HOME/\~}
-        if [[ "$newVer" == "$currentVer" ]]; then
-            echo -e "  ${GREY}Already up to date${RESET}"
-        else
-            echo -e "  ${GREEN}✔ Updated ${GREY}v${currentVer}${RESET} → ${GREEN}v${newVer#v}${RESET}"
-        fi
-        echo -e "├─ ${GREY}Binary${RESET}   ${CYAN}${codexBin}${RESET}"
-        echo -e "└─ ${GREY}Config${RESET}   ${CYAN}~/.codex${RESET}"
-        return 0
-    fi
+    local bin ver
 
     echo -e "${BOLD}${COLOR}Installing Codex${RESET}"
 
     if [[ $(uname -s) == 'Darwin' ]]; then
         echo -e "  ${LIGHTYELLOW}Installing ${BLUE}codex${RESET}${GREY}...${RESET}"
-        brew install --cask codex || {
+        brew install --cask codex || brew upgrade --cask codex || {
             echo -e "  ${RED}Error: brew install failed.${RESET}" >&2
             return 1
         }
@@ -379,16 +343,16 @@ installCodex() {
             echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
             return 1
         }
+        hash -r
     fi
 
-    codexBin=$(command -v codex 2>/dev/null || echo 'not found')
-    codexBin=${codexBin/#$HOME/\~}
-    local codexVer
-    codexVer=$(codex --version 2>/dev/null)
-    echo -e "  ${GREEN}✔${RESET} ${GREEN}Installed${RESET}"
-    echo -e "├─ ${GREY}Version${RESET}  ${CYAN}${codexVer:-unknown}${RESET}"
-    echo -e "├─ ${GREY}Binary${RESET}   ${CYAN}${codexBin}${RESET}"
-    echo -e "└─ ${GREY}Config${RESET}   ${CYAN}~/.codex${RESET}"
+    ver=$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    bin=$(command -v codex 2>/dev/null || echo 'not found')
+    bin=${bin/#$HOME/\~}
+
+    echo -e "${GREEN}✔ Installed${RESET} ${GREY}v${ver:-unknown}${RESET}"
+    echo -e "${GREEN}✔${RESET} ${GREY}Binary${RESET}: ${CYAN}${bin}${RESET}"
+    echo -e "${GREEN}✔${RESET} ${GREY}Config${RESET}: ${CYAN}~/.codex${RESET}"
 }
 
 removeClaude() {
@@ -402,24 +366,20 @@ removeClaude() {
             return 0
         fi
     else
-        local removed=false
-        # Source NVM so npm is available
         if [ -s "$HOME/.nvm/nvm.sh" ]; then
             export NVM_DIR="$HOME/.nvm"
             # shellcheck source=/dev/null
             source "$NVM_DIR/nvm.sh"
         fi
-        if command -v npm &>/dev/null && npm list -g @anthropic-ai/claude-code &>/dev/null; then
-            echo -e "  ${LIGHTYELLOW}Removing npm-installed Claude Code...${RESET}"
-            npm uninstall -g @anthropic-ai/claude-code
-            removed=true
-        fi
-        if [ -L "$HOME/.local/bin/claude" ] || [ -d "$HOME/.local/share/claude" ]; then
-            echo -e "  ${LIGHTYELLOW}Removing standalone Claude Code...${RESET}"
-            rm -f "$HOME/.local/bin/claude"
-            rm -rf "$HOME/.local/share/claude"
-            removed=true
-        fi
+        local removed=false
+        local pkg
+        for pkg in @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime; do
+            if command -v npm &>/dev/null && npm list -g "$pkg" &>/dev/null; then
+                echo -e "  ${LIGHTYELLOW}Removing ${BLUE}${pkg}${RESET}${GREY}...${RESET}"
+                npm uninstall -g "$pkg"
+                removed=true
+            fi
+        done
         if ! $removed; then
             echo -e "  ${GREY}Claude Code is not installed.${RESET}"
             return 0
@@ -446,6 +406,7 @@ removeCodex() {
             source "$NVM_DIR/nvm.sh"
         fi
         if command -v npm &>/dev/null && npm list -g @openai/codex &>/dev/null; then
+            echo -e "  ${LIGHTYELLOW}Removing ${BLUE}@openai/codex${RESET}${GREY}...${RESET}"
             npm uninstall -g @openai/codex
         else
             echo -e "  ${GREY}Codex is not installed.${RESET}"
@@ -719,6 +680,26 @@ while true; do
             shift
             exit 0
             ;;
+        --claude-backup)
+            fClaudeAction="backup"
+            shift
+            ;;
+        --claude-restore)
+            fClaudeAction="restore"
+            shift
+            ;;
+        --claude-desktop-backup)
+            fClaudeDesktopAction="backup"
+            shift
+            ;;
+        --claude-desktop-restore)
+            fClaudeDesktopAction="restore"
+            shift
+            ;;
+        --claude-link-mcp)
+            fClaudeLinkMcpJson=1
+            shift
+            ;;
         --codex)
             installCodex
             shift
@@ -728,6 +709,14 @@ while true; do
             removeCodex
             shift
             exit 0
+            ;;
+        --codex-backup)
+            fCodexAction="backup"
+            shift
+            ;;
+        --codex-restore)
+            fCodexAction="restore"
+            shift
             ;;
         --xray)
             fXrayUpdate=true
@@ -796,17 +785,17 @@ while true; do
             shift
             ;;
 
-        --block)
+        --acl-block)
             fGwAclAction="block"
             fGwAclTarget="$2"
             shift 2
             ;;
-        --unblock)
+        --acl-unblock)
             fGwAclAction="unblock"
             fGwAclTarget="$2"
             shift 2
             ;;
-        --status)
+        --acl-status)
             fGwAclAction="status"
             fGwAclTarget="$2"
             shift 2
@@ -1554,37 +1543,37 @@ linkFile() {
     fi
 }
 
-# copyFile: Copies a file into a destination directory.
+# syncFile: Syncs a file into a destination directory using rsync.
 #
-# It creates the destination directory if needed and uses rsync to decide
-# whether the destination needs updating, skipping files that are identical.
+# Creates the destination directory if needed. Skips files that are already
+# identical at the destination.
 #
 # Usage:
-#   copyFile <source_file> <destination_dir> [new_file_name]
+#   syncFile <source_file> <destination_dir> [new_file_name]
 #
 # Returns:
 #   0 on successful copy.
 #   1 if the destination is already up to date.
 #   2 if the source file does not exist.
 #   3 if the copy fails.
-copyFile() {
+syncFile() {
     local src="$1"
-    local copyPath="$2"
-    local newCopyName="$3"
+    local syncPath="$2"
+    local newName="$3"
     local rsyncOutput=
     local rsyncStatus=0
 
     local filename=$(basename "$src")
-    local copyName=${newCopyName:-$filename}
-    local dst="$copyPath/${copyName}"
+    local syncName=${newName:-$filename}
+    local dst="$syncPath/${syncName}"
 
     if [ ! -f "$src" ]; then
         echo -e "${LIGHTYELLOW}Warning: ${BLUE}$src${LIGHTYELLOW} does not exist, skipping.${RESET}"
         return 2
     fi
 
-    if [ ! -d "$copyPath" ] && ! mkdir -p "$copyPath"; then
-        echo -e "${RED}Error: Failed to create directory ${BLUE}$copyPath${RESET}"
+    if [ ! -d "$syncPath" ] && ! mkdir -p "$syncPath"; then
+        echo -e "${RED}Error: Failed to create directory ${BLUE}$syncPath${RESET}"
         return 3
     fi
 
@@ -1910,28 +1899,16 @@ backupCursorSettings() {
         return 1
     fi
 
-    copyFile "$cursorUserDir/settings.json" "$fTKCursorDir" "local.settings.json"
-    status=$?
-    case "$status" in
-        0|1) processedCount=$((processedCount + 1)) ;;
-        3)   failedCount=$((failedCount + 1)) ;;
-    esac
+    syncFile "$cursorUserDir/settings.json" "$fTKCursorDir" "local.settings.json"
+    _trackSyncResult $? processedCount failedCount
 
-    copyFile "$cursorUserDir/keybindings.json" "$fTKCursorDir"
-    status=$?
-    case "$status" in
-        0|1) processedCount=$((processedCount + 1)) ;;
-        3)   failedCount=$((failedCount + 1)) ;;
-    esac
+    syncFile "$cursorUserDir/keybindings.json" "$fTKCursorDir"
+    _trackSyncResult $? processedCount failedCount
 
     remoteSettingsPath=$(getCursorRemoteSettingsPath)
     if [ -d "$HOME/.cursor-server" ]; then
-        copyFile "$remoteSettingsPath" "$fTKCursorDir" "remote.settings.json"
-        status=$?
-        case "$status" in
-            0|1) processedCount=$((processedCount + 1)) ;;
-            3)   failedCount=$((failedCount + 1)) ;;
-        esac
+        syncFile "$remoteSettingsPath" "$fTKCursorDir" "remote.settings.json"
+        _trackSyncResult $? processedCount failedCount
     else
         echo -e "${LIGHTYELLOW}Warning: Cursor Server not found, skipping remote settings backup${RESET}"
     fi
@@ -1957,35 +1934,22 @@ restoreCursorSettings() {
     local remoteSettingsPath=
     local processedCount=0
     local failedCount=0
-    local status=0
 
     if ! cursorUserDir=$(getCursorUserConfigDir); then
         echo -e "${RED}Error: Unsupported OS for Cursor settings restore: $(uname -s)${RESET}"
         return 1
     fi
 
-    copyFile "$fTKCursorLocalSettings" "$cursorUserDir" "settings.json"
-    status=$?
-    case "$status" in
-        0|1) processedCount=$((processedCount + 1)) ;;
-        3)   failedCount=$((failedCount + 1)) ;;
-    esac
+    syncFile "$fTKCursorLocalSettings" "$cursorUserDir" "settings.json"
+    _trackSyncResult $? processedCount failedCount
 
-    copyFile "$fTKCursorKeybindings" "$cursorUserDir"
-    status=$?
-    case "$status" in
-        0|1) processedCount=$((processedCount + 1)) ;;
-        3)   failedCount=$((failedCount + 1)) ;;
-    esac
+    syncFile "$fTKCursorKeybindings" "$cursorUserDir"
+    _trackSyncResult $? processedCount failedCount
 
     remoteSettingsPath=$(getCursorRemoteSettingsPath)
     if [ -d "$HOME/.cursor-server" ]; then
-        copyFile "$fTKCursorRemoteSettings" "$(dirname "$remoteSettingsPath")" "settings.json"
-        status=$?
-        case "$status" in
-            0|1) processedCount=$((processedCount + 1)) ;;
-            3)   failedCount=$((failedCount + 1)) ;;
-        esac
+        syncFile "$fTKCursorRemoteSettings" "$(dirname "$remoteSettingsPath")" "settings.json"
+        _trackSyncResult $? processedCount failedCount
     else
         echo -e "${LIGHTYELLOW}Warning: Cursor Server not found, skipping remote settings restore${RESET}"
     fi
@@ -1996,6 +1960,187 @@ restoreCursorSettings() {
 
     if [ $processedCount -eq 0 ]; then
         echo -e "${RED}Error: No Cursor settings files were restored${RESET}"
+        return 1
+    fi
+}
+
+# _trackSyncResult <syncFile_status> <processed_nameref> <failed_nameref>
+# Bumps the processed/failed counters based on syncFile's return code:
+#   0|1 = processed (copied or already up to date), 3 = failed.
+_trackSyncResult() {
+    local -n _proc=$2
+    local -n _failed=$3
+    case "$1" in
+        0|1) _proc=$((_proc + 1)) ;;
+        3)   _failed=$((_failed + 1)) ;;
+    esac
+}
+
+getClaudeCodeDir() { echo "$HOME/.claude"; }
+getCodexDir()      { echo "$HOME/.codex"; }
+
+linkClaudeMcpJson() {
+    echo -e "${COLOR}Linking Claude .mcp.json${RESET}"
+    linkFile "$fTKClaudeMcpJson" "$PWD" ".mcp.json"
+}
+
+getClaudeDesktopConfigDir() {
+    case "$(uname -s)" in
+        Darwin) echo "$HOME/Library/Application Support/Claude" ;;
+        *) return 1 ;;
+    esac
+}
+
+backupClaudeCodeSettings() {
+    echo -e "${COLOR}Backing up Claude Code settings${RESET}"
+    local srcDir=$(getClaudeCodeDir)
+    local processedCount=0 failedCount=0
+
+    if [ ! -d "$srcDir" ]; then
+        echo -e "${LIGHTYELLOW}Warning: $srcDir not found, nothing to back up.${RESET}"
+        return 0
+    fi
+
+    syncFile "$srcDir/settings.json"       "$fTKClaudeDir"
+    _trackSyncResult $? processedCount failedCount
+    syncFile "$srcDir/settings.local.json" "$fTKClaudeDir"
+    _trackSyncResult $? processedCount failedCount
+    syncFile "$srcDir/CLAUDE.md"           "$fTKClaudeDir"
+    _trackSyncResult $? processedCount failedCount
+
+    if [ $failedCount -gt 0 ]; then
+        return 1
+    fi
+    if [ $processedCount -eq 0 ]; then
+        echo -e "${RED}Error: No Claude Code settings files were backed up${RESET}"
+        return 1
+    fi
+}
+
+restoreClaudeCodeSettings() {
+    echo -e "${COLOR}Restoring Claude Code settings${RESET}"
+    local dstDir=$(getClaudeCodeDir)
+    local processedCount=0 failedCount=0
+
+    [ ! -d "$dstDir" ] && mkdir -p "$dstDir"
+
+    syncFile "$fTKClaudeCodeSettings"      "$dstDir"
+    _trackSyncResult $? processedCount failedCount
+    syncFile "$fTKClaudeCodeLocalSettings" "$dstDir"
+    _trackSyncResult $? processedCount failedCount
+    syncFile "$fTKClaudeCodeMd"            "$dstDir"
+    _trackSyncResult $? processedCount failedCount
+
+    if [ $failedCount -gt 0 ]; then
+        return 1
+    fi
+    if [ $processedCount -eq 0 ]; then
+        echo -e "${RED}Error: No Claude Code settings files were restored${RESET}"
+        return 1
+    fi
+}
+
+backupClaudeDesktopSettings() {
+    if [[ $(uname -s) != 'Darwin' ]]; then
+        echo -e "${RED}Error: --claude-desktop-backup is only supported on macOS.${RESET}"
+        return 1
+    fi
+    echo -e "${COLOR}Backing up Claude Desktop settings${RESET}"
+
+    local srcDir=
+    if ! srcDir=$(getClaudeDesktopConfigDir); then
+        echo -e "${RED}Error: Unsupported OS for Claude Desktop backup: $(uname -s)${RESET}"
+        return 1
+    fi
+
+    if [ ! -d "$srcDir" ]; then
+        echo -e "${LIGHTYELLOW}Warning: Claude Desktop config directory $srcDir not found, nothing to back up.${RESET}"
+        return 0
+    fi
+
+    local processedCount=0 failedCount=0
+    syncFile "$srcDir/claude_desktop_config.json" "$fTKClaudeDir"
+    _trackSyncResult $? processedCount failedCount
+
+    if [ $failedCount -gt 0 ]; then
+        return 1
+    fi
+    if [ $processedCount -eq 0 ]; then
+        echo -e "${RED}Error: No Claude Desktop settings files were backed up${RESET}"
+        return 1
+    fi
+}
+
+restoreClaudeDesktopSettings() {
+    if [[ $(uname -s) != 'Darwin' ]]; then
+        echo -e "${RED}Error: --claude-desktop-restore is only supported on macOS.${RESET}"
+        return 1
+    fi
+    echo -e "${COLOR}Restoring Claude Desktop settings${RESET}"
+
+    local dstDir=
+    if ! dstDir=$(getClaudeDesktopConfigDir); then
+        echo -e "${RED}Error: Unsupported OS for Claude Desktop restore: $(uname -s)${RESET}"
+        return 1
+    fi
+
+    [ ! -d "$dstDir" ] && mkdir -p "$dstDir"
+
+    local processedCount=0 failedCount=0
+    syncFile "$fTKClaudeDesktopConfig" "$dstDir"
+    _trackSyncResult $? processedCount failedCount
+
+    if [ $failedCount -gt 0 ]; then
+        return 1
+    fi
+    if [ $processedCount -eq 0 ]; then
+        echo -e "${RED}Error: No Claude Desktop settings files were restored${RESET}"
+        return 1
+    fi
+}
+
+backupCodexSettings() {
+    echo -e "${COLOR}Backing up Codex settings${RESET}"
+    local srcDir=$(getCodexDir)
+    local processedCount=0 failedCount=0
+
+    if [ ! -d "$srcDir" ]; then
+        echo -e "${LIGHTYELLOW}Warning: $srcDir not found, nothing to back up.${RESET}"
+        return 0
+    fi
+
+    syncFile "$srcDir/config.toml"         "$fTKCodexDir"
+    _trackSyncResult $? processedCount failedCount
+    syncFile "$srcDir/rules/default.rules" "$fTKCodexDir/rules"
+    _trackSyncResult $? processedCount failedCount
+
+    if [ $failedCount -gt 0 ]; then
+        return 1
+    fi
+    if [ $processedCount -eq 0 ]; then
+        echo -e "${RED}Error: No Codex settings files were backed up${RESET}"
+        return 1
+    fi
+}
+
+restoreCodexSettings() {
+    echo -e "${COLOR}Restoring Codex settings${RESET}"
+    local dstDir=$(getCodexDir)
+    local processedCount=0 failedCount=0
+
+    [ ! -d "$dstDir" ]        && mkdir -p "$dstDir"
+    [ ! -d "$dstDir/rules" ]  && mkdir -p "$dstDir/rules"
+
+    syncFile "$fTKCodexConfig" "$dstDir"
+    _trackSyncResult $? processedCount failedCount
+    syncFile "$fTKCodexRules"  "$dstDir/rules"
+    _trackSyncResult $? processedCount failedCount
+
+    if [ $failedCount -gt 0 ]; then
+        return 1
+    fi
+    if [ $processedCount -eq 0 ]; then
+        echo -e "${RED}Error: No Codex settings files were restored${RESET}"
         return 1
     fi
 }
@@ -2016,9 +2161,6 @@ createDevToolSymlinks() {
     linkFile "$fJCPath" "$HOME/.usr/bin"
     if [ -d "$HOME"/.vscode-server/data/Machine ]; then
         linkFile "$fMainDir"/assets/vscode/remote.settings.json "$HOME"/.vscode-server/data/Machine "settings.json"
-    fi
-    if [ -d "$HOME/.claude" ]; then
-        linkFile "$fMainDir/assets/claude/CLAUDE.md" "$HOME/.claude"
     fi
 }
 
@@ -4709,10 +4851,23 @@ launchSingbox() {
 
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
+    [ -n "$fClaudeLinkMcpJson" ]   && { linkClaudeMcpJson; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     case "$fCursorAction" in
         backup)  backupCursorSettings;  exit $? ;;
         restore) restoreCursorSettings; exit $? ;;
+    esac
+    case "$fClaudeAction" in
+        backup)  backupClaudeCodeSettings;  exit $? ;;
+        restore) restoreClaudeCodeSettings; exit $? ;;
+    esac
+    case "$fClaudeDesktopAction" in
+        backup)  backupClaudeDesktopSettings;  exit $? ;;
+        restore) restoreClaudeDesktopSettings; exit $? ;;
+    esac
+    case "$fCodexAction" in
+        backup)  backupCodexSettings;  exit $? ;;
+        restore) restoreCodexSettings; exit $? ;;
     esac
     [ -n "$fDisplayMode" ]         && { switchDisplayMode "$fDisplayMode"; exit 0; }
     [ -n "$fRtspKill" ]            && { killRtspStreams; exit 0; }

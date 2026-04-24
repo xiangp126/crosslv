@@ -12,9 +12,11 @@ _jc_complete() {
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
-               --gdm --text --claude --claude-remove --codex --codex-remove \
+               --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status \
+               --claude-backup --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
+               --codex --codex-remove --codex-backup --codex-restore \
                --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-wg \
-               --xray --xray-port --xray-server --xray-remove --block --unblock --status \
+               --xray --xray-port --xray-server --xray-remove \
                --wg --wg-port --wg-server --wg-client --wg-remove \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-h264 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"
@@ -68,7 +70,7 @@ _jc_complete() {
             COMPREPLY=( $(compgen -W "${resolutions}" -- ${cur}) )
             return 0
             ;;
-        --block|--unblock|--status)
+        --acl-block|--acl-unblock|--acl-status)
             COMPREPLY=( $(compgen -W "c700_01 c700_02 all" -- ${cur}) )
             return 0
             ;;

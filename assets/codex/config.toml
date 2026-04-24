@@ -1,0 +1,22 @@
+model = "gpt-5.4"
+service_tier = "fast"
+[projects."/auto/fwgwork1/pexiang/golan_fw"]
+trust_level = "trusted"
+
+[projects."/auto/fwgwork1/pexiang/golan_fw2"]
+trust_level = "trusted"
+
+[projects."/labhome/pexiang/myGit/crosslv"]
+trust_level = "trusted"
+
+[projects."/labhome/pexiang"]
+trust_level = "trusted"
+
+[projects."/auto/fwgwork1/pexiang/golan_fw3"]
+trust_level = "trusted"
+
+[projects."/auto/fwgwork1/pexiang/bugZilla/bug_4950555_degardation_on_argaman/new_fix"]
+trust_level = "trusted"
+
+[notice.model_migrations]
+"gpt-5.3-codex" = "gpt-5.4"

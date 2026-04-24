@@ -1210,7 +1210,7 @@ removeWriteFromJson() {
 # Deep clean using git clean -fdx; caller must cd to repo and call requireGitRepo first
 runGitClean() {
     echo -e "$NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
-    local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE --exclude=*.mlx"
+    local excludeOpts="--exclude=*.code-workspace --exclude=$STATE_FILE --exclude=*.mlx --exclude=.mcp.json"
     if [ -z "$fRMCompileCommandsJson" ]; then
         if [ -L "$fCompileCommandsJson" ]; then
             local realFile
