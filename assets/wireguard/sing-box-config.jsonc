@@ -157,7 +157,8 @@
           {
             "domain_keyword": [
               "nvidia",
-              "mellanox"
+              "mellanox",
+              "mlnx"
             ]
           },
           {
@@ -245,6 +246,18 @@
       {
         "protocol": "dns",
         "action": "hijack-dns"
+      },
+      // --- Mellanox lab hosts -> proxy (corporate VPN cannot reach these;
+      //     must transit the WireGuard VPS which has a route into the lab net) ---
+      {
+        "domain_keyword": ["mlnx"],
+        "action": "route",
+        "outbound": "proxy"
+      },
+      {
+        "ip_cidr": ["10.7.0.0/16"],
+        "action": "route",
+        "outbound": "proxy"
       },
       // --- NVIDIA intranet traffic -> corporate VPN ---
       {
