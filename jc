@@ -300,21 +300,17 @@ installClaude() {
 
     echo -e "${BOLD}${COLOR}Installing Claude Code${RESET}"
 
-    if [[ $(uname -s) == 'Darwin' ]]; then
-        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}claude-code${RESET}${GREY}...${RESET}"
-        brew install --cask claude-code || brew upgrade --cask claude-code || {
-            echo -e "  ${RED}Error: brew install failed.${RESET}" >&2
-            return 1
-        }
-    else
-        checkNodeEnv || return 1
-        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@anthropic-ai/claude-code${RESET}${GREY}...${RESET}"
-        npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime || {
-            echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
-            return 1
-        }
-        hash -r
-    fi
+    # Use npm on every OS. Homebrew's claude-code cask is auto-bumped from
+    # the GCS bucket and routinely lags npm by 10+ patch releases, so even
+    # macOS users get fresher binaries from the npm package (which ships
+    # native binaries per platform via optionalDependencies).
+    checkNodeEnv || return 1
+    echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@anthropic-ai/claude-code${RESET}${GREY}...${RESET}"
+    npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime || {
+        echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
+        return 1
+    }
+    hash -r
 
     ver=$(claude -v 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     bin=$(command -v claude 2>/dev/null || echo 'not found')
@@ -330,21 +326,15 @@ installCodex() {
 
     echo -e "${BOLD}${COLOR}Installing Codex${RESET}"
 
-    if [[ $(uname -s) == 'Darwin' ]]; then
-        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}codex${RESET}${GREY}...${RESET}"
-        brew install --cask codex || brew upgrade --cask codex || {
-            echo -e "  ${RED}Error: brew install failed.${RESET}" >&2
-            return 1
-        }
-    else
-        checkNodeEnv || return 1
-        echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@openai/codex${RESET}${GREY}...${RESET}"
-        npm install -g @openai/codex || {
-            echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
-            return 1
-        }
-        hash -r
-    fi
+    # See installClaude — npm is the canonical, most up-to-date channel
+    # on every OS.
+    checkNodeEnv || return 1
+    echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@openai/codex${RESET}${GREY}...${RESET}"
+    npm install -g @openai/codex || {
+        echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
+        return 1
+    }
+    hash -r
 
     ver=$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     bin=$(command -v codex 2>/dev/null || echo 'not found')
@@ -358,32 +348,32 @@ installCodex() {
 removeClaude() {
     echo -e "${BOLD}${COLOR}Removing Claude Code${RESET}"
 
-    if [[ $(uname -s) == 'Darwin' ]]; then
-        if brew list --cask claude-code &>/dev/null; then
-            brew uninstall --cask claude-code
-        else
-            echo -e "  ${GREY}Claude Code is not installed via Homebrew.${RESET}"
-            return 0
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        export NVM_DIR="$HOME/.nvm"
+        # shellcheck source=/dev/null
+        source "$NVM_DIR/nvm.sh"
+    fi
+    local removed=false
+    local pkg
+    for pkg in @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime; do
+        if command -v npm &>/dev/null && npm list -g "$pkg" &>/dev/null; then
+            echo -e "  ${LIGHTYELLOW}Removing ${BLUE}${pkg}${RESET}${GREY}...${RESET}"
+            npm uninstall -g "$pkg"
+            removed=true
         fi
-    else
-        if [ -s "$HOME/.nvm/nvm.sh" ]; then
-            export NVM_DIR="$HOME/.nvm"
-            # shellcheck source=/dev/null
-            source "$NVM_DIR/nvm.sh"
-        fi
-        local removed=false
-        local pkg
-        for pkg in @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime; do
-            if command -v npm &>/dev/null && npm list -g "$pkg" &>/dev/null; then
-                echo -e "  ${LIGHTYELLOW}Removing ${BLUE}${pkg}${RESET}${GREY}...${RESET}"
-                npm uninstall -g "$pkg"
-                removed=true
-            fi
-        done
-        if ! $removed; then
-            echo -e "  ${GREY}Claude Code is not installed.${RESET}"
-            return 0
-        fi
+    done
+
+    # Clean up legacy macOS Homebrew installs from earlier versions of jc.
+    if [[ $(uname -s) == 'Darwin' ]] && command -v brew &>/dev/null \
+        && brew list --cask claude-code &>/dev/null; then
+        echo -e "  ${LIGHTYELLOW}Removing legacy ${BLUE}claude-code${RESET} ${GREY}cask...${RESET}"
+        brew uninstall --cask claude-code
+        removed=true
+    fi
+
+    if ! $removed; then
+        echo -e "  ${GREY}Claude Code is not installed.${RESET}"
+        return 0
     fi
 
     echo -e "${GREEN}✔${GREY} Claude Code removed.${RESET}"
@@ -392,26 +382,29 @@ removeClaude() {
 removeCodex() {
     echo -e "${BOLD}${COLOR}Removing Codex${RESET}"
 
-    if [[ $(uname -s) == 'Darwin' ]]; then
-        if brew list --cask codex &>/dev/null; then
-            brew uninstall --cask codex
-        else
-            echo -e "  ${GREY}Codex is not installed via Homebrew.${RESET}"
-            return 0
-        fi
-    else
-        if [ -s "$HOME/.nvm/nvm.sh" ]; then
-            export NVM_DIR="$HOME/.nvm"
-            # shellcheck source=/dev/null
-            source "$NVM_DIR/nvm.sh"
-        fi
-        if command -v npm &>/dev/null && npm list -g @openai/codex &>/dev/null; then
-            echo -e "  ${LIGHTYELLOW}Removing ${BLUE}@openai/codex${RESET}${GREY}...${RESET}"
-            npm uninstall -g @openai/codex
-        else
-            echo -e "  ${GREY}Codex is not installed.${RESET}"
-            return 0
-        fi
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        export NVM_DIR="$HOME/.nvm"
+        # shellcheck source=/dev/null
+        source "$NVM_DIR/nvm.sh"
+    fi
+    local removed=false
+    if command -v npm &>/dev/null && npm list -g @openai/codex &>/dev/null; then
+        echo -e "  ${LIGHTYELLOW}Removing ${BLUE}@openai/codex${RESET}${GREY}...${RESET}"
+        npm uninstall -g @openai/codex
+        removed=true
+    fi
+
+    # Clean up legacy macOS Homebrew installs from earlier versions of jc.
+    if [[ $(uname -s) == 'Darwin' ]] && command -v brew &>/dev/null \
+        && brew list --cask codex &>/dev/null; then
+        echo -e "  ${LIGHTYELLOW}Removing legacy ${BLUE}codex${RESET} ${GREY}cask...${RESET}"
+        brew uninstall --cask codex
+        removed=true
+    fi
+
+    if ! $removed; then
+        echo -e "  ${GREY}Codex is not installed.${RESET}"
+        return 0
     fi
 
     echo -e "${GREEN}✔${GREY} Codex removed.${RESET}"

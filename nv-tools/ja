@@ -395,7 +395,7 @@ mainLoop() {
     [ -n "$fAiName" ] && echo -e "${GREY}AI:${RESET}        ${CYAN}$fAiName${RESET}"
     echo -e "${GREY}Target:${RESET}    ${BLUE}$fTmuxTarget${RESET}"
     echo -e "${GREY}Polling:${RESET}   ${fPollInterval}s"
-    [ "$fApproveDelay" != "0" ] && echo -e "${GREY}Delay:${RESET}     ${fApproveDelay}s"
+    echo -e "${GREY}Delay:${RESET}     ${fApproveDelay}s"
     echo -e "${GREY}Blacklist:${RESET} rm -rf"
     echo -e "${GREY}Stop:${RESET}      Ctrl+C"
     echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"

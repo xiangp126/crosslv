@@ -24,9 +24,9 @@
       "Bash(sudo:*)"
     ],
     "additionalDirectories": [
-      "/auto/fwgwork1/pexiang/golan_fw",
-      "/auto/fwgwork1/pexiang/golan_fw2",
-      "/auto/fwgwork1/pexiang/golan_fw3"
+      "/auto/fwgwork1/$USER/golan_fw",
+      "/auto/fwgwork1/$USER/golan_fw2",
+      "/auto/fwgwork1/$USER/golan_fw3"
     ]
   },
   "hooks": {
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/labhome/pexiang/myGit/crosslv/assets/claude/hooks/auto-approve.sh"
+            "command": "$HOME/myGit/crosslv/assets/claude/hooks/auto-approve.sh"
           }
         ]
       }

@@ -272,20 +272,21 @@ fi
 
 # Lazy wrappers for AI coding tools: ensure NVM-managed Node.js is on
 # PATH before first invocation, then replace with the real command.
+# Needed on every OS — `jc --claude` / `jc --codex` install via npm on
+# both Linux and macOS, so the nvm bin dir must be activated before the
+# binary is reachable in a fresh interactive shell.
 _ai_nvm_tools=(codex claude)
-if [[ $_UNAME_S == 'Linux' ]]; then
-    for _ai_cmd in "${_ai_nvm_tools[@]}"; do
-        if ! declare -f "$_ai_cmd" &>/dev/null; then
-            eval "$_ai_cmd() {
-                nvm use default &>/dev/null
-                unset -f $_ai_cmd
-                [[ -n \"\$TMUX\" ]] && code -p &>/dev/null
-                command $_ai_cmd \"\$@\"
-            }"
-        fi
-    done
-    unset _ai_cmd
-fi
+for _ai_cmd in "${_ai_nvm_tools[@]}"; do
+    if ! declare -f "$_ai_cmd" &>/dev/null; then
+        eval "$_ai_cmd() {
+            nvm use default &>/dev/null
+            unset -f $_ai_cmd
+            [[ -n \"\$TMUX\" ]] && code -p &>/dev/null
+            command $_ai_cmd \"\$@\"
+        }"
+    fi
+done
+unset _ai_cmd
 
 # For fzf-tab-completion vim plugin (requires Bash 4.0+)
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
