@@ -588,6 +588,30 @@ mainLoop() {
             # 2s before declaring the key lost. Only then retry, because
             # double-pressing a number key in Claude Code can silently jump
             # to a different option.
+            #
+            # KNOWN LIMITATION — multi-digit option numbers
+            # ─────────────────────────────────────────────
+            # detectPromptOption uses [0-9]+ in the regex, so an option
+            # numbered "10" or higher would be returned as a multi-char
+            # string. tmux send-keys treats each character as a separate
+            # keystroke, so passing "10" sends "1" then "0":
+            #     - "1" already selects + submits option 1
+            #     - "0" lands on whatever state comes next (usually a no-op,
+            #       but could land on an unintended target)
+            # → wrong option approved.
+            #
+            # In practice neither Claude Code nor Codex CLI exposes more
+            # than ~3 options today, so this hasn't bitten us. If a future
+            # version surfaces 10+ options, two possible fixes:
+            #   (a) Conservative — clamp the detector to [1-9] and let the
+            #       user approve manually when there are more options.
+            #   (b) Adaptive — send the digits one-by-one followed by Enter
+            #       (`send-keys "$promptOption" Enter`); requires verifying
+            #       that Claude/Codex's prompt UI actually accepts that
+            #       form (single-digit hotkeys auto-submit, but multi-digit
+            #       entry mode may not exist).
+            # Until that version ships, this branch trusts that
+            # $promptOption is a single ASCII digit.
             local _preSendFp="$fingerprint"
             local _maxRetries=3
             local _attempt=0
