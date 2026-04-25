@@ -2,6 +2,8 @@
 # shellcheck disable=SC2155 disable=SC2120 disable=SC2024 disable=SC2034
 # set -x
 
+# Constants
+SCRIPT_NAME=$(basename $0)
 # Tracking directories
 fMainDir=$(cd "$(dirname "$(readlink -f "$0")")" || exit; pwd)
 fTKFilesDir=$fMainDir/track-files
@@ -11,24 +13,26 @@ fTKBatThemeDir=$fMainDir/assets/bat-themes
 fTKFontDir=$fMainDir/assets/fonts
 fTKFontConfigDir=$fMainDir/assets/fontconfig
 fTKClangdConfig=$fMainDir/assets/clangd/config.yaml
+fTKtemplateDir=$fMainDir/template
+fTKToolsDir=$fMainDir/nv-tools
+fDownloads=$HOME/Downloads
+fJCPath=$fMainDir/$SCRIPT_NAME
+fFirstTimeFile=$fMainDir/".has_been_invoked"
+# Cursor
 fTKCursorDir=$fMainDir/assets/cursor
 fTKCursorLocalSettings=$fTKCursorDir/local.settings.json
 fTKCursorKeybindings=$fTKCursorDir/keybindings.json
 fTKCursorRemoteSettings=$fTKCursorDir/remote.settings.json
+# Claude
 fTKClaudeDir=$fMainDir/assets/claude
 fTKClaudeCodeSettings=$fTKClaudeDir/settings.json
 fTKClaudeCodeLocalSettings=$fTKClaudeDir/settings.local.json
 fTKClaudeCodeMd=$fTKClaudeDir/CLAUDE.md
 fTKClaudeDesktopConfig=$fTKClaudeDir/claude_desktop_config.json
 fTKClaudeMcpJson=$fTKClaudeDir/.mcp.json
+# Codex
 fTKCodexDir=$fMainDir/assets/codex
 fTKCodexConfig=$fTKCodexDir/config.toml
-
-fTKtemplateDir=$fMainDir/template
-fTKToolsDir=$fMainDir/nv-tools
-fDownloads=$HOME/Downloads
-fJCPath=$fMainDir/jc
-fFirstTimeFile=$fMainDir/".has_been_invoked"
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -105,8 +109,6 @@ fSingboxRetryTimeout=180  # seconds to retry after VPN/tunnel drop
 fSingboxMonitorPid=""
 fSingboxCleaning=0
 fSingboxRecoveryMarker=""
-# Constants
-SCRIPT_NAME=$(basename $0)
 # Colors
 RED='\033[31m'
 GREEN='\033[32m'
