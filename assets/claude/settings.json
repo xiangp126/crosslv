@@ -17,12 +17,6 @@
       "WebFetch",
       "WebSearch"
     ],
-    "deny": [
-      "Bash(rm:*)",
-      "Bash(mkfs:*)",
-      "Bash(dd:*)",
-      "Bash(sudo:*)"
-    ],
     "additionalDirectories": [
       "/auto/fwgwork1/$USER/golan_fw",
       "/auto/fwgwork1/$USER/golan_fw2",
