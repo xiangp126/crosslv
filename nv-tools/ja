@@ -12,6 +12,15 @@
 
 SCRIPT_NAME=$(basename "$0")
 
+# Options
+fTmuxTarget=      # tmux target pane in session[:window[.pane]] format
+fListOnly=        # list detected AI panes and exit
+fApproveDelay=0   # seconds to wait before approving
+fPollInterval=0.3 # seconds to poll for new prompts
+fAiName=          # AI running in the target pane (claude|codex|...)
+fApprovedCount=0  # number of prompts approved
+fLockFile=        # populated AFTER fTmuxTarget is finalised; see main flow
+
 # Colors
 RED='\033[31m'
 GREEN='\033[32m'
@@ -21,14 +30,6 @@ LIGHTYELLOW='\033[93m'
 GREY='\033[90m'
 BLUE='\033[34m'
 RESET='\033[0m'
-
-# Options
-fTmuxTarget=      # tmux target pane in session[:window[.pane]] format
-fListOnly=        # list detected AI panes and exit
-fApproveDelay=0   # seconds to wait before approving
-fPollInterval=0.3 # seconds to poll for new prompts
-fAiName=          # AI running in the target pane (claude|codex|...)
-approvedCount=0   # number of prompts approved
 
 usage() {
     cat << _EOF
@@ -125,50 +126,147 @@ validateTarget() {
     fi
 }
 
-# Identify the AI running in a given tmux target. Mirrors findAiPanes's
-# logic — codex shows up as "node" so we look at the child process argv.
-# Prints "claude" / "codex" when recognised, otherwise the raw command
-# (empty if the pane can't be resolved).
-detectAiForTarget() {
+# Return the pid of a live monitor process currently watching `target`,
+# or empty (with non-zero exit) if no live monitor exists. The lockfile
+# path is built from $SCRIPT_NAME so it stays in sync with the main flow
+# even if this script is renamed.
+_monitorPid() {
+    local target="$1"
+    local lockfile="/tmp/${SCRIPT_NAME}-${target//[:.]/-}.lock"
+    [ -f "$lockfile" ] || return 1
+    local pid
+    pid=$(cat "$lockfile" 2>/dev/null)
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    echo "$pid"
+}
+
+# Return the tty name of a pid (e.g. "pts/4"), or empty (with non-zero
+# exit) if the pid has no controlling tty or doesn't exist. The "?"
+# value in ps output means "no controlling tty" (daemons, detached
+# processes); we treat that as no tty.
+_ttyOfPid() {
+    local pid="$1"
+    [ -n "$pid" ] || return 1
+    local tty
+    tty=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    [ -n "$tty" ] && [ "$tty" != "?" ] || return 1
+    printf '%s' "$tty"
+}
+
+# Return the tmux target (session:window.pane) that a pid is running in,
+# or empty if the pid isn't attached to a tmux pane (e.g. a plain shell
+# without tmux, or the pid has died). Works by matching the pid's tty
+# against tmux's pane_tty list.
+_paneOfPid() {
+    local pid="$1"
+    local tty
+    tty=$(_ttyOfPid "$pid") || return 1
+    tmux list-panes -a -F '#{pane_tty} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null \
+        | awk -v t="/dev/$tty" '$1==t{print $2; exit}'
+}
+
+# Build a horizontal rule of N `─` characters. printf's %s precision
+# works on bytes (not characters) and `─` is multibyte UTF-8, so we
+# build the rule by repeated concatenation instead.
+_hr() {
+    local n="$1" out=""
+    while [ "$n" -gt 0 ]; do out+="─"; n=$((n - 1)); done
+    printf '%s' "$out"
+}
+
+# Render the standard "AI sessions" table given a list of "pid|target|name"
+# lines as positional args. Used by both the `-l` listing block and
+# autoDetectTarget's multi-session picker so the two stay visually in sync.
+#
+# Output: header row, separator row, then one row per pane with a Status
+# column reflecting whether a monitor process is already watching that target.
+#
+# Usage: _renderAiTable "${panes[@]}"
+_renderAiTable() {
+    local panes=("$@")
+    local pid t c
+    local tool_width=4    # min "Tool"
+    local target_width=6  # min "Target"
+    for p in "${panes[@]}"; do
+        IFS='|' read -r pid t c <<<"$p"
+        [ ${#c} -gt "$tool_width" ] && tool_width=${#c}
+        [ ${#t} -gt "$target_width" ] && target_width=${#t}
+    done
+
+    local _gap_str=""
+    printf "${_gap_str}${GREY}%-3s %-${tool_width}s  %-${target_width}s  %s${RESET}\n" \
+        "#" "Tool" "Target" "Status"
+    printf "${_gap_str}${GREY}%s %s  %s  %s${RESET}\n" \
+        "$(_hr 3)" "$(_hr "$tool_width")" "$(_hr "$target_width")" "$(_hr 22)"
+
+    local i=1 mon_pid mon_pane mon_tty mon_loc status p
+    for p in "${panes[@]}"; do
+        IFS='|' read -r pid t c <<<"$p"
+        mon_pid=$(_monitorPid "$t")
+        if [ -n "$mon_pid" ]; then
+            # Two-tier location lookup:
+            #   1. Try to map the monitor pid to a tmux target (best case;
+            #      user can jump there with `tmux switch -t <addr>`).
+            #   2. Fall back to the bare tty if the monitor is running
+            #      outside tmux (still useful — tells the user which
+            #      terminal owns the process).
+            #   3. If neither resolves (detached / nohup'd), suppress the
+            #      suffix entirely via ${var:+text}.
+            mon_pane=$(_paneOfPid "$mon_pid")
+            if [ -n "$mon_pane" ]; then
+                mon_loc=", from $mon_pane"
+            else
+                mon_tty=$(_ttyOfPid "$mon_pid")
+                mon_loc="${mon_tty:+, on tty $mon_tty}"
+            fi
+            status="${LIGHTYELLOW}●${RESET} ${SCRIPT_NAME} monitoring ${GREY}(pid $mon_pid$mon_loc)${RESET}"
+        else
+            status="${GREEN}○${RESET} idle"
+        fi
+        # %b on the status field: $status contains dynamic ANSI escapes
+        # built via "${COLOR}..." which produce LITERAL backslash bytes
+        # at variable expansion time. printf only re-interprets backslash
+        # escapes in arguments under %b (not %s).
+        printf "${_gap_str}${CYAN}%-3d${RESET} %-${tool_width}s  ${BLUE}%-${target_width}s${RESET}  %b\n" \
+            "$i" "$c" "$t" "$status"
+        i=$((i + 1))
+    done
+}
+
+# Identify the AI running in a single, already-known tmux target.
+# Mirrors findAiPanes's regex — see the design block above. Keep them in sync.
+detectAiNameForTarget() {
     local target="$1"
     local info cmd pane_pid
     info=$(tmux display-message -t "$target" -p '#{pane_current_command}|#{pane_pid}' 2>/dev/null)
     [ -z "$info" ] && return
     cmd="${info%%|*}"
     pane_pid="${info##*|}"
-    if [[ "$cmd" =~ ^(claude|codex)$ ]]; then
-        echo "$cmd"
-    elif [[ "$cmd" == "node" ]] && ps -o args --ppid "$pane_pid" 2>/dev/null | grep -q 'codex'; then
+    if [[ "$cmd" =~ ^claude([-.]|$) ]]; then
+        echo "claude"
+    elif [[ "$cmd" =~ ^codex([-.]|$) ]]; then
+        echo "codex"
+    elif [[ "$cmd" == "node" ]] && pgrep -P "$pane_pid" -f codex >/dev/null 2>&1; then
         echo "codex"
     else
         echo "$cmd"
     fi
 }
 
-# Find panes running claude or codex.
-# Claude shows as "claude" in pane_current_command.
-# Codex shows as "node" — check child processes of the pane for "codex" in argv.
+# Scan all tmux panes and emit one "<pid>|<target>|<canonical>" line per AI pane.
+# See the design block above for the full algorithm and gotchas.
 findAiPanes() {
     local panes=()
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        local pane_pid=$(echo "$line" | cut -d'|' -f1)
-        local pane_target=$(echo "$line" | cut -d'|' -f2)
-        local cmd=$(echo "$line" | cut -d'|' -f3)
-        # Direct match on claude or codex. Accept arch-suffixed names
-        # (macOS ships codex as e.g. "codex-aarch64-apple-darwin", which
-        # tmux truncates in pane_current_command to "codex-aarch64-a").
-        if [[ "$cmd" =~ ^claude(-|$) ]]; then
+    local pane_pid pane_target cmd
+    while IFS='|' read -r pane_pid pane_target cmd; do
+        [ -z "$pane_pid" ] && continue
+        if [[ "$cmd" =~ ^claude([-.]|$) ]]; then
             panes+=("$pane_pid|$pane_target|claude")
-        elif [[ "$cmd" =~ ^codex(-|$) ]]; then
+        elif [[ "$cmd" =~ ^codex([-.]|$) ]]; then
             panes+=("$pane_pid|$pane_target|codex")
-        elif [[ "$cmd" == "node" ]]; then
-            # Some Linux installs run codex as a node script; check child
-            # processes' args. Use portable ps syntax — macOS `ps` has no
-            # `--ppid` flag, so filter with awk on ppid,args output.
-            if ps -Ao ppid,args 2>/dev/null | awk -v p="$pane_pid" '$1==p' | grep -q 'codex'; then
-                panes+=("$pane_pid|$pane_target|codex")
-            fi
+        elif [[ "$cmd" == "node" ]] && pgrep -P "$pane_pid" -f codex >/dev/null 2>&1; then
+            panes+=("$pane_pid|$pane_target|codex")
         fi
     done < <(tmux list-panes -a -F '#{pane_pid}|#{session_name}:#{window_index}.#{pane_index}|#{pane_current_command}' 2>/dev/null)
     printf '%s\n' "${panes[@]}"
@@ -189,35 +287,26 @@ autoDetectTarget() {
         echo -e "${GREY}If the tool runs inside another process (e.g. bash), use -t to specify the pane manually.${RESET}" >&2
         exit 1
     elif [ "$count" -eq 1 ]; then
-        local target=$(echo "${panes[0]}" | cut -d'|' -f2)
-        local cmd=$(echo "${panes[0]}" | cut -d'|' -f3)
+        local pane_pid target cmd
+        IFS='|' read -r pane_pid target cmd <<<"${panes[0]}"
         echo -e "${GREEN}Auto-detected:${RESET} ${CYAN}$cmd${RESET} at ${BLUE}$target${RESET}"
-        echo -e "${GREY}If a session is missing, use -t to specify it manually.${RESET}"
+        echo -e "${GREY}\nIf a session is missing, use -t to specify it manually.${RESET}"
         fTmuxTarget="$target"
         fAiName="$cmd"
     else
-        echo -e "${LIGHTYELLOW}Multiple AI sessions found:${RESET}"
-        local cmd_width=0
-        for pane in "${panes[@]}"; do
-            local c=$(echo "$pane" | cut -d'|' -f3)
-            [ ${#c} -gt "$cmd_width" ] && cmd_width=${#c}
-        done
-        local i=1
-        for pane in "${panes[@]}"; do
-            local target=$(echo "$pane" | cut -d'|' -f2)
-            local cmd=$(echo "$pane" | cut -d'|' -f3)
-            printf "  ${CYAN}[%d]${RESET} %-${cmd_width}s  ${GREY}%s${RESET}\n" "$i" "$cmd" "$target"
-            ((i++))
-        done
-        echo -e "${GREY}If a session is missing, use -t to specify it manually.${RESET}"
+        # echo ""
+        # echo -e "${LIGHTYELLOW}Multiple AI sessions found ($count)${RESET}"
         echo ""
+        _renderAiTable "${panes[@]}"
+        echo ""
+        echo -e "${GREY}(If a session is missing, use -t to specify it manually.)${RESET}"
+        echo ""
+        local _pid
         while true; do
             read -rp "Select target (1-$count): " choice || { echo ""; exit 0; }
             if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
-                local selected="${panes[$((choice - 1))]}"
-                fTmuxTarget=$(echo "$selected" | cut -d'|' -f2)
-                fAiName=$(echo "$selected" | cut -d'|' -f3)
-                echo -e "${GREEN}Selected:${RESET} ${BLUE}$fTmuxTarget${RESET}"
+                IFS='|' read -r _pid fTmuxTarget fAiName <<<"${panes[$((choice - 1))]}"
+                # echo -e "${GREEN}Selected:${RESET} ${BLUE}$fTmuxTarget${RESET}"
                 break
             fi
             echo -e "${RED}Invalid choice. Enter a number between 1 and $count.${RESET}"
@@ -307,11 +396,11 @@ isBlacklisted() {
 #   Approve|Proceed|Confirm|Continue). That's the safety net: if a
 #   future prompt is structurally a menu but has no affirmative option
 #   (e.g. a neutral "pick one of these files"), Stage B returns empty
-#   and ja does nothing instead of blindly pressing "1".
+#   and the monitor does nothing instead of blindly pressing "1".
 #
 # Adding a new affirmative word is the only maintenance knob; adding
 # new question phrasings requires no change.
-detectClaudePrompt() {
+detectPromptOption() {
     local tail="$1"
 
     # Stage A: structural gate — cursor + 2+ numbered options.
@@ -384,21 +473,20 @@ detectClaudePrompt() {
     return 1
 }
 
-
-
-
 mainLoop() {
     local lastFingerprint=""
 
+    # Compact two-line banner: title + watch summary on the first line,
+    # config + stop hint on the second, single horizontal rule below to
+    # mark where the run-time log starts.
     echo ""
-    echo -e "${MAGENTA}━━━ ja (AUTO-APPROVE) ━━━${RESET}"
-    [ -n "$fAiName" ] && echo -e "${GREY}AI:${RESET}        ${CYAN}$fAiName${RESET}"
-    echo -e "${GREY}Target:${RESET}    ${BLUE}$fTmuxTarget${RESET}"
-    echo -e "${GREY}Polling:${RESET}   ${fPollInterval}s"
-    echo -e "${GREY}Delay:${RESET}     ${fApproveDelay}s"
-    echo -e "${GREY}Blacklist:${RESET} rm -rf"
-    echo -e "${GREY}Stop:${RESET}      Ctrl+C"
-    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    if [ -n "$fAiName" ]; then
+        echo -e "${MAGENTA}▶ ${SCRIPT_NAME} AUTO-APPROVE${RESET} ${GREY}·${RESET} ${CYAN}${fAiName}${RESET} ${GREY}→${RESET} ${BLUE}${fTmuxTarget}${RESET}"
+    else
+        echo -e "${MAGENTA}▶ ${SCRIPT_NAME} AUTO-APPROVE${RESET} ${GREY}·${RESET} ${BLUE}${fTmuxTarget}${RESET}"
+    fi
+    echo -e "  ${GREY}poll${RESET} ${fPollInterval}s ${GREY}·${RESET} ${GREY}delay${RESET} ${fApproveDelay}s ${GREY}·${RESET} ${GREY}blacklist${RESET} '${LIGHTYELLOW}rm -rf${RESET}' ${GREY}·${RESET} ${GREY}Ctrl+C to stop${RESET}"
+    echo -e "${GREY}$(_hr 60)${RESET}"
     echo ""
 
     while true; do
@@ -420,10 +508,11 @@ mainLoop() {
             continue
         fi
 
-        # Path 1: Claude Code
-        local claudeOption
-        claudeOption=$(detectClaudePrompt "$tail")
-        if [ -n "$claudeOption" ]; then
+        # Detect a permission prompt (Claude Code or Codex CLI — same
+        # structural shape) and pick the option number to approve.
+        local promptOption
+        promptOption=$(detectPromptOption "$tail")
+        if [ -n "$promptOption" ]; then
             if isBlacklisted "$content"; then
                 echo -e "${GREY}[$(timestamp)]${RESET} ${RED}⚠ BLACKLISTED (rm -rf) — skipping${RESET}"
                 lastFingerprint="$fingerprint"
@@ -447,12 +536,12 @@ mainLoop() {
             local _attempt=0
             local _postFp="$_preSendFp"
             while true; do
-                tmux send-keys -t "$fTmuxTarget" "$claudeOption"
+                tmux send-keys -t "$fTmuxTarget" "$promptOption"
                 _postFp=$(waitForScreenChange "$_preSendFp" 2000)
                 [ "$_postFp" != "$_preSendFp" ] && break
 
                 # Timeout: before re-sending, confirm the prompt is
-                # still on-screen. If detectClaudePrompt returns empty,
+                # still on-screen. If detectPromptOption returns empty,
                 # the keystroke took effect and we only missed the hash
                 # change (stable header, tiny diff); treat as success.
                 # Only retry when the prompt truly is still visible —
@@ -461,7 +550,7 @@ mainLoop() {
                 local _verifyContent _verifyTail
                 _verifyContent=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null)
                 _verifyTail=$(echo "$_verifyContent" | tail -20)
-                if [ -z "$(detectClaudePrompt "$_verifyTail")" ]; then
+                if [ -z "$(detectPromptOption "$_verifyTail")" ]; then
                     _postFp=$(echo "$_verifyTail" | _hash)
                     break
                 fi
@@ -470,12 +559,12 @@ mainLoop() {
                 [ "$_attempt" -ge "$_maxRetries" ] && break
             done
             if [ "$_postFp" = "$_preSendFp" ]; then
-                echo -e "${GREY}[$(timestamp)]${RESET} ${RED}⚠ Keystroke dropped (option $claudeOption) after $_maxRetries attempts${RESET}"
+                echo -e "${GREY}[$(timestamp)]${RESET} ${RED}⚠ Keystroke dropped (option $promptOption) after $_maxRetries attempts${RESET}"
             else
-                approvedCount=$((approvedCount + 1))
+                fApprovedCount=$((fApprovedCount + 1))
                 local _retryNote=""
                 [ "$_attempt" -gt 0 ] && _retryNote=" (retry $_attempt)"
-                echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $claudeOption)${_retryNote} [#$approvedCount]"
+                echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $promptOption)${_retryNote} [#$fApprovedCount]"
             fi
             # Track the PRE-send fingerprint, not the post-send one.
             # Rationale: if Claude finishes the approved command quickly and
@@ -507,23 +596,17 @@ if [ -n "$fListOnly" ]; then
     while IFS= read -r line; do
         [ -n "$line" ] && _panes+=("$line")
     done < <(findAiPanes)
+
     if [ ${#_panes[@]} -eq 0 ]; then
         echo -e "${RED}No pane running claude or codex found${RESET}"
-    else
-        echo -e "${LIGHTYELLOW}AI sessions found:${RESET}"
-        _cmd_width=0
-        for _p in "${_panes[@]}"; do
-            _c=$(echo "$_p" | cut -d'|' -f3)
-            [ ${#_c} -gt "$_cmd_width" ] && _cmd_width=${#_c}
-        done
-        _i=1
-        for _p in "${_panes[@]}"; do
-            _cmd=$(echo "$_p" | cut -d'|' -f3)
-            _target=$(echo "$_p" | cut -d'|' -f2)
-            printf "  ${CYAN}[%d]${RESET} %-${_cmd_width}s  ${GREY}%s${RESET}\n" "$_i" "$_cmd" "$_target"
-            _i=$((_i + 1))
-        done
+        exit 0
     fi
+
+    echo ""
+    echo -e "${LIGHTYELLOW}AI sessions on tmux server (${#_panes[@]})${RESET}"
+    echo ""
+    _renderAiTable "${_panes[@]}"
+    echo ""
     exit 0
 fi
 
@@ -531,29 +614,31 @@ if [ -z "$fTmuxTarget" ]; then
     autoDetectTarget
 else
     validateTarget "$fTmuxTarget"
-    fAiName=$(detectAiForTarget "$fTmuxTarget")
+    fAiName=$(detectAiNameForTarget "$fTmuxTarget")
 fi
 
-# Prevent two ja instances from targeting the same pane
-LOCKFILE="/tmp/ja-${fTmuxTarget//[:.]/-}.lock"
-if [ -f "$LOCKFILE" ]; then
-    local_pid=$(cat "$LOCKFILE" 2>/dev/null)
+# Build the lockfile path now that fTmuxTarget is finalised.
+# Must stay in sync with _monitorPid, which derives the same path from
+# the target arg passed in.  Eg: target=M:6.1 → /tmp/ja-M-6-1.lock
+fLockFile="/tmp/${SCRIPT_NAME}-${fTmuxTarget//[:.]/-}.lock"
+
+# Prevent two monitor instances from targeting the same pane
+if [ -f "$fLockFile" ]; then
+    local_pid=$(cat "$fLockFile" 2>/dev/null)
     if kill -0 "$local_pid" 2>/dev/null; then
-        _monitor_tty=$(ps -o tty= -p "$local_pid" 2>/dev/null | sed 's|^|/dev/|')
-        _monitor_pane=$(tmux list-panes -a -F '#{pane_tty} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null \
-            | awk -v tty="$_monitor_tty" '$1==tty{print $2; exit}')
-        echo -e "${GREY}ja is already monitoring ${BLUE}$fTmuxTarget${GREY} (pid ${CYAN}$local_pid${GREY}${_monitor_pane:+, in pane ${CYAN}$_monitor_pane${GREY}}).${RESET}"
+        _monitor_pane=$(_paneOfPid "$local_pid")
+        echo -e "${GREY}${SCRIPT_NAME} is already monitoring ${BLUE}$fTmuxTarget${GREY} (pid ${CYAN}$local_pid${GREY}${_monitor_pane:+, in pane ${CYAN}$_monitor_pane${GREY}}).${RESET}"
         echo -e "${GREY}Kill it first:${RESET} kill $local_pid"
         exit 1
     fi
 fi
-echo $$ > "$LOCKFILE"
+echo $$ > "$fLockFile"
 # Clear the trap before exiting to avoid re-entry: INT calls _cleanup which
 # exits, but exiting also fires EXIT — if the trap is still armed, the
 # "Stopped" message prints twice.
 _cleanup() {
-    rm -f "$LOCKFILE"
-    echo -e "\n${GREY}[$(timestamp)]${RESET} Stopped. Approved ${GREEN}$approvedCount${RESET} prompts."
+    rm -f "$fLockFile"
+    echo -e "\n${GREY}[$(timestamp)]${RESET} Stopped. Approved ${GREEN}$fApprovedCount${RESET} prompts."
     trap - INT TERM EXIT
     exit 0
 }
