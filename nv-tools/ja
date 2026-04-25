@@ -324,7 +324,7 @@ else
 fi
 
 # Wait (silently) before approving so Ctrl+C still has a window to abort.
-preApproveGate() {
+applyApproveDelay() {
     if [ "$fApproveDelay" != "0" ]; then
         sleep "$fApproveDelay"
     fi
@@ -473,8 +473,65 @@ detectPromptOption() {
     return 1
 }
 
+# =============================================================================
+# AUTO-APPROVE SIGNAL FLOW — high-level view of one mainLoop iteration
+# =============================================================================
+#
+#   tmux pane content
+#         │
+#         │ capture-pane (every fPollInterval, default 0.3s)
+#         ▼
+#     last 20 lines
+#         │
+#         │ _hash
+#         ▼
+#     12-char fingerprint ─────→ compare against lastHandledFp
+#         │                            │
+#         │                            └→ equal = screen unchanged → skip
+#         │
+#         │ tail text
+#         ▼
+#     detectPromptOption
+#         │
+#         │ Stage A: structural gate (cursor + ≥2 numbered options)
+#         ▼
+#     is this a menu?
+#         │
+#         │ Stage B: 3-tier picker (permanent → session → plain)
+#         ▼
+#     option number N (1–9)
+#         │
+#         │ tmux send-keys "N"
+#         ▼
+#     pane receives key → prompt vanishes → new content appears
+#         │
+#         │ waitForScreenChange (poll the pane hash, capped at 2s)
+#         ▼
+#     post-send fingerprint _postFp
+#         │
+#         │ _postFp != _preSendFp ?  yes → success
+#         │                          no  → re-run detector to verify;
+#         │                                if prompt still on screen, retry
+#         ▼
+#     log "✔ Approved (option N)"
+#         │
+#         ▼
+#     lastHandledFp = _preSendFp   (note: NOT _postFp — using post-send
+#                                     would dedup-skip the very next
+#                                     prompt if Claude/Codex emits one
+#                                     during our 2s wait window)
+#         │
+#         ▼
+#     back to capture-pane, next iteration
+#
+# =============================================================================
 mainLoop() {
-    local lastFingerprint=""
+    # Fingerprint of the screen state we already took action on (approved,
+    # blacklist-skipped, or gave up after retries). Top-of-loop dedup skips
+    # iterations whose fingerprint matches this — meaning the screen hasn't
+    # changed since we handled it, so there's nothing new to do.
+    # Empty string at startup so the first iteration always proceeds.
+    local lastHandledFp=""
 
     # Compact two-line banner: title + watch summary on the first line,
     # config + stop hint on the second, single horizontal rule below to
@@ -503,7 +560,7 @@ mainLoop() {
         # Fingerprint to avoid double-pressing
         local fingerprint
         fingerprint=$(echo "$tail" | _hash)
-        if [ "$fingerprint" = "$lastFingerprint" ]; then
+        if [ "$fingerprint" = "$lastHandledFp" ]; then
             sleep "$fPollInterval"
             continue
         fi
@@ -515,11 +572,11 @@ mainLoop() {
         if [ -n "$promptOption" ]; then
             if isBlacklisted "$content"; then
                 echo -e "${GREY}[$(timestamp)]${RESET} ${RED}⚠ BLACKLISTED (rm -rf) — skipping${RESET}"
-                lastFingerprint="$fingerprint"
+                lastHandledFp="$fingerprint"
                 sleep "$fPollInterval"
                 continue
             fi
-            preApproveGate
+            applyApproveDelay
             # Both Claude Code and Codex CLI (macOS + Linux) accept the
             # option number as a hotkey in the permission prompt. Sending
             # the number selects + submits in one shot, which avoids any
@@ -574,7 +631,7 @@ mainLoop() {
             # dedup only fires when the EXACT prompt we just approved is
             # still on screen (i.e., the keystroke was dropped), while a
             # brand-new prompt has a different hash and is handled normally.
-            lastFingerprint="$_preSendFp"
+            lastHandledFp="$_preSendFp"
             continue
         fi
 
