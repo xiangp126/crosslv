@@ -256,7 +256,7 @@ export FZF_COMPLETION_OPTS='+c -x'
 # Bind-mount large dot-directories to NFS work volume (Linux/NV only,
 # requires NOPASSWD sudoers entry for mount --bind to work silently)
 if [[ $_UNAME_S == 'Linux' && $EUID -ne 0 ]]; then
-    for _dir in .cursor-server .claude .codex; do
+    for _dir in .cursor-server .claude .codex .npm .nvm; do
         _dst="$HOME/$_dir"
         _src="/auto/fwgwork1/$USER/$_dir"
         [[ -d "$_dst" ]] || mkdir -p "$_dst" 2>/dev/null
