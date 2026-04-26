@@ -8,7 +8,7 @@
 #
 # Usage:
 #   ja                        # auto-detect the pane running claude/codex
-#   ja -t myses:0.1           # explicit tmux target (session:window.pane)
+#   ja -t main:0.1            # explicit tmux target (session:window.pane)
 
 SCRIPT_NAME=$(basename "$0")
 
@@ -20,6 +20,42 @@ fPollInterval=0.3 # seconds to poll for new prompts
 fAiName=          # AI running in the target pane (claude|codex|...)
 fApprovedCount=0  # number of prompts approved
 fLockFile=        # populated AFTER fTmuxTarget is finalised; see main flow
+fVerbose=         # debug logging to stderr
+fAiFilter=        # "claude", "codex", or empty (any); set by --claude/--codex
+fDaemon=          # 1 = stay alive across AI restarts (--daemon/-d)
+
+# =============================================================================
+# AI CATALOG — single source of truth for which AIs ja recognises
+# =============================================================================
+#
+# To add support for a new AI tool, append ONE line below:
+#
+#   "<canonical_name>;<cmd_regex>;<node_pattern>"
+#
+#   canonical_name  Name shown in output and used by --ai <name>.
+#                   Lowercase, alphanumeric, no spaces.
+#
+#   cmd_regex       Bash extended regex matched against tmux's
+#                   pane_current_command. Anchor with `^`. Use `([-.]|$)`
+#                   to accept arch-suffixed (e.g. codex-aarch64-a) or
+#                   .exe variants.
+#
+#   node_pattern    If this AI is sometimes distributed as a node script
+#                   (so pane_current_command shows "node" instead of the
+#                   AI's name), put a pgrep -f pattern here that matches
+#                   one of its child process argvs. Empty = no node
+#                   fallback. Used only for codex today.
+#
+# Delimiter is `;` (NOT `|`) because `|` is a regex alternation operator
+# and would collide with patterns like `([-.]|$)`.
+#
+# All detection / filtering / error messages flow through this list via
+# _classifyAi / _isKnownAi / _aiNamesPretty — no other place in the script
+# hardcodes "claude" or "codex".
+fAiCatalog=(
+    "claude;^claude([-.]|$);"
+    "codex;^codex([-.]|$);codex"
+)
 
 # Colors
 RED='\033[31m'
@@ -45,6 +81,16 @@ Options:
                      (default: auto-detect the pane running claude or codex)
     -w, --wait SEC   Wait before approving (default: 0, approve immediately)
     -l, --list       List detected AI panes and exit
+    -v, --verbose    Print debug info to stderr (detector matches, send-keys
+                     events, screen change outcomes)
+    -d, --daemon     Stay alive across AI restarts. When the AI in the target
+                     pane exits, $SCRIPT_NAME pauses prompt detection (so it won't spam
+                     keys at the bare shell) and waits for an AI to come back
+                     in the same pane, then resumes monitoring automatically.
+                     Only the pane disappearing or Ctrl+C will stop it.
+    --claude         Restrict detection/listing to panes running Claude Code
+    --codex          Restrict detection/listing to panes running Codex CLI
+                     (--claude and --codex are mutually exclusive)
 
 Supports:
     Claude Code      Numbered options (1. Yes / 2. No) — sends the number
@@ -54,9 +100,10 @@ Blacklist:
     Commands containing 'rm -rf' are never auto-approved.
 
 Examples:
-    $SCRIPT_NAME                    # auto-detect, approve immediately
+    $SCRIPT_NAME                   # auto-detect, approve immediately
     $SCRIPT_NAME -t main:0.1       # target specific pane
     $SCRIPT_NAME -w 3              # wait 3s before each approval (Ctrl+C to abort)
+    $SCRIPT_NAME -d                # daemon mode: survive claude restarts
 
 
 Stop:
@@ -74,8 +121,8 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
 
-    local SHORTOPTS="ht:w:l"
-    local LONGOPTS="help,wait:,list"
+    local SHORTOPTS="ht:w:lvd"
+    local LONGOPTS="help,wait:,list,verbose,daemon,claude,codex"
 
     local PARSED
     if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
@@ -101,6 +148,28 @@ parseOptions() {
                 ;;
             -l|--list)
                 fListOnly=1
+                shift
+                ;;
+            -v|--verbose)
+                fVerbose=1
+                shift
+                ;;
+            -d|--daemon)
+                fDaemon=1
+                shift
+                ;;
+            --claude|--codex)
+                # Mutually exclusive — refuse if the other was already set.
+                # The catalog still drives detection internally, but these
+                # two flags stay hardcoded for now (one explicit flag per
+                # AI). Add a new --foo case here when registering a new AI
+                # in fAiCatalog.
+                local _newFilter="${1#--}"
+                if [ -n "$fAiFilter" ] && [ "$fAiFilter" != "$_newFilter" ]; then
+                    echo -e "${RED}Error: --claude and --codex are mutually exclusive${RESET}" >&2
+                    exit 1
+                fi
+                fAiFilter="$_newFilter"
                 shift
                 ;;
             --)
@@ -234,21 +303,89 @@ _renderAiTable() {
     done
 }
 
+# Catalog accessors — every AI-detection / filtering / error path goes
+# through these so adding a new AI only touches fAiCatalog.
+
+# Classify a (cmd, pane_pid) pair against the catalog.
+# Prints the canonical name on match, nothing on miss; returns 0/1 to match.
+_classifyAi() {
+    local cmd="$1" pane_pid="$2"
+    local entry name regex node_pat
+    # Direct match: cmd's name pattern
+    for entry in "${fAiCatalog[@]}"; do
+        IFS=';' read -r name regex node_pat <<<"$entry"
+        if [[ "$cmd" =~ $regex ]]; then
+            echo "$name"
+            return 0
+        fi
+    done
+    # Indirect match: cmd is "node", but a child process matches an AI's
+    # node_pattern (e.g. codex shipped as node script).
+    if [ "$cmd" = "node" ]; then
+        for entry in "${fAiCatalog[@]}"; do
+            IFS=';' read -r name regex node_pat <<<"$entry"
+            [ -z "$node_pat" ] && continue
+            if pgrep -P "$pane_pid" -f "$node_pat" >/dev/null 2>&1; then
+                echo "$name"
+                return 0
+            fi
+        done
+    fi
+    return 1
+}
+
+# True if `name` is one of the canonical names in the catalog.
+_isKnownAi() {
+    local target="$1"
+    local entry name rest
+    for entry in "${fAiCatalog[@]}"; do
+        IFS=';' read -r name rest <<<"$entry"
+        [ "$name" = "$target" ] && return 0
+    done
+    return 1
+}
+
+# Render the catalog's canonical names as a natural-language list:
+#   1 entry  → "claude"
+#   2 entries → "claude or codex"
+#   3+       → "claude, codex, or gemini"
+# Used in error messages to keep them in sync with the catalog.
+_aiNamesPretty() {
+    local entry name rest
+    local names=()
+    for entry in "${fAiCatalog[@]}"; do
+        IFS=';' read -r name rest <<<"$entry"
+        names+=("$name")
+    done
+    local n=${#names[@]}
+    case "$n" in
+        0) echo "(no AIs configured)" ;;
+        1) echo "${names[0]}" ;;
+        2) echo "${names[0]} or ${names[1]}" ;;
+        *)
+            local out="${names[0]}" i
+            for ((i = 1; i < n - 1; i++)); do
+                out="$out, ${names[i]}"
+            done
+            echo "$out, or ${names[n - 1]}"
+            ;;
+    esac
+}
+
 # Identify the AI running in a single, already-known tmux target.
-# Mirrors findAiPanes's regex — see the design block above. Keep them in sync.
+# Returns the canonical AI name on match, the raw cmd otherwise (so the
+# fallback path in autoDetectTarget's banner can still display something
+# useful for non-AI panes the user manually targeted).
 detectAiNameForTarget() {
     local target="$1"
-    local info cmd pane_pid
+    local info cmd pane_pid matched
     info=$(tmux display-message -t "$target" -p '#{pane_current_command}|#{pane_pid}' 2>/dev/null)
     [ -z "$info" ] && return
     cmd="${info%%|*}"
     pane_pid="${info##*|}"
-    if [[ "$cmd" =~ ^claude([-.]|$) ]]; then
-        echo "claude"
-    elif [[ "$cmd" =~ ^codex([-.]|$) ]]; then
-        echo "codex"
-    elif [[ "$cmd" == "node" ]] && pgrep -P "$pane_pid" -f codex >/dev/null 2>&1; then
-        echo "codex"
+    matched=$(_classifyAi "$cmd" "$pane_pid")
+    if [ -n "$matched" ]; then
+        echo "$matched"
     else
         echo "$cmd"
     fi
@@ -258,15 +395,14 @@ detectAiNameForTarget() {
 # See the design block above for the full algorithm and gotchas.
 findAiPanes() {
     local panes=()
-    local pane_pid pane_target cmd
+    local pane_pid pane_target cmd matchedAi
     while IFS='|' read -r pane_pid pane_target cmd; do
         [ -z "$pane_pid" ] && continue
-        if [[ "$cmd" =~ ^claude([-.]|$) ]]; then
-            panes+=("$pane_pid|$pane_target|claude")
-        elif [[ "$cmd" =~ ^codex([-.]|$) ]]; then
-            panes+=("$pane_pid|$pane_target|codex")
-        elif [[ "$cmd" == "node" ]] && pgrep -P "$pane_pid" -f codex >/dev/null 2>&1; then
-            panes+=("$pane_pid|$pane_target|codex")
+        matchedAi=$(_classifyAi "$cmd" "$pane_pid")
+        [ -z "$matchedAi" ] && continue
+        # Filter by --claude/--codex if set (else keep all matched panes).
+        if [ -z "$fAiFilter" ] || [ "$fAiFilter" = "$matchedAi" ]; then
+            panes+=("$pane_pid|$pane_target|$matchedAi")
         fi
     done < <(tmux list-panes -a -F '#{pane_pid}|#{session_name}:#{window_index}.#{pane_index}|#{pane_current_command}' 2>/dev/null)
     printf '%s\n' "${panes[@]}"
@@ -282,8 +418,12 @@ autoDetectTarget() {
     local count=${#panes[@]}
 
     if [ "$count" -eq 0 ]; then
-        echo -e "${RED}Error: No pane running claude or codex found${RESET}" >&2
-        echo -e "${GREY}Start claude/codex in a tmux pane first, or use -t to specify a target.${RESET}" >&2
+        if [ -n "$fAiFilter" ]; then
+            echo -e "${RED}Error: No pane running ${fAiFilter} found${RESET}" >&2
+        else
+            echo -e "${RED}Error: No pane running $(_aiNamesPretty) found${RESET}" >&2
+        fi
+        echo -e "${GREY}Start an AI tool in a tmux pane first, or use -t to specify a target.${RESET}" >&2
         echo -e "${GREY}If the tool runs inside another process (e.g. bash), use -t to specify the pane manually.${RESET}" >&2
         exit 1
     elif [ "$count" -eq 1 ]; then
@@ -316,12 +456,44 @@ autoDetectTarget() {
 
 timestamp() { date '+%H:%M:%S'; }
 
+# Single source of truth for the "[HH:MM:SS] <body>" event-log format.
+# Every visible status line in mainLoop (✔ Approved, ⚠ Keystroke dropped,
+# ⏸ Paused, ▶ Resumed, BLACKLISTED, Target pane gone, Stopped) routes
+# through here, so there's exactly one place that owns the timestamp
+# prefix. Body is taken verbatim and printed with `echo -e`, so callers
+# can embed ${COLOR} variables freely.
+#
+# Adding a new event class = one call to _log, no copy-pasted timestamp.
+_log() {
+    echo -e "${GREY}[$(timestamp)]${RESET} $*"
+}
+
 # Portable hash: Linux has md5sum; macOS has `md5 -r` (GNU-like output).
 if command -v md5sum &>/dev/null; then
     _hash() { md5sum | cut -c1-12; }
 else
     _hash() { md5 -r | cut -c1-12; }
 fi
+
+# Debug logging — only emits when -v/--verbose was passed. Output goes to
+# stderr so it doesn't get tangled with the script's normal stdout (the
+# approval log lines, banner, etc.).
+_dbg() {
+    [ -n "$fVerbose" ] || return 0
+    echo -e "${GREY}[$(timestamp)] [DBG]${RESET} $*" >&2
+}
+
+# Multi-line dbg: dump a labelled block of content with `│ ` prefix so it's
+# visually distinct from normal log lines. Read content from stdin so the
+# caller can pipe / heredoc / `<<<` it.
+_dbgBlock() {
+    [ -n "$fVerbose" ] || return 0
+    local label="$1"
+    echo -e "${GREY}[$(timestamp)] [DBG]${RESET} $label" >&2
+    while IFS= read -r _line; do
+        echo "    │ $_line" >&2
+    done
+}
 
 # Wait (silently) before approving so Ctrl+C still has a window to abort.
 applyApproveDelay() {
@@ -533,6 +705,14 @@ mainLoop() {
     # Empty string at startup so the first iteration always proceeds.
     local lastHandledFp=""
 
+    # Daemon-mode pause flag. Set when the pane is currently running
+    # something we don't monitor (bash, filtered-out AI). Cleared the
+    # next iteration we see a known AI again — the transition from set
+    # → unset is what triggers the "Resumed" log line, regardless of
+    # whether the AI that came back has the same name as the original
+    # ($fAiName unchanged) or a different one ($fAiName updated).
+    local _daemonPaused=""
+
     # Compact two-line banner: title + watch summary on the first line,
     # config + stop hint on the second, single horizontal rule below to
     # mark where the run-time log starts.
@@ -542,7 +722,9 @@ mainLoop() {
     else
         echo -e "${MAGENTA}▶ ${SCRIPT_NAME} AUTO-APPROVE${RESET} ${GREY}·${RESET} ${BLUE}${fTmuxTarget}${RESET}"
     fi
-    echo -e "  ${GREY}poll${RESET} ${fPollInterval}s ${GREY}·${RESET} ${GREY}delay${RESET} ${fApproveDelay}s ${GREY}·${RESET} ${GREY}blacklist${RESET} '${LIGHTYELLOW}rm -rf${RESET}' ${GREY}·${RESET} ${GREY}Ctrl+C to stop${RESET}"
+    local _daemonNote=""
+    [ -n "$fDaemon" ] && _daemonNote=" ${GREY}·${RESET} ${MAGENTA}daemon${RESET}"
+    echo -e "  ${GREY}poll${RESET} ${fPollInterval}s ${GREY}·${RESET} ${GREY}delay${RESET} ${fApproveDelay}s ${GREY}·${RESET} ${GREY}blacklist${RESET} '${LIGHTYELLOW}rm -rf${RESET}'${_daemonNote} ${GREY}·${RESET} ${GREY}Ctrl+C to stop${RESET}"
     echo -e "${GREY}$(_hr 60)${RESET}"
     echo ""
 
@@ -550,8 +732,68 @@ mainLoop() {
         local content
         content=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null)
         if [ $? -ne 0 ]; then
-            echo -e "${GREY}[$(timestamp)]${RESET} ${RED}Target pane gone. Exiting.${RESET}"
+            _log "${RED}Target pane gone. Exiting.${RESET}"
             break
+        fi
+
+        # Sanity check: AI process still running in the pane?
+        # If claude/codex exits while ja keeps running, the pane returns to
+        # bash but the AI's prompt text often stays in scrollback. The
+        # detector then matches that stale text on every iteration and ja
+        # spams `tmux send-keys '1'` into the now-bash pane (each "1" is
+        # echoed by bash, the screen changes, dedup fails to fire — tight
+        # loop). Guard against this by re-checking the AI on every iter.
+        #
+        # Two behaviours, gated by --daemon:
+        #   default        : current cmd != fAiName → exit (original).
+        #   --daemon (-d)  : if pane is running a known (and filter-allowed)
+        #                    AI, monitor it — adopting a new name if needed.
+        #                    Otherwise skip detection this iter and keep
+        #                    polling. Never feed bash output to the detector.
+        local currentAi
+        currentAi=$(detectAiNameForTarget "$fTmuxTarget")
+
+        if [ -z "$fDaemon" ]; then
+            # Original (non-daemon) behaviour preserved verbatim.
+            if [ -n "$currentAi" ] && [ "$currentAi" != "$fAiName" ]; then
+                _log "${RED}'${fAiName}' no longer running in ${fTmuxTarget} (now '${currentAi}'). Exiting.${RESET}"
+                break
+            fi
+        else
+            # Daemon mode. Decide if the current pane content is something
+            # we should actively monitor. Two checks:
+            #   • _isKnownAi: filters out plain shells / unknown commands.
+            #   • fAiFilter: when --claude/--codex was set, only that AI
+            #     counts as "ours".
+            local _shouldMonitor=""
+            if [ -n "$currentAi" ] && _isKnownAi "$currentAi" && \
+               { [ -z "$fAiFilter" ] || [ "$currentAi" = "$fAiFilter" ]; }; then
+                _shouldMonitor=1
+            fi
+
+            if [ -z "$_shouldMonitor" ]; then
+                # Pane is on bash / a filtered-out AI. Skip detection this
+                # iter — DO NOT fall through to detectPromptOption, which
+                # would happily match stale menu text in scrollback and
+                # start spamming digits at the bare shell.
+                if [ -z "$_daemonPaused" ]; then
+                    _log "${LIGHTYELLOW}⏸ Paused${RESET} — pane currently '${currentAi:-?}', not an AI we monitor. Waiting for ${fAiName}…"
+                    _daemonPaused=1
+                fi
+                sleep "$fPollInterval"
+                continue
+            fi
+
+            # An AI is in the pane and we're allowed to monitor it. If we
+            # were paused, or the AI's identity changed mid-run, announce
+            # the resume + reset dedup so a fresh prompt isn't skipped by
+            # a stale fingerprint match.
+            if [ -n "$_daemonPaused" ] || [ "$currentAi" != "$fAiName" ]; then
+                _log "${GREEN}▶ Resumed${RESET} — monitoring '${CYAN}${currentAi}${RESET}' in ${BLUE}${fTmuxTarget}${RESET}"
+                fAiName="$currentAi"
+                lastHandledFp=""
+                _daemonPaused=""
+            fi
         fi
 
         local tail
@@ -570,8 +812,10 @@ mainLoop() {
         local promptOption
         promptOption=$(detectPromptOption "$tail")
         if [ -n "$promptOption" ]; then
+            _dbg "detector matched: option=$promptOption fp=$fingerprint"
+            _dbgBlock "tail content (the 20 lines fed to detectPromptOption):" <<<"$tail"
             if isBlacklisted "$content"; then
-                echo -e "${GREY}[$(timestamp)]${RESET} ${RED}⚠ BLACKLISTED (rm -rf) — skipping${RESET}"
+                _log "${RED}⚠ BLACKLISTED (rm -rf) — skipping${RESET}"
                 lastHandledFp="$fingerprint"
                 sleep "$fPollInterval"
                 continue
@@ -612,14 +856,64 @@ mainLoop() {
             #       entry mode may not exist).
             # Until that version ships, this branch trusts that
             # $promptOption is a single ASCII digit.
+            #
+            # KNOWN LIMITATION — slow-transition prompts (trust prompt)
+            # ──────────────────────────────────────────────────────────
+            # The trust prompt is the one prompt where pressing the
+            # option number is correctly accepted but the visible UI
+            # takes 10+ seconds to transition (codex/claude do config
+            # loading, MCP startup, etc. before the menu is replaced).
+            # All other prompts transition in well under 1 second.
+            #
+            # Real wording (so future regex detection has examples):
+            #
+            #   Codex CLI:
+            #     "Do you trust the contents of this directory? ..."
+            #     "› 1. Yes, continue / 2. No, quit"
+            #     "Press enter to continue"
+            #
+            #   Claude Code:
+            #     "Quick safety check: Is this a project you created
+            #      or one you trust? ..."
+            #     "❯ 1. Yes, I trust this folder / 2. No, exit"
+            #     "Enter to confirm · Esc to cancel"
+            #
+            # Common markers across both: word "trust" near the question,
+            # and a footer hint mentioning "Enter to (confirm|continue)".
+            #
+            # Effect: waitForScreenChange's 2s budget expires while the
+            # menu is still on screen; verify-and-retry then misclassifies
+            # this as "key dropped" and resends. The second keystroke
+            # leaks into whatever input context comes next (typically the
+            # main UI's text input → a stray "1" appears in the prompt
+            # box).
+            #
+            # Why it's not fixed:
+            #   - Bumping the global timeout to 15-30s slows down EVERY
+            #     dropped-key recovery for the 99% of fast prompts.
+            #   - Detecting the trust prompt by phrase ("do you trust")
+            #     and bypassing retry would work but adds a maintenance
+            #     knob and a regex that has to track future wording.
+            #   - The damage is small: one extra digit in the input box,
+            #     trivially deleted with backspace. Trust prompts only
+            #     appear once per untrusted directory, so this is
+            #     low-frequency.
+            # Tracked here so future regressions (more frequent or more
+            # damaging variants) can find the rationale and the proposed
+            # fixes (see brainstorm in commit history).
             local _preSendFp="$fingerprint"
             local _maxRetries=3
             local _attempt=0
             local _postFp="$_preSendFp"
             while true; do
+                _dbg "send-keys '$promptOption' (attempt $((_attempt + 1))/$_maxRetries)"
                 tmux send-keys -t "$fTmuxTarget" "$promptOption"
                 _postFp=$(waitForScreenChange "$_preSendFp" 2000)
-                [ "$_postFp" != "$_preSendFp" ] && break
+                if [ "$_postFp" != "$_preSendFp" ]; then
+                    _dbg "screen changed: $_preSendFp → $_postFp"
+                    break
+                fi
+                _dbg "screen unchanged after 2s, verifying prompt is still visible..."
 
                 # Timeout: before re-sending, confirm the prompt is
                 # still on-screen. If detectPromptOption returns empty,
@@ -632,20 +926,22 @@ mainLoop() {
                 _verifyContent=$(tmux capture-pane -t "$fTmuxTarget" -p 2>/dev/null)
                 _verifyTail=$(echo "$_verifyContent" | tail -20)
                 if [ -z "$(detectPromptOption "$_verifyTail")" ]; then
+                    _dbg "prompt vanished from screen → treating as success (key likely took effect, hash diff was missed)"
                     _postFp=$(echo "$_verifyTail" | _hash)
                     break
                 fi
 
+                _dbg "prompt still on screen → key likely dropped, will retry"
                 _attempt=$((_attempt + 1))
                 [ "$_attempt" -ge "$_maxRetries" ] && break
             done
             if [ "$_postFp" = "$_preSendFp" ]; then
-                echo -e "${GREY}[$(timestamp)]${RESET} ${RED}⚠ Keystroke dropped (option $promptOption) after $_maxRetries attempts${RESET}"
+                _log "${RED}⚠ Keystroke dropped (option $promptOption) after $_maxRetries attempts${RESET}"
             else
                 fApprovedCount=$((fApprovedCount + 1))
                 local _retryNote=""
-                [ "$_attempt" -gt 0 ] && _retryNote=" (retry $_attempt)"
-                echo -e "${GREY}[$(timestamp)]${RESET} ${GREEN}✔ Approved${RESET} (option $promptOption)${_retryNote} [#$fApprovedCount]"
+                [ "$_attempt" -gt 0 ] && _retryNote=" (${LIGHTYELLOW}retry${RESET} $_attempt)"
+                _log "${GREEN}✔ Approved${RESET} (option $promptOption)${_retryNote} [#$fApprovedCount]"
             fi
             # Track the PRE-send fingerprint, not the post-send one.
             # Rationale: if Claude finishes the approved command quickly and
@@ -656,8 +952,14 @@ mainLoop() {
             # still on screen (i.e., the keystroke was dropped), while a
             # brand-new prompt has a different hash and is handled normally.
             lastHandledFp="$_preSendFp"
+            _dbg "lastHandledFp ← $_preSendFp (pre-send fp)"
             continue
         fi
+
+        # Screen changed but detector didn't match — useful signal when
+        # diagnosing why a stale-but-visible prompt stops triggering on
+        # later iterations.
+        _dbg "no prompt detected (fp=$fingerprint, but screen changed since fp=$lastHandledFp)"
 
         sleep "$fPollInterval"
     done
@@ -679,12 +981,20 @@ if [ -n "$fListOnly" ]; then
     done < <(findAiPanes)
 
     if [ ${#_panes[@]} -eq 0 ]; then
-        echo -e "${RED}No pane running claude or codex found${RESET}"
+        if [ -n "$fAiFilter" ]; then
+            echo -e "${RED}No pane running ${fAiFilter} found${RESET}"
+        else
+            echo -e "${RED}No pane running $(_aiNamesPretty) found${RESET}"
+        fi
         exit 0
     fi
 
     echo ""
-    echo -e "${LIGHTYELLOW}AI sessions on tmux server (${#_panes[@]})${RESET}"
+    if [ -n "$fAiFilter" ]; then
+        echo -e "${LIGHTYELLOW}AI sessions on tmux server (${#_panes[@]}) ${GREY}[filter: ${fAiFilter}]${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}AI sessions on tmux server (${#_panes[@]})${RESET}"
+    fi
     echo ""
     _renderAiTable "${_panes[@]}"
     echo ""
@@ -692,10 +1002,54 @@ if [ -n "$fListOnly" ]; then
 fi
 
 if [ -z "$fTmuxTarget" ]; then
+    # auto-detect requires at least one AI pane to bootstrap the target.
+    # Even in daemon mode there's no way to "wait for an AI to come back"
+    # without first knowing which pane to wait in, so this path stays
+    # strict regardless of -d.
     autoDetectTarget
 else
     validateTarget "$fTmuxTarget"
     fAiName=$(detectAiNameForTarget "$fTmuxTarget")
+    # Refuse to attach to a pane that isn't running an AI tool. Without
+    # this, `ja -t <bash-pane>` happily starts monitoring and the
+    # detector ends up matching stale prompt text in scrollback (e.g.
+    # from a previous claude session) — leading to runaway `tmux
+    # send-keys '1'` into a plain shell.
+    #
+    # Daemon mode relaxes this: the whole point of -d is "stay alive
+    # while no AI is running", so we let ja boot into a paused state
+    # when the target pane has no AI yet. mainLoop's pause/resume logic
+    # then handles things naturally once an AI appears.
+    if ! _isKnownAi "$fAiName"; then
+        if [ -z "$fDaemon" ]; then
+            echo -e "${RED}Error: target ${fTmuxTarget} is running '${fAiName}', not $(_aiNamesPretty)${RESET}" >&2
+            echo -e "${GREY}Start an AI tool in that pane first, or run '${SCRIPT_NAME} -l' to find existing AI panes.${RESET}" >&2
+            exit 1
+        fi
+        # Daemon: synthesise an fAiName so banner/log lines have something
+        # readable. fAiFilter (if set) is a better label than the raw cmd
+        # because it tells the user *which* AI ja will accept on resume.
+        if [ -n "$fAiFilter" ]; then
+            fAiName="$fAiFilter"
+        else
+            fAiName="$(_aiNamesPretty)"
+        fi
+    fi
+    # If the user requested a specific AI via --claude/--codex, refuse to
+    # attach to a target running anything else.  Catches misuse like
+    # `ja -t M:5.1 --codex` when M:5.1 is actually claude.
+    #
+    # Daemon mode again relaxes: a mismatched-but-known AI is fine because
+    # the pane might switch to the requested AI later. mainLoop's filter
+    # check will keep us paused until that happens.
+    if [ -n "$fAiFilter" ] && _isKnownAi "$fAiName" && [ "$fAiName" != "$fAiFilter" ]; then
+        if [ -z "$fDaemon" ]; then
+            echo -e "${RED}Error: target ${fTmuxTarget} is running '${fAiName}', not '${fAiFilter}'${RESET}" >&2
+            exit 1
+        fi
+        # Re-label so banner reflects what we'll actually monitor.
+        fAiName="$fAiFilter"
+    fi
 fi
 
 # Build the lockfile path now that fTmuxTarget is finalised.
@@ -719,7 +1073,8 @@ echo $$ > "$fLockFile"
 # "Stopped" message prints twice.
 _cleanup() {
     rm -f "$fLockFile"
-    echo -e "\n${GREY}[$(timestamp)]${RESET} Stopped. Approved ${GREEN}$fApprovedCount${RESET} prompts."
+    echo
+    _log "Stopped. Approved ${GREEN}$fApprovedCount${RESET} prompts."
     trap - INT TERM EXIT
     exit 0
 }

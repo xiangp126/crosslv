@@ -14,10 +14,14 @@ if ! declare -F __ltrim_colon_completions &>/dev/null; then
 fi
 
 _ja_complete() {
-    local cur prev
+    local cur prev short_opts long_opts
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    short_opts="-h -t -w -l -v -d"
+    long_opts="--help --wait --list --verbose --daemon \
+               --claude --codex"
 
     # Complete tmux targets in session[:window[.pane]] format.
     # Generates candidates with raw colons, then uses
@@ -95,7 +99,7 @@ _ja_complete() {
     esac
 
     if [[ ${cur} == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help -t -w --wait -l --list" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "${short_opts} ${long_opts}" -- "${cur}") )
         return 0
     fi
 }

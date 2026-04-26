@@ -231,6 +231,10 @@ Codex Options:
                                     (config.toml)
     --codex-restore                 Restore Codex CLI settings
 
+Gemini Options:
+    --gemini                        Install or upgrade Gemini (CLI)
+    --gemini-remove                 Remove Gemini CLI
+
 Examples:
     $SCRIPT_NAME -h
     $SCRIPT_NAME --link-clang-format \$HOME/crosslv
@@ -255,7 +259,8 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,\
           rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,claude-remove,\
           claude-backup,claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
-          codex,codex-remove,codex-backup,codex-restore,cursor-backup,cursor-restore,\
+          codex,codex-remove,codex-backup,codex-restore,\
+          gemini,gemini-remove,cursor-backup,cursor-restore,\
           singbox,singbox-xray,singbox-wg,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           acl-block:,acl-unblock:,acl-status:"
@@ -410,6 +415,53 @@ removeCodex() {
     fi
 
     echo -e "${GREEN}✔${GREY} Codex removed.${RESET}"
+}
+
+installGemini() {
+    local bin ver
+
+    echo -e "${BOLD}${COLOR}Installing Gemini CLI${RESET}"
+
+    # Same npm channel as claude/codex — Google ships gemini-cli only via
+    # @google/gemini-cli on npm; no Homebrew or system package today.
+    checkNodeEnv || return 1
+    echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@google/gemini-cli${RESET}${GREY}...${RESET}"
+    npm install -g @google/gemini-cli || {
+        echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
+        return 1
+    }
+    hash -r
+
+    ver=$(gemini --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    bin=$(command -v gemini 2>/dev/null || echo 'not found')
+    bin=${bin/#$HOME/\~}
+
+    echo -e "${GREEN}✔ Installed${RESET} ${GREY}v${ver:-unknown}${RESET}"
+    echo -e "${GREEN}✔${RESET} ${GREY}Binary${RESET}: ${CYAN}${bin}${RESET}"
+    echo -e "${GREEN}✔${RESET} ${GREY}Config${RESET}: ${CYAN}~/.gemini${RESET}"
+}
+
+removeGemini() {
+    echo -e "${BOLD}${COLOR}Removing Gemini CLI${RESET}"
+
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        export NVM_DIR="$HOME/.nvm"
+        # shellcheck source=/dev/null
+        source "$NVM_DIR/nvm.sh"
+    fi
+    local removed=false
+    if command -v npm &>/dev/null && npm list -g @google/gemini-cli &>/dev/null; then
+        echo -e "  ${LIGHTYELLOW}Removing ${BLUE}@google/gemini-cli${RESET}${GREY}...${RESET}"
+        npm uninstall -g @google/gemini-cli
+        removed=true
+    fi
+
+    if ! $removed; then
+        echo -e "  ${GREY}Gemini CLI is not installed.${RESET}"
+        return 0
+    fi
+
+    echo -e "${GREEN}✔${GREY} Gemini CLI removed.${RESET}"
 }
 
 gwAclControl() {
@@ -712,6 +764,16 @@ while true; do
         --codex-restore)
             fCodexAction="restore"
             shift
+            ;;
+        --gemini)
+            installGemini
+            shift
+            exit 0
+            ;;
+        --gemini-remove)
+            removeGemini
+            shift
+            exit 0
             ;;
         --xray)
             fXrayUpdate=true
