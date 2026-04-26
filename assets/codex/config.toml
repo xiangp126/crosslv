@@ -1,23 +1,7 @@
 model = "gpt-5.5"
 service_tier = "fast"
-model_reasoning_effort = "high"
-[projects."/auto/fwgwork1/pexiang/golan_fw"]
-trust_level = "trusted"
-
-[projects."/auto/fwgwork1/pexiang/golan_fw2"]
-trust_level = "trusted"
-
-[projects."/labhome/pexiang/myGit/crosslv"]
-trust_level = "trusted"
-
-[projects."/labhome/pexiang"]
-trust_level = "trusted"
-
-[projects."/auto/fwgwork1/pexiang/golan_fw3"]
-trust_level = "trusted"
-
-[projects."/auto/fwgwork1/pexiang/bugZilla/bug_4950555_degardation_on_argaman/new_fix"]
-trust_level = "trusted"
+model_reasoning_effort = "xhigh"
+check_for_update_on_startup = false
 
 [mcp_servers.nvidia-redmine]
 type = "http"
@@ -35,8 +19,142 @@ url = "https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
 type = "http"
 url = "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
 
+[mcp_servers.nvidia-jira]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/jira/mcp"
+
+[mcp_servers.nvidia-confluence]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/confluence/mcp"
+
+[mcp_servers.nvidia-glean]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/glean/mcp"
+
+[mcp_servers.nvidia-jama-cache]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/jama_cache/mcp"
+
+[mcp_servers.nvidia-colossus-mysql]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/colossus_mysql/mcp"
+
+[mcp_servers.nvidia-gdrive]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/gdrive/mcp"
+
+[mcp_servers.nvidia-onedrive]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/onedrive/mcp"
+
+[mcp_servers.nvidia-sharepoint]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/sharepoint/mcp"
+
+[mcp_servers.nvidia-gitlab]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/gitlab/mcp"
+
+[mcp_servers.nvidia-perforce]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/p4/mcp"
+
+[mcp_servers.nvidia-nsight-cuda]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/nsight_cuda/mcp"
+
+[mcp_servers.nvidia-pagerduty]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/pagerduty/mcp"
+
+[mcp_servers.nvidia-ippsec-metrics]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/ippsec_metrics/mcp"
+
+[mcp_servers.nvidia-nvks-prometheus]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/nvks_prometheus/mcp"
+
+[mcp_servers.nvidia-armis]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/armis/mcp"
+
+[mcp_servers.nvidia-sonarqube]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/sonarqube/mcp"
+
+[mcp_servers.nvidia-testpilot]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/testpilot/mcp"
+
+[mcp_servers.nvidia-cqa]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/cqa/mcp"
+
+[mcp_servers.nvidia-swagger-schema]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/swagger_schema_retrieval/mcp"
+
+[mcp_servers.nvidia-dlsim-assistant]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/dlsim_assistant_server/mcp"
+
+[mcp_servers.nvidia-vlm-screen]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/vlm_screen_analysis/mcp"
+
+[mcp_servers.nvidia-querysage]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/querysage/mcp"
+
+[mcp_servers.nvidia-salesforce]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/salesforce/mcp"
+
+[mcp_servers.nvidia-databricks]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/databricks/mcp"
+
+[mcp_servers.nvidia-awx]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/awx_mcp_server/mcp"
+
+[mcp_servers.nvidia-sqa-aipilot]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/sqa_aipilot/mcp"
+
+[mcp_servers.nvidia-cmi]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/cmi/mcp"
+
+[mcp_servers.nvidia-space]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/space/mcp"
+
+[mcp_servers.nvidia-ironwise]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/ironwise/mcp"
+
+[mcp_servers.nvidia-nvinfo]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/nvinfo/mcp"
+
+[mcp_servers.nvidia-nvspecs]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/nvspecs/mcp"
+
+[mcp_servers.nvidia-outlook]
+type = "http"
+url = "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
+
 [notice.model_migrations]
 "gpt-5.3-codex" = "gpt-5.4"
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4
+
+[projects."/Users/pexiang"]
+trust_level = "trusted"
+
+[projects."/Users/pexiang/myGit/crosslv"]
+trust_level = "trusted"

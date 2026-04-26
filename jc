@@ -705,7 +705,15 @@ while true; do
             if [ -s "$nvmSh" ]; then
                 # shellcheck source=/dev/null
                 source "$nvmSh"
-                globalPkgs=$(npm list -g --depth=0 2>/dev/null | grep -oP '── \K(@[^@]+|[^@\s]+)(?=@)')
+                # Parse `npm list -g --depth=0` lines like `├── @scope/pkg@1.2.3`
+                # or `└── pkg@1.2.3` and emit just the package name. Avoid grep
+                # -oP / \K / lookahead — BSD grep on macOS lacks PCRE.
+                globalPkgs=$(npm list -g --depth=0 2>/dev/null | awk '/── / {
+                    pkg = $NF
+                    n = split(pkg, parts, "@")
+                    if (n == 2) print parts[1]
+                    else if (n == 3 && parts[1] == "") print "@" parts[2]
+                }')
                 if [ -n "$globalPkgs" ]; then
                     echo -e "${COLOR}Upgrading globally installed npm packages${RESET}"
                     for pkg in $globalPkgs; do

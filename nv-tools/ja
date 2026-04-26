@@ -63,6 +63,7 @@ GREEN='\033[32m'
 MAGENTA='\033[35m'
 CYAN='\033[36m'
 LIGHTYELLOW='\033[93m'
+LIGHTMAGENTA='\033[95m'
 GREY='\033[90m'
 BLUE='\033[34m'
 RESET='\033[0m'
@@ -940,7 +941,7 @@ mainLoop() {
             else
                 fApprovedCount=$((fApprovedCount + 1))
                 local _retryNote=""
-                [ "$_attempt" -gt 0 ] && _retryNote=" (${LIGHTYELLOW}retry${RESET} $_attempt)"
+                [ "$_attempt" -gt 0 ] && _retryNote=" (${LIGHTMAGENTA}retry $_attempt${RESET})"
                 _log "${GREEN}✔ Approved${RESET} (option $promptOption)${_retryNote} [#$fApprovedCount]"
             fi
             # Track the PRE-send fingerprint, not the post-send one.
