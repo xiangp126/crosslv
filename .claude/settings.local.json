@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh:*)",
+      "Skill(update-config)",
+      "mcp__nvidia-redmine__yai__get_tickets",
+      "WebFetch(domain:www.macrotrends.net)",
+      "WebFetch(domain:finance.yahoo.com)",
+      "WebFetch(domain:stockanalysis.com)"
+    ]
+  },
+  "sandbox": {
+    "enabled": false,
+    "autoAllowBashIfSandboxed": false
+  }
+}
