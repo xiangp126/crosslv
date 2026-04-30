@@ -40,6 +40,151 @@
     "enabled": false
   },
   "skipDangerousModePermissionPrompt": true,
-  "mcpServers": {},
+  "mcpServers": {
+    "nvidia-redmine": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/redmine/mcp"
+    },
+    "nvidia-gerrit": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/gerrit/mcp"
+    },
+    "nvidia-nvbugs": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
+    },
+    "nvidia-jenkins": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
+    },
+    "nvidia-jira": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/jira/mcp"
+    },
+    "nvidia-confluence": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/confluence/mcp"
+    },
+    "nvidia-glean": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/glean/mcp"
+    },
+    "nvidia-jama-cache": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/jama_cache/mcp"
+    },
+    "nvidia-colossus-mysql": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/colossus_mysql/mcp"
+    },
+    "nvidia-gdrive": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/gdrive/mcp"
+    },
+    "nvidia-onedrive": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/onedrive/mcp"
+    },
+    "nvidia-sharepoint": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/sharepoint/mcp"
+    },
+    "nvidia-gitlab": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/gitlab/mcp"
+    },
+    "nvidia-perforce": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/p4/mcp"
+    },
+    "nvidia-nsight-cuda": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/nsight_cuda/mcp"
+    },
+    "nvidia-pagerduty": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/pagerduty/mcp"
+    },
+    "nvidia-ippsec-metrics": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/ippsec_metrics/mcp"
+    },
+    "nvidia-nvks-prometheus": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/nvks_prometheus/mcp"
+    },
+    "nvidia-armis": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/armis/mcp"
+    },
+    "nvidia-sonarqube": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/sonarqube/mcp"
+    },
+    "nvidia-testpilot": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/testpilot/mcp"
+    },
+    "nvidia-cqa": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/cqa/mcp"
+    },
+    "nvidia-swagger-schema": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/swagger_schema_retrieval/mcp"
+    },
+    "nvidia-dlsim-assistant": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/dlsim_assistant_server/mcp"
+    },
+    "nvidia-vlm-screen": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/vlm_screen_analysis/mcp"
+    },
+    "nvidia-querysage": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/querysage/mcp"
+    },
+    "nvidia-salesforce": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/salesforce/mcp"
+    },
+    "nvidia-databricks": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/databricks/mcp"
+    },
+    "nvidia-awx": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/awx_mcp_server/mcp"
+    },
+    "nvidia-sqa-aipilot": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/sqa_aipilot/mcp"
+    },
+    "nvidia-cmi": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/cmi/mcp"
+    },
+    "nvidia-space": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/space/mcp"
+    },
+    "nvidia-ironwise": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/ironwise/mcp"
+    },
+    "nvidia-nvinfo": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/nvinfo/mcp"
+    },
+    "nvidia-nvspecs": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/nvspecs/mcp"
+    },
+    "nvidia-outlook": {
+      "type": "http",
+      "url": "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
+    }
+  },
   "model": "claude-opus-4-7[1m]"
 }
