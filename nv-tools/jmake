@@ -50,6 +50,7 @@ fBurnOfficial=
 fFwQuery=
 fInputCmd=
 fBuildTimeFormatted=
+fLoopStartTime=
 # Git associated variables
 fCompileCommandsJson="compile_commands.json"
 fRMCompileCommandsJson=
@@ -231,12 +232,14 @@ loadLoopState() {
     echo $SEPARATOR
 }
 
-# Delete state file
+# Delete state file. Pass "quiet" to suppress the standalone message
+# (used at end-of-loop where the disposition is shown inside the summary block).
 deleteLoopState() {
+    local quiet="$1"
     local stateFile="$fWorkingDir/$STATE_FILE"
     if [[ -f "$stateFile" ]]; then
         rm -f "$stateFile"
-        echo -e "$NOTATION Cleared saved state file: ${LIGHTYELLOW}$stateFile${RESET}"
+        [[ "$quiet" == "quiet" ]] || echo -e "$NOTATION Cleared saved state file: ${LIGHTYELLOW}$stateFile${RESET}"
     fi
 }
 
@@ -275,7 +278,7 @@ Build Options:
     -b, --bear                      Generate $fCompileCommandsJson (implies -c --clean-db -o)
     -m, --models <models>           Build specified models (comma-separated, loop if multiple)
         --skip <models>             Skip these models when building (comma-separated)
-    -p, --patch                     Patch 'sudo docker' → 'docker' in build scripts (essential for CC autorun)
+    -p, --patch                     Patch 'sudo docker' → 'docker' in build scripts (for Sandbox autorun)
         --ethlt                     Build the _ethlt variant of the model(s)
         --codecov                   Build the _codecov variant of the model(s)
         --cov                       Build the cov variant of the model(s)
@@ -951,23 +954,94 @@ patchSudoDocker() {
     fi
 }
 
-printLoopStatusChart() {
+# Print one summary row: "▸   <coloredLabel>   (N) item, item, ..." with wrapping.
+# Args: $1 coloredLabel  $2 plainLabel (for width)  $3 count  $4..  items
+printSummaryRow() {
+    local coloredLabel="$1" plainLabel="$2" count="$3"
+    shift 3
+    local -a items=("$@")
+    local countStr="($count)"
+    # Visible header: 3sp + label[8] + 3sp + count[4] + 1sp = 19 chars; continuation = 19 spaces
+    local pad="" i
+    for ((i=0; i<8-${#plainLabel}; i++)); do pad+=" "; done
+    local paddedCount
+    paddedCount=$(printf '%-4s' "$countStr")
+    local hdrPrefix="   ${coloredLabel}${pad}   ${paddedCount}"
+    local indent="                   "
+    local maxWidth=60
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        echo -e "$NOTATION$hdrPrefix ${GREY}(none)${RESET}"
+        return
+    fi
+
+    local line="" lastIdx=$(( ${#items[@]} - 1 ))
+    local -a wrappedLines=()
+    for i in "${!items[@]}"; do
+        local sep=""
+        [[ $i -lt $lastIdx ]] && sep=","
+        local addition
+        if [[ -z "$line" ]]; then
+            addition="${items[$i]}$sep"
+        else
+            addition=" ${items[$i]}$sep"
+        fi
+        if [[ -n "$line" && $(( ${#line} + ${#addition} )) -gt $maxWidth ]]; then
+            wrappedLines+=("$line")
+            line="${items[$i]}$sep"
+        else
+            line+="$addition"
+        fi
+    done
+    [[ -n "$line" ]] && wrappedLines+=("$line")
+
+    local first=1 ln
+    for ln in "${wrappedLines[@]}"; do
+        if [[ $first -eq 1 ]]; then
+            echo -e "$NOTATION$hdrPrefix $ln"
+            first=0
+        else
+            echo -e "$NOTATION$indent$ln"
+        fi
+    done
+}
+
+# Print the aligned Loop Build Summary block (used by both success and failure paths).
+# $1 = "success" | "failed"
+# $2 = optional stateNote rendered as a "State" row before the closing separator
+printLoopBuildSummary() {
+    local variant="$1"
+    local stateNote="${2:-}"
+    local totalTimeFormatted="-"
+    if [[ -n "$fLoopStartTime" ]]; then
+        local totalTime=$(( $(date +%s) - fLoopStartTime ))
+        totalTimeFormatted=$(formatElapsed $totalTime)
+    fi
+
     echo "$SEPARATOR"
-    echo -e "$NOTATION ${BOLD}${RED}Build Failed - Loop Status Chart:${RESET}"
-    echo -e "  ${RED}✗ Failed:${RESET}      $fModelsCurrent"
-    if [[ ${#fModelsVerified[@]} -gt 0 ]]; then
-        echo -e "  ${GREEN}✓ Verified:${RESET}    $(IFS=','; echo "${fModelsVerified[*]}")"
+    if [[ "$variant" == "failed" ]]; then
+        echo -e "$NOTATION ${BOLD}${RED}Loop Build Summary (failed)${RESET}"
     else
-        echo -e "  ${GREEN}✓ Verified:${RESET}    (none)"
+        echo -e "$NOTATION ${BOLD}Loop Build Summary${RESET}"
     fi
+    echo -e "$NOTATION   Finished   $(getCurrentTime)"
+    echo -e "$NOTATION   Total      ${CYAN}$totalTimeFormatted${RESET}"
+
+    printSummaryRow "${GREEN}Verified${RESET}" "Verified" "${#fModelsVerified[@]}" "${fModelsVerified[@]}"
+
     if [[ ${#fModelsSkipped[@]} -gt 0 ]]; then
-        echo -e "  ${CYAN}⊘ Skipped:${RESET}     $(IFS=','; echo "${fModelsSkipped[*]}")"
+        printSummaryRow "${CYAN}Skipped${RESET}" "Skipped" "${#fModelsSkipped[@]}" "${fModelsSkipped[@]}"
     fi
-    if [[ ${#fModelsPending[@]} -gt 0 ]]; then
-        echo -e "  ${YELLOW}○ Pending:${RESET}     $(IFS=','; echo "${fModelsPending[*]}")"
-    else
-        echo -e "  ${YELLOW}○ Pending:${RESET}     (none)"
+
+    if [[ "$variant" == "failed" ]]; then
+        printSummaryRow "${RED}Failed${RESET}" "Failed" 1 "$fModelsCurrent"
+        if [[ ${#fModelsPending[@]} -gt 0 ]]; then
+            printSummaryRow "${YELLOW}Pending${RESET}" "Pending" "${#fModelsPending[@]}" "${fModelsPending[@]}"
+        fi
     fi
+
+    [[ -n "$stateNote" ]] && echo -e "$NOTATION   State      $stateNote"
+
     echo "$SEPARATOR"
 }
 
@@ -991,12 +1065,16 @@ runBuildCommands() {
     local maxAttempt=$fMaxBuildAttempt
     local buildStartTime buildEndTime
     local eval_status=1
+    # Loop mode = building multiple models or filtering with --skip; runLoopModels
+    # owns the per-iteration success line and final summary in that case.
+    local isLoopMode=$([[ ${#fModels[@]} -gt 1 || ${#fModelsSkip[@]} -gt 0 ]] && echo 1 || echo 0)
 
     while [[ $currAttempt -le $maxAttempt ]]; do
         buildStartTime=$(date +%s)
         COLOR="$GREEN"
         echo -e "$NOTATION Running: ${LIGHTYELLOW}$fBuildCommand${RESET}"
         echo -e "$NOTATION ${COLOR}Build attempt $currAttempt/$maxAttempt${RESET}"
+        echo "$SEPARATOR"
         sleep 1
 
         eval "$fBuildCommand"
@@ -1012,9 +1090,8 @@ runBuildCommands() {
 
     if [[ $eval_status -ne 0 ]]; then
         echo -e "$NOTATION ${RED}✗ $(getModelDisplayName "$fBuildModel") build failed${RESET}"
-        # Only save state and show chart when building multiple models
-        if [[ ${#fModels[@]} -gt 1 || ${#fModelsSkip[@]} -gt 0 ]]; then
-            printLoopStatusChart
+        if [[ $isLoopMode -eq 1 ]]; then
+            printLoopBuildSummary "failed"
             saveLoopState
         fi
         exit 1
@@ -1023,16 +1100,20 @@ runBuildCommands() {
     local buildTime=$((buildEndTime - buildStartTime))
     fBuildTimeFormatted=$(formatElapsed $buildTime)
 
-    echo $SEPARATOR
-    echo -e "$NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
+    # In loop mode, runLoopModels prints the per-model success line and summary,
+    # so skip the per-build banner here to avoid duplicated time/messages.
+    if [[ $isLoopMode -eq 0 ]]; then
+        echo $SEPARATOR
+        echo -e "$NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
 
-    local mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
-    if [[ -n "$mlxFile" && -f "$mlxFile" ]]; then
-        local mlxSize
-        mlxSize=$(du -h "$mlxFile" | cut -f1)
-        echo -e "$NOTATION ${GREEN}✓ .mlx:${RESET} ${CYAN}$mlxFile${RESET} ${GREY}($mlxSize)${RESET}"
+        local mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
+        if [[ -n "$mlxFile" && -f "$mlxFile" ]]; then
+            local mlxSize
+            mlxSize=$(du -h "$mlxFile" | cut -f1)
+            echo -e "$NOTATION ${GREEN}✓ .mlx:${RESET} ${CYAN}$mlxFile${RESET} ${GREY}($mlxSize)${RESET}"
+        fi
+        echo $SEPARATOR
     fi
-    echo $SEPARATOR
 }
 
 isModelSkipped() {
@@ -1060,7 +1141,7 @@ runLoopModels() {
     # Only run if --models or --all is specified
     [[ ${#fModels[@]} -eq 0 ]] && return 1
 
-    local totalStartTime=$(date +%s)
+    fLoopStartTime=$(date +%s)
     local isLoopMode=$([[ ${#fModels[@]} -gt 1 || ${#fModelsSkip[@]} -gt 0 ]] && echo 1 || echo 0)
     fModelsSkipped=()
 
@@ -1096,19 +1177,21 @@ runLoopModels() {
         fBuildModel="$model"
 
         echo -e "$NOTATION ${BOLD}Current Building: ${GREEN}$(getModelDisplayName "$model")${RESET}"
-        runBuildCommands  # exits on failure with status chart
+        runBuildCommands  # exits on failure with summary
 
         # If we get here, build succeeded
         fModelsVerified+=("$model")
 
-        # Show progress banner between models in loop mode
         if [[ $isLoopMode -eq 1 ]]; then
-            echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") build succeeded${RESET} ${GREY}(${fBuildTimeFormatted})${RESET}"
-            echo -e "$NOTATION Progress: ${CYAN}[${#fModelsVerified[@]}/$totalModels]${RESET}" \
-                "$( [[ ${#fModelsPending[@]} -gt 0 ]] \
-                    && echo -e "Next up: ${YELLOW}$(getModelDisplayName "${fModelsPending[0]}")${RESET}" \
-                    || echo -e "${GREEN}All models built${RESET}" )"
-            [[ ${#fModelsPending[@]} -gt 0 ]] && echo "$SEPARATOR"
+            # Frame the per-iteration summary with a leading separator (replaces
+            # the leading === that the suppressed "Build completed..." banner used to provide).
+            echo "$SEPARATOR"
+            echo -e "$NOTATION ${GREEN}✓ $(getModelDisplayName "$model") built in ${fBuildTimeFormatted}${RESET}"
+            if [[ ${#fModelsPending[@]} -gt 0 ]]; then
+                local doneCount=${#fModelsVerified[@]}
+                echo -e "$NOTATION Progress ${CYAN}[$doneCount/$totalModels]${RESET} next: ${YELLOW}$(getModelDisplayName "${fModelsPending[0]}")${RESET}"
+                echo "$SEPARATOR"
+            fi
             saveLoopState "progress"
         else
             local mlxFile="${MODEL_MLX_FILE[$model]}"
@@ -1117,28 +1200,24 @@ runLoopModels() {
         fi
     done
 
-    local totalEndTime=$(date +%s)
-    local totalTime=$((totalEndTime - totalStartTime))
-    local totalTimeFormatted=$(formatElapsed $totalTime)
-
-    echo "$SEPARATOR"
     if [[ $isLoopMode -eq 1 ]]; then
-        echo -e "$NOTATION ${BOLD}Loop Build Summary:${RESET}"
+        local stateFilePath="$fWorkingDir/$STATE_FILE"
+        local stateNote
+        if [[ ${#fModelsSkipped[@]} -eq 0 ]]; then
+            stateNote="${LIGHTYELLOW}$stateFilePath${RESET} ${GREY}(cleared)${RESET}"
+        else
+            stateNote="${LIGHTYELLOW}$stateFilePath${RESET} ${GREY}(kept; skipped models will resume next run)${RESET}"
+        fi
+        printLoopBuildSummary "success" "$stateNote"
+        [[ ${#fModelsSkipped[@]} -eq 0 ]] && deleteLoopState quiet
     else
+        local totalTime=$(( $(date +%s) - fLoopStartTime ))
+        local totalTimeFormatted=$(formatElapsed $totalTime)
+        echo "$SEPARATOR"
         echo -e "$NOTATION ${BOLD}Build Summary:${RESET}"
-    fi
-    echo -e "$NOTATION Total time: ${CYAN}$totalTimeFormatted${RESET}"
-    echo -e "$NOTATION ${GREEN}✓ Verified (${#fModelsVerified[@]}):${RESET} $(IFS=','; echo "${fModelsVerified[*]}")"
-    if [[ ${#fModelsSkipped[@]} -gt 0 ]]; then
-        echo -e "$NOTATION ${CYAN}⊘ Skipped (${#fModelsSkipped[@]}):${RESET} $(IFS=','; echo "${fModelsSkipped[*]}")"
-    fi
-    echo "$SEPARATOR"
-
-    # Delete state file only if no models were skipped (all completed)
-    if [[ ${#fModelsSkipped[@]} -eq 0 ]]; then
-        deleteLoopState
-    else
-        echo -e "$NOTATION ${YELLOW}State file kept (skipped models can be built later)${RESET}"
+        echo -e "$NOTATION Total time: ${CYAN}$totalTimeFormatted${RESET}"
+        echo -e "$NOTATION ${GREEN}✓ Verified (${#fModelsVerified[@]}):${RESET} $(IFS=','; echo "${fModelsVerified[*]}")"
+        echo "$SEPARATOR"
     fi
     return 0
 }
