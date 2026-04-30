@@ -23,6 +23,22 @@ fLockFile=        # populated AFTER fTmuxTarget is finalised; see main flow
 fVerbose=         # debug logging to stderr
 fAiFilter=        # "claude", "codex", or empty (any); set by --claude/--codex
 fDaemon=          # 1 = stay alive across AI restarts (--daemon/-d)
+fStartedTs=       # unix seconds when mainLoop started (for --status uptime)
+fHost=            # where ja itself started: "<sess:win.pane>" if launched
+                  # inside tmux, "<tty>" if outside tmux but attached to a
+                  # terminal, empty string if fully detached (no ctty).
+                  # Computed once at mainLoop start by _resolveHostLocation
+                  # and frozen — does not track tty changes after launch.
+fTargetPaneId=    # tmux pane_id (eg. "%47") of fTmuxTarget at startup.
+                  # Frozen anchor for detecting silent target hijack:
+                  # if move-window/rename-session causes another pane to
+                  # take over fTmuxTarget's string, mainLoop notices the
+                  # pane_id mismatch and exits cleanly instead of
+                  # blindly monitoring the wrong pane.
+fPaused=          # 1 while daemon is paused (no AI in pane); empty otherwise
+fStopOnly=        # 1 = --stop:    stop the daemon for the resolved target
+fStatusOnly=      # 1 = --status:  show daemon status (single or all)
+fLogOnly=         # 1 = --log:     tail -F the daemon's log file
 
 # =============================================================================
 # AI CATALOG — single source of truth for which AIs ja recognises
@@ -93,6 +109,16 @@ Options:
     --codex          Restrict detection/listing to panes running Codex CLI
                      (--claude and --codex are mutually exclusive)
 
+Daemon control (operate on already-running daemons):
+    --stop           Stop the daemon monitoring the target pane (default: the
+                     current pane; pass -t to stop a specific one). Cleans
+                     up stale lockfiles automatically.
+    -s, --status     Show all running daemons (summary row + detail block
+                     each). Inside tmux, the daemon for the current pane is
+                     marked with '*' in the index column.
+    --log            Tail -F the daemon's log file (default: current pane;
+                     pass -t for a specific one). Ctrl+C to exit.
+
 Supports:
     Claude Code      Numbered options (1. Yes / 2. No) — sends the number
     Codex CLI        Numbered options (1. Yes, proceed) — sends the number
@@ -105,10 +131,13 @@ Examples:
     $SCRIPT_NAME -t main:0.1       # target specific pane
     $SCRIPT_NAME -w 3              # wait 3s before each approval (Ctrl+C to abort)
     $SCRIPT_NAME -d                # daemon mode: survive claude restarts
+    $SCRIPT_NAME --status          # see what daemons are running
+    $SCRIPT_NAME --log             # follow current pane's daemon log
+    $SCRIPT_NAME --stop            # stop the daemon for the current pane
 
 
 Stop:
-    Press Ctrl+C or run: pkill -f '$SCRIPT_NAME'
+    Press Ctrl+C, run $SCRIPT_NAME --stop, or: pkill -f '$SCRIPT_NAME'
 
 _EOF
     exit 0
@@ -122,8 +151,8 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
 
-    local SHORTOPTS="ht:w:lvd"
-    local LONGOPTS="help,wait:,list,verbose,daemon,claude,codex"
+    local SHORTOPTS="ht:w:lvds"
+    local LONGOPTS="help,wait:,list,verbose,daemon,claude,codex,stop,status,log"
 
     local PARSED
     if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
@@ -159,6 +188,18 @@ parseOptions() {
                 fDaemon=1
                 shift
                 ;;
+            --stop)
+                fStopOnly=1
+                shift
+                ;;
+            -s|--status)
+                fStatusOnly=1
+                shift
+                ;;
+            --log)
+                fLogOnly=1
+                shift
+                ;;
             --claude|--codex)
                 # Mutually exclusive — refuse if the other was already set.
                 # The catalog still drives detection internally, but these
@@ -186,6 +227,89 @@ parseOptions() {
     done
 }
 
+# Path helpers — single source of truth for `/tmp/<script>-<target>` files.
+# All three derive paths from $SCRIPT_NAME so the script can be renamed
+# without changing them, and the same target sanitization rule
+# (`${target//[:.]/-}` — replace `:` and `.` with `-`) is applied everywhere.
+#
+# Eg:  target=M:6.1 → /tmp/ja-M-6-1.lock
+#                  → /tmp/ja-M-6-1.log
+#                  → /tmp/ja-M-6-1.state.json
+#
+# Every site that needs one of these paths (lockfile acquisition, --stop,
+# --log, --status, wrapper log redirection) must call these helpers — never
+# duplicate the path-build expression. Otherwise a future rename of the
+# sanitization rule would silently desync.
+_lockFilePath()  { echo "/tmp/${SCRIPT_NAME}-${1//[:.]/-}.lock"; }
+_logFilePath()   { echo "/tmp/${SCRIPT_NAME}-${1//[:.]/-}.log"; }
+_stateFilePath() { echo "/tmp/${SCRIPT_NAME}-${1//[:.]/-}.state.json"; }
+
+# Write a state snapshot for --status to read. Called from mainLoop on
+# every notable event (start, approve, paused, resumed, blacklist, dropped).
+#
+# Schema:
+#   {
+#     "pid":              <int>,
+#     "target":           "<session:window.pane>",
+#     "ai":               "<claude|codex|...>",
+#     "ai_filter":        "<claude|codex|>",     # empty if no --claude/--codex
+#     "daemon":           <0|1>,
+#     "started_ts":       <unix seconds>,
+#     "approved_count":   <int>,
+#     "paused":           <true|false>,
+#     "last_event_ts":    <unix seconds>,
+#     "last_event_type":  "<start|approve|paused|resumed|blacklist|dropped>",
+#     "log_file":         "/tmp/ja-<sanitized>.log",
+#     "host":             "<sess:win.pane>" | "<tty>" | "",  # see fHost
+#     "target_pane_id":   "<%N>"                              # see fTargetPaneId
+#   }
+#
+# Written via mv-from-tmp for atomic replacement; readers see either the
+# old snapshot or the new one, never half-written content.
+#
+# Globals consumed: fTmuxTarget, fAiName, fAiFilter, fDaemon,
+#                   fStartedTs (set in mainLoop start), fApprovedCount,
+#                   fPaused (toggled by mainLoop paused/resumed handling),
+#                   fHost (frozen at mainLoop start by _resolveHostLocation),
+#                   fTargetPaneId (frozen at mainLoop start).
+#
+# Arg 1 is the event type that triggered this write (one of the strings
+# listed in the schema). It updates last_event_type/ts but doesn't
+# otherwise gate the write.
+_writeState() {
+    local event="$1"
+    [ -n "$fTmuxTarget" ] || return 0   # nothing to write before resolveTarget
+    local sf=$(_stateFilePath "$fTmuxTarget")
+    local lf=$(_logFilePath "$fTmuxTarget")
+    local now=$(date +%s)
+    local paused_str="false"
+    [ -n "$fPaused" ] && paused_str="true"
+    local daemon_int=0
+    [ -n "$fDaemon" ] && daemon_int=1
+    # Use a tmpfile + mv for atomic replacement. Suffix with $$ so two ja
+    # processes can't collide on the same tmpname (paranoia — they'd be
+    # blocked by the lockfile check anyway).
+    local tmp="${sf}.tmp.$$"
+    printf '{\n  "pid": %d,\n  "target": "%s",\n  "ai": "%s",\n  "ai_filter": "%s",\n  "daemon": %d,\n  "started_ts": %s,\n  "approved_count": %d,\n  "paused": %s,\n  "last_event_ts": %d,\n  "last_event_type": "%s",\n  "log_file": "%s",\n  "host": "%s",\n  "target_pane_id": "%s"\n}\n' \
+        "$$" \
+        "$fTmuxTarget" \
+        "${fAiName//\"/\\\"}" \
+        "${fAiFilter//\"/\\\"}" \
+        "$daemon_int" \
+        "${fStartedTs:-$now}" \
+        "${fApprovedCount:-0}" \
+        "$paused_str" \
+        "$now" \
+        "$event" \
+        "$lf" \
+        "${fHost//\"/\\\"}" \
+        "${fTargetPaneId//\"/\\\"}" \
+        > "$tmp" 2>/dev/null \
+        && mv -f "$tmp" "$sf" 2>/dev/null
+    rm -f "$tmp" 2>/dev/null
+    return 0   # never let state-write failure kill ja
+}
+
 # Validate a tmux target exists
 validateTarget() {
     local target="$1"
@@ -197,12 +321,11 @@ validateTarget() {
 }
 
 # Return the pid of a live monitor process currently watching `target`,
-# or empty (with non-zero exit) if no live monitor exists. The lockfile
-# path is built from $SCRIPT_NAME so it stays in sync with the main flow
-# even if this script is renamed.
+# or empty (with non-zero exit) if no live monitor exists. Path is built
+# via _lockFilePath so it stays in sync with everything else.
 _monitorPid() {
     local target="$1"
-    local lockfile="/tmp/${SCRIPT_NAME}-${target//[:.]/-}.lock"
+    local lockfile=$(_lockFilePath "$target")
     [ -f "$lockfile" ] || return 1
     local pid
     pid=$(cat "$lockfile" 2>/dev/null)
@@ -234,6 +357,37 @@ _paneOfPid() {
     tty=$(_ttyOfPid "$pid") || return 1
     tmux list-panes -a -F '#{pane_tty} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null \
         | awk -v t="/dev/$tty" '$1==t{print $2; exit}'
+}
+
+# Determine where THIS ja process was launched from. Returns:
+#   • "<sess:win.pane>" — launched inside tmux and its tty maps to a pane
+#   • "<tty>"           — launched outside tmux but attached to a terminal
+#   • ""                — fully detached (no controlling tty)
+#
+# Called once at mainLoop start; the result is frozen into $fHost and
+# written to the state file. We deliberately do NOT re-check at each
+# event — host as recorded means "where ja was started", not "where it's
+# attached right now". Runtime tty migration / re-parenting is rare and
+# tracking it would bloat the schema for no real value.
+_resolveHostLocation() {
+    # Try pane mapping first (only meaningful inside tmux).
+    if [ -n "$TMUX" ]; then
+        local pane
+        pane=$(_paneOfPid $$)
+        if [ -n "$pane" ]; then
+            printf '%s' "$pane"
+            return 0
+        fi
+    fi
+    # Fallback: bare tty (terminal outside tmux, or tmux pane lookup failed).
+    local tty
+    tty=$(_ttyOfPid $$)
+    if [ -n "$tty" ]; then
+        printf '%s' "$tty"
+        return 0
+    fi
+    # Truly detached — no ctty. Return empty (caller will treat as "daemon").
+    return 1
 }
 
 # Build a horizontal rule of N `─` characters. printf's %s precision
@@ -706,13 +860,24 @@ mainLoop() {
     # Empty string at startup so the first iteration always proceeds.
     local lastHandledFp=""
 
-    # Daemon-mode pause flag. Set when the pane is currently running
-    # something we don't monitor (bash, filtered-out AI). Cleared the
-    # next iteration we see a known AI again — the transition from set
-    # → unset is what triggers the "Resumed" log line, regardless of
-    # whether the AI that came back has the same name as the original
-    # ($fAiName unchanged) or a different one ($fAiName updated).
-    local _daemonPaused=""
+    # Daemon-mode pause flag (global so --status / _writeState can read it).
+    # Set when the pane is currently running something we don't monitor
+    # (bash, filtered-out AI). Cleared the next iteration we see a known
+    # AI again — the transition from set → unset is what triggers the
+    # "Resumed" log line, regardless of whether the AI that came back has
+    # the same name as the original ($fAiName unchanged) or a different
+    # one ($fAiName updated).
+    fPaused=""
+
+    # Record start time for --status uptime calculation, freeze where ja
+    # was launched (host pane / tty / detached), capture the target
+    # pane's pane_id as a stable anchor, and write an initial state
+    # snapshot so --status can answer "is daemon up?" the very next
+    # moment after we launch (don't wait for first event).
+    fStartedTs=$(date +%s)
+    fHost=$(_resolveHostLocation || true)
+    fTargetPaneId=$(tmux display-message -t "$fTmuxTarget" -p '#{pane_id}' 2>/dev/null)
+    _writeState start
 
     # Compact two-line banner: title + watch summary on the first line,
     # config + stop hint on the second, single horizontal rule below to
@@ -735,6 +900,24 @@ mainLoop() {
         if [ $? -ne 0 ]; then
             _log "${RED}Target pane gone. Exiting.${RESET}"
             break
+        fi
+
+        # Hijack check: did some other pane take over our target string?
+        # tmux pane_id (eg. "%47") is permanent — it does NOT change on
+        # move-window / rename-session. So if the pane_id currently
+        # mapped to fTmuxTarget differs from what we recorded at launch
+        # in fTargetPaneId, the original pane has been moved away and
+        # something else now answers to fTmuxTarget. Refuse to keep
+        # monitoring (we'd be reading the wrong pane's content and could
+        # silently send-keys into an unrelated pane). Only enforced when
+        # we successfully captured the original pane_id at startup.
+        if [ -n "$fTargetPaneId" ]; then
+            local _curPaneId
+            _curPaneId=$(tmux display-message -t "$fTmuxTarget" -p '#{pane_id}' 2>/dev/null)
+            if [ -n "$_curPaneId" ] && [ "$_curPaneId" != "$fTargetPaneId" ]; then
+                _log "${RED}Target pane ${fTmuxTarget} was replaced (was ${fTargetPaneId}, now ${_curPaneId}). Exiting.${RESET}"
+                break
+            fi
         fi
 
         # Sanity check: AI process still running in the pane?
@@ -777,9 +960,10 @@ mainLoop() {
                 # iter — DO NOT fall through to detectPromptOption, which
                 # would happily match stale menu text in scrollback and
                 # start spamming digits at the bare shell.
-                if [ -z "$_daemonPaused" ]; then
+                if [ -z "$fPaused" ]; then
                     _log "${LIGHTYELLOW}⏸ Paused${RESET} — pane currently '${currentAi:-?}', not an AI we monitor. Waiting for ${fAiName}…"
-                    _daemonPaused=1
+                    fPaused=1
+                    _writeState paused
                 fi
                 sleep "$fPollInterval"
                 continue
@@ -789,11 +973,12 @@ mainLoop() {
             # were paused, or the AI's identity changed mid-run, announce
             # the resume + reset dedup so a fresh prompt isn't skipped by
             # a stale fingerprint match.
-            if [ -n "$_daemonPaused" ] || [ "$currentAi" != "$fAiName" ]; then
+            if [ -n "$fPaused" ] || [ "$currentAi" != "$fAiName" ]; then
                 _log "${GREEN}▶ Resumed${RESET} — monitoring '${CYAN}${currentAi}${RESET}' in ${BLUE}${fTmuxTarget}${RESET}"
                 fAiName="$currentAi"
                 lastHandledFp=""
-                _daemonPaused=""
+                fPaused=""
+                _writeState resumed
             fi
         fi
 
@@ -817,6 +1002,7 @@ mainLoop() {
             _dbgBlock "tail content (the 20 lines fed to detectPromptOption):" <<<"$tail"
             if isBlacklisted "$content"; then
                 _log "${RED}⚠ BLACKLISTED (rm -rf) — skipping${RESET}"
+                _writeState blacklist
                 lastHandledFp="$fingerprint"
                 sleep "$fPollInterval"
                 continue
@@ -938,11 +1124,13 @@ mainLoop() {
             done
             if [ "$_postFp" = "$_preSendFp" ]; then
                 _log "${RED}⚠ Keystroke dropped (option $promptOption) after $_maxRetries attempts${RESET}"
+                _writeState dropped
             else
                 fApprovedCount=$((fApprovedCount + 1))
                 local _retryNote=""
                 [ "$_attempt" -gt 0 ] && _retryNote=" (${LIGHTMAGENTA}retry $_attempt${RESET})"
                 _log "${GREEN}✔ Approved${RESET} (option $promptOption)${_retryNote} [#$fApprovedCount]"
+                _writeState approve
             fi
             # Track the PRE-send fingerprint, not the post-send one.
             # Rationale: if Claude finishes the approved command quickly and
@@ -966,17 +1154,45 @@ mainLoop() {
     done
 }
 
-# --- Main ---
+# =============================================================================
+# MAIN FLOW — modeled on jc's structure
+# =============================================================================
+#
+#   main()
+#     ├── parseOptions       (fills fXxx globals)
+#     ├── doEarlyExitJobs    (handles task-mode flags like -l; never returns)
+#     ├── checkTmuxAvailable (sanity check)
+#     ├── resolveTarget      (autoDetect or validate -t; sets fTmuxTarget/fAiName)
+#     ├── acquireLockfile    (single-instance guard; sets fLockFile)
+#     ├── setupCleanupTrap   (defines _cleanup; arms trap)
+#     └── mainLoop           (the watch-and-approve loop)
+#
+# Adding a new task-mode flag (e.g. --status, --stop, --log) means:
+#   1. parseOptions registers it
+#   2. doEarlyExitJobs dispatches it to a handler
+#   3. write the handler
+# The handler runs and exits, never reaching the monitor flow below.
+# =============================================================================
 
-parseOptions "$@"
+# Dispatch task-mode flags. Each handler runs to completion and exits;
+# control never returns to main(). Mirrors jc's doEarlyExitJobs pattern.
+#
+# Order matters when multiple flags collide — the first one that fires
+# wins. We pick the order that makes accidental combinations harmless:
+# --stop wins over --status / --log (you wanted to stop, not query),
+# --list stays first as the historical default.
+doEarlyExitJobs() {
+    [ -n "$fListOnly" ]   && { handleListMode;     exit 0;  }
+    [ -n "$fStopOnly" ]   && { handleStopRequest;   exit $?; }
+    [ -n "$fStatusOnly" ] && { handleStatusRequest; exit $?; }
+    [ -n "$fLogOnly" ]    && { handleLogRequest;    exit $?; }
+}
 
-if ! command -v tmux &>/dev/null; then
-    echo -e "${RED}Error: tmux is required but not found${RESET}" >&2
-    exit 1
-fi
-
-if [ -n "$fListOnly" ]; then
-    _panes=()
+# `-l` / `--list` handler — list every tmux pane currently running an AI,
+# annotated with whether ja is already monitoring it. Honors --claude /
+# --codex filtering.
+handleListMode() {
+    local _panes=()
     while IFS= read -r line; do
         [ -n "$line" ] && _panes+=("$line")
     done < <(findAiPanes)
@@ -987,7 +1203,7 @@ if [ -n "$fListOnly" ]; then
         else
             echo -e "${RED}No pane running $(_aiNamesPretty) found${RESET}"
         fi
-        exit 0
+        return 0
     fi
 
     echo ""
@@ -999,16 +1215,354 @@ if [ -n "$fListOnly" ]; then
     echo ""
     _renderAiTable "${_panes[@]}"
     echo ""
-    exit 0
-fi
+}
 
-if [ -z "$fTmuxTarget" ]; then
-    # auto-detect requires at least one AI pane to bootstrap the target.
-    # Even in daemon mode there's no way to "wait for an AI to come back"
-    # without first knowing which pane to wait in, so this path stays
-    # strict regardless of -d.
-    autoDetectTarget
-else
+# Shared target resolution for --stop / --status / --log. Three sources:
+#   1. -t was passed → use it as-is. Validation is left to the caller —
+#      --stop and --status should be tolerant of a target that no longer
+#      exists (no daemon there anyway), but --log and the monitor flow
+#      need a live target.
+#   2. inside tmux, -t not passed → use the current pane's target.
+#   3. outside tmux, -t not passed → return empty (caller decides
+#      whether that's an error or a "list-all" fallback).
+#
+# Echoes the resolved target on stdout. Returns 0 if a target was
+# found, 1 if running outside tmux without -t.
+_resolveTargetForTaskMode() {
+    if [ -n "$fTmuxTarget" ]; then
+        printf '%s' "$fTmuxTarget"
+        return 0
+    fi
+    if [ -n "$TMUX" ]; then
+        local cur
+        cur=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+        if [ -n "$cur" ]; then
+            printf '%s' "$cur"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Stop the daemon monitoring a target pane. Idempotent — "already not
+# running" is reported but exits 0. Cleans up stale lockfile/state if
+# the recorded pid is dead.
+handleStopRequest() {
+    local target
+    if ! target=$(_resolveTargetForTaskMode) || [ -z "$target" ]; then
+        echo -e "${RED}Error: ${SCRIPT_NAME} --stop without -t requires running inside tmux${RESET}" >&2
+        echo -e "${GREY}Pass an explicit target: ${SCRIPT_NAME} --stop -t session:window.pane${RESET}" >&2
+        return 1
+    fi
+    local lockfile=$(_lockFilePath "$target")
+    local statefile=$(_stateFilePath "$target")
+    if [ ! -f "$lockfile" ]; then
+        # ○ idle (yellow open circle) — no daemon, nothing to stop.
+        # Mirrors the empty-state symbol used by `ja --status`.
+        echo -e "${LIGHTYELLOW}○${RESET} ${SCRIPT_NAME}: ${GREY}no daemon running for pane${RESET} ${BLUE}${target}${RESET}"
+        return 0
+    fi
+    local pid
+    pid=$(cat "$lockfile" 2>/dev/null)
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        # Stale lockfile — daemon died without cleaning up. Remove the
+        # detritus so next launch isn't blocked.
+        rm -f "$lockfile" "$statefile"
+        # ⚠ lightyellow — not an error but worth noticing (you intended
+        # to stop something that wasn't fully there).
+        echo -e "${LIGHTYELLOW}⚠${RESET} ${SCRIPT_NAME}: ${GREY}stale lockfile cleaned${RESET} ${GREY}(no live daemon for pane${RESET} ${BLUE}${target}${GREY})${RESET}"
+        return 0
+    fi
+    if kill "$pid" 2>/dev/null; then
+        # Wait briefly for the daemon's TERM trap to clean up its own
+        # lockfile/state. If it's slow or stuck, force-clean ourselves.
+        local i
+        for i in 1 2 3 4 5; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+        rm -f "$lockfile" "$statefile" 2>/dev/null
+        # ▶ magenta + green "stopped" — same palette as wrapper's
+        # "ja running / ja already running" status lines so all daemon
+        # life-cycle messages share a vocabulary. pid stays cyan.
+        echo -e "${MAGENTA}▶${RESET} ${SCRIPT_NAME} ${GREEN}stopped${RESET} ${GREY}·${RESET} pid ${CYAN}${pid}${RESET} ${GREY}·${RESET} pane ${BLUE}${target}${RESET}"
+        return 0
+    fi
+    echo -e "${RED}✗${RESET} ${SCRIPT_NAME}: ${RED}failed to kill pid ${pid}${RESET} ${GREY}(permission denied?)${RESET}" >&2
+    return 1
+}
+
+# Pretty-format a duration in seconds as "Xm Ys" or "Xh Ym Zs".
+_fmtDuration() {
+    local s="$1" h m
+    if [ "$s" -lt 60 ]; then echo "${s}s"; return; fi
+    if [ "$s" -lt 3600 ]; then m=$((s / 60)); echo "${m}m $((s % 60))s"; return; fi
+    h=$((s / 3600)); m=$(((s % 3600) / 60))
+    echo "${h}h ${m}m $((s % 3600 % 60))s"
+}
+
+# Read a single field from a state JSON file. Crude but adequate — our
+# schema is flat and we control the writer (_writeState), so we don't
+# need a real JSON parser. Strips wrapping quotes and trailing comma.
+_readStateField() {
+    local file="$1" field="$2"
+    grep -E "\"${field}\":" "$file" 2>/dev/null \
+        | sed -E "s/.*\"${field}\":[[:space:]]*//; s/,[[:space:]]*$//; s/^\"//; s/\"$//" \
+        | head -1
+}
+
+# Single status renderer — one entry per daemon, formatted as a summary
+# row plus an indented detail block. Always shows every daemon, no -t /
+# --all / tmux-aware branching. If the caller is currently inside tmux,
+# the row corresponding to the caller's pane is marked with `*` in the
+# `#` column (decorative only — doesn't change layout or behavior).
+handleStatusRequest() {
+    local files=( /tmp/"${SCRIPT_NAME}"-*.state.json )
+    # Glob with no match expands to a literal that doesn't exist — guard.
+    if [ ! -e "${files[0]}" ]; then
+        # Empty-state output uses ○ (open circle) + yellow to mirror the
+        # `-l` listing's "● monitoring / ○ idle" convention, then a grey
+        # hint pointing at how to start one. Avoids looking like an error
+        # (no red) while still being more visible than plain grey.
+        echo -e "${LIGHTYELLOW}○${RESET} ${SCRIPT_NAME}: no daemons running"
+        echo -e "  ${GREY}Start one with:${RESET} ${CYAN}claude -y${RESET} ${GREY}or${RESET} ${CYAN}${SCRIPT_NAME} -d${RESET}"
+        return 0
+    fi
+
+    # Best-effort: identify the caller's current pane so we can mark its
+    # row. Failure is silent — outside tmux we just don't mark anything.
+    local current_pane=""
+    if [ -n "$TMUX" ]; then
+        current_pane=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+    fi
+
+    echo -e "${LIGHTYELLOW}${SCRIPT_NAME} daemons running (${#files[@]})${RESET}"
+    echo
+    # Header: # column is 4 wide to fit "N *" cleanly. `* ` is the
+    # current-pane marker; daemons not in the caller's pane get blank.
+    printf "${GREY}%-4s %-12s %-8s %-10s %-9s %s${RESET}\n" \
+        "#" "Target" "AI" "State" "Approved" "Last Event"
+    printf "${GREY}%s %s %s %s %s %s${RESET}\n" \
+        "$(_hr 4)" "$(_hr 12)" "$(_hr 8)" "$(_hr 10)" "$(_hr 9)" "$(_hr 22)"
+
+    local i=1 f target pid ai filter daemon_int started approved paused
+    local last_ts last_type host state_plain state_colored state_pad last_when
+    local now=$(date +%s)
+    local uptime mark idx_col
+    for f in "${files[@]}"; do
+        target=$(_readStateField "$f" target)
+        pid=$(_readStateField "$f" pid)
+        ai=$(_readStateField "$f" ai)
+        filter=$(_readStateField "$f" ai_filter)
+        daemon_int=$(_readStateField "$f" daemon)
+        started=$(_readStateField "$f" started_ts)
+        approved=$(_readStateField "$f" approved_count)
+        paused=$(_readStateField "$f" paused)
+        last_ts=$(_readStateField "$f" last_event_ts)
+        last_type=$(_readStateField "$f" last_event_type)
+        host=$(_readStateField "$f" host)
+
+        # State: colored, padded by hand (ANSI escapes throw off %-Ns).
+        if ! kill -0 "$pid" 2>/dev/null; then
+            state_plain="dead";    state_colored="${RED}dead${RESET}"
+        elif [ "$paused" = "true" ]; then
+            state_plain="paused";  state_colored="${LIGHTYELLOW}paused${RESET}"
+        else
+            state_plain="active";  state_colored="${GREEN}active${RESET}"
+        fi
+        state_pad=$(printf '%-10s' "$state_plain")
+        state_pad="${state_colored}${state_pad#$state_plain}"
+
+        # Time formatting with macOS/Linux compatibility for date(1).
+        last_when="?"
+        [[ "$last_ts" =~ ^[0-9]+$ ]] && last_when=$(date -d "@$last_ts" '+%H:%M:%S' 2>/dev/null || date -r "$last_ts" '+%H:%M:%S' 2>/dev/null || echo "$last_ts")
+        uptime="?"
+        [[ "$started" =~ ^[0-9]+$ ]] && uptime=$(_fmtDuration $((now - started)))
+
+        # Current-pane marker — only when caller is inside tmux AND this
+        # row's target matches the caller's pane.
+        if [ -n "$current_pane" ] && [ "$target" = "$current_pane" ]; then
+            mark="*"
+        else
+            mark=" "
+        fi
+        idx_col=$(printf '%d %s' "$i" "$mark")
+
+        # Summary row.
+        printf "${CYAN}%-4s${RESET} ${BLUE}%-12s${RESET} %-8s %b ${GREEN}%-9s${RESET} %s %s\n" \
+            "$idx_col" "$target" "$ai" "$state_pad" "$approved" "$last_when" "$last_type"
+
+        # Filter label: "--claude" / "--codex" / "(none)" if not filtered.
+        local filter_label="(none)"
+        [ -n "$filter" ] && filter_label="--$filter"
+
+        # Persistent label — reflects the startup-time `-d/--daemon` flag
+        # the ja was launched with. Names this "Persistent" rather than
+        # "Daemon" because in our flag it really means "stay alive across
+        # AI restarts", not "detached unix daemon". The actual runtime
+        # detached/foreground status is shown separately as Mode below.
+        local persistent_label="no"
+        [ "$daemon_int" = "1" ] && persistent_label="yes"
+
+        # Mode — what kind of process this ja is. Read directly from the
+        # state file's "host" field, frozen at startup by the daemon
+        # itself (see _resolveHostLocation). Three cases:
+        #
+        #   • host like "<sess:win.pane>" (contains both ':' and '.'):
+        #     started inside a tmux pane → "foreground in <pane>"
+        #   • host like "<tty>" (no ':' or no '.'):
+        #     started outside tmux but in a terminal → "foreground on <tty>"
+        #   • host empty:
+        #     fully detached at launch (no controlling terminal) → "daemon"
+        #
+        # We trust the recorded host rather than re-checking via
+        # _ttyOfPid/_paneOfPid at status time because runtime tty state
+        # can be unreliable: subshell + disown can leave a residual ctty,
+        # and pane closures don't necessarily revoke the daemon's tty.
+        # The recorded host means "where it was launched" — which is the
+        # question users actually want answered.
+        #
+        # Visual treatment: pane / tty value rendered in GREY so it's
+        # clearly secondary to the bright-blue Target on the summary row.
+        #
+        # Pad the plain label first, then wrap with color — printf %-Ns
+        # counts ANSI escape bytes against the width, throwing alignment
+        # off if we color-then-pad.
+        # Detail block widths — chosen so values line up under the
+        # header columns of the summary row above:
+        #
+        #   header       #    Target       AI       State      Approved  Last Event
+        #   col          0    5            18       27         38        48
+        #
+        # Layout per detail line:
+        #   "     " (5)   + label1 (_labW)  + " " (1) +
+        #                   value1 (_valW)  + " " (1) +
+        #                   label2 (_lab2W) + " " (1) + value2
+        #
+        # _labW=12, _valW=19, _lab2W=9 puts:
+        #   • value1 (PID, Persistent yes/no) at col 5+12+1 = 18 (under "claude")
+        #   • label2 (Uptime, Mode)           at col 18+19+1 = 38 (under "Approved")
+        #   • value2 (uptime str, mode str)   at col 38+9+1 = 48 (under "Last Event")
+        #
+        # _labW=12 also fits the longest left-column label "Persistent:"
+        # (12 chars including colon) exactly. _lab2W=9 fits "Uptime:" (7)
+        # and "Mode:" (5) with trailing padding.
+        local _labW=12 _valW=19 _lab2W=9
+
+        # Mode label — describes the daemon's controlling-tty binding,
+        # which determines whether closing the host pane / terminal will
+        # send the daemon SIGHUP. Two states:
+        #
+        #   • "attached to <X>" — daemon has a controlling tty inheriting
+        #     from the shell where it was launched. Closing that pane (or
+        #     terminal) will send SIGHUP and kill the daemon. This is the
+        #     case for `claude -y` launches today, because bash's
+        #     `& disown` only detaches from the job table — it does NOT
+        #     release the ctty, which requires setsid(2).
+        #
+        #   • "detached" — no ctty. The daemon survives pane / terminal
+        #     close. Achieved via `setsid ja -d ...` in the wrapper, or
+        #     by tools like nohup setsid.
+        #
+        # Keeping the word "daemon" out of this column entirely — that
+        # word is already used by the --daemon / Persistent flag, which
+        # describes lifecycle (stay alive across AI restarts), not ctty
+        # binding. Two distinct concepts deserve two distinct vocabularies.
+        local mode_label
+        if [ -z "$host" ]; then
+            mode_label="${MAGENTA}detached${RESET}"
+        else
+            mode_label="attached to ${GREY}${host}${RESET}"
+        fi
+
+        local logf=$(_logFilePath "$target")
+        local lockf=$(_lockFilePath "$target")
+
+        # Detail block — indented to line up under the Target column of
+        # the summary row. Layout math:
+        #   header  "#    Target       AI       State      ..."
+        #            ^^^^^                       ^
+        #            4 cols  ⇒ Target starts at col 5
+        #                                        col 27 is where State begins
+        # 5-space indent matches Target start, _labW=10 holds longest
+        # label, _valW=18 is the first value column (PID, mode), then
+        # the second label/value column for Uptime/Persistent.
+        #
+        # Using printf (not echo -e): we feed our color vars directly
+        # into the format string, so they're already-expanded ANSI bytes
+        # by the time printf sees them — no extra escape interpretation
+        # needed.
+        printf "     ${GREY}%-${_labW}s${RESET} ${CYAN}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} %s\n" \
+            "PID:"        "$pid"               "Uptime:" "$uptime"
+        # Mode value is on the right (last column) so its variable length
+        # ("daemon" / "foreground in M:5.1") never affects the left column.
+        # Persistent is the fixed-width yes/no, so it sits in the left
+        # value slot and keeps alignment with PID/Uptime above.
+        printf "     ${GREY}%-${_labW}s${RESET} %-${_valW}s ${GREY}%-${_lab2W}s${RESET} %b\n" \
+            "Persistent:" "$persistent_label"  "Mode:"   "$mode_label"
+        printf "     ${GREY}%-${_labW}s${RESET} %s\n" \
+            "Filter:"     "$filter_label"
+        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Lockfile:" "$lockf"
+        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Logfile:"  "$logf"
+        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "State:"    "$f"
+        echo
+
+        i=$((i + 1))
+    done
+}
+
+# tail -F the daemon's log file. -F (capital) follows by name not fd, so
+# log rotation (or daemon restart writing a new file) is handled.
+handleLogRequest() {
+    local target
+    if ! target=$(_resolveTargetForTaskMode) || [ -z "$target" ]; then
+        echo -e "${RED}Error: ${SCRIPT_NAME} --log without -t requires running inside tmux${RESET}" >&2
+        echo -e "${GREY}Pass an explicit target: ${SCRIPT_NAME} --log -t session:window.pane${RESET}" >&2
+        return 1
+    fi
+    local logfile=$(_logFilePath "$target")
+    local lockfile=$(_lockFilePath "$target")
+    if [ ! -f "$logfile" ]; then
+        if [ -f "$lockfile" ]; then
+            echo -e "${LIGHTYELLOW}${SCRIPT_NAME}: daemon running for ${BLUE}${target}${LIGHTYELLOW} but log file missing at ${GREY}${logfile}${RESET}" >&2
+            echo -e "${GREY}(daemon may have been started without log redirection)${RESET}" >&2
+            return 1
+        fi
+        echo -e "${GREY}${SCRIPT_NAME}: no daemon running for pane ${BLUE}${target}${RESET}"
+        echo -e "${GREY}Start one with:${RESET} ${SCRIPT_NAME} -d -t ${target}"
+        return 1
+    fi
+    # exec replaces our shell with tail so Ctrl+C goes straight to tail
+    # without an intermediate process layer.
+    exec tail -F "$logfile"
+}
+
+# Sanity-check that tmux is on PATH. Without tmux ja literally cannot do
+# anything — capture-pane, list-panes, send-keys all need it.
+checkTmuxAvailable() {
+    if ! command -v tmux &>/dev/null; then
+        echo -e "${RED}Error: tmux is required but not found${RESET}" >&2
+        exit 1
+    fi
+}
+
+# Pin down which pane to monitor and which AI is in it. Two paths:
+#   • -t not given: autoDetectTarget scans tmux for AI panes, picks one
+#     (or prompts the user if multiple match).
+#   • -t given:     validate the target exists, then sanity-check that
+#     a recognised AI is running there. Daemon mode relaxes this: the
+#     pane is allowed to currently be running anything (or nothing AI-y)
+#     and ja boots into a paused state, waiting for an AI to appear.
+resolveTarget() {
+    if [ -z "$fTmuxTarget" ]; then
+        # auto-detect requires at least one AI pane to bootstrap the target.
+        # Even in daemon mode there's no way to "wait for an AI to come back"
+        # without first knowing which pane to wait in, so this path stays
+        # strict regardless of -d.
+        autoDetectTarget
+        return
+    fi
+
     validateTarget "$fTmuxTarget"
     fAiName=$(detectAiNameForTarget "$fTmuxTarget")
     # Refuse to attach to a pane that isn't running an AI tool. Without
@@ -1051,34 +1605,56 @@ else
         # Re-label so banner reflects what we'll actually monitor.
         fAiName="$fAiFilter"
     fi
-fi
-
-# Build the lockfile path now that fTmuxTarget is finalised.
-# Must stay in sync with _monitorPid, which derives the same path from
-# the target arg passed in.  Eg: target=M:6.1 → /tmp/ja-M-6-1.lock
-fLockFile="/tmp/${SCRIPT_NAME}-${fTmuxTarget//[:.]/-}.lock"
-
-# Prevent two monitor instances from targeting the same pane
-if [ -f "$fLockFile" ]; then
-    local_pid=$(cat "$fLockFile" 2>/dev/null)
-    if kill -0 "$local_pid" 2>/dev/null; then
-        _monitor_pane=$(_paneOfPid "$local_pid")
-        echo -e "${GREY}${SCRIPT_NAME} is already monitoring ${BLUE}$fTmuxTarget${GREY} (pid ${CYAN}$local_pid${GREY}${_monitor_pane:+, in pane ${CYAN}$_monitor_pane${GREY}}).${RESET}"
-        echo -e "${GREY}Kill it first:${RESET} kill $local_pid"
-        exit 1
-    fi
-fi
-echo $$ > "$fLockFile"
-# Clear the trap before exiting to avoid re-entry: INT calls _cleanup which
-# exits, but exiting also fires EXIT — if the trap is still armed, the
-# "Stopped" message prints twice.
-_cleanup() {
-    rm -f "$fLockFile"
-    echo
-    _log "Stopped. Approved ${GREEN}$fApprovedCount${RESET} prompts."
-    trap - INT TERM EXIT
-    exit 0
 }
-trap '_cleanup' INT TERM EXIT
 
-mainLoop
+# Acquire the per-target lockfile so only one ja monitors a given pane.
+# If a stale (dead-pid) lockfile exists, we silently overwrite it.
+acquireLockfile() {
+    # Path computed via _lockFilePath so it stays in sync with everything
+    # else (_monitorPid, --stop, --status, wrapper log redirection, etc.).
+    fLockFile=$(_lockFilePath "$fTmuxTarget")
+
+    # Prevent two monitor instances from targeting the same pane
+    if [ -f "$fLockFile" ]; then
+        local_pid=$(cat "$fLockFile" 2>/dev/null)
+        if kill -0 "$local_pid" 2>/dev/null; then
+            _monitor_pane=$(_paneOfPid "$local_pid")
+            echo -e "${GREY}${SCRIPT_NAME} is already monitoring ${BLUE}$fTmuxTarget${GREY} (pid ${CYAN}$local_pid${GREY}${_monitor_pane:+, in pane ${CYAN}$_monitor_pane${GREY}}).${RESET}"
+            echo -e "${GREY}Kill it first:${RESET} kill $local_pid"
+            exit 1
+        fi
+    fi
+    echo $$ > "$fLockFile"
+}
+
+# Define _cleanup and arm the trap. _cleanup runs on Ctrl+C (INT), kill
+# (TERM), or natural script exit (EXIT) — covers every termination path.
+setupCleanupTrap() {
+    # Clear the trap before exiting to avoid re-entry: INT calls _cleanup
+    # which exits, but exiting also fires EXIT — if the trap is still
+    # armed, the "Stopped" message prints twice.
+    _cleanup() {
+        rm -f "$fLockFile"
+        # Also remove the state file — --status should not list a daemon
+        # that has clearly stopped. Use _stateFilePath so the rule stays
+        # in sync with where mainLoop wrote it.
+        [ -n "$fTmuxTarget" ] && rm -f "$(_stateFilePath "$fTmuxTarget")"
+        echo
+        _log "Stopped. Approved ${GREEN}$fApprovedCount${RESET} prompts."
+        trap - INT TERM EXIT
+        exit 0
+    }
+    trap '_cleanup' INT TERM EXIT
+}
+
+main() {
+    parseOptions "$@"
+    doEarlyExitJobs
+    checkTmuxAvailable
+    resolveTarget
+    acquireLockfile
+    setupCleanupTrap
+    mainLoop
+}
+
+main "$@"

@@ -19,9 +19,9 @@ _ja_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    short_opts="-h -t -w -l -v -d"
+    short_opts="-h -t -w -l -v -d -s"
     long_opts="--help --wait --list --verbose --daemon \
-               --claude --codex"
+               --stop --status --log --claude --codex"
 
     # Complete tmux targets in session[:window[.pane]] format.
     # Generates candidates with raw colons, then uses
@@ -99,7 +99,15 @@ _ja_complete() {
     esac
 
     if [[ ${cur} == -* ]]; then
-        COMPREPLY=( $(compgen -W "${short_opts} ${long_opts}" -- "${cur}") )
+        # Mirror jc's split-suggestion style: `--<TAB>` shows only long
+        # options, `-<TAB>` shows only short options. Keeps the candidate
+        # list focused — when the user has already typed two dashes they
+        # clearly don't want to see -t / -w / etc.
+        if [[ ${cur} == --* ]]; then
+            COMPREPLY=( $(compgen -W "${long_opts}" -- "${cur}") )
+        else
+            COMPREPLY=( $(compgen -W "${short_opts}" -- "${cur}") )
+        fi
         return 0
     fi
 }

@@ -1863,7 +1863,7 @@ createMacOSBashProfile() {
 }
 
 setMacOSDefaultShell() {
-    echo -e "${COLOR}Setting up macOS default shell${RESET}"
+    echo -e "${COLOR}Setting up Homebrew Bash as default shell${RESET}"
     [[ $(uname -s) != 'Darwin' ]] && return
 
     local HOMEBREW_BASH="/opt/homebrew/bin/bash"
@@ -1874,8 +1874,6 @@ setMacOSDefaultShell() {
         echo -e "${LIGHTYELLOW}Homebrew bash not found, skipping default shell setup${RESET}"
         return
     fi
-
-    echo -e "${COLOR}Setting up Homebrew Bash as default shell${RESET}"
 
     # Add to /etc/shells if not already there
     if ! grep -q "^${HOMEBREW_BASH}$" /etc/shells; then

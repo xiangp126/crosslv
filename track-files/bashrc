@@ -93,7 +93,12 @@ alias gdb='gdb -q'
 alias rg='rg --smart-case --color=ansi'
 alias tmux='tmux -u'
 alias yt-dlp='yt-dlp --verbose'
-alias youtube-dl='yt-dlp --external-downloader aria2c --external-downloader-args "-x 16 -s 16" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --write-auto-subs --sub-langs zh-Hans'
+# alias youtube-dl='yt-dlp \
+#     --external-downloader aria2c \
+#     --external-downloader-args "-x 16 -s 16" \
+#     -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" \
+#     --write-auto-subs \
+#     --sub-langs zh-Hans'
 alias rsync='rsync -azPv'
 alias jn='jr --no-clipboard'
 alias jk='jmake'
@@ -270,23 +275,200 @@ fi
 # Load customized code wrapper (supports both local and remote VS Code / Cursor)
 [ -f "$HOME/Templates/code-function.sh" ] && source ~/Templates/code-function.sh
 
-# Lazy wrappers for AI coding tools: ensure NVM-managed Node.js is on
-# PATH before first invocation, then replace with the real command.
-# Needed on every OS — `jc --claude` / `jc --codex` install via npm on
-# both Linux and macOS, so the nvm bin dir must be activated before the
-# binary is reachable in a fresh interactive shell.
+# Wrappers for AI coding tools (claude, codex). Two responsibilities:
+#
+#   1. Ensure NVM-managed Node.js is on PATH before invocation. `jc
+#      --claude` / `jc --codex` install via npm on both Linux and macOS,
+#      so the nvm bin dir must be activated before the binary is reachable
+#      in a fresh interactive shell. Done idempotently — once $NVM_BIN is
+#      set, we skip the (slow) `nvm use` call.
+#
+#   2. Recognise auto-approve flags / env vars (see knobs below) and
+#      launch ja in daemon mode against the current tmux pane, so
+#      permission prompts get auto-confirmed for the lifetime of the
+#      daemon. The wrapper persists across invocations (no unset -f) —
+#      otherwise we'd lose the ability to parse --auto-approve on the
+#      second call. ja's daemon mode is the part that survives across
+#      claude restarts, so subsequent plain `claude` invocations get
+#      auto-approve "for free" via ja's ▶ Resumed mechanism.
+#
+# User-facing knobs (per AI; replace <TOOL> with CLAUDE or CODEX):
+#
+#   --auto-approve  /  -y          Per-invocation flag. Stripped from
+#                                  $@ before claude is exec'd, so the
+#                                  real binary never sees it. Triggers
+#                                  ja daemon launch for THIS invocation.
+#                                  Subsequent invocations don't need it
+#                                  again — once ja is up in daemon mode
+#                                  it keeps approving across restarts.
+#
+#   <TOOL>_AUTO_APPROVE=1          Env-var equivalent of the flag above.
+#                                  Set once in your shell (or export from
+#                                  ~/.bashrc.local etc.) to make every
+#                                  invocation auto-approve without typing
+#                                  -y each time. Only the matching tool's
+#                                  variable applies — CLAUDE_AUTO_APPROVE=1
+#                                  has no effect on `codex`, and vice versa.
+#
+#   Examples:
+#     claude -y                    one-shot auto-approve
+#     CLAUDE_AUTO_APPROVE=1 claude  one-shot via env-var (same effect)
+#     export CLAUDE_AUTO_APPROVE=1  persistent default in this shell
+#     export CODEX_AUTO_APPROVE=1   same for codex
+#     unset CLAUDE_AUTO_APPROVE     turn off the persistent default
+#
+# Stop the daemon at any time with: ja --stop  (or ja --stop -t <pane>).
+#
+# Helper: start a ja daemon for the current tmux pane if one isn't
+# already running. Four guards before launching:
+#   1. inside tmux (ja can't monitor without a pane to watch)
+#   2. ja is on PATH
+#   3. no existing daemon for this pane (lockfile w/ live pid)
+#   4. log file goes to /tmp so ja's stdout doesn't pollute claude's TUI
+# Prints a one-line status to inform the user what was launched (or that
+# an existing daemon was reused) — short enough not to disrupt the
+# claude/codex banner, long enough to teach `ja --stop` exists.
+_ai_start_ja_if_needed() {
+    local ai="$1"            # "claude" or "codex"
+    # ANSI escapes — match the palette ja itself uses (see top of nv-tools/ja).
+    # Defined locally to keep the wrapper self-contained without leaking
+    # globals into the rest of bashrc.
+    local _C_RED=$'\033[31m'   _C_GREEN=$'\033[32m'   _C_MAGENTA=$'\033[35m'
+    local _C_CYAN=$'\033[36m'  _C_YELLOW=$'\033[93m'  _C_GREY=$'\033[90m'
+    local _C_BLUE=$'\033[34m'  _C_RESET=$'\033[0m'
+
+    if [[ -z "$TMUX" ]]; then
+        printf '%s%s:%s --auto-approve requires running inside tmux. %sFalling back.%s\n' \
+            "$_C_RED" "$ai" "$_C_RESET" "$_C_GREY" "$_C_RESET" >&2
+        return 0
+    fi
+    if ! command -v ja &>/dev/null; then
+        printf '%s%s:%s --auto-approve needs %s'\''ja'\''%s on PATH. %sFalling back.%s\n' \
+            "$_C_RED" "$ai" "$_C_RESET" "$_C_CYAN" "$_C_RESET" "$_C_GREY" "$_C_RESET" >&2
+        return 0
+    fi
+    local target
+    target=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+    if [[ -z "$target" ]]; then
+        printf '%s%s:%s --auto-approve could not resolve current tmux target. %sFalling back.%s\n' \
+            "$_C_RED" "$ai" "$_C_RESET" "$_C_GREY" "$_C_RESET" >&2
+        return 0
+    fi
+    local sanitized="${target//[:.]/-}"
+    local lockfile="/tmp/ja-${sanitized}.lock"
+    local logfile="/tmp/ja-${sanitized}.log"
+    if [[ -f "$lockfile" ]]; then
+        local pid
+        pid=$(cat "$lockfile" 2>/dev/null)
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            # ▶ ja already running · pid 24085 · /tmp/ja-M-7-1.log · stop: ja --stop
+            printf '%s▶%s %sja already running%s %s·%s pid %s%s%s %s·%s %s%s%s %s·%s stop: %sja --stop%s\n' \
+                "$_C_MAGENTA" "$_C_RESET" \
+                "$_C_CYAN" "$_C_RESET" \
+                "$_C_GREY" "$_C_RESET" \
+                "$_C_CYAN" "$pid" "$_C_RESET" \
+                "$_C_GREY" "$_C_RESET" \
+                "$_C_GREY" "$logfile" "$_C_RESET" \
+                "$_C_GREY" "$_C_RESET" \
+                "$_C_YELLOW" "$_C_RESET"
+            return 0
+        fi
+    fi
+    # Launch ja in daemon mode, redirected to log + disowned. & disown
+    # detaches from the wrapper's job table so the daemon survives the
+    # wrapper exiting (which it will, when claude itself exits).
+    #
+    # Note: we deliberately do NOT pass --$ai as an AI filter. -y means
+    # "auto-approve", not "only approve <this AI>". If the user later
+    # switches the same pane from claude to codex (or vice versa), the
+    # daemon should keep working. Users who want a strict filter can
+    # launch ja manually: ja -d --claude.
+    # Detach from controlling tty if possible. bash's `& disown` only
+    # backgrounds + removes from the job table — it does NOT release the
+    # ctty, so the launched ja still inherits this pane's tty and gets
+    # mis-classified as foreground by `ja --status`. Real detach requires
+    # setsid(2). Use the `setsid` command when available (Linux ships it
+    # by default; macOS users can `brew install util-linux`). Fallback to
+    # plain `& disown` — ja will still work, but --status will say
+    # foreground in <pane>, which is technically true for that case.
+    if command -v setsid &>/dev/null; then
+        setsid ja -d -t "$target" </dev/null >"$logfile" 2>&1 &
+        disown
+    else
+        ( ja -d -t "$target" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
+    fi
+    # Brief pause so ja can claim its lockfile before we return — avoids
+    # racing the next invocation that might re-launch a duplicate.
+    local i
+    for i in 1 2 3 4 5 6; do
+        [[ -f "$lockfile" ]] && break
+        sleep 0.1
+    done
+    local pid=""
+    [[ -f "$lockfile" ]] && pid=$(cat "$lockfile" 2>/dev/null)
+    # ▶ ja running · pid 24085 · /tmp/ja-M-7-1.log · stop: ja --stop
+    printf '%s▶%s %sja running%s' \
+        "$_C_MAGENTA" "$_C_RESET" \
+        "$_C_GREEN" "$_C_RESET"
+    [[ -n "$pid" ]] && printf ' %s·%s pid %s%s%s' \
+        "$_C_GREY" "$_C_RESET" \
+        "$_C_CYAN" "$pid" "$_C_RESET"
+    printf ' %s·%s %s%s%s %s·%s stop: %sja --stop%s\n' \
+        "$_C_GREY" "$_C_RESET" \
+        "$_C_GREY" "$logfile" "$_C_RESET" \
+        "$_C_GREY" "$_C_RESET" \
+        "$_C_YELLOW" "$_C_RESET"
+}
+
+# Per-AI wrapper. Runs every invocation (no unset -f) — overhead is one
+# nvm gate check + one $@ scan, both negligible.
+#
+# The eval interpolates the AI name twice:
+#   * `$_ai_cmd` (no escape)   — expanded NOW, baked into the function
+#   * `\"\$@\"` etc. (escaped) — expanded at CALL time inside the function
+# So $_AI_NAME below is the string "CLAUDE" or "CODEX" baked in at
+# definition time, and \${!_envname} is dereferenced at call time.
 _ai_nvm_tools=(codex claude)
 for _ai_cmd in "${_ai_nvm_tools[@]}"; do
-    if ! declare -f "$_ai_cmd" &>/dev/null; then
-        eval "$_ai_cmd() {
-            nvm use default &>/dev/null
-            unset -f $_ai_cmd
-            [[ -n \"\$TMUX\" ]] && code -p &>/dev/null
-            command $_ai_cmd \"\$@\"
-        }"
-    fi
+    _AI_NAME_UC="${_ai_cmd^^}"   # CLAUDE / CODEX (bash 4+)
+    eval "$_ai_cmd() {
+        # Strip --auto-approve / -y from \$@; record whether it appeared.
+        # Also honor ${_AI_NAME_UC}_AUTO_APPROVE=1 env var as a persistent default.
+        local _auto=0 _args=() _arg
+        [[ \"\$${_AI_NAME_UC}_AUTO_APPROVE\" == 1 ]] && _auto=1
+        for _arg in \"\$@\"; do
+            case \"\$_arg\" in
+                --auto-approve|-y) _auto=1 ;;
+                *) _args+=(\"\$_arg\") ;;
+            esac
+        done
+
+        # NVM activation. Idempotent — skip if the AI's binary is already
+        # findable. If not, source nvm.sh directly (rather than calling the
+        # lazy 'nvm' stub, which can silently misbehave under exec bash /
+        # subshells where NVM_BIN was unset). nvm use default then puts
+        # the right node version's bin on PATH.
+        if [[ -z \"\$(type -P $_ai_cmd)\" ]]; then
+            [ -s \"\$NVM_DIR/nvm.sh\" ] && source \"\$NVM_DIR/nvm.sh\" >/dev/null
+            # --silent skips nvm_print_npm_version, which can hang on \`npm --version\`
+            nvm use default --silent >/dev/null 2>&1
+        fi
+        # Refresh Cursor/VS Code IPC socket so that Claude Code's IDE
+        # extension shows \"Connected\" inside tmux. Linux-only — on macOS
+        # the standalone 'code' binary doesn't recognise -p and the call
+        # is just dead overhead (warning swallowed by &>/dev/null).
+        # [[ \"\$_UNAME_S\" == 'Linux' ]] && [[ -n \"\$TMUX\" ]] && \\
+        #     [[ -d \"\$HOME/.vscode-server/cli/servers\" || -d \"\$HOME/.cursor-server/bin\" ]] && \\
+        #     code -p &>/dev/null
+
+        if (( _auto )); then
+            _ai_start_ja_if_needed $_ai_cmd
+        fi
+
+        command $_ai_cmd \"\${_args[@]}\"
+    }"
 done
-unset _ai_cmd
+unset _ai_cmd _AI_NAME_UC
 
 # For fzf-tab-completion vim plugin (requires Bash 4.0+)
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
