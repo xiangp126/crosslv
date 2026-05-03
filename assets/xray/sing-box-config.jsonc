@@ -40,6 +40,13 @@
       {
         "rule_set": "geosite-cn",
         "server": "dns-local"
+      },
+      // Chinese e-commerce -> resolve via Alibaba DNS so direct routing
+      // gets China-local IPs (otherwise resolver falls through to dns-remote
+      // via proxy and returns IPs only reachable from the VPS).
+      {
+        "rule_set": "cn-ecommerce",
+        "server": "dns-local"
       }
     ],
     // Unmatched domains -> resolve via Cloudflare (privacy-friendly, avoids corporate DNS)
@@ -190,6 +197,56 @@
           }
         ]
       },
+      // Chinese e-commerce (JD, Pinduoduo, Taobao, etc.) -> direct
+      {
+        "tag": "cn-ecommerce",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "jd.com",
+              "360buy.com",
+              "360buyimg.com",
+              "jdpay.com",
+              "jdcloud.com",
+              "jcloud.com",
+              "jd.hk",
+              "pinduoduo.com",
+              "yangkeduo.com",
+              "pddpic.com",
+              "pdd.com",
+              "taobao.com",
+              "tmall.com",
+              "tmall.hk",
+              "taobaocdn.com",
+              "1688.com",
+              "alibaba.com",
+              "alibabagroup.com",
+              "alibabausercontent.com",
+              "aliexpress.com",
+              "aliexpress-media.com",
+              "aliyun.com",
+              "aliyuncs.com",
+              "alibabacloud.com",
+              "alicdn.com",
+              "aliimg.com",
+              "tbcdn.cn",
+              "alipay.com",
+              "alipayobjects.com",
+              "mmstat.com"
+            ]
+          },
+          {
+            "domain_keyword": [
+              "jd",
+              "pdd",
+              "taobao",
+              "alibaba",
+              "1688"
+            ]
+          }
+        ]
+      },
       // NVIDIA intranet IP ranges
       {
         "tag": "nvidia-subnets",
@@ -281,6 +338,12 @@
       // --- Alibaba DNS IPs direct, prevent dns-local traffic looping into proxy ---
       {
         "ip_cidr": ["223.5.5.5/32", "223.6.6.6/32"],
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      // --- Chinese e-commerce -> direct (explicit; catches CDNs/APIs not always in geosite-cn) ---
+      {
+        "rule_set": "cn-ecommerce",
         "action": "route",
         "outbound": "direct-local"
       },
