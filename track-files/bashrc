@@ -324,7 +324,11 @@ fi
 #   1. inside tmux (ja can't monitor without a pane to watch)
 #   2. ja is on PATH
 #   3. no existing daemon for this pane (lockfile w/ live pid)
-#   4. log file goes to /tmp so ja's stdout doesn't pollute claude's TUI
+#   4. log file goes to ~/.local/ja so ja's stdout doesn't pollute the
+#      claude TUI and isn't subject to /tmp reapers (macOS periodic
+#      cleanup, tmpwatch on some Linux distros). Path layout MUST
+#      match nv-tools/ja's _runtimeDir + sanitisation rule — see the
+#      comment block above _lockFilePath() in that script.
 # Prints a one-line status to inform the user what was launched (or that
 # an existing daemon was reused) — short enough not to disrupt the
 # claude/codex banner, long enough to teach `ja --stop` exists.
@@ -355,13 +359,19 @@ _ai_start_ja_if_needed() {
         return 0
     fi
     local sanitized="${target//[:.]/-}"
-    local lockfile="/tmp/ja-${sanitized}.lock"
-    local logfile="/tmp/ja-${sanitized}.log"
+    # Path layout mirrors nv-tools/ja's _runtimeDir/_lockFilePath/_logFilePath.
+    # mkdir -p so the shell redirection below can open the log file
+    # before ja itself runs (ja's own _runtimeDir creation happens after
+    # the wrapper has already opened the fd).
+    local jadir="$HOME/.local/ja"
+    mkdir -p "$jadir" 2>/dev/null
+    local lockfile="$jadir/${sanitized}.lock"
+    local logfile="$jadir/${sanitized}.log"
     if [[ -f "$lockfile" ]]; then
         local pid
         pid=$(cat "$lockfile" 2>/dev/null)
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            # ▶ ja already running · pid 24085 · /tmp/ja-M-7-1.log · stop: ja --stop
+            # ▶ ja already running · pid 24085 · ~/.local/ja/M-7-1.log · stop: ja --stop
             printf '%s▶%s %sja already running%s %s·%s pid %s%s%s %s·%s %s%s%s %s·%s stop: %sja --stop%s\n' \
                 "$_C_MAGENTA" "$_C_RESET" \
                 "$_C_CYAN" "$_C_RESET" \
@@ -406,7 +416,7 @@ _ai_start_ja_if_needed() {
     done
     local pid=""
     [[ -f "$lockfile" ]] && pid=$(cat "$lockfile" 2>/dev/null)
-    # ▶ ja running · pid 24085 · /tmp/ja-M-7-1.log · stop: ja --stop
+    # ▶ ja running · pid 24085 · ~/.local/ja/M-7-1.log · stop: ja --stop
     printf '%s▶%s %sja running%s' \
         "$_C_MAGENTA" "$_C_RESET" \
         "$_C_GREEN" "$_C_RESET"
