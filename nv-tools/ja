@@ -22,7 +22,7 @@ fApprovedCount=0  # number of prompts approved
 fLockFile=        # populated AFTER fTmuxTarget is finalised; see main flow
 fVerbose=         # debug logging to stderr
 fAiFilter=        # "claude", "codex", or empty (any); set by --claude/--codex
-fDaemon=          # 1 = stay alive across AI restarts (--daemon/-d)
+fDaemon=          # 1 = stay alive across AI restarts (--daemon/-D)
 fStartedTs=       # unix seconds when mainLoop started (for --status uptime)
 fHost=            # where ja itself started: "<sess:win.pane>" if launched
                   # inside tmux, "<tty>" if outside tmux but attached to a
@@ -94,13 +94,14 @@ known permission prompt is detected.
 
 Options:
     -h, --help       Show this help message
-    -t TARGET        Tmux target pane in session[:window[.pane]] format
+    -t, --target TARGET
+                     Tmux target pane in session[:window[.pane]] format
                      (default: auto-detect the pane running claude or codex)
     -w, --wait SEC   Wait before approving (default: 0, approve immediately)
     -l, --list       List detected AI panes and exit
     -v, --verbose    Print debug info to stderr (detector matches, send-keys
                      events, screen change outcomes)
-    -d, --daemon     Stay alive across AI restarts. When the AI in the target
+    -D, --daemon     Stay alive across AI restarts. When the AI in the target
                      pane exits, $SCRIPT_NAME pauses prompt detection (so it won't spam
                      keys at the bare shell) and waits for an AI to come back
                      in the same pane, then resumes monitoring automatically.
@@ -110,13 +111,13 @@ Options:
                      (--claude and --codex are mutually exclusive)
 
 Daemon control (operate on already-running daemons):
-    --stop           Stop the daemon monitoring the target pane (default: the
+    -S, --stop       Stop the daemon monitoring the target pane (default: the
                      current pane; pass -t to stop a specific one). Cleans
                      up stale lockfiles automatically.
     -s, --status     Show all running daemons (summary row + detail block
                      each). Inside tmux, the daemon for the current pane is
                      marked with '*' in the index column.
-    --log            Tail -F the daemon's log file (default: current pane;
+    -L, --log        Tail -F the daemon's log file (default: current pane;
                      pass -t for a specific one). Ctrl+C to exit.
 
 Supports:
@@ -130,14 +131,14 @@ Examples:
     $SCRIPT_NAME                   # auto-detect, approve immediately
     $SCRIPT_NAME -t main:0.1       # target specific pane
     $SCRIPT_NAME -w 3              # wait 3s before each approval (Ctrl+C to abort)
-    $SCRIPT_NAME -d                # daemon mode: survive claude restarts
-    $SCRIPT_NAME --status          # see what daemons are running
-    $SCRIPT_NAME --log             # follow current pane's daemon log
-    $SCRIPT_NAME --stop            # stop the daemon for the current pane
+    $SCRIPT_NAME -D                # daemon mode: survive claude restarts
+    $SCRIPT_NAME -s                # see what daemons are running
+    $SCRIPT_NAME -L                # follow current pane's daemon log
+    $SCRIPT_NAME -S                # stop the daemon for the current pane
 
 
 Stop:
-    Press Ctrl+C, run $SCRIPT_NAME --stop, or: pkill -f '$SCRIPT_NAME'
+    Press Ctrl+C, run $SCRIPT_NAME -S, or: pkill -f '$SCRIPT_NAME'
 
 _EOF
     exit 0
@@ -151,8 +152,8 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
 
-    local SHORTOPTS="ht:w:lvds"
-    local LONGOPTS="help,wait:,list,verbose,daemon,claude,codex,stop,status,log"
+    local SHORTOPTS="ht:w:lvDsSL"
+    local LONGOPTS="help,target:,wait:,list,verbose,daemon,claude,codex,stop,status,log"
 
     local PARSED
     if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
@@ -168,7 +169,7 @@ parseOptions() {
             -h|--help)
                 usage
                 ;;
-            -t)
+            -t|--target)
                 fTmuxTarget="$2"
                 shift 2
                 ;;
@@ -184,11 +185,11 @@ parseOptions() {
                 fVerbose=1
                 shift
                 ;;
-            -d|--daemon)
+            -D|--daemon)
                 fDaemon=1
                 shift
                 ;;
-            --stop)
+            -S|--stop)
                 fStopOnly=1
                 shift
                 ;;
@@ -196,7 +197,7 @@ parseOptions() {
                 fStatusOnly=1
                 shift
                 ;;
-            --log)
+            -L|--log)
                 fLogOnly=1
                 shift
                 ;;
@@ -254,7 +255,7 @@ parseOptions() {
 # JSON for every daemon. mkdir -p is a no-op if the directory already
 # exists, so calling it on every path lookup is cheap (one stat).
 # Doing it here rather than in writers means even a fresh install can
-# `ja -d` without an explicit init step. Failures (rare: $HOME
+# `ja -D` without an explicit init step. Failures (rare: $HOME
 # readonly, quota) silently fall through; the subsequent open/write
 # will surface the real error.
 _runtimeDir() {
@@ -966,7 +967,7 @@ mainLoop() {
         #
         # Two behaviours, gated by --daemon:
         #   default        : current cmd != fAiName → exit (original).
-        #   --daemon (-d)  : if pane is running a known (and filter-allowed)
+        #   --daemon (-D)  : if pane is running a known (and filter-allowed)
         #                    AI, monitor it — adopting a new name if needed.
         #                    Otherwise skip detection this iter and keep
         #                    polling. Never feed bash output to the detector.
@@ -1370,7 +1371,7 @@ handleStatusRequest() {
         # hint pointing at how to start one. Avoids looking like an error
         # (no red) while still being more visible than plain grey.
         echo -e "${LIGHTYELLOW}○${RESET} ${SCRIPT_NAME}: no daemons running"
-        echo -e "  ${GREY}Start one with:${RESET} ${CYAN}claude -y${RESET} ${GREY}or${RESET} ${CYAN}${SCRIPT_NAME} -d${RESET}"
+        echo -e "  ${GREY}Start one with:${RESET} ${CYAN}claude -y${RESET} ${GREY}or${RESET} ${CYAN}${SCRIPT_NAME} -D${RESET}"
         return 0
     fi
 
@@ -1441,7 +1442,7 @@ handleStatusRequest() {
         local filter_label="(none)"
         [ -n "$filter" ] && filter_label="--$filter"
 
-        # Persistent label — reflects the startup-time `-d/--daemon` flag
+        # Persistent label — reflects the startup-time `-D/--daemon` flag
         # the ja was launched with. Names this "Persistent" rather than
         # "Daemon" because in our flag it really means "stay alive across
         # AI restarts", not "detached unix daemon". The actual runtime
@@ -1506,7 +1507,7 @@ handleStatusRequest() {
         #     release the ctty, which requires setsid(2).
         #
         #   • "detached" — no ctty. The daemon survives pane / terminal
-        #     close. Achieved via `setsid ja -d ...` in the wrapper, or
+        #     close. Achieved via `setsid ja -D ...` in the wrapper, or
         #     by tools like nohup setsid.
         #
         # Keeping the word "daemon" out of this column entirely — that
@@ -1574,7 +1575,7 @@ handleLogRequest() {
             return 1
         fi
         echo -e "${GREY}${SCRIPT_NAME}: no daemon running for pane ${BLUE}${target}${RESET}"
-        echo -e "${GREY}Start one with:${RESET} ${SCRIPT_NAME} -d -t ${target}"
+        echo -e "${GREY}Start one with:${RESET} ${SCRIPT_NAME} -D -t ${target}"
         return 1
     fi
     # exec replaces our shell with tail so Ctrl+C goes straight to tail
@@ -1603,7 +1604,7 @@ resolveTarget() {
         # auto-detect requires at least one AI pane to bootstrap the target.
         # Even in daemon mode there's no way to "wait for an AI to come back"
         # without first knowing which pane to wait in, so this path stays
-        # strict regardless of -d.
+        # strict regardless of -D.
         autoDetectTarget
         return
     fi
@@ -1616,7 +1617,7 @@ resolveTarget() {
     # from a previous claude session) — leading to runaway `tmux
     # send-keys '1'` into a plain shell.
     #
-    # Daemon mode relaxes this: the whole point of -d is "stay alive
+    # Daemon mode relaxes this: the whole point of -D is "stay alive
     # while no AI is running", so we let ja boot into a paused state
     # when the target pane has no AI yet. mainLoop's pause/resume logic
     # then handles things naturally once an AI appears.
@@ -1658,7 +1659,7 @@ resolveTarget() {
 # Duplicate detection routes through _monitorPid, so it sees a live
 # daemon even if the lockfile got deleted out from under it (the
 # state file is consulted as a fallback). Without that, a second
-# `ja -d` would happily start next to the already-running one and
+# `ja -D` would happily start next to the already-running one and
 # both would race on send-keys into the same pane.
 acquireLockfile() {
     # Path computed via _lockFilePath so it stays in sync with everything

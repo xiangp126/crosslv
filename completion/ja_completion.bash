@@ -19,8 +19,8 @@ _ja_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    short_opts="-h -t -w -l -v -d -s"
-    long_opts="--help --wait --list --verbose --daemon \
+    short_opts="-h -t -w -l -v -D -s -S -L"
+    long_opts="--help --target --wait --list --verbose --daemon \
                --stop --status --log --claude --codex"
 
     # Complete tmux targets in session[:window[.pane]] format.
@@ -55,20 +55,20 @@ _ja_complete() {
         __ltrim_colon_completions "$prefix"
     }
 
-    # Check if we're completing a -t tmux-target argument.
+    # Check if we're completing a -t / --target tmux-target argument.
     # Because ':' is in COMP_WORDBREAKS, bash splits targets like "1:2"
-    # into ["1", ":", "2"]. We walk back through COMP_WORDS to find -t
-    # and reconstruct the full target prefix typed so far.
+    # into ["1", ":", "2"]. We walk back through COMP_WORDS to find
+    # -t / --target and reconstruct the full target prefix typed so far.
     local _completing_target=false
     local _full_cur="$cur"
 
-    if [[ "$prev" == "-t" ]]; then
+    if [[ "$prev" == "-t" || "$prev" == "--target" ]]; then
         _completing_target=true
     elif [[ "$cur" != -* ]] && [[ -n "$cur" || "$prev" == ":" ]]; then
         local i w
         for (( i = COMP_CWORD - 1; i >= 1; i-- )); do
             w="${COMP_WORDS[i]}"
-            if [[ "$w" == "-t" ]]; then
+            if [[ "$w" == "-t" || "$w" == "--target" ]]; then
                 _completing_target=true
                 _full_cur=""
                 local j
