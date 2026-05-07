@@ -916,7 +916,33 @@ mainLoop() {
 
     # Compact two-line banner: title + watch summary on the first line,
     # config + stop hint on the second, single horizontal rule below to
-    # mark where the run-time log starts.
+    # mark where the run-time log starts. Rule width tracks the wider of
+    # the two banner lines plus a small overshoot so the underline always
+    # extends a few cells past the last visible glyph — gives the banner
+    # an obvious "this is the bottom edge" feel instead of butting flush
+    # against text (which can read as accidental wrap). The overshoot
+    # also absorbs minor variation: a long $fTmuxTarget or the optional
+    # "· daemon" suffix can push lines past the old hardcoded 60 cols
+    # without truncating the rule. bash's ${#var} counts UTF-8 code
+    # points correctly under a UTF-8 locale, so the multi-byte glyphs
+    # (▶ → · ─) measure as 1 column each — matching their rendered width.
+    local _line1Plain _line2Plain _daemonNotePlain=""
+    if [ -n "$fAiName" ]; then
+        _line1Plain="▶ ${SCRIPT_NAME} AUTO-APPROVE · ${fAiName} → ${fTmuxTarget}"
+    else
+        _line1Plain="▶ ${SCRIPT_NAME} AUTO-APPROVE · ${fTmuxTarget}"
+    fi
+    [ -n "$fDaemon" ] && _daemonNotePlain=" · daemon"
+    _line2Plain="  poll ${fPollInterval}s · delay ${fApproveDelay}s${_daemonNotePlain} · Ctrl+C to stop"
+    local _ruleW=${#_line1Plain}
+    [ ${#_line2Plain} -gt "$_ruleW" ] && _ruleW=${#_line2Plain}
+    # Overshoot: 4 cells past the widest visible content. Small enough
+    # that the rule still reads as "tight" framing for the banner, large
+    # enough that the underline is clearly separated from the trailing
+    # word at the eye-flick scale. Matches the visual rhythm jc/jmake
+    # use for similar two-line banners.
+    _ruleW=$((_ruleW + 4))
+
     echo ""
     if [ -n "$fAiName" ]; then
         echo -e "${MAGENTA}▶ ${SCRIPT_NAME} AUTO-APPROVE${RESET} ${GREY}·${RESET} ${CYAN}${fAiName}${RESET} ${GREY}→${RESET} ${BLUE}${fTmuxTarget}${RESET}"
@@ -926,7 +952,7 @@ mainLoop() {
     local _daemonNote=""
     [ -n "$fDaemon" ] && _daemonNote=" ${GREY}·${RESET} ${MAGENTA}daemon${RESET}"
     echo -e "  ${GREY}poll${RESET} ${fPollInterval}s ${GREY}·${RESET} ${GREY}delay${RESET} ${fApproveDelay}s${_daemonNote} ${GREY}·${RESET} ${GREY}Ctrl+C to stop${RESET}"
-    echo -e "${GREY}$(_hr 60)${RESET}"
+    echo -e "${GREY}$(_hr "$_ruleW")${RESET}"
     echo ""
 
     while true; do
