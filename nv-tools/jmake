@@ -1336,7 +1336,12 @@ runGitOptions() {
                 local stashed=0
                 if ! git diff --quiet 2>/dev/null; then
                     echo -e "$NOTATION ${CYAN}Unstaged changes detected, stashing...${RESET}"
-                    git stash push -m "jmake-rebase-autostash" && stashed=1
+                    local stash_before
+                    stash_before=$(git rev-parse --quiet --verify refs/stash 2>/dev/null || true)
+                    git stash push -m "jmake-rebase-autostash"
+                    local stash_after
+                    stash_after=$(git rev-parse --quiet --verify refs/stash 2>/dev/null || true)
+                    [[ -n "$stash_after" && "$stash_before" != "$stash_after" ]] && stashed=1
                 fi
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git rebase origin/master_rc${RESET}"
                 if git rebase origin/master_rc; then
