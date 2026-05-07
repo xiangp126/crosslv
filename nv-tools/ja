@@ -4,7 +4,7 @@
 # ja — Auto-approve confirmation prompts for Claude Code and Codex CLI
 #
 # Monitors a tmux pane and sends the affirmative option whenever a known
-# permission prompt is detected. Blacklists rm -rf (falls through to manual).
+# permission prompt is detected.
 #
 # Usage:
 #   ja                        # auto-detect the pane running claude/codex
@@ -126,9 +126,6 @@ Daemon control (operate on already-running daemons):
 Supports:
     Claude Code      Numbered options (1. Yes / 2. No) — sends the number
     Codex CLI        Numbered options (1. Yes, proceed) — sends the number
-
-Blacklist:
-    Commands containing 'rm -rf' are never auto-approved.
 
 Examples:
     $SCRIPT_NAME                   # auto-detect, approve immediately
@@ -275,7 +272,7 @@ _logFilePath()   { echo "$(_runtimeDir)/${1//[:.]/-}.log"; }
 _stateFilePath() { echo "$(_runtimeDir)/${1//[:.]/-}.state.json"; }
 
 # Write a state snapshot for --status to read. Called from mainLoop on
-# every notable event (start, approve, paused, resumed, blacklist, dropped).
+# every notable event (start, approve, paused, resumed, dropped).
 #
 # Schema:
 #   {
@@ -288,7 +285,7 @@ _stateFilePath() { echo "$(_runtimeDir)/${1//[:.]/-}.state.json"; }
 #     "approved_count":   <int>,
 #     "paused":           <true|false>,
 #     "last_event_ts":    <unix seconds>,
-#     "last_event_type":  "<start|approve|paused|resumed|blacklist|dropped>",
+#     "last_event_type":  "<start|approve|paused|resumed|dropped>",
 #     "log_file":         "<runtime_dir>/<sanitized>.log",
 #     "host":             "<sess:win.pane>" | "<tty>" | "",  # see fHost
 #     "target_pane_id":   "<%N>"                              # see fTargetPaneId
@@ -657,10 +654,10 @@ timestamp() { date '+%H:%M:%S'; }
 
 # Single source of truth for the "[HH:MM:SS] <body>" event-log format.
 # Every visible status line in mainLoop (✔ Approved, ⚠ Keystroke dropped,
-# ⏸ Paused, ▶ Resumed, BLACKLISTED, Target pane gone, Stopped) routes
-# through here, so there's exactly one place that owns the timestamp
-# prefix. Body is taken verbatim and printed with `echo -e`, so callers
-# can embed ${COLOR} variables freely.
+# ⏸ Paused, ▶ Resumed, Target pane gone, Stopped) routes through here,
+# so there's exactly one place that owns the timestamp prefix. Body is
+# taken verbatim and printed with `echo -e`, so callers can embed
+# ${COLOR} variables freely.
 #
 # Adding a new event class = one call to _log, no copy-pasted timestamp.
 _log() {
@@ -733,12 +730,6 @@ waitForScreenChange() {
     done
     printf '%s' "$oldFp"
     return 1
-}
-
-# Check if the pane content contains a blacklisted command
-isBlacklisted() {
-    local content="$1"
-    echo "$content" | grep -q "rm -rf"
 }
 
 # Detect a permission prompt in the captured pane tail and return which
@@ -898,9 +889,9 @@ detectPromptOption() {
 # =============================================================================
 mainLoop() {
     # Fingerprint of the screen state we already took action on (approved,
-    # blacklist-skipped, or gave up after retries). Top-of-loop dedup skips
-    # iterations whose fingerprint matches this — meaning the screen hasn't
-    # changed since we handled it, so there's nothing new to do.
+    # or gave up after retries). Top-of-loop dedup skips iterations whose
+    # fingerprint matches this — meaning the screen hasn't changed since
+    # we handled it, so there's nothing new to do.
     # Empty string at startup so the first iteration always proceeds.
     local lastHandledFp=""
 
@@ -934,7 +925,7 @@ mainLoop() {
     fi
     local _daemonNote=""
     [ -n "$fDaemon" ] && _daemonNote=" ${GREY}·${RESET} ${MAGENTA}daemon${RESET}"
-    echo -e "  ${GREY}poll${RESET} ${fPollInterval}s ${GREY}·${RESET} ${GREY}delay${RESET} ${fApproveDelay}s ${GREY}·${RESET} ${GREY}blacklist${RESET} '${LIGHTYELLOW}rm -rf${RESET}'${_daemonNote} ${GREY}·${RESET} ${GREY}Ctrl+C to stop${RESET}"
+    echo -e "  ${GREY}poll${RESET} ${fPollInterval}s ${GREY}·${RESET} ${GREY}delay${RESET} ${fApproveDelay}s${_daemonNote} ${GREY}·${RESET} ${GREY}Ctrl+C to stop${RESET}"
     echo -e "${GREY}$(_hr 60)${RESET}"
     echo ""
 
@@ -1044,13 +1035,6 @@ mainLoop() {
         if [ -n "$promptOption" ]; then
             _dbg "detector matched: option=$promptOption fp=$fingerprint"
             _dbgBlock "tail content (the 20 lines fed to detectPromptOption):" <<<"$tail"
-            if isBlacklisted "$content"; then
-                _log "${RED}⚠ BLACKLISTED${RESET} — auto-approval ${RED}blocked${RESET} because the prompt contains ${RED}'rm -rf'${RESET}. ${LIGHTYELLOW}Please respond to the prompt manually in pane ${BLUE}${fTmuxTarget}${LIGHTYELLOW}.${RESET}"
-                _writeState blacklist
-                lastHandledFp="$fingerprint"
-                sleep "$fPollInterval"
-                continue
-            fi
             applyApproveDelay
             # Both Claude Code and Codex CLI (macOS + Linux) accept the
             # option number as a hotkey in the permission prompt. Sending
