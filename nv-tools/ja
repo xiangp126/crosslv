@@ -14,7 +14,7 @@ SCRIPT_NAME=$(basename "$0")
 
 # Options
 fTmuxTarget=      # tmux target pane in session[:window[.pane]] format
-fListOnly=        # list detected AI panes and exit
+fList=            # list detected AI panes and exit
 fApproveDelay=0   # seconds to wait before approving
 fPollInterval=0.3 # seconds to poll for new prompts
 fAiName=          # AI running in the target pane (claude|codex|...)
@@ -36,9 +36,10 @@ fTargetPaneId=    # tmux pane_id (eg. "%47") of fTmuxTarget at startup.
                   # pane_id mismatch and exits cleanly instead of
                   # blindly monitoring the wrong pane.
 fPaused=          # 1 while daemon is paused (no AI in pane); empty otherwise
-fStopOnly=        # 1 = --stop:    stop the daemon for the resolved target
-fStatusOnly=      # 1 = --status:  show daemon status (single or all)
-fLogOnly=         # 1 = --log:     tail -F the daemon's log file
+fStop=            # 1 = --stop:     stop the daemon for the resolved target
+fStatus=          # 1 = --status:   show daemon status (single or all)
+fLog=             # 1 = --log:      tail -F the daemon's log file
+fLogFull=         # 1 = --log-full: print full log then tail -F it
 
 # =============================================================================
 # AI CATALOG — single source of truth for which AIs ja recognises
@@ -119,6 +120,8 @@ Daemon control (operate on already-running daemons):
                      marked with '*' in the index column.
     -L, --log        Tail -F the daemon's log file (default: current pane;
                      pass -t for a specific one). Ctrl+C to exit.
+    --log-full       Like --log, but print the full log first, then follow.
+                     Useful for catching up on a long-running daemon.
 
 Supports:
     Claude Code      Numbered options (1. Yes / 2. No) — sends the number
@@ -153,7 +156,7 @@ parseOptions() {
     fi
 
     local SHORTOPTS="ht:w:lvDsSL"
-    local LONGOPTS="help,target:,wait:,list,verbose,daemon,claude,codex,stop,status,log"
+    local LONGOPTS="help,target:,wait:,list,verbose,daemon,claude,codex,stop,status,log,log-full"
 
     local PARSED
     if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
@@ -178,7 +181,7 @@ parseOptions() {
                 shift 2
                 ;;
             -l|--list)
-                fListOnly=1
+                fList=1
                 shift
                 ;;
             -v|--verbose)
@@ -190,15 +193,19 @@ parseOptions() {
                 shift
                 ;;
             -S|--stop)
-                fStopOnly=1
+                fStop=1
                 shift
                 ;;
             -s|--status)
-                fStatusOnly=1
+                fStatus=1
                 shift
                 ;;
             -L|--log)
-                fLogOnly=1
+                fLog=1
+                shift
+                ;;
+            --log-full)
+                fLogFull=1
                 shift
                 ;;
             --claude|--codex)
@@ -1038,7 +1045,7 @@ mainLoop() {
             _dbg "detector matched: option=$promptOption fp=$fingerprint"
             _dbgBlock "tail content (the 20 lines fed to detectPromptOption):" <<<"$tail"
             if isBlacklisted "$content"; then
-                _log "${RED}⚠ BLACKLISTED (rm -rf) — skipping${RESET}"
+                _log "${RED}⚠ BLACKLISTED${RESET} — auto-approval ${RED}blocked${RESET} because the prompt contains ${RED}'rm -rf'${RESET}. ${LIGHTYELLOW}Please respond to the prompt manually in pane ${BLUE}${fTmuxTarget}${LIGHTYELLOW}.${RESET}"
                 _writeState blacklist
                 lastHandledFp="$fingerprint"
                 sleep "$fPollInterval"
@@ -1219,10 +1226,11 @@ mainLoop() {
 # --stop wins over --status / --log (you wanted to stop, not query),
 # --list stays first as the historical default.
 doEarlyExitJobs() {
-    [ -n "$fListOnly" ]   && { handleListMode;     exit 0;  }
-    [ -n "$fStopOnly" ]   && { handleStopRequest;   exit $?; }
-    [ -n "$fStatusOnly" ] && { handleStatusRequest; exit $?; }
-    [ -n "$fLogOnly" ]    && { handleLogRequest;    exit $?; }
+    [ -n "$fList" ]    && { handleListMode;            exit 0;  }
+    [ -n "$fStop" ]    && { handleStopRequest;         exit $?; }
+    [ -n "$fStatus" ]  && { handleStatusRequest;       exit $?; }
+    [ -n "$fLogFull" ] && { handleLogRequest full;     exit $?; }
+    [ -n "$fLog" ]     && { handleLogRequest tail;     exit $?; }
 }
 
 # `-l` / `--list` handler — list every tmux pane currently running an AI,
@@ -1557,13 +1565,27 @@ handleStatusRequest() {
     done
 }
 
-# tail -F the daemon's log file. -F (capital) follows by name not fd, so
+# Tail the daemon's log file. `-F` (capital) follows by name not fd, so
 # log rotation (or daemon restart writing a new file) is handled.
+#
+# Mode arg controls the starting point:
+#   • "tail" (default) — last 15 lines, then follow. Maps to --log / -L.
+#                        15 (vs tail's default of 10) gives enough context
+#                        to see the most recent ✔ Approved / ⚠ events
+#                        without scrolling.
+#   • "full"           — every line from line 1, then follow. Maps to
+#                        --log-full. Implemented as `tail -F -n +1` (single
+#                        process) rather than `cat … && tail -F …` so no
+#                        appends written between the cat finishing and tail
+#                        starting can be missed.
 handleLogRequest() {
+    local mode="${1:-tail}"
     local target
     if ! target=$(_resolveTargetForTaskMode) || [ -z "$target" ]; then
-        echo -e "${RED}Error: ${SCRIPT_NAME} --log without -t requires running inside tmux${RESET}" >&2
-        echo -e "${GREY}Pass an explicit target: ${SCRIPT_NAME} --log -t session:window.pane${RESET}" >&2
+        local _flag="--log"
+        [ "$mode" = "full" ] && _flag="--log-full"
+        echo -e "${RED}Error: ${SCRIPT_NAME} ${_flag} without -t requires running inside tmux${RESET}" >&2
+        echo -e "${GREY}Pass an explicit target: ${SCRIPT_NAME} ${_flag} -t session:window.pane${RESET}" >&2
         return 1
     fi
     local logfile=$(_logFilePath "$target")
@@ -1580,7 +1602,11 @@ handleLogRequest() {
     fi
     # exec replaces our shell with tail so Ctrl+C goes straight to tail
     # without an intermediate process layer.
-    exec tail -F "$logfile"
+    if [ "$mode" = "full" ]; then
+        exec tail -F -n +1 "$logfile"
+    else
+        exec tail -F -n 15 "$logfile"
+    fi
 }
 
 # Sanity-check that tmux is on PATH. Without tmux ja literally cannot do

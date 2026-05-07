@@ -21,7 +21,7 @@ _ja_complete() {
 
     short_opts="-h -t -w -l -v -D -s -S -L"
     long_opts="--help --target --wait --list --verbose --daemon \
-               --stop --status --log --claude --codex"
+               --stop --status --log --log-full --claude --codex"
 
     # Complete tmux targets in session[:window[.pane]] format.
     # Generates candidates with raw colons, then uses
