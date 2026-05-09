@@ -16,14 +16,6 @@
         "https://maas.prd.astra.nvidia.com/maas/gerrit/mcp"
       ]
     },
-    "nvidia-nvbugs": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote",
-        "https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
-      ]
-    },
     "nvidia-jenkins": {
       "command": "npx",
       "args": [
