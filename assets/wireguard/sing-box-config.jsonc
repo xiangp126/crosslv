@@ -242,7 +242,17 @@
               "alipayobjects.com",
               "mmstat.com",
               "goofish.com",
-              "xianyu.com"
+              "xianyu.com",
+              // CNAME targets used by JD/Alibaba CDNs — must be matched here
+              // so resolution stays on dns-local (Alibaba) and ECS returns
+              // China-local CDN IPs. Without these, the CNAME chain leaks to
+              // dns-remote (Cloudflare via proxy) and returns global edges
+              // (e.g. Akamai US) that the GFW interferes with, causing
+              // Firefox to show "Server Not Found".
+              "qianxun.com",          // item.jd.com.gslb.qianxun.com
+              "jdtransaction.com",    // jdtransaction.com.edgekey.net
+              "jcloud-cdn.com",       // JD Cloud CDN
+              "jdcdn.com"             // JD CDN
             ]
           },
           {
