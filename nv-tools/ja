@@ -943,7 +943,10 @@ mainLoop() {
     # use for similar two-line banners.
     _ruleW=$((_ruleW + 4))
 
-    echo ""
+    # No leading blank line — the banner is the very first thing in the
+    # log file and a leading blank reads as "ja --log silently ate a
+    # line" when the user runs it. Trailing blank below stays (it
+    # visually separates the banner from the run-time events).
     if [ -n "$fAiName" ]; then
         echo -e "${MAGENTA}▶ ${SCRIPT_NAME} AUTO-APPROVE${RESET} ${GREY}·${RESET} ${CYAN}${fAiName}${RESET} ${GREY}→${RESET} ${BLUE}${fTmuxTarget}${RESET}"
     else

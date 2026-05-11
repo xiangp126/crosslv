@@ -1308,6 +1308,19 @@ runGitClean() {
     echo -e "$NOTATION ${MAGENTA}Git deep clean completed.${RESET}"
 }
 
+# Print the first existing branch on origin from: master_rc, master, main.
+# Returns 0 on success (branch name on stdout), 1 if none found.
+resolveKeyBranch() {
+    local candidate
+    for candidate in master_rc master main; do
+        if git ls-remote --heads --exit-code origin "$candidate" >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 runGitOptions() {
     [[ ${#fGitCmds[@]} -eq 0 && -z "$fGitClean" ]] && return 0
     fWorkingDir=$(realpath "$fWorkingDir")
@@ -1327,12 +1340,22 @@ runGitOptions() {
         [[ $isCascade -eq 1 ]] && echo -e "$NOTATION ${BOLD}[Git $gitStep/$gitCmdCount]${RESET}"
         case "$cmd" in
             fetch)
-                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin master_rc${RESET}"
-                git fetch origin master_rc
+                local fetchBranch
+                if fetchBranch=$(resolveKeyBranch); then
+                    echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin $fetchBranch${RESET}"
+                    git fetch origin "$fetchBranch"
+                else
+                    echo -e "$NOTATION ${RED}No master_rc/master/main branch found on origin.${RESET}"
+                fi
                 # echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git fetch origin --tags${RESET}"
                 # git fetch origin --tags
                 ;;
             rebase)
+                local rebaseBranch
+                if ! rebaseBranch=$(resolveKeyBranch); then
+                    echo -e "$NOTATION ${RED}No master_rc/master/main branch found on origin.${RESET}"
+                    continue
+                fi
                 local stashed=0
                 if ! git diff --quiet 2>/dev/null; then
                     echo -e "$NOTATION ${CYAN}Unstaged changes detected, stashing...${RESET}"
@@ -1343,8 +1366,8 @@ runGitOptions() {
                     stash_after=$(git rev-parse --quiet --verify refs/stash 2>/dev/null || true)
                     [[ -n "$stash_after" && "$stash_before" != "$stash_after" ]] && stashed=1
                 fi
-                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git rebase origin/master_rc${RESET}"
-                if git rebase origin/master_rc; then
+                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git rebase origin/$rebaseBranch${RESET}"
+                if git rebase "origin/$rebaseBranch"; then
                     if [[ $stashed -eq 1 ]]; then
                         echo -e "$NOTATION ${CYAN}Rebase succeeded, restoring stashed changes...${RESET}"
                         git stash pop
@@ -1369,8 +1392,13 @@ runGitOptions() {
                 git commit --amend
                 ;;
             push)
-                echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git push origin HEAD:refs/for/master_rc${RESET}"
-                git push origin HEAD:refs/for/master_rc
+                local pushBranch
+                if pushBranch=$(resolveKeyBranch); then
+                    echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git push origin HEAD:refs/for/$pushBranch${RESET}"
+                    git push origin "HEAD:refs/for/$pushBranch"
+                else
+                    echo -e "$NOTATION ${RED}No master_rc/master/main branch found on origin.${RESET}"
+                fi
                 ;;
             stat)
                 echo -e "$NOTATION ${CYAN}Running: ${YELLOW}git diff --stat${RESET}"
