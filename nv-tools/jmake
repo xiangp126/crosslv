@@ -1286,6 +1286,45 @@ removeWriteFromJson() {
     fi
 }
 
+# Frame linkWorkspaceFiles + removeWriteFromJson as a single labeled
+# block so their output isn't an unframed tail dangling after the
+# Build Summary's closing === rule. The Build Summary above always
+# closes with === (printLoopBuildSummary in loop mode, the else branch
+# of runLoopModels in single-model mode, or runBuildCommands' own
+# banner when called outside runLoopModels), so we only need to emit
+# the header, run the children, and close with another === rule.
+#
+# Silent when nothing would print: both children early-return under
+# various flags, and an empty "Post-build housekeeping:" header
+# followed immediately by another === would be uglier than today.
+# The pre-check replicates each child's own "will I print?" guard:
+#   • linkWorkspaceFiles prints whenever (fGenerateCompileCmds OR
+#     fLinkWorkspace) is set — either the real link work, or the
+#     "Skipping..." line in multi-model loop mode.
+#   • removeWriteFromJson prints when fNeedBuild is set, we're not in
+#     multi-model loop mode, and the per-model compile-db file exists.
+runPostBuildHousekeeping() {
+    local _willPrint=
+    if [ -n "$fGenerateCompileCmds" ] || [ -n "$fLinkWorkspace" ]; then
+        _willPrint=1
+    fi
+    if [ -z "$_willPrint" ] && [ -n "$fNeedBuild" ] && [[ ${#fModels[@]} -le 1 ]]; then
+        local _dbFile="$fWorkingDir/bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json"
+        [ -f "$_dbFile" ] && _willPrint=1
+    fi
+
+    if [ -z "$_willPrint" ]; then
+        linkWorkspaceFiles
+        removeWriteFromJson
+        return
+    fi
+
+    echo -e "$NOTATION ${BOLD}Post-build housekeeping:${RESET}"
+    linkWorkspaceFiles
+    removeWriteFromJson
+    echo "$SEPARATOR"
+}
+
 # Deep clean using git clean -fdx; caller must cd to repo and call requireGitRepo first
 runGitClean() {
     echo -e "$NOTATION ${CYAN}Deep cleaning with git clean -fdx...${RESET}"
@@ -1980,8 +2019,7 @@ main() {
     else
         runBuildCommands
     fi
-    linkWorkspaceFiles
-    removeWriteFromJson
+    runPostBuildHousekeeping
     runBurn
     runMlxReset
 }

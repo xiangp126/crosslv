@@ -1368,6 +1368,24 @@ _fmtDuration() {
     echo "${h}h ${m}m $((s % 3600 % 60))s"
 }
 
+# Format a unix-second timestamp as "YYYY-MM-DD HH:MM:SS".
+# Used by --status to render the Last Event cell. A bare HH:MM:SS is
+# ambiguous on long-running daemons (uptime routinely exceeds 24h), so
+# we always show the full date — same format everywhere, no calendar-day
+# branches to mentally decode.
+#
+# GNU date (Linux) uses `-d "@<ts>"`; BSD/macOS uses `-r <ts>`. We try
+# GNU first and fall back, matching the existing dual-form elsewhere in
+# the script. If both fail (e.g. malformed ts), echo the raw ts so the
+# cell is still readable instead of blank.
+_fmtEventTime() {
+    local ts="$1"
+    [[ "$ts" =~ ^[0-9]+$ ]] || { echo "?"; return; }
+    date -d "@$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null \
+        || date -r "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null \
+        || echo "$ts"
+}
+
 # Read a single field from a state JSON file. Crude but adequate — our
 # schema is flat and we control the writer (_writeState), so we don't
 # need a real JSON parser. Strips wrapping quotes and trailing comma.
@@ -1405,17 +1423,35 @@ handleStatusRequest() {
 
     echo -e "${LIGHTYELLOW}${SCRIPT_NAME} daemons running (${#files[@]})${RESET}"
     echo
-    # Header: # column is 4 wide to fit "N *" cleanly. `* ` is the
-    # current-pane marker; daemons not in the caller's pane get blank.
-    printf "${GREY}%-4s %-12s %-8s %-10s %-9s %s${RESET}\n" \
-        "#" "Target" "AI" "State" "Approved" "Last Event"
-    printf "${GREY}%s %s %s %s %s %s${RESET}\n" \
-        "$(_hr 4)" "$(_hr 12)" "$(_hr 8)" "$(_hr 10)" "$(_hr 9)" "$(_hr 22)"
+
+    # Layout: every line in every daemon block is `Label: value`, in the
+    # same two-column grid. Removed the old summary-row + table-header
+    # combo because mixing a columnar one-liner with label:value detail
+    # rows made the eye switch reading patterns mid-block.
+    #
+    # Per-line grid:
+    #   "[N]  " or "     " (5)     # index marker on first line, indent elsewhere
+    #     + label1   (_labW)   + " " (1)
+    #     + value1   (_valW)   + " " (1)
+    #     + label2   (_lab2W)  + " " (1)
+    #     + value2
+    #
+    # _labW=12  fits the longest label1 ("Persistent:", "Last Event:" — 11
+    #           chars + 1 trailing space).
+    # _valW=19  fits the longest fixed-width value1 (state_pad, PID up to
+    #           7 digits, event type up to 7 chars, target string).
+    # _lab2W=12 fits the longest label2 ("Event Time:" — 11 chars +
+    #           1 trailing space). Symmetry with _labW keeps right-side
+    #           label/value gaps consistent with left-side.
+    #
+    # All hoisted to the top of the loop because state_pad's padding
+    # (computed during the active/paused/dead branch) consumes _valW too.
+    local _labW=12 _valW=19 _lab2W=12
 
     local i=1 f target pid ai filter daemon_int started approved paused
     local last_ts last_type host state_plain state_colored state_pad last_when
     local now=$(date +%s)
-    local uptime mark idx_col
+    local uptime index_label
     for f in "${files[@]}"; do
         target=$(_readStateField "$f" target)
         pid=$(_readStateField "$f" pid)
@@ -1429,7 +1465,8 @@ handleStatusRequest() {
         last_type=$(_readStateField "$f" last_event_type)
         host=$(_readStateField "$f" host)
 
-        # State: colored, padded by hand (ANSI escapes throw off %-Ns).
+        # State: colored, padded by hand to _valW (ANSI escapes throw
+        # off %-Ns so we can't rely on printf's width spec downstream).
         if ! kill -0 "$pid" 2>/dev/null; then
             state_plain="dead";    state_colored="${RED}dead${RESET}"
         elif [ "$paused" = "true" ]; then
@@ -1437,27 +1474,28 @@ handleStatusRequest() {
         else
             state_plain="active";  state_colored="${GREEN}active${RESET}"
         fi
-        state_pad=$(printf '%-10s' "$state_plain")
+        state_pad=$(printf "%-${_valW}s" "$state_plain")
         state_pad="${state_colored}${state_pad#$state_plain}"
 
-        # Time formatting with macOS/Linux compatibility for date(1).
-        last_when="?"
-        [[ "$last_ts" =~ ^[0-9]+$ ]] && last_when=$(date -d "@$last_ts" '+%H:%M:%S' 2>/dev/null || date -r "$last_ts" '+%H:%M:%S' 2>/dev/null || echo "$last_ts")
+        # Full YYYY-MM-DD HH:MM:SS via shared helper (handles GNU/BSD date
+        # divergence and malformed-ts fallback in one place).
+        last_when=$(_fmtEventTime "$last_ts")
         uptime="?"
         [[ "$started" =~ ^[0-9]+$ ]] && uptime=$(_fmtDuration $((now - started)))
 
-        # Current-pane marker — only when caller is inside tmux AND this
-        # row's target matches the caller's pane.
+        # Index marker — bracketed form. Caller's current pane (only
+        # populated inside tmux) gets a `*` flag inside the brackets so
+        # it stays inside the 5-wide index column.
+        #
+        # Width budget: "[NN*]" fits in 5 chars for N=1..99 with the
+        # marker; for N>=100 the field overflows (no padding) and the
+        # next field shifts right — acceptable since 100+ concurrent ja
+        # daemons is implausible.
         if [ -n "$current_pane" ] && [ "$target" = "$current_pane" ]; then
-            mark="*"
+            index_label="[${i}*]"
         else
-            mark=" "
+            index_label="[${i}]"
         fi
-        idx_col=$(printf '%d %s' "$i" "$mark")
-
-        # Summary row.
-        printf "${CYAN}%-4s${RESET} ${BLUE}%-12s${RESET} %-8s %b ${GREEN}%-9s${RESET} %s %s\n" \
-            "$idx_col" "$target" "$ai" "$state_pad" "$approved" "$last_when" "$last_type"
 
         # Filter label: "--claude" / "--codex" / "(none)" if not filtered.
         local filter_label="(none)"
@@ -1470,51 +1508,6 @@ handleStatusRequest() {
         # detached/foreground status is shown separately as Mode below.
         local persistent_label="no"
         [ "$daemon_int" = "1" ] && persistent_label="yes"
-
-        # Mode — what kind of process this ja is. Read directly from the
-        # state file's "host" field, frozen at startup by the daemon
-        # itself (see _resolveHostLocation). Three cases:
-        #
-        #   • host like "<sess:win.pane>" (contains both ':' and '.'):
-        #     started inside a tmux pane → "foreground in <pane>"
-        #   • host like "<tty>" (no ':' or no '.'):
-        #     started outside tmux but in a terminal → "foreground on <tty>"
-        #   • host empty:
-        #     fully detached at launch (no controlling terminal) → "daemon"
-        #
-        # We trust the recorded host rather than re-checking via
-        # _ttyOfPid/_paneOfPid at status time because runtime tty state
-        # can be unreliable: subshell + disown can leave a residual ctty,
-        # and pane closures don't necessarily revoke the daemon's tty.
-        # The recorded host means "where it was launched" — which is the
-        # question users actually want answered.
-        #
-        # Visual treatment: pane / tty value rendered in GREY so it's
-        # clearly secondary to the bright-blue Target on the summary row.
-        #
-        # Pad the plain label first, then wrap with color — printf %-Ns
-        # counts ANSI escape bytes against the width, throwing alignment
-        # off if we color-then-pad.
-        # Detail block widths — chosen so values line up under the
-        # header columns of the summary row above:
-        #
-        #   header       #    Target       AI       State      Approved  Last Event
-        #   col          0    5            18       27         38        48
-        #
-        # Layout per detail line:
-        #   "     " (5)   + label1 (_labW)  + " " (1) +
-        #                   value1 (_valW)  + " " (1) +
-        #                   label2 (_lab2W) + " " (1) + value2
-        #
-        # _labW=12, _valW=19, _lab2W=9 puts:
-        #   • value1 (PID, Persistent yes/no) at col 5+12+1 = 18 (under "claude")
-        #   • label2 (Uptime, Mode)           at col 18+19+1 = 38 (under "Approved")
-        #   • value2 (uptime str, mode str)   at col 38+9+1 = 48 (under "Last Event")
-        #
-        # _labW=12 also fits the longest left-column label "Persistent:"
-        # (12 chars including colon) exactly. _lab2W=9 fits "Uptime:" (7)
-        # and "Mode:" (5) with trailing padding.
-        local _labW=12 _valW=19 _lab2W=9
 
         # Mode label — describes the daemon's controlling-tty binding,
         # which determines whether closing the host pane / terminal will
@@ -1545,33 +1538,45 @@ handleStatusRequest() {
         local logf=$(_logFilePath "$target")
         local lockf=$(_lockFilePath "$target")
 
-        # Detail block — indented to line up under the Target column of
-        # the summary row. Layout math:
-        #   header  "#    Target       AI       State      ..."
-        #            ^^^^^                       ^
-        #            4 cols  ⇒ Target starts at col 5
-        #                                        col 27 is where State begins
-        # 5-space indent matches Target start, _labW=10 holds longest
-        # label, _valW=18 is the first value column (PID, mode), then
-        # the second label/value column for Uptime/Persistent.
-        #
-        # Using printf (not echo -e): we feed our color vars directly
-        # into the format string, so they're already-expanded ANSI bytes
-        # by the time printf sees them — no extra escape interpretation
+        # Using printf (not echo -e): we feed color vars directly into
+        # the format string, so they're already-expanded ANSI bytes by
+        # the time printf sees them — no extra escape interpretation
         # needed.
+
+        # Row 1: index marker + Target / AI. The index_label takes the
+        # 5-char slot that subsequent rows reserve with "     ".
+        printf "${CYAN}%-5s${RESET}${GREY}%-${_labW}s${RESET} ${BLUE}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} ${CYAN}%s${RESET}\n" \
+            "$index_label" "Target:" "$target" "AI:" "$ai"
+
+        # Row 2: State / Approved. %b for state_pad because it carries
+        # pre-computed ANSI; width is already baked into state_pad above.
+        printf "     ${GREY}%-${_labW}s${RESET} %b ${GREY}%-${_lab2W}s${RESET} ${GREEN}%s${RESET}\n" \
+            "State:" "$state_pad" "Approved:" "$approved"
+
+        # Row 3: Last event type / event time.
+        printf "     ${GREY}%-${_labW}s${RESET} %-${_valW}s ${GREY}%-${_lab2W}s${RESET} %s\n" \
+            "Last Event:" "$last_type" "Event Time:" "$last_when"
+
+        # Row 4: PID / Uptime.
         printf "     ${GREY}%-${_labW}s${RESET} ${CYAN}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} %s\n" \
-            "PID:"        "$pid"               "Uptime:" "$uptime"
-        # Mode value is on the right (last column) so its variable length
-        # ("daemon" / "foreground in M:5.1") never affects the left column.
-        # Persistent is the fixed-width yes/no, so it sits in the left
-        # value slot and keeps alignment with PID/Uptime above.
+            "PID:" "$pid" "Uptime:" "$uptime"
+
+        # Row 5: Persistent / Mode. Mode value is on the right (last
+        # column) so its variable length never affects the left column.
         printf "     ${GREY}%-${_labW}s${RESET} %-${_valW}s ${GREY}%-${_lab2W}s${RESET} %b\n" \
-            "Persistent:" "$persistent_label"  "Mode:"   "$mode_label"
+            "Persistent:" "$persistent_label" "Mode:" "$mode_label"
+
+        # Row 6: Filter (single column — value is short, no value2 to
+        # pair with that wouldn't feel forced).
         printf "     ${GREY}%-${_labW}s${RESET} %s\n" \
-            "Filter:"     "$filter_label"
-        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Lockfile:" "$lockf"
-        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Logfile:"  "$logf"
-        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "State:"    "$f"
+            "Filter:" "$filter_label"
+
+        # Paths — full-width, since each path is long and pairing two on
+        # one line would wrap on typical terminals. `State:` renamed to
+        # `Statefile:` to disambiguate from the daemon-state label above.
+        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Lockfile:"  "$lockf"
+        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Logfile:"   "$logf"
+        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Statefile:" "$f"
         echo
 
         i=$((i + 1))
