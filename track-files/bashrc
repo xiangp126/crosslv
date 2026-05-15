@@ -102,6 +102,7 @@ alias yt-dlp='yt-dlp --verbose'
 alias rsync='rsync -azPv'
 alias jn='jr --no-clipboard'
 alias jk='jmake'
+alias jas='ja --status'
 alias jx='xray-manager'
 
 function __cd () {
