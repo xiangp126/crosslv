@@ -1,5 +1,36 @@
 # completion.bash for oneKey.sh
 
+# All valid tokens for --acl-block / --acl-unblock / --acl-status.
+JC_ACL_TARGETS="c700_01 c700_02 c700_03 c700_04 all"
+
+# Comma-separated multi-target completion for the --acl-* flags.
+# Supports: jc --acl-block c700_01,c700_03,<TAB> -> suggests remaining tokens.
+_jc_complete_acl_targets() {
+    local typed="$cur" prefix="" last_word="" remaining="" m
+
+    if [[ "$typed" == *,* ]]; then
+        last_word="${typed##*,}"
+        prefix="${typed%,*},"
+    else
+        last_word="$typed"
+    fi
+
+    for m in $JC_ACL_TARGETS; do
+        if [[ ! ",$prefix" =~ ",$m," ]]; then
+            remaining+="$m "
+        fi
+    done
+
+    local completions
+    completions=$(compgen -W "$remaining" -- "$last_word")
+    if [[ -n "$completions" ]]; then
+        COMPREPLY=()
+        while IFS= read -r c; do
+            COMPREPLY+=("${prefix}${c}")
+        done <<< "$completions"
+    fi
+}
+
 _jc_complete() {
     local cur prev opts long_opts
     COMPREPLY=() # Array that will hold the completions
@@ -33,7 +64,7 @@ _jc_complete() {
             return 0
             ;;
         --rtsp-stream)
-            local streams="c700_01_raw c700_02_raw"
+            local streams="c700_01_raw c700_02_raw c700_03_raw c700_04_raw"
             COMPREPLY=( $(compgen -W "${streams}" -- ${cur}) )
             return 0
             ;;
@@ -71,7 +102,8 @@ _jc_complete() {
             return 0
             ;;
         --acl-block|--acl-unblock|--acl-status)
-            COMPREPLY=( $(compgen -W "c700_01 c700_02 all" -- ${cur}) )
+            compopt -o nospace 2>/dev/null
+            _jc_complete_acl_targets
             return 0
             ;;
     esac

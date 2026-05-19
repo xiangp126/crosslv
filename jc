@@ -90,7 +90,8 @@ fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset passwo
 fGwHost="root@192.168.10.1"
 fGwPort=8822
 fGwAclAction=""    # block | unblock | status
-fGwAclTarget=""    # c700_01 | c700_02 | all
+fGwAclTarget=()    # array of: c700_01 | c700_02 | c700_03 | c700_04 | all
+                   # Comma- or space-separated values; flags accumulate when repeated.
 # SSH Tunnel (autossh port forward over VPN)
 # Remote host: the real server autossh connects to. Not derivable from the
 # sing-box config because sing-box only sees 127.0.0.1 in xray-tunnel mode.
@@ -191,9 +192,13 @@ RTSP Options:
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
 
 Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
-    --acl-block   <c700_01|c700_02|all>  Enable block rule(s) — camera(s) offline
-    --acl-unblock <c700_01|c700_02|all>  Disable block rule(s) — camera(s) online
-    --acl-status  <c700_01|c700_02|all>  Show current rule state
+    --acl-block   <targets>  Enable block rule(s) — camera(s) offline
+    --acl-unblock <targets>  Disable block rule(s) — camera(s) online
+    --acl-status  <targets>  Show current rule state
+                             <targets>: comma- or space-separated tokens; flags accumulate.
+                             Tokens: c700_01 | c700_02 | c700_03 | c700_04 | all
+                             E.g.  c700_01,c700_03   or   "c700_01 c700_03"
+                                   --acl-block c700_01 --acl-block c700_03
 
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
@@ -465,18 +470,32 @@ removeGemini() {
 }
 
 gwAclControl() {
-    local action="$1" target="$2"
-    local rules="" desired=""
+    local action="$1"; shift
+    local targets=("$@")
+    local rules="" desired="" t
 
-    case "$target" in
-        c700_01) rules="Block_C700_01" ;;
-        c700_02) rules="Block_C700_02" ;;
-        all)     rules="Block_C700_01 Block_C700_02" ;;
-        *)
-            echo -e "${RED}Error: Invalid target '$target'. Valid: c700_01, c700_02, all${RESET}" >&2
-            return 2
-            ;;
-    esac
+    if [ "${#targets[@]}" -eq 0 ]; then
+        echo -e "${RED}Error: No targets specified. Valid: c700_01, c700_02, c700_03, c700_04, all${RESET}" >&2
+        return 2
+    fi
+
+    for t in "${targets[@]}"; do
+        case "$t" in
+            c700_01) rules+=" Block_C700_01" ;;
+            c700_02) rules+=" Block_C700_02" ;;
+            c700_03) rules+=" Block_C700_03" ;;
+            c700_04) rules+=" Block_C700_04" ;;
+            all)     rules+=" Block_C700_01 Block_C700_02 Block_C700_03 Block_C700_04" ;;
+            *)
+                echo -e "${RED}Error: Invalid target '$t'. Valid: c700_01, c700_02, c700_03, c700_04, all${RESET}" >&2
+                return 2
+                ;;
+        esac
+    done
+
+    # Dedupe while preserving order, drop leading whitespace.
+    rules=$(printf '%s\n' $rules | awk 'NF && !seen[$0]++' | tr '\n' ' ')
+    rules="${rules% }"
 
     case "$action" in
         block)   desired="1" ;;
@@ -488,11 +507,10 @@ gwAclControl() {
     printf -v remote_env "DESIRED='%s' RULES='%s' sh -s" "$desired" "$rules"
     ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
         "$fGwHost" "$remote_env" <<'REMOTE' || rc=$?
-set -e
 missing=0
 changed=0
 for n in $RULES; do
-    sec=$(uci show firewall | awk -F'[.=]' -v n="$n" '
+    sec=$(uci show firewall 2>/dev/null | awk -F'[.=]' -v n="$n" '
         tolower($0) ~ "\\.name=\x27" tolower(n) "\x27" { print $2; exit }
     ')
     if [ -z "$sec" ]; then
@@ -500,20 +518,26 @@ for n in $RULES; do
         missing=1
         continue
     fi
-    cur=$(uci -q get firewall.$sec.enabled); [ -z "$cur" ] && cur=1
+    cur=$(uci -q get firewall.$sec.enabled 2>/dev/null || true)
+    [ -z "$cur" ] && cur=1
     if [ -z "$DESIRED" ]; then
         echo "$n: enabled=$cur (section=$sec)"
         continue
     fi
     if [ "$cur" != "$DESIRED" ]; then
-        uci set firewall.$sec.enabled="$DESIRED"; changed=1
-        echo "$n: $cur -> $DESIRED"
+        if uci set firewall.$sec.enabled="$DESIRED"; then
+            changed=1
+            echo "$n: $cur -> $DESIRED"
+        else
+            echo "ERROR: failed to set firewall.$sec.enabled=$DESIRED" >&2
+            missing=1
+        fi
     else
         echo "$n: already $DESIRED"
     fi
 done
 if [ "$missing" = 1 ]; then
-    echo "ERROR: one or more rules not found; aborting without commit" >&2
+    echo "ERROR: one or more rules not found or failed to update; aborting without commit" >&2
     exit 3
 fi
 if [ "$changed" = 1 ]; then
@@ -850,19 +874,10 @@ while true; do
             shift
             ;;
 
-        --acl-block)
-            fGwAclAction="block"
-            fGwAclTarget="$2"
-            shift 2
-            ;;
-        --acl-unblock)
-            fGwAclAction="unblock"
-            fGwAclTarget="$2"
-            shift 2
-            ;;
-        --acl-status)
-            fGwAclAction="status"
-            fGwAclTarget="$2"
+        --acl-block|--acl-unblock|--acl-status)
+            fGwAclAction="${1#--acl-}"
+            IFS=', ' read -ra _aclTargets <<< "$2"
+            fGwAclTarget+=("${_aclTargets[@]}")
             shift 2
             ;;
 
@@ -886,7 +901,7 @@ while true; do
 done
 
 if [ -n "$fGwAclAction" ]; then
-    gwAclControl "$fGwAclAction" "$fGwAclTarget" || exit $?
+    gwAclControl "$fGwAclAction" "${fGwAclTarget[@]}" || exit $?
     exit 0
 fi
 
