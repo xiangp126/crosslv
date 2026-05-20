@@ -31,6 +31,7 @@ fEthlt=
 fCodecov=
 fCov=
 fScratch=
+fRepoType=        # golan | nicx | utopx (set by detectRepoType)
 # MFT (Mellanox Firmware Tools) & OFED options
 fBurn=
 fFwReset=
@@ -650,6 +651,23 @@ requireGitRepo() {
     fi
 }
 
+# Detect repo type by matching $fWorkingDir against known repo names.
+# jmake only knows how to drive golan, nicx, and utopx trees; anything else
+# is rejected so the user is not silently fed a wrong build command.
+detectRepoType() {
+    case "${fWorkingDir,,}" in
+        */utopx*) fRepoType="utopx" ;;
+        */nicx*)  fRepoType="nicx" ;;
+        */golan*) fRepoType="golan" ;;
+        *)
+            echo -e "$NOTATION ${RED}Error: Unknown repo type for ${YELLOW}$fWorkingDir${RESET}" >&2
+            echo -e "$NOTATION ${RED}Path must contain one of: ${CYAN}golan${RED}, ${CYAN}nicx${RED}, ${CYAN}utopx${RESET}" >&2
+            echo -e "$NOTATION Tip: use ${YELLOW}-w <dir>${RESET} to point at a supported tree" >&2
+            exit 1
+            ;;
+    esac
+}
+
 # $1: available models, $2: target model
 searchBuildModel() {
     matchedModels=()
@@ -712,6 +730,7 @@ preConfigure() {
 
     fWorkingDir=$(realpath "$fWorkingDir")
     cd "$fWorkingDir" || exit 1
+    detectRepoType
 
     # Device-only operations don't need a golan_fw source tree
     if [[ -z "$fNeedBuild" && -z "$fBurn" && -z "$fClean" && -z "$fGenerateCompileCmds" && -z "$fLinkWorkspace" ]]; then
@@ -723,6 +742,19 @@ preConfigure() {
         echo -e "$NOTATION ${RED}Error: $BUILD_SCRIPT not found in ${YELLOW}$fWorkingDir${RESET}"
         echo -e "$NOTATION Tip: use ${YELLOW}-w <golan_fw_dir>${RESET} to specify the working directory"
         exit 1
+    fi
+
+    # utopx has no model concept: ./build.sh takes no -d argument and no variants.
+    # Silently drop any model/variant flags the user may have passed so a stray
+    # `jk -o -m carmel` in utopx still runs a bare ./build.sh.
+    if [[ "$fRepoType" == "utopx" ]]; then
+        fBuildModel=""
+        fModels=()
+        fModelsSkip=()
+        fEthlt=
+        fCodecov=
+        fCov=
+        return
     fi
 
     # Lower case the build model
@@ -823,7 +855,10 @@ printBuildFlags() {
     if [ -n "$fNeedBuild" ]; then
         echo -e "${BOLD}Build Options:${RESET}"
         COLOR="$RED"
-        if [[ ${#fModels[@]} -gt 1 || ${#fModelsSkip[@]} -gt 0 ]]; then
+        [ -n "$fRepoType" ] && echo -e "[r] Repo:         ${COLOR}$fRepoType${RESET}"
+        if [[ "$fRepoType" == "utopx" ]]; then
+            : # utopx has no model concept; skip the model row entirely
+        elif [[ ${#fModels[@]} -gt 1 || ${#fModelsSkip[@]} -gt 0 ]]; then
             echo -e "[L] Build Mode:   ${COLOR}Loop Mode${RESET} (models one by one)"
             if [[ ${#fModels[@]} -gt 0 ]]; then
                 echo -e "[I] Include Only: ${GREEN}${fModels[*]}${RESET}"
@@ -1047,6 +1082,10 @@ printLoopBuildSummary() {
 
 makeBuildCommand() {
     fBuildCommand="$BUILD_SCRIPT"
+    # utopx's ./build.sh accepts no flags (no model, no jobs, no verbose).
+    if [[ "$fRepoType" == "utopx" ]]; then
+        return
+    fi
     fBuildCommand+=" -d $fBuildModel"
     fBuildCommand+=" -c $fNumOfJobs"
     [ -z "$fNoVerbose" ] && fBuildCommand+=" --verbose"
@@ -1106,7 +1145,8 @@ runBuildCommands() {
         echo $SEPARATOR
         echo -e "$NOTATION Build completed successfully at $(getCurrentTime) in $fBuildTimeFormatted"
 
-        local mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
+        local mlxFile=""
+        [[ -n "$fBuildModel" ]] && mlxFile="${MODEL_MLX_FILE[$fBuildModel]}"
         if [[ -n "$mlxFile" && -f "$mlxFile" ]]; then
             local mlxSize
             mlxSize=$(du -h "$mlxFile" | cut -f1)
@@ -1246,6 +1286,11 @@ linkFile() {
 
 linkWorkspaceFiles() {
     [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkWorkspace" ] && return
+    # utopx has no per-model compile_db; skip linking entirely.
+    if [[ "$fRepoType" == "utopx" ]]; then
+        echo -e "$NOTATION ${GREY}Skipping compile database link (utopx has no per-model compile_db)${RESET}"
+        return
+    fi
     # Skip linking when in loop mode (multiple models)
     if [[ ${#fModels[@]} -gt 1 ]]; then
         echo -e "$NOTATION ${GREY}Skipping compile database link (loop mode with multiple models)${RESET}"
@@ -2013,8 +2058,10 @@ main() {
     cleanTheRepo
     updateSubmodules
     patchSudoDocker
-    # Handle models mode (--models) or regular build
-    if [[ ${#fModels[@]} -gt 0 ]]; then
+    # Handle models mode (--models) or regular build.
+    # utopx has no model concept, so it always takes the single-build path
+    # regardless of any -m/-a flags the user may have passed.
+    if [[ "$fRepoType" != "utopx" && ${#fModels[@]} -gt 0 ]]; then
         runLoopModels
     else
         runBuildCommands
