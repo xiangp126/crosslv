@@ -95,7 +95,7 @@ fGwAclTarget=()    # array of: c700_01 | c700_02 | c700_03 | c700_04 | all
 # SSH Tunnel (autossh port forward over VPN)
 # Remote host: the real server autossh connects to. Not derivable from the
 # sing-box config because sing-box only sees 127.0.0.1 in xray-tunnel mode.
-fSshTunnelRemoteIp=10.220.62.167
+fSshTunnelRemoteIp=10.6.10.221
 # Ports are populated from .outbounds[proxy].server_port when xray-tunnel
 # mode is detected in launchSingbox; unused in other modes.
 fSshTunnelRemotePort=""
