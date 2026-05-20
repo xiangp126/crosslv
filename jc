@@ -4641,6 +4641,12 @@ isSshTunnelAlive() {
 }
 
 stopSshTunnel() {
+    local wasRunning=
+    if [ -n "$fSshTunnelAutosshPid" ] || pgrep -f "autossh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" >/dev/null; then
+        wasRunning=1
+        echo -e "${LIGHTYELLOW}⏻ Tearing down SSH port forward (${fSshTunnelLocalPort} → ${fSshTunnelRemoteIp}:${fSshTunnelRemotePort})${RESET}"
+    fi
+
     if [ -n "$fSshTunnelAutosshPid" ]; then
         pkill -P "$fSshTunnelAutosshPid" 2>/dev/null || true
         kill "$fSshTunnelAutosshPid" 2>/dev/null || true
@@ -4648,6 +4654,10 @@ stopSshTunnel() {
     fi
     pkill -f "autossh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" 2>/dev/null || true
     pkill -f "ssh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" 2>/dev/null || true
+
+    if [ -n "$wasRunning" ]; then
+        echo -e "${GREEN}✔${GREY} SSH port forward torn down.${RESET}"
+    fi
 }
 
 startSshTunnel() {
