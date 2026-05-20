@@ -1,0 +1,394 @@
+{
+  "log": {
+    "level": "info"
+  },
+  // ========================
+  // DNS Configuration
+  // ========================
+  "dns": {
+    "servers": [
+      // Local DNS: Alibaba public DoH, direct for China domains
+      {
+        "type": "https",
+        "tag": "dns-local",
+        "server": "223.5.5.5"
+      },
+      // NVIDIA intranet DNS: via corporate VPN outbound
+      {
+        "type": "udp",
+        "tag": "nvidia-dns",
+        "server": "10.19.185.31",
+        "detour": "nvidia-vpn"
+      },
+      // Remote DNS: Cloudflare DoH via proxy, for non-China non-NVIDIA domains
+      {
+        "type": "https",
+        "tag": "dns-remote",
+        "server": "1.1.1.1",
+        "detour": "proxy"
+      }
+    ],
+    "strategy": "ipv4_only",
+    "independent_cache": true,
+    "rules": [
+      // NVIDIA internal domains -> resolve via intranet DNS
+      {
+        "rule_set": "nvidia-internal",
+        "server": "nvidia-dns"
+      },
+      // China domains -> resolve via Alibaba DNS to avoid pollution
+      {
+        "rule_set": "geosite-cn",
+        "server": "dns-local"
+      },
+      // Chinese e-commerce -> resolve via Alibaba DNS so direct routing
+      // gets China-local IPs (otherwise resolver falls through to dns-remote
+      // via proxy and returns IPs only reachable from the VPS).
+      {
+        "rule_set": "cn-ecommerce",
+        "server": "dns-local"
+      }
+    ],
+    // Unmatched domains -> resolve via Cloudflare (privacy-friendly, avoids corporate DNS)
+    "final": "dns-remote"
+  },
+  // ========================
+  // Inbound Configuration
+  // ========================
+  "inbounds": [
+    // HTTP/SOCKS5 mixed proxy for manual configuration
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    },
+    // TUN transparent proxy, captures all system traffic
+    // gvisor stack: all packets handled in userspace (avoids mixed stack crash on macOS)
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "utun10",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "mtu": 1350,
+      "stack": "gvisor",
+      // Exclude autossh tunnel destination IPs from TUN capture.
+      // Without this, autossh's SSH packets get re-captured by TUN after
+      // sing-box starts (double-TUN), adding latency to every proxy packet.
+      "route_exclude_address": [
+        "10.220.62.167/32"
+      ]
+    }
+  ],
+  // ========================
+  // Outbound Configuration
+  // ========================
+  "outbounds": [
+    // Main proxy: VLESS + REALITY, TLS disguised as nvidia.com
+    // Connects to local port 3389 (upstream SSH tunnel)
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "127.0.0.1",
+      "server_port": 3389,
+      "uuid": "XRAY_UUID",
+      "flow": "xtls-rprx-vision",
+      "network": [
+        "tcp"
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "www.nvidia.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "XRAY_PUBLIC_KEY",
+          "short_id": "XRAY_SHORT_ID"
+        }
+      }
+    },
+    // Direct: use default network interface
+    {
+      "type": "direct",
+      "tag": "direct-local"
+    },
+    // NVIDIA corporate VPN: bind to utun4 (GlobalProtect tunnel interface)
+    {
+      "type": "direct",
+      "tag": "nvidia-vpn",
+      "bind_interface": "utun4"
+    }
+  ],
+  // ========================
+  // Route Configuration
+  // ========================
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": "nvidia-dns",
+    // ---------- Rule Set Definitions ----------
+    "rule_set": [
+      // Google domain list (remote, must be before geosite-cn)
+      {
+        "tag": "geosite-google",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/geosite-google.srs",
+        "download_detour": "proxy",
+        "update_interval": "7d"
+      },
+      // China domain list (remote, downloaded via proxy, refresh weekly)
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/geosite-cn.srs",
+        "download_detour": "proxy",
+        "update_interval": "7d"
+      },
+      // NVIDIA internal domain matching rules
+      {
+        "tag": "nvidia-internal",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_keyword": [
+              "nvidia",
+              "mellanox",
+              "mlnx"
+            ]
+          },
+          {
+            "domain_suffix": [
+              "nvda.com",
+              "atlassian.net",
+              "atlassian.com"
+            ]
+          }
+        ]
+      },
+      // AI services (Claude, ChatGPT, etc.) domain matching rules
+      {
+        "tag": "ai-services",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "anthropic.com",
+              "claude.ai",
+              "workos.com",
+              "claudeusercontent.com",
+              "intercom.io",
+              "intercomcdn.com",
+              "sentry.io",
+              "statsigapi.net",
+              "featuregates.org",
+              "segment.com",
+              "stripe.com",
+              "openai.com",
+              "chatgpt.com",
+              "oaistatic.com",
+              "oaiusercontent.com",
+              "auth0.com"
+            ]
+          }
+        ]
+      },
+      // Chinese e-commerce (JD, Pinduoduo, Taobao, etc.) -> direct
+      {
+        "tag": "cn-ecommerce",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "jd.com",
+              "360buy.com",
+              "360buyimg.com",
+              "jdpay.com",
+              "jdcloud.com",
+              "jcloud.com",
+              "jd.hk",
+              "pinduoduo.com",
+              "yangkeduo.com",
+              "pddpic.com",
+              "pdd.com",
+              "taobao.com",
+              "tmall.com",
+              "tmall.hk",
+              "taobaocdn.com",
+              "1688.com",
+              "alibaba.com",
+              "alibabagroup.com",
+              "alibabausercontent.com",
+              "aliexpress.com",
+              "aliexpress-media.com",
+              "aliyun.com",
+              "aliyuncs.com",
+              "alibabacloud.com",
+              "alicdn.com",
+              "aliimg.com",
+              "tbcdn.cn",
+              "alipay.com",
+              "alipayobjects.com",
+              "mmstat.com",
+              "goofish.com",
+              "xianyu.com"
+            ]
+          },
+          {
+            "domain_keyword": [
+              "jd",
+              "pdd",
+              "taobao",
+              "alibaba",
+              "1688",
+              "goofish",
+              "xianyu"
+            ]
+          }
+        ]
+      },
+      // NVIDIA intranet IP ranges
+      {
+        "tag": "nvidia-subnets",
+        "type": "inline",
+        "rules": [
+          {
+            "ip_cidr": [
+              "10.18.128.0/21",
+              "10.19.160.0/21",
+              "10.19.172.0/22",
+              "10.19.176.0/23",
+              "10.19.184.0/21",
+              "10.19.210.0/23",
+              "10.19.216.0/23",
+              "10.19.240.0/22",
+              "10.19.244.0/23",
+              "10.19.248.0/22",
+              "10.228.132.0/24",
+              "172.29.224.0/19"
+            ]
+          }
+        ]
+      }
+    ],
+    // ---------- Routing Rules (matched top-down by priority) ----------
+    "rules": [
+      // Protocol sniffing: detect HTTP/TLS traffic
+      {
+        "action": "sniff",
+        "sniffer": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        "timeout": "300ms"
+      },
+      // Reject QUIC: force browsers to fall back to TCP (HTTP/2)
+      // The SSH tunnel does not support UDP, so we explicitly reject UDP 443
+      // to prevent packets slipping past the sniffer and causing log errors.
+      {
+        "protocol": "quic",
+        "action": "reject"
+      },
+      {
+        "network": "udp",
+        "port": 443,
+        "action": "reject"
+      },
+      // DNS hijack: intercept all DNS queries for sing-box to handle
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      // --- Mellanox lab hosts -> proxy (corporate VPN cannot reach these;
+      //     must transit the VLESS VPS which has a route into the lab net) ---
+      {
+        "domain_keyword": ["mlnx"],
+        "action": "route",
+        "outbound": "proxy"
+      },
+      {
+        "ip_cidr": ["10.7.0.0/16"],
+        "action": "route",
+        "outbound": "proxy"
+      },
+      // --- NVIDIA intranet traffic -> corporate VPN ---
+      {
+        "rule_set": "nvidia-internal",
+        "action": "route",
+        "outbound": "nvidia-vpn"
+      },
+      {
+        "rule_set": "nvidia-subnets",
+        "action": "route",
+        "outbound": "nvidia-vpn"
+      },
+      // --- NTP (port 123) -> direct, proxy (autossh) doesn't support UDP ---
+      {
+        "port": 123,
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      // --- Google -> proxy (before geosite-cn to avoid misclassification) ---
+      {
+        "rule_set": "geosite-google",
+        "action": "route",
+        "outbound": "proxy"
+      },
+      // --- AI Services (Claude/ChatGPT) -> proxy ---
+      {
+        "rule_set": "ai-services",
+        "action": "route",
+        "outbound": "proxy"
+      },
+      // --- Alibaba DNS IPs direct, prevent dns-local traffic looping into proxy ---
+      {
+        "ip_cidr": ["223.5.5.5/32", "223.6.6.6/32"],
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      // --- Chinese e-commerce -> direct (explicit; catches CDNs/APIs not always in geosite-cn) ---
+      {
+        "rule_set": "cn-ecommerce",
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      // --- China traffic -> direct ---
+      {
+        "rule_set": "geosite-cn",
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      // --- Private IPs -> direct (LAN, Docker, etc.) ---
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct-local"
+      },
+      // --- Fallback: all remaining traffic -> proxy ---
+      {
+        "action": "route",
+        "outbound": "proxy"
+      }
+    ]
+  },
+  // ========================
+  // Experimental: Clash API for debugging and monitoring
+  // Access dashboard at http://127.0.0.1:9090/ui via Yacd or Metacubexd
+  // ========================
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "metacubexd",
+      "external_ui_download_url": "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
+      "external_ui_download_detour": "proxy"
+    }
+  }
+}

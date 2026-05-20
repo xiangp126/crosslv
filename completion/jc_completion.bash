@@ -46,7 +46,7 @@ _jc_complete() {
                --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status \
                --claude-backup --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
                --codex --codex-remove --codex-backup --codex-restore \
-               --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-wg \
+               --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-wg \
                --xray --xray-port --xray-server --xray-remove \
                --wg --wg-port --wg-server --wg-client --wg-remove \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-h264 \

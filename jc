@@ -95,7 +95,7 @@ fGwAclTarget=()    # array of: c700_01 | c700_02 | c700_03 | c700_04 | all
 # SSH Tunnel (autossh port forward over VPN)
 # Remote host: the real server autossh connects to. Not derivable from the
 # sing-box config because sing-box only sees 127.0.0.1 in xray-tunnel mode.
-fSshTunnelRemoteIp=10.6.10.221
+fSshTunnelRemoteIp=10.220.62.167
 # Ports are populated from .outbounds[proxy].server_port when xray-tunnel
 # mode is detected in launchSingbox; unused in other modes.
 fSshTunnelRemotePort=""
@@ -203,6 +203,7 @@ Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
     --singbox-xray                  Link xray sing-box config to ~/Documents
+    --singbox-xray-autossh          Link xray autossh sing-box config to ~/Documents
     --singbox-wg                    Link WireGuard sing-box config to ~/Documents
 
 Xray Options (server-side only — run on the Xray server host):
@@ -266,7 +267,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           claude-backup,claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
           codex,codex-remove,codex-backup,codex-restore,\
           gemini,gemini-remove,cursor-backup,cursor-restore,\
-          singbox,singbox-xray,singbox-wg,\
+          singbox,singbox-xray,singbox-xray-autossh,singbox-wg,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           acl-block:,acl-unblock:,acl-status:"
 
@@ -867,6 +868,10 @@ while true; do
             ;;
         --singbox-xray)
             fSingboxLink="xray"
+            shift
+            ;;
+        --singbox-xray-autossh)
+            fSingboxLink="xray-autossh"
             shift
             ;;
         --singbox-wg)
@@ -4697,8 +4702,13 @@ startSshTunnel() {
 }
 
 linkSingboxConfig() {
-    local target="$fMainDir/assets/$1/sing-box-config.jsonc"
-    linkFile "$target" "$(dirname "$fSingboxConfig")"
+    local target
+    if [[ "$1" == "xray-autossh" ]]; then
+        target="$fMainDir/assets/xray/sing-box-config-autossh.jsonc"
+    else
+        target="$fMainDir/assets/$1/sing-box-config.jsonc"
+    fi
+    linkFile "$target" "$(dirname "$fSingboxConfig")" "sing-box-config.jsonc"
     # linkFile returns 1 for "already up to date", which is not an error
     local rc=$?
     [[ $rc -le 1 ]] && return 0
