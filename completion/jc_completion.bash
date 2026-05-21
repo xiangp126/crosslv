@@ -1,7 +1,24 @@
 # completion.bash for oneKey.sh
 
-# All valid tokens for --acl-block / --acl-unblock / --acl-status.
-JC_ACL_TARGETS="c700_01 c700_02 c700_03 c700_04 all"
+# Single source of truth for camera names. Add a camera by appending here; the
+# ACL target list and RTSP stream list update automatically.
+JC_CAMERAS="c700_01 c700_02 c700_03 c700_04"
+
+# Each camera exposes two go2rtc streams: <camera>_raw and <camera>_1080p.
+JC_STREAM_VARIANTS="raw 1080p"
+
+# Derived: tokens accepted by --acl-block / --acl-unblock / --acl-status.
+JC_ACL_TARGETS="$JC_CAMERAS all"
+
+# Derived: tokens accepted by --rtsp-stream (cartesian product cameras x variants).
+JC_RTSP_STREAMS=
+for _c in $JC_CAMERAS; do
+    for _v in $JC_STREAM_VARIANTS; do
+        JC_RTSP_STREAMS+="${_c}_${_v} "
+    done
+done
+JC_RTSP_STREAMS="${JC_RTSP_STREAMS% }"
+unset _c _v
 
 # Comma-separated multi-target completion for the --acl-* flags.
 # Supports: jc --acl-block c700_01,c700_03,<TAB> -> suggests remaining tokens.
@@ -16,6 +33,34 @@ _jc_complete_acl_targets() {
     fi
 
     for m in $JC_ACL_TARGETS; do
+        if [[ ! ",$prefix" =~ ",$m," ]]; then
+            remaining+="$m "
+        fi
+    done
+
+    local completions
+    completions=$(compgen -W "$remaining" -- "$last_word")
+    if [[ -n "$completions" ]]; then
+        COMPREPLY=()
+        while IFS= read -r c; do
+            COMPREPLY+=("${prefix}${c}")
+        done <<< "$completions"
+    fi
+}
+
+# Comma-separated multi-stream completion for --rtsp-stream.
+# Supports: jc --rtsp-stream c700_01_raw,<TAB> -> suggests remaining stream tokens.
+_jc_complete_rtsp_streams() {
+    local typed="$cur" prefix="" last_word="" remaining="" m
+
+    if [[ "$typed" == *,* ]]; then
+        last_word="${typed##*,}"
+        prefix="${typed%,*},"
+    else
+        last_word="$typed"
+    fi
+
+    for m in $JC_RTSP_STREAMS; do
         if [[ ! ",$prefix" =~ ",$m," ]]; then
             remaining+="$m "
         fi
@@ -49,7 +94,7 @@ _jc_complete() {
                --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-wg \
                --xray --xray-port --xray-server --xray-remove \
                --wg --wg-port --wg-server --wg-client --wg-remove \
-               --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-h264 \
+               --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-1080 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"
 
     case "${prev}" in
@@ -64,8 +109,8 @@ _jc_complete() {
             return 0
             ;;
         --rtsp-stream)
-            local streams="c700_01_raw c700_02_raw c700_03_raw c700_04_raw"
-            COMPREPLY=( $(compgen -W "${streams}" -- ${cur}) )
+            compopt -o nospace 2>/dev/null
+            _jc_complete_rtsp_streams
             return 0
             ;;
         --rtsp-ip)

@@ -82,7 +82,7 @@ fRtspKill=
 fRtspList=
 fRtspFilter=
 fRtspSrvIp=192.168.10.240
-fRtspStream=
+fRtspStream=()    # array of go2rtc stream names; comma- or space-separated; flags accumulate.
 MAX_RTSP_STREAMS=10
 fRtspScreenRes=   # Exp: 4k Mi Monitor resolution 3360 x 1890
 fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset password
@@ -90,8 +90,9 @@ fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset passwo
 fGwHost="root@192.168.10.1"
 fGwPort=8822
 fGwAclAction=""    # block | unblock | status
-fGwAclTarget=()    # array of: c700_01 | c700_02 | c700_03 | c700_04 | all
+fGwAclTarget=()    # array of camera tokens (any of fGwCameras) or 'all'
                    # Comma- or space-separated values; flags accumulate when repeated.
+fGwCameras=(c700_01 c700_02 c700_03 c700_04)   # source of truth — add a camera by appending here.
 # SSH Tunnel (autossh port forward over VPN)
 # Remote host: the real server autossh connects to. Not derivable from the
 # sing-box config because sing-box only sees 127.0.0.1 in xray-tunnel mode.
@@ -181,13 +182,17 @@ Vnc Lock Options:
     --lock-vnc                      Lock VNC, equivalent to --vnclock lock
 
 RTSP Options:
-    --rtsp                          Play RTSP stream with mpv (low-latency)
+    --rtsp                          Play RTSP stream with mpv (low-latency).
+                                    If --rtsp-stream is omitted, plays the first
+                                    stream advertised by go2rtc.
     --rtsp-all                      Play multiple RTSP streams in tiled layout
     --rtsp-kill                     Kill all running mpv instances
     --rtsp-list                     List all available streams from go2rtc
     --rtsp-raw                      Play all *_raw streams in tiled layout
-    --rtsp-h264                     Play all *_h264 streams in tiled layout
-    --rtsp-stream <stream>          Specify stream name (default: first from go2rtc)
+    --rtsp-1080                     Play all *_1080p streams in tiled layout
+    --rtsp-stream <streams>         Stream name(s) to play (argument required).
+                                    Comma- or space-separated; flags accumulate.
+                                    With 2+ streams, plays tiled (like --rtsp-all).
     --rtsp-ip <ip>                  Specify RTSP server IP (default: ${fRtspSrvIp})
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
 
@@ -262,7 +267,7 @@ SHORTOPTS="hdnf"
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
-          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-h264,rtsp-stream:,\
+          git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-1080,rtsp-stream:,\
           rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,claude-remove,\
           claude-backup,claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
           codex,codex-remove,codex-backup,codex-restore,\
@@ -473,25 +478,34 @@ removeGemini() {
 gwAclControl() {
     local action="$1"; shift
     local targets=("$@")
-    local rules="" desired="" t
+    local rules="" desired="" t cam matched
+    # Camera token c700_NN maps to firewall rule Block_C700_NN via uppercase.
+    local valid_targets="${fGwCameras[*]} all"
 
     if [ "${#targets[@]}" -eq 0 ]; then
-        echo -e "${RED}Error: No targets specified. Valid: c700_01, c700_02, c700_03, c700_04, all${RESET}" >&2
+        echo -e "${RED}Error: No targets specified. Valid: ${valid_targets}${RESET}" >&2
         return 2
     fi
 
     for t in "${targets[@]}"; do
-        case "$t" in
-            c700_01) rules+=" Block_C700_01" ;;
-            c700_02) rules+=" Block_C700_02" ;;
-            c700_03) rules+=" Block_C700_03" ;;
-            c700_04) rules+=" Block_C700_04" ;;
-            all)     rules+=" Block_C700_01 Block_C700_02 Block_C700_03 Block_C700_04" ;;
-            *)
-                echo -e "${RED}Error: Invalid target '$t'. Valid: c700_01, c700_02, c700_03, c700_04, all${RESET}" >&2
-                return 2
-                ;;
-        esac
+        if [ "$t" = "all" ]; then
+            for cam in "${fGwCameras[@]}"; do
+                rules+=" Block_${cam^^}"
+            done
+            continue
+        fi
+        matched=0
+        for cam in "${fGwCameras[@]}"; do
+            if [ "$t" = "$cam" ]; then
+                rules+=" Block_${cam^^}"
+                matched=1
+                break
+            fi
+        done
+        if [ "$matched" -eq 0 ]; then
+            echo -e "${RED}Error: Invalid target '$t'. Valid: ${valid_targets}${RESET}" >&2
+            return 2
+        fi
     done
 
     # Dedupe while preserving order, drop leading whitespace.
@@ -616,15 +630,16 @@ while true; do
             fRtspFilter="_raw"
             shift
             ;;
-        --rtsp-h264)
+        --rtsp-1080)
             fRtspFlag=1
             fRtspMulti=1
-            fRtspFilter="_h264"
+            fRtspFilter="_1080p"
             shift
             ;;
         --rtsp-stream)
             fRtspFlag=1
-            fRtspStream="$2"
+            IFS=', ' read -ra _rtspStreams <<< "$2"
+            fRtspStream+=("${_rtspStreams[@]}")
             shift 2
             ;;
         --rtsp-ip)
@@ -4516,14 +4531,18 @@ playRtspStream() {
 
     # Auto-fit tiling: cols=ceil(sqrt(N)), rows=ceil(N/cols), row-major order.
     # Uses pixel geometry when screen resolution is known, otherwise falls back to percentage.
-    if [ -n "$fRtspMulti" ]; then
-        local stream_list
-        stream_list=$(getSupportedRtspStreams) || return 1
-        if [[ -n "$fRtspFilter" ]]; then
-            stream_list=$(echo "$stream_list" | tr ' ' '\n' | grep "$fRtspFilter" | tr '\n' ' ')
-        fi
+    if [ -n "$fRtspMulti" ] || (( ${#fRtspStream[@]} > 1 )); then
         local streams
-        read -ra streams <<< "$stream_list"
+        if (( ${#fRtspStream[@]} > 0 )); then
+            streams=("${fRtspStream[@]}")
+        else
+            local stream_list
+            stream_list=$(getSupportedRtspStreams) || return 1
+            if [[ -n "$fRtspFilter" ]]; then
+                stream_list=$(echo "$stream_list" | tr ' ' '\n' | grep "$fRtspFilter" | tr '\n' ' ')
+            fi
+            read -ra streams <<< "$stream_list"
+        fi
         local count=${#streams[@]}
         if (( count == 0 )); then
             echo -e "${RED}Error: no streams available from go2rtc.${RESET}"
@@ -4584,7 +4603,10 @@ playRtspStream() {
             echo -e "${CYAN}${launched}/${count} stream(s) launched.${RESET} ${BLUE}To stop all: ${LIGHTYELLOW}pkill mpv${RESET}"
         fi
     else
-        if [[ -z "$fRtspStream" ]]; then
+        local single
+        if (( ${#fRtspStream[@]} == 1 )); then
+            single="${fRtspStream[0]}"
+        else
             local available
             available=$(getSupportedRtspStreams) || return 1
             read -ra available <<< "$available"
@@ -4592,18 +4614,18 @@ playRtspStream() {
                 echo -e "${RED}Error: no streams available from go2rtc.${RESET}"
                 return 1
             fi
-            fRtspStream="${available[0]}"
+            single="${available[0]}"
         fi
-        local url="rtsp://${server}:8554/${fRtspStream}"
+        local url="rtsp://${server}:8554/${single}"
         echo -e "${COLOR}Playing RTSP stream: ${BLUE}${url}${RESET}"
         echo -e "${COLOR}Executing:${RESET} mpv \"${url}\" ${args[*]}${RESET}"
-        mpv "$url" "${args[@]}" --force-media-title="${fRtspStream}" 2>/dev/null
+        mpv "$url" "${args[@]}" --force-media-title="${single}" 2>/dev/null
         local rc=$?
         if (( rc != 0 )); then
             echo -e "${RED}Error: mpv exited with code ${rc}.${RESET}"
             echo -e "${GREY}Possible causes:${RESET}"
             echo -e "${GREY}  - RTSP server not reachable at ${BLUE}${server}:8554${RESET}"
-            echo -e "${GREY}  - Stream ${BLUE}${fRtspStream}${GREY} not available on server${RESET}"
+            echo -e "${GREY}  - Stream ${BLUE}${single}${GREY} not available on server${RESET}"
             echo -e "${GREY}  - go2rtc not running (check: ${BLUE}curl -s http://${server}:1984/api/streams${GREY})${RESET}"
             echo -e "${GREY}  - Run without ${BLUE}--really-quiet${GREY} for full mpv output:${RESET}"
             echo -e "${GREY}    mpv \"${url}\" ${args[*]//--really-quiet/}${RESET}\n"
