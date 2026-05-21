@@ -1943,7 +1943,7 @@ runBurn() {
 
     # Step 6: Burn image to device
     echo -e "$NOTATION ${CYAN}Burning $imageBin to $fDevice...${RESET}"
-    local flintBurnCmd="sudo flint -d $fDevice -i $imageBin -y b"
+    local flintBurnCmd="sudo flint -d $fDevice -i $imageBin -y burn"
     echo -e "$NOTATION Running: ${YELLOW}$flintBurnCmd${RESET}"
     eval "$flintBurnCmd"
     if [[ $? -ne 0 ]]; then
