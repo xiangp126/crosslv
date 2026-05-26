@@ -7,7 +7,7 @@ JC_CAMERAS="c700_01 c700_02 c700_03 c700_04"
 # Each camera exposes two go2rtc streams: <camera>_raw and <camera>_1080p.
 JC_STREAM_VARIANTS="raw 1080p"
 
-# Derived: tokens accepted by --acl-block / --acl-unblock / --acl-status.
+# Derived: tokens accepted by --acl-block / --acl-unblock / --acl-status / --acl-restart.
 JC_ACL_TARGETS="$JC_CAMERAS all"
 
 # Derived: tokens accepted by --rtsp-stream (cartesian product cameras x variants).
@@ -88,7 +88,7 @@ _jc_complete() {
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
-               --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status \
+               --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status --acl-restart \
                --claude-backup --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
                --codex --codex-remove --codex-backup --codex-restore \
                --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-wg \
@@ -146,7 +146,7 @@ _jc_complete() {
             COMPREPLY=( $(compgen -W "${resolutions}" -- ${cur}) )
             return 0
             ;;
-        --acl-block|--acl-unblock|--acl-status)
+        --acl-block|--acl-unblock|--acl-status|--acl-restart)
             compopt -o nospace 2>/dev/null
             _jc_complete_acl_targets
             return 0

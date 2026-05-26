@@ -285,7 +285,7 @@ _stateFilePath() { echo "$(_runtimeDir)/${1//[:.]/-}.state.json"; }
 #     "approved_count":   <int>,
 #     "paused":           <true|false>,
 #     "last_event_ts":    <unix seconds>,
-#     "last_event_type":  "<start|approve|paused|resumed|dropped>",
+#     "last_event_type":  "<start|approve|paused|resumed|dropped|plan_review>",
 #     "log_file":         "<runtime_dir>/<sanitized>.log",
 #     "host":             "<sess:win.pane>" | "<tty>" | "",  # see fHost
 #     "target_pane_id":   "<%N>"                              # see fTargetPaneId
@@ -759,6 +759,37 @@ waitForScreenChange() {
 #
 # Adding a new affirmative word is the only maintenance knob; adding
 # new question phrasings requires no change.
+#
+# PLAN-REVIEW GUARD
+# ─────────────────
+# Claude Code's "exit plan mode" prompt is structurally a normal
+# numbered menu whose option 1 is "Yes, auto-accept edits". Without
+# special handling, Tier 3 would happily press 1 and Claude would
+# leave plan mode and start executing — defeating the whole point of
+# plan mode (user review before action).
+#
+# isPlanReviewPrompt() is the dedicated detector. It looks for the
+# distinctive sentence "Claude has written up a plan and is ready to
+# execute", which appears verbatim in this prompt and nowhere else.
+# Called from mainLoop BEFORE detectPromptOption so the auto-approve
+# path is bypassed entirely; mainLoop then logs a WARN and waits for
+# the user to choose manually.
+isPlanReviewPrompt() {
+    local tail="$1"
+    # Precise marker — the full lead sentence of Claude Code's exit-
+    # plan-mode prompt. Matched verbatim on exact punctuation but
+    # case-insensitive (so a banner-cased or lowercased rendering
+    # still triggers). The whole sentence (not just a fragment) is
+    # required, so casual mentions of "plan" elsewhere won't trip
+    # this. If Claude Code ever rewords the sentence, the WARN will
+    # silently stop firing and ja will fall back to its normal
+    # auto-approve behaviour — update this string when that happens.
+    if echo "$tail" | grep -qiF 'Claude has written up a plan and is ready to execute. Would you like to proceed?'; then
+        return 0
+    fi
+    return 1
+}
+
 detectPromptOption() {
     local tail="$1"
 
@@ -850,6 +881,9 @@ detectPromptOption() {
 #         │
 #         │ tail text
 #         ▼
+#     isPlanReviewPrompt ──► yes → log WARN, mark fp handled, skip
+#         │ no
+#         ▼
 #     detectPromptOption
 #         │
 #         │ Stage A: structural gate (cursor + ≥2 numbered options)
@@ -891,6 +925,18 @@ mainLoop() {
     # we handled it, so there's nothing new to do.
     # Empty string at startup so the first iteration always proceeds.
     local lastHandledFp=""
+
+    # Plan-review "already warned" latch. Fingerprint dedup alone isn't
+    # enough here: when the user picks option 4 ("Tell Claude what to
+    # change"), Claude Code opens an inline text box. Every keystroke
+    # changes the captured tail → new fingerprint → dedup fails → the
+    # WARN line fires on every keypress, even though the trigger
+    # sentence is still sitting above the input box. This latch trips
+    # on the first plan-review hit, suppresses subsequent ones, and is
+    # cleared the moment isPlanReviewPrompt stops matching (i.e. the
+    # prompt is gone from the screen). Reset on daemon resume so a
+    # plan-review that was on screen when we paused gets re-announced.
+    local lastPlanReviewLogged=""
 
     # Daemon-mode pause flag (global so --status / _writeState can read it).
     # Set when the pane is currently running something we don't monitor
@@ -1039,6 +1085,7 @@ mainLoop() {
                 _log "${GREEN}▶ Resumed${RESET} — monitoring '${CYAN}${currentAi}${RESET}' in ${BLUE}${fTmuxTarget}${RESET}"
                 fAiName="$currentAi"
                 lastHandledFp=""
+                lastPlanReviewLogged=""
                 fPaused=""
                 _writeState resumed
             fi
@@ -1053,6 +1100,35 @@ mainLoop() {
         if [ "$fingerprint" = "$lastHandledFp" ]; then
             sleep "$fPollInterval"
             continue
+        fi
+
+        # Plan-review guard — Claude Code's "exit plan mode" prompt is
+        # structurally a normal numbered menu, so detectPromptOption
+        # would happily press "1. Yes, auto-accept edits" and let
+        # Claude start executing. Catch it BEFORE detectPromptOption
+        # and leave it on screen for the user to handle manually.
+        #
+        # Dedup uses a dedicated latch ($lastPlanReviewLogged), NOT
+        # the fingerprint: when the user picks option 4 the tail
+        # changes on every keystroke (new fingerprint each time) but
+        # the trigger sentence stays on screen, so a fingerprint-based
+        # dedup would re-fire the WARN per character. The latch trips
+        # on the first hit and only clears when the prompt is no
+        # longer on screen (see the else branch below).
+        if isPlanReviewPrompt "$tail"; then
+            if [ -z "$lastPlanReviewLogged" ]; then
+                _log "${LIGHTYELLOW}⚠ Plan-review prompt detected${RESET} — ${LIGHTYELLOW}NOT auto-approving${RESET}. Review the plan and choose manually."
+                _dbgBlock "tail content (plan-review prompt fed to isPlanReviewPrompt):" <<<"$tail"
+                _writeState plan_review
+                lastPlanReviewLogged=1
+            fi
+            sleep "$fPollInterval"
+            continue
+        else
+            # Prompt is no longer on screen → arm the latch for the
+            # next plan-review event. Cheap unconditional assignment;
+            # most iterations this is already empty.
+            lastPlanReviewLogged=""
         fi
 
         # Detect a permission prompt (Claude Code or Codex CLI — same
@@ -1570,6 +1646,7 @@ handleLogRequest() {
     fi
     local logfile=$(_logFilePath "$target")
     local lockfile=$(_lockFilePath "$target")
+    local statefile=$(_stateFilePath "$target")
     if [ ! -f "$logfile" ]; then
         if [ -f "$lockfile" ]; then
             echo -e "${LIGHTYELLOW}${SCRIPT_NAME}: daemon running for ${BLUE}${target}${LIGHTYELLOW} but log file missing at ${GREY}${logfile}${RESET}" >&2
@@ -1580,6 +1657,38 @@ handleLogRequest() {
         echo -e "${GREY}Start one with:${RESET} ${SCRIPT_NAME} -D -t ${target}"
         return 1
     fi
+
+    # Staleness check — the log file may have outlived its writer.
+    # _cleanup removes the lockfile and state file on daemon shutdown
+    # but intentionally preserves the log, and `ja -D` standalone never
+    # opens the log itself (only the `claude -y` wrapper redirects into
+    # it). Either way, a present log file doesn't prove there's a live
+    # daemon. Without this check, `ja -L -t <stale>` silently tails a
+    # frozen file, which reads as a hang.
+    #
+    # Behavior: warn loudly to stderr (so it doesn't pollute the tailed
+    # log stream on stdout), then STILL tail. The user explicitly asked
+    # for the log; refusing would force them to `less` the file by hand.
+    # Worst case they Ctrl+C after reading the warning.
+    local mon_pid
+    if ! mon_pid=$(_monitorPid "$target"); then
+        local last_ts last_type last_when="?"
+        if [ -f "$statefile" ]; then
+            last_ts=$(_readStateField "$statefile" last_event_ts)
+            last_type=$(_readStateField "$statefile" last_event_type)
+            [ -n "$last_ts" ] && last_when=$(_fmtEventTime "$last_ts")
+        fi
+        echo -e "${LIGHTYELLOW}⚠${RESET} ${SCRIPT_NAME}: ${LIGHTYELLOW}no live daemon for ${BLUE}${target}${RESET} ${GREY}—${RESET} tailing stale log" >&2
+        if [ -n "$last_ts" ]; then
+            echo -e "  ${GREY}last event:${RESET} ${last_type:-?} ${GREY}at${RESET} ${last_when}" >&2
+        else
+            echo -e "  ${GREY}(state file gone — no last-event info)${RESET}" >&2
+        fi
+        echo -e "  ${GREY}log:${RESET} ${logfile}" >&2
+        echo -e "  ${GREY}restart with:${RESET} ${CYAN}${SCRIPT_NAME} -D -t ${target}${RESET}" >&2
+        echo >&2
+    fi
+
     # exec replaces our shell with tail so Ctrl+C goes straight to tail
     # without an intermediate process layer.
     if [ "$mode" = "full" ]; then

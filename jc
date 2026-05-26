@@ -89,7 +89,7 @@ fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset passwo
 # Camera ACL (OpenWrt firewall rules Block_C700_NN)
 fGwHost="root@192.168.10.1"
 fGwPort=8822
-fGwAclAction=""    # block | unblock | status
+fGwAclAction=""    # block | unblock | status | restart
 fGwAclTarget=()    # array of camera tokens (any of fGwCameras) or 'all'
                    # Comma- or space-separated values; flags accumulate when repeated.
 fGwCameras=(c700_01 c700_02 c700_03 c700_04)   # source of truth — add a camera by appending here.
@@ -200,6 +200,8 @@ Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
     --acl-block   <targets>  Enable block rule(s) — camera(s) offline
     --acl-unblock <targets>  Disable block rule(s) — camera(s) online
     --acl-status  <targets>  Show current rule state
+    --acl-restart <targets>  Toggle the rule(s) to nudge the camera(s):
+                             unblock → wait 10s → block → wait 2s → status
                              <targets>: comma- or space-separated tokens; flags accumulate.
                              Tokens: c700_01 | c700_02 | c700_03 | c700_04 | all
                              E.g.  c700_01,c700_03   or   "c700_01 c700_03"
@@ -274,7 +276,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           gemini,gemini-remove,cursor-backup,cursor-restore,\
           singbox,singbox-xray,singbox-xray-autossh,singbox-wg,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
-          acl-block:,acl-unblock:,acl-status:"
+          acl-block:,acl-unblock:,acl-status:,acl-restart:"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -567,6 +569,41 @@ REMOTE
         echo -e "  ssh -p $fGwPort $fGwHost \"uci show firewall | grep -i '\\.name='\"" >&2
     fi
     return "$rc"
+}
+
+# --acl-restart: toggle the camera ACL to give the camera(s) a brief
+# kick. Sequence (per user spec):
+#   1. unblock <targets>      (rule disabled → camera(s) online)
+#   2. sleep 10s
+#   3. block   <targets>      (rule enabled  → camera(s) offline)
+#   4. sleep 2s
+#   5. status  <targets>      (confirm final rule state)
+#
+# Works for a single token, multiple comma/space-separated tokens, or
+# 'all' — gwAclControl already handles expansion, so we just forward
+# whatever targets the user accumulated on the command line.
+#
+# Bail on first error: if step 1 fails (SSH down, bad target name,
+# missing firewall rule) there's no point waiting 8s and trying step 3
+# — it'll fail the same way, and continuing would leave the camera(s)
+# in whichever transient state step 1 actually managed to set.
+gwAclRestart() {
+    local targets=("$@")
+
+    echo -e "${COLOR}[1/3] Unblocking camera(s) — bringing online${RESET}"
+    gwAclControl unblock "${targets[@]}" || return $?
+
+    echo -e "${GREY}Waiting 10s for camera(s) to come up...${RESET}"
+    sleep 10
+
+    echo -e "${COLOR}[2/3] Blocking camera(s) — putting offline${RESET}"
+    gwAclControl block "${targets[@]}" || return $?
+
+    echo -e "${GREY}Waiting 2s for firewall to settle...${RESET}"
+    sleep 2
+
+    echo -e "${COLOR}[3/3] Final ACL status${RESET}"
+    gwAclControl status "${targets[@]}"
 }
 
 while true; do
@@ -894,7 +931,7 @@ while true; do
             shift
             ;;
 
-        --acl-block|--acl-unblock|--acl-status)
+        --acl-block|--acl-unblock|--acl-status|--acl-restart)
             fGwAclAction="${1#--acl-}"
             IFS=', ' read -ra _aclTargets <<< "$2"
             fGwAclTarget+=("${_aclTargets[@]}")
@@ -921,7 +958,11 @@ while true; do
 done
 
 if [ -n "$fGwAclAction" ]; then
-    gwAclControl "$fGwAclAction" "${fGwAclTarget[@]}" || exit $?
+    if [ "$fGwAclAction" = "restart" ]; then
+        gwAclRestart "${fGwAclTarget[@]}" || exit $?
+    else
+        gwAclControl "$fGwAclAction" "${fGwAclTarget[@]}" || exit $?
+    fi
     exit 0
 fi
 
