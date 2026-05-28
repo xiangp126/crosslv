@@ -65,6 +65,45 @@ _JMAKE_RELEASE_BASE="/mswg/release/host_fw"
 _JMAKE_WORKSPACE_BASE="/auto/fwgwork1/$USER"
 _JMAKE_WORKSPACE_MARKER="adabe"
 
+# Static list of regression servers, used by --reg-malloc tab completion.
+# Extracted from noga cache file. To refresh, run:
+#   grep -oE '[a-z]+-fwreg-[0-9]+' \
+#     /auto/sw/work/hca_fw/data/noga_alloc/cache_info/cache_setup_info.json | sort -u
+_JMAKE_REG_SERVERS="\
+l-fwreg-002 l-fwreg-003 l-fwreg-004 l-fwreg-005 l-fwreg-006 l-fwreg-007 \
+l-fwreg-008 l-fwreg-009 l-fwreg-010 l-fwreg-011 l-fwreg-012 l-fwreg-013 \
+l-fwreg-015 l-fwreg-016 l-fwreg-017 l-fwreg-018 l-fwreg-020 l-fwreg-021 \
+l-fwreg-022 l-fwreg-023 l-fwreg-025 l-fwreg-026 l-fwreg-028 l-fwreg-029 \
+l-fwreg-031 l-fwreg-032 l-fwreg-035 l-fwreg-036 l-fwreg-037 l-fwreg-038 \
+l-fwreg-039 l-fwreg-040 l-fwreg-041 l-fwreg-042 l-fwreg-043 l-fwreg-044 \
+l-fwreg-045 l-fwreg-046 l-fwreg-047 l-fwreg-048 l-fwreg-049 l-fwreg-050 \
+l-fwreg-051 l-fwreg-052 l-fwreg-053 l-fwreg-054 l-fwreg-055 l-fwreg-056 \
+l-fwreg-057 l-fwreg-058 l-fwreg-059 l-fwreg-060 l-fwreg-061 l-fwreg-062 \
+l-fwreg-063 l-fwreg-064 l-fwreg-065 l-fwreg-066 l-fwreg-067 l-fwreg-068 \
+l-fwreg-069 l-fwreg-070 l-fwreg-071 l-fwreg-072 l-fwreg-073 l-fwreg-074 \
+l-fwreg-075 l-fwreg-080 l-fwreg-084 l-fwreg-085 l-fwreg-086 l-fwreg-087 \
+l-fwreg-088 l-fwreg-089 l-fwreg-090 l-fwreg-091 l-fwreg-092 l-fwreg-093 \
+l-fwreg-094 l-fwreg-095 l-fwreg-096 l-fwreg-097 l-fwreg-100 l-fwreg-101 \
+l-fwreg-102 l-fwreg-103 l-fwreg-104 l-fwreg-105 l-fwreg-106 l-fwreg-107 \
+l-fwreg-108 l-fwreg-109 l-fwreg-110 l-fwreg-113 l-fwreg-114 l-fwreg-115 \
+l-fwreg-116 l-fwreg-117 l-fwreg-118 l-fwreg-119 l-fwreg-121 l-fwreg-122 \
+l-fwreg-124 l-fwreg-125 l-fwreg-127 l-fwreg-129 l-fwreg-130 l-fwreg-131 \
+l-fwreg-132 l-fwreg-133 l-fwreg-134 l-fwreg-136 l-fwreg-137 l-fwreg-138 \
+l-fwreg-139 l-fwreg-140 l-fwreg-141 l-fwreg-142 l-fwreg-143 l-fwreg-144 \
+l-fwreg-145 l-fwreg-146 l-fwreg-147 l-fwreg-148 l-fwreg-149 l-fwreg-164 \
+l-fwreg-165 l-fwreg-166 l-fwreg-167 l-fwreg-170 l-fwreg-171 l-fwreg-172 \
+l-fwreg-173 l-fwreg-174 l-fwreg-175 l-fwreg-176 l-fwreg-177 l-fwreg-178 \
+l-fwreg-179 l-fwreg-180 l-fwreg-181 l-fwreg-182 l-fwreg-183 l-fwreg-184 \
+l-fwreg-185 l-fwreg-186 l-fwreg-187 l-fwreg-188 l-fwreg-189 l-fwreg-190 \
+l-fwreg-191 l-fwreg-192 l-fwreg-193 l-fwreg-194 l-fwreg-195 l-fwreg-196 \
+l-fwreg-197 l-fwreg-198 l-fwreg-199 l-fwreg-201 l-fwreg-202 l-fwreg-203 \
+l-fwreg-204 l-fwreg-205 l-fwreg-206 l-fwreg-207 l-fwreg-208 l-fwreg-209 \
+l-fwreg-210 l-fwreg-211 l-fwreg-212 l-fwreg-213 l-fwreg-214 l-fwreg-215 \
+l-fwreg-216 l-fwreg-217 l-fwreg-218 l-fwreg-219 l-fwreg-220 l-fwreg-221 \
+l-fwreg-222 l-fwreg-224 l-fwreg-225 l-fwreg-226 \
+m-fwreg-010 m-fwreg-011 m-fwreg-012 m-fwreg-013 m-fwreg-014 m-fwreg-016 \
+m-fwreg-017 m-fwreg-018 m-fwreg-028 m-fwreg-029 m-fwreg-030 m-fwreg-031"
+
 # Tiered version completion for --burn-official
 # Tier 1: major (22, 40, 82, ...)
 # Tier 2: major.minor (82.49, 82.42, ...)
@@ -130,9 +169,10 @@ _jmake_complete() {
     long_opts="--help --all --all-extended --jobs --working-dir --clean --clean-db --git-clean --clean-submodule \
                --build --bear --debug --attempt --no-verbose --nicx --list --list-extended --link --models \
                --skip --scratch --track --patch --ethlt --codecov --cov --fetch --push --rebase --add --commit \
-               --amend --stat --df --diff --show --burn --burn-official --firmware --device --fw-query --fw-reset \
+               --amend --stat --df --diff --show --burn --burn-official --firmware --ini --device --fw-query --fw-reset \
                --mft-install --mft-start --mft-stop --mft-restart --ofed-restart --ofed-start --ofed-stop \
-               --power-cycle --power-on --power-off --docker-group"
+               --power-cycle --power-on --power-off --docker-group \
+               --reg-query --reg-malloc --reg-mine --reg-idle --reg-cancel"
 
     # Handle option arguments
     case $prev in
@@ -183,9 +223,18 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -f -X '!*.mlx' -- "$cur") )
             return 0
             ;;
+        --ini)
+            compopt -o filenames
+            COMPREPLY=( $(compgen -f -X '!*.ini' -- "$cur") )
+            return 0
+            ;;
         --power-cycle|--power-on|--power-off)
-            local servers="l-fwdev-107 m-fwdev-167"
+            local servers="l-fwdev-107 m-fwdev-167 $_JMAKE_REG_SERVERS"
             COMPREPLY=( $(compgen -W "$servers" -- "$cur") )
+            return 0
+            ;;
+        --reg-malloc)
+            COMPREPLY=( $(compgen -W "$_JMAKE_REG_SERVERS" -- "$cur") )
             return 0
             ;;
     esac

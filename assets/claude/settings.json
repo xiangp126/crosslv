@@ -23,6 +23,7 @@
       "/auto/fwgwork1/$USER/golan_fw3"
     ]
   },
+  "model": "claude-opus-4-7[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -186,5 +187,5 @@
       "url": "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
     }
   },
-  "model": "claude-opus-4-7[1m]"
+  "theme": "dark-ansi"
 }

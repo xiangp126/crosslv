@@ -46,7 +46,13 @@ fOfedStop=
 fPowerCycle=
 fPowerOn=
 fPowerOff=
+fRegQuery=
+fRegMalloc=
+fRegMine=
+fRegIdle=
+fRegCancel=
 fFirmware=
+fIniFile=
 fBurnOfficial=
 fFwQuery=
 fInputCmd=
@@ -88,6 +94,21 @@ declare -A MODEL_HARDWARE=(
     [gilboa]="CX8"
     [argaman]="CX9"
     [alpine]="CX10"
+)
+
+# Map jmake model -> .fwvalias fwreset<key> suffix (chip short code).
+# Keys must match `project_names_ids` in /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias.
+# Alpine (CX10) intentionally absent: no fwreset alias for it yet.
+declare -A MODEL_FWRESET_KEY=(
+    [arava]=a   [tamar]=t   [viper]=v   [mustang]=m
+    [carmel]=c  [gilboa]=gl [argaman]=ar
+)
+
+# Map MST device-id (the NNN in mtNNN_pciconfX) -> fwreset<key> suffix.
+declare -A DEVID_FWRESET_KEY=(
+    [4113]=g   [4115]=s   [4117]=d   [4119]=ga  [4123]=n
+    [4125]=a   [4127]=t   [4129]=c   [4131]=gl  [4133]=ar
+    [41682]=bf [41686]=v  [41692]=m
 )
 
 # Model to .mlx firmware image filename mapping (from Makefile.exe)
@@ -320,8 +341,17 @@ MFT Options (Mellanox Firmware Tools):
         --burn-official <version>   Burn official release FW to device (e.g., 82.49.0052)
         --device <mst_device>       MST device path (e.g. /dev/mst/mt4133_pciconf0)
         --firmware <path>           Custom .mlx firmware file (overrides model lookup)
+        --ini <path>                Custom INI file for --burn (overrides PSID-based prs/ lookup)
         --fw-query                  Query FW info from device (requires --device)
-        --fw-reset                  Reset FW on device after burn (requires --device)
+        --fw-reset                  Reset FW via fwreset<key> alias (-m model or --device;
+                                    if both given, they must agree on the same chip)
+
+Regression Server Options:
+        --reg-query                 Query regression servers (minfo)
+        --reg-malloc <server>       Allocate regression server for 10h (malloc <server> -t 10)
+        --reg-mine                  Show my allocated regression servers (sqme)
+        --reg-idle                  Show idle regression servers (midle)
+        --reg-cancel                Cancel my regression-server allocations (scancelme)
 
 Supported Models:
     $GOLAN_MODELS
@@ -339,6 +369,7 @@ Examples:
     $SCRIPT_NAME --burn --device /dev/mst/mt4133_pciconf0 -m argaman # Burn argaman FW to device
     $SCRIPT_NAME --burn --fw-reset --device /dev/mst/mt4133_pciconf0 # Burn and reset FW
     $SCRIPT_NAME --burn-official 82.49.0052 --fw-reset --device /dev/mst/mt4133_pciconf0
+    $SCRIPT_NAME --fw-reset -m mustang     # Reset via fwresetm (no device path needed)
 
 _EOF
     exit 0
@@ -360,7 +391,8 @@ SHORTOPTS="hcoaAj:w:Dlbm:NpT:"
 LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,\
 list,list-extended,link,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,scratch,track,fetch,push,\
 rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,mft-start,\
-mft-stop,mft-restart,ofed-restart,ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:"
+mft-stop,mft-restart,ofed-restart,ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:,ini:,\
+reg-query,reg-malloc:,reg-mine,reg-idle,reg-cancel"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -613,12 +645,36 @@ while true; do
             fPowerOff="$2"
             shift 2
             ;;
+        --reg-query)
+            fRegQuery=true
+            shift
+            ;;
+        --reg-malloc)
+            fRegMalloc="$2"
+            shift 2
+            ;;
+        --reg-mine)
+            fRegMine=true
+            shift
+            ;;
+        --reg-idle)
+            fRegIdle=true
+            shift
+            ;;
+        --reg-cancel)
+            fRegCancel=true
+            shift
+            ;;
         --docker-group)
             fDockerGroup=true
             shift
             ;;
         --firmware)
             fFirmware="$2"
+            shift 2
+            ;;
+        --ini)
+            fIniFile="$2"
             shift 2
             ;;
         --)
@@ -705,31 +761,34 @@ searchBuildModel() {
 }
 
 preConfigure() {
+    # Only flags whose downstream code touches the source tree gate
+    # repo-type detection. Early-exit jobs (MFT/OFED/Power/Docker/BurnOfficial/
+    # FwReset-alone/--reg-*) are self-contained and must work from any cwd.
     if [[ -n "$fClean"                 ]] ||
        [[ -n "$fNeedBuild"             ]] ||
        [[ -n "$fGenerateCompileCmds"   ]] ||
        [[ -n "$fRMCompileCommandsJson" ]] ||
        [[ -n "$fLinkWorkspace"         ]] ||
        [[ -n "$fBurn"                  ]] ||
-       [[ -n "$fBurnOfficial"          ]] ||
-       [[ -n "$fFwReset"               ]] ||
-       [[ -n "$fMftInstall"            ]] ||
-       [[ -n "$fMftStart"              ]] ||
-       [[ -n "$fMftStop"               ]] ||
-       [[ -n "$fMftRestart"            ]] ||
-       [[ -n "$fOfedRestart"           ]] ||
-       [[ -n "$fOfedStart"             ]] ||
-       [[ -n "$fOfedStop"              ]] ||
-       [[ -n "$fPowerCycle"            ]] ||
-       [[ -n "$fPowerOn"               ]] ||
-       [[ -n "$fPowerOff"              ]] ||
-       [[ -n "$fDockerGroup"           ]]; then
+       [[ -n "$fFwReset"               ]]; then
         fPrintBuildFlags=true
     fi
     [[ -z "$fPrintBuildFlags" ]] && return
 
     fWorkingDir=$(realpath "$fWorkingDir")
     cd "$fWorkingDir" || exit 1
+
+    # Early-exit jobs (e.g. `--fw-reset -m carmel`) only use -m to pick a chip
+    # key for fwreset<key>; they don't touch the source tree. Skip repo-type
+    # detection AND the build.sh check, but still normalize fBuildModel so
+    # the alias dispatcher in runFWReset can map it.
+    if [[ -n "$fFwReset" && -z "$fBurn" && -z "$fBurnOfficial" && \
+          -z "$fClean"  && -z "$fGenerateCompileCmds" && \
+          -z "$fLinkWorkspace" ]]; then
+        fBuildModel=$(echo "$fBuildModel" | tr '[:upper:]' '[:lower:]')
+        [[ -z "$fBuildModel" && -z "$fDevice" ]] && fBuildModel="$DEFAULT_MODEL"
+        return
+    fi
     detectRepoType
 
     # Device-only operations don't need a golan_fw source tree
@@ -791,10 +850,10 @@ validateArguments() {
         exit 1
     fi
 
-    if [[ -n "$fFwReset" && -z "$fDevice" ]]; then
-        echo -e "$NOTATION ${RED}Error: --fw-reset requires --device <mst_device>${RESET}"
-        exit 1
-    fi
+    # --fw-reset now dispatches to fwreset<key> aliases (see runFWReset).
+    # It accepts either -m <model> or --device <mst_device>; if neither is
+    # supplied, the build's default model is used. Consistency between -m
+    # and --device is enforced inside runFWReset.
 
     if [[ -n "$fBurn" && ${#fModels[@]} -gt 1 ]]; then
         echo -e "$NOTATION ${RED}Error: --burn does not support multiple models (loop mode)${RESET}"
@@ -836,9 +895,10 @@ printBuildFlags() {
         [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, ~/.claude/$CLAUDE_MD)"
         [ -n "$fBurn" ]                  && echo -e "[B] ${COLOR}Burn${RESET} FW image to device"
         [ -n "$fBurnOfficial" ]          && echo -e "[B] ${COLOR}Burn Official:${RESET} $fBurnOfficial"
-        [ -n "$fFwReset" ]               && echo -e "[R] ${COLOR}Reset${RESET} FW on device (mlxfwreset)"
+        [ -n "$fFwReset" ]               && echo -e "[R] ${COLOR}Reset${RESET} FW on device (fwreset<key>)"
         [ -n "$fDevice" ]                && echo -e "[d] ${COLOR}Device:${RESET} $fDevice"
         [ -n "$fFirmware" ]              && echo -e "[F] ${COLOR}Firmware:${RESET} $fFirmware"
+        [ -n "$fIniFile" ]               && echo -e "[i] ${COLOR}Ini:${RESET}      $fIniFile"
         [ -n "$fMftInstall" ]            && echo -e "[M] ${COLOR}MFT Install${RESET}"
         [ -n "$fMftStart" ]              && echo -e "[M] ${COLOR}MST Start${RESET}"
         [ -n "$fMftStop" ]               && echo -e "[M] ${COLOR}MST Stop${RESET}"
@@ -1655,7 +1715,7 @@ runIpmiAction() {
     local output rc
     output=$(ipmi_command.sh "$server" "$action" 2>&1)
     rc=$?
-    echo "$output"
+    echo "$output" | sed 's/^/  /'
     if echo "$output" | grep -qiE 'Unable to establish IPMI|RMCP\+|RAKP|Authentication|Invalid password|Unauthorized'; then
         return 2
     fi
@@ -1673,6 +1733,8 @@ runPowerCycle() {
     rejectSelfTarget "$server"
     requireIpmiCmd
 
+    local cycleStartTime=$(date +%s)
+
     echo "$SEPARATOR"
     echo -e "$NOTATION ${BOLD}Power Cycling ${CYAN}$server${RESET}"
     echo "$SEPARATOR"
@@ -1689,7 +1751,8 @@ runPowerCycle() {
             echo -e "$NOTATION ${RED}Error: ssh fallback (sudo ipmitool power cycle) failed${RESET}"
             exit 1
         fi
-        echo -e "$NOTATION ${GREEN}✓ Power cycle sent via ssh${RESET}"
+        local cycleEndTime=$(date +%s)
+        echo -e "${GREEN}✓ Power cycle sent via ssh${RESET} at $(getCurrentTime) in $(formatElapsed $((cycleEndTime - cycleStartTime)))"
         echo "$SEPARATOR"
         return
     fi
@@ -1697,7 +1760,7 @@ runPowerCycle() {
         echo -e "$NOTATION ${RED}Error: IPMI power off failed${RESET}"
         exit 1
     fi
-    echo -e "$NOTATION ${GREEN}✓ Power off sent${RESET}"
+    echo -e "${GREEN}✓ Power off sent${RESET}"
 
     echo -e "$NOTATION ${CYAN}Waiting ${sleepSec}s for shutdown...${RESET}"
     sleep "$sleepSec"
@@ -1710,7 +1773,8 @@ runPowerCycle() {
     fi
     echo -e "$NOTATION ${CYAN}Pinging $server until it's back...${RESET}"
     ping "$server" | grep -m 1 "bytes from" &>/dev/null
-    echo -e "$NOTATION ${GREEN}✓ Power cycle completed for $server${RESET}"
+    local cycleEndTime=$(date +%s)
+    echo -e "${GREEN}✓ Power cycle completed for $server${RESET} at $(getCurrentTime) in $(formatElapsed $((cycleEndTime - cycleStartTime)))"
     echo "$SEPARATOR"
 }
 
@@ -1915,15 +1979,28 @@ runBurn() {
     fi
     echo -e "$NOTATION ${GREEN}✓ PSID: ${CYAN}$psid${RESET}"
 
-    # Step 4: Find INI file matching the PSID
-    echo -e "$NOTATION ${CYAN}Looking up INI file for PSID $psid...${RESET}"
+    # Step 4: Resolve INI file (--ini overrides PSID-based prs/ lookup)
     local iniFile
-    iniFile=$(grep -rn "$psid" prs/ 2>/dev/null | grep '\.ini:' | head -1 | awk -F: '{print $1}')
-    if [[ -z "$iniFile" || ! -f "$iniFile" ]]; then
-        echo -e "$NOTATION ${RED}Error: No INI file found for PSID ${YELLOW}$psid${RED} under prs/${RESET}"
+    if [[ -n "$fIniFile" ]]; then
+        iniFile="$fIniFile"
+    else
+        echo -e "$NOTATION ${CYAN}Looking up INI file for PSID $psid...${RESET}"
+        iniFile=$(grep -rn "$psid" prs/ 2>/dev/null | grep '\.ini:' | head -1 | awk -F: '{print $1}')
+        if [[ -z "$iniFile" ]]; then
+            echo -e "$NOTATION ${RED}Error: No INI file found for PSID ${YELLOW}$psid${RED} under prs/${RESET}"
+            echo -e "$NOTATION Tip: use --ini <path> to specify a custom INI file"
+            exit 1
+        fi
+    fi
+    if [[ ! -f "$iniFile" ]]; then
+        echo -e "$NOTATION ${RED}Error: INI file not found: ${YELLOW}$iniFile${RESET}"
         exit 1
     fi
-    echo -e "$NOTATION ${GREEN}✓ INI: ${CYAN}$iniFile${RESET}"
+    if [[ -n "$fIniFile" ]]; then
+        echo -e "$NOTATION ${GREEN}✓ Using specified INI (--ini): ${CYAN}$iniFile${RESET}"
+    else
+        echo -e "$NOTATION ${GREEN}✓ Using INI: ${CYAN}$iniFile${RESET}"
+    fi
 
     # Step 5: Generate flash image via mlxburn
     local imageBin="image.bin"
@@ -1995,22 +2072,77 @@ runBurnOfficial() {
     echo "$SEPARATOR"
 }
 
-runMlxReset() {
+runFWReset() {
     [[ -z "$fFwReset" ]] && return
 
-    if ! command -v mlxfwreset &>/dev/null; then
-        echo -e "$NOTATION ${RED}Error: Required tool not found: ${YELLOW}mlxfwreset${RESET}"
+    # Resolve the fwreset<chipKey> suffix from both -m model and --device path
+    # (when set) so we can cross-check that the user-specified pair is
+    # internally consistent (e.g. reject -m carmel + --device /dev/mst/mt41692_*).
+    #
+    # NOTE: do NOT name any local here `key` -- /mswg/.../.fwvalias runs
+    # `for key in ...` at source time and bash's dynamic scoping would let
+    # that for-loop clobber a `local key` declared in this function.
+    local model="" devId="" keyFromModel="" keyFromDevice="" chipKey=""
+    # fModels[0] reflects the user's explicit -m/--models choice; fBuildModel
+    # is the build-side default (may be "mustang" even when user picked
+    # something else via -m). Strip known variant suffixes (_ethlt/_codecov/cov)
+    # so e.g. "arava_ethlt" still maps to arava -> 'a'.
+    if [[ ${#fModels[@]} -gt 0 ]]; then
+        model="${fModels[0]}"
+        model="${model%_ethlt}"
+        model="${model%_codecov}"
+        model="${model%cov}"
+    elif [[ -n "$fBuildModel" ]]; then
+        model="$fBuildModel"
+    fi
+    if [[ -n "$model" ]]; then
+        keyFromModel="${MODEL_FWRESET_KEY[$model]}"
+    fi
+    if [[ -n "$fDevice" ]]; then
+        devId=$(echo "$fDevice" | sed -nE 's|.*mt([0-9]+)_pciconf.*|\1|p')
+        [[ -n "$devId" ]] && keyFromDevice="${DEVID_FWRESET_KEY[$devId]}"
+    fi
+
+    # Consistency check: if both sides resolved AND they disagree, hard-error.
+    # One side resolving and the other being empty is fine (empty = "no opinion").
+    if [[ -n "$keyFromModel" && -n "$keyFromDevice" && "$keyFromModel" != "$keyFromDevice" ]]; then
+        echo -e "$NOTATION ${RED}Error: -m and --device refer to different chips${RESET}"
+        echo -e "$NOTATION   -m ${YELLOW}$model${RESET} -> fwreset${keyFromModel}"
+        echo -e "$NOTATION   --device ${YELLOW}$fDevice${RESET} (devid $devId) -> fwreset${keyFromDevice}"
+        echo -e "$NOTATION Drop one or fix the mismatch."
         exit 1
     fi
 
+    # Prefer the model-derived key (explicit user intent) when both agree
+    # or only the model side resolved.
+    chipKey="${keyFromModel:-$keyFromDevice}"
+
+    if [[ -z "$chipKey" ]]; then
+        echo -e "$NOTATION ${RED}Error: --fw-reset could not resolve chip key${RESET}"
+        if [[ -n "$model" ]]; then
+            echo -e "$NOTATION Model ${YELLOW}$model${RESET} has no fwreset<key> alias (alpine/CX10 not yet supported)"
+        elif [[ -n "$fDevice" ]]; then
+            if [[ -z "$devId" ]]; then
+                echo -e "$NOTATION Device ${YELLOW}$fDevice${RESET} did not match mt<devid>_pciconf<N>"
+            else
+                echo -e "$NOTATION Device ${YELLOW}$fDevice${RESET} devid ${YELLOW}$devId${RESET} has no fwreset<key> mapping"
+            fi
+        else
+            echo -e "$NOTATION Tip: pass ${YELLOW}-m <model>${RESET} or ${YELLOW}--device <mst_device>${RESET}"
+        fi
+        exit 1
+    fi
+
+    sourceFwvAlias
+
     local resetStartTime=$(date +%s)
     echo "$SEPARATOR"
-    echo -e "$NOTATION ${CYAN}Resetting FW on $fDevice...${RESET}"
-    local resetCmd="sudo mlxfwreset -d $fDevice -y r"
-    echo -e "$NOTATION Running: ${YELLOW}$resetCmd${RESET}"
-    eval "$resetCmd"
+    echo -e "$NOTATION ${CYAN}Resetting FW via fwreset${chipKey}...${RESET}"
+    local cmd="fwreset${chipKey}"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
     if [[ $? -ne 0 ]]; then
-        echo -e "$NOTATION ${RED}Error: mlxfwreset failed${RESET}"
+        echo -e "$NOTATION ${RED}Error: $cmd failed${RESET}"
         exit 1
     fi
     local resetEndTime=$(date +%s)
@@ -2028,6 +2160,107 @@ runFwQuery() {
     sudo flint -d "$fDevice" q
 }
 
+# minfo/malloc/sqme/midle/scancelme are shell aliases/functions defined in
+# this file, not standalone executables. Non-interactive bash does not expand
+# aliases by default, so we must shopt + source before eval can resolve them.
+FWV_ALIAS_FILE="/mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias"
+sourceFwvAlias() {
+    if [[ ! -f "$FWV_ALIAS_FILE" ]]; then
+        echo -e "$NOTATION ${RED}Error: required alias file not found: ${YELLOW}$FWV_ALIAS_FILE${RESET}" >&2
+        echo -e "$NOTATION ${YELLOW}--reg-* commands depend on aliases defined in this file${RESET}" >&2
+        exit 1
+    fi
+    shopt -s expand_aliases
+    # shellcheck disable=SC1090
+    source "$FWV_ALIAS_FILE"
+}
+
+runRegQuery() {
+    [[ -z "$fRegQuery" ]] && return
+    sourceFwvAlias
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Querying regression servers...${RESET}"
+    local cmd="minfo"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    echo "$SEPARATOR"
+}
+
+runRegMalloc() {
+    [[ -z "$fRegMalloc" ]] && return
+    sourceFwvAlias
+    local server="$fRegMalloc"
+    local hours=10
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Allocating regression server $server for ${hours}h...${RESET}"
+    local cmd="malloc $server -t $hours"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+
+    # Tee so the user sees malloc's live output AND we can parse the
+    # actual allocated hours afterwards (server may cap the request).
+    local tmpFile
+    tmpFile=$(mktemp)
+    eval "$cmd" 2>&1 | tee "$tmpFile"
+    local status=${PIPESTATUS[0]}
+
+    local actualHours
+    actualHours=$(grep -E '^Going to lock' "$tmpFile" | head -1 \
+                  | sed -nE 's/.*for ([0-9]+) hours.*/\1/p')
+    rm -f "$tmpFile"
+
+    if [[ $status -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: malloc failed for $server${RESET}"
+        exit 1
+    fi
+    if [[ -n "$actualHours" && "$actualHours" != "$hours" ]]; then
+        echo -e "$NOTATION ${GREEN}✓ Allocated $server for ${actualHours}h${RESET}" \
+                "${GREY}(requested ${hours}h, capped by server max)${RESET}"
+    elif [[ -n "$actualHours" ]]; then
+        echo -e "$NOTATION ${GREEN}✓ Allocated $server for ${actualHours}h${RESET}"
+    else
+        echo -e "$NOTATION ${GREEN}✓ Allocated $server for ${hours}h${RESET}"
+    fi
+    echo "$SEPARATOR"
+}
+
+runRegMine() {
+    [[ -z "$fRegMine" ]] && return
+    sourceFwvAlias
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Listing my allocated regression servers...${RESET}"
+    local cmd="sqme"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    echo "$SEPARATOR"
+}
+
+runRegIdle() {
+    [[ -z "$fRegIdle" ]] && return
+    sourceFwvAlias
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Listing idle regression servers...${RESET}"
+    local cmd="midle"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    echo "$SEPARATOR"
+}
+
+runRegCancel() {
+    [[ -z "$fRegCancel" ]] && return
+    sourceFwvAlias
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Cancelling my regression-server allocations...${RESET}"
+    local cmd="scancelme"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: scancelme failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Cancelled my regression-server allocations${RESET}"
+    echo "$SEPARATOR"
+}
+
 doEarlyExitJobs() {
     [ -n "$fDockerGroup" ]   && { runDockerGroup; exit 0; }
     [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ] && { linkWorkspaceFiles; exit 0; }
@@ -2039,11 +2272,16 @@ doEarlyExitJobs() {
     [ -n "$fOfedStop" ]      && { runOfedStop; [ -n "$fOfedStart" ] && runOfedStart; exit 0; }
     [ -n "$fOfedStart" ]     && { runOfedStart; exit 0; }
     [ -n "$fFwQuery" ]       && { runFwQuery; exit 0; }
-    [ -n "$fBurnOfficial" ]  && { runBurnOfficial; [ -n "$fFwReset" ] && runMlxReset; exit 0; }
-    [ -n "$fFwReset" ] && [ -z "$fBurn" ] && { runMlxReset; exit 0; }
+    [ -n "$fBurnOfficial" ]  && { runBurnOfficial; [ -n "$fFwReset" ] && runFWReset; exit 0; }
+    [ -n "$fFwReset" ] && [ -z "$fBurn" ] && { runFWReset; exit 0; }
     [ -n "$fPowerCycle" ]    && { runPowerCycle; exit 0; }
     [ -n "$fPowerOn" ]       && { runPowerOn; exit 0; }
     [ -n "$fPowerOff" ]      && { runPowerOff; exit 0; }
+    [ -n "$fRegQuery" ]      && { runRegQuery; exit 0; }
+    [ -n "$fRegMalloc" ]     && { runRegMalloc; exit 0; }
+    [ -n "$fRegMine" ]       && { runRegMine; exit 0; }
+    [ -n "$fRegIdle" ]       && { runRegIdle; exit 0; }
+    [ -n "$fRegCancel" ]     && { runRegCancel; exit 0; }
 }
 
 main() {
@@ -2068,7 +2306,7 @@ main() {
     fi
     runPostBuildHousekeeping
     runBurn
-    runMlxReset
+    runFWReset
 }
 
 main "$@"

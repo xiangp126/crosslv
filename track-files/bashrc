@@ -1,5 +1,6 @@
 #!/bin/bash
 # shellcheck disable=SC2155 disable=SC1090 disable=SC1091 disable=SC2032
+# shellcheck disable=SC2139
 
 # Cache uname result once (avoid repeated forks)
 _UNAME_S=$(uname -s)
@@ -118,16 +119,15 @@ alias cdb='__cd $HOME/.usr/bin'
 alias cdT='__cd $HOME/Templates'
 alias cdD='__cd $HOME/Downloads'
 alias cdM='__cd $HOME/Media'
-alias cdU='__cd $HOME/Uploads'
 alias cdP='__cd $HOME/Public'
 # NV specific 2
-alias cdw='__cd /auto/fwgwork1/$USER/golan_fw'
-alias cdm='__cd /auto/fwgwork1/$USER/mLX/'
-alias cdL='__cd /auto/fwgwork1/$USER/bugZilla/'
-alias cdN='__cd /auto/fwgwork1/$USER/nicx'
 alias mss='sudo mst status -v'
+alias cdm='__cd /auto/fwgwork1/$USER/mLX/'
+alias cdz='__cd /auto/fwgwork1/$USER/bugZilla/'
+alias cdn='__cd /auto/fwgwork1/$USER/nicx'
+alias cdu='__cd /auto/fwgwork1/pexiang/utopx'
+alias cdw='__cd /auto/fwgwork1/$USER/golan_fw'
 for i in {2..3}; do
-    # shellcheck disable=SC2139
     alias "cdw$i=__cd /auto/fwgwork1/$USER/golan_fw$i"
 done
 
@@ -485,4 +485,29 @@ unset _ai_cmd _AI_NAME_UC
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
     bind -r "\\\t"
     bind -x '"\\\t": fzf_bash_completion'
+fi
+
+# ai-pim-utils CLI wrappers via Docker. m-fwdev-167 only: native glibc 2.31
+# can't run the prebuilt CLIs (need >=2.34).
+if [[ $(hostname -s) == m-fwdev-167 ]]; then
+    pim_ensure() {
+        docker ps --format '{{.Names}}' | grep -qx pim && return
+        docker start pim 2>/dev/null || docker run -d --name pim \
+            -v "$HOME:$HOME" \
+            -v /auto:/auto:rslave \
+            -u "$(id -u):$(id -g)" \
+            --network host \
+            -e HOME="$HOME" \
+            -w "$PWD" \
+            ai-pim:latest sleep infinity >/dev/null
+    }
+    for _cli in confluence-cli jira-cli redmine-cli nvbugs-cli glean-cli pplx-cli \
+                outlook-cli calendar-cli teams-cli meeting-cli onenote-cli \
+                onedrive-cli sharepoint-cli gdrive-cli dl-cli \
+                slack-cli pagerduty-cli helios-cli itss-cli omni-cli \
+                transcript-cli starfleet-cli sfdc-cli databricks-cli smartsheet-cli \
+                nspect-cli argus-cli nvspecs-cli concur-cli; do
+        eval "${_cli}() { pim_ensure; docker exec -w \"\$PWD\" pim ${_cli} \"\$@\"; }"
+    done
+    unset _cli
 fi

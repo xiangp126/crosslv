@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Update a Confluence Cloud page from a local markdown file.
+#
+# Uses Confluence REST API v1 directly (no confluence-cli human-confirmation gate).
+# Credentials loaded from ~/.confluence_env (override with $CONFLUENCE_ENV_FILE):
+#   export ATLASSIAN_EMAIL=...
+#   export ATLASSIAN_API_TOKEN=...
+#   export CONFLUENCE_BASE=https://nvidia.atlassian.net/wiki   # optional
+#
+# Usage:
+#   confluence-update <page-id> <markdown-file>
+#   confluence-update <markdown-file>
+#       Reads <!-- confluence-page-id: N --> from the markdown file.
+set -euo pipefail
+
+. "${CONFLUENCE_ENV_FILE:-$HOME/.confluence_env}"
+BASE="${CONFLUENCE_BASE:-https://nvidia.atlassian.net/wiki}"
+
+if [ $# -eq 1 ]; then
+    md="$1"
+    id=$(grep -oP '<!-- *confluence-page-id: *\K[0-9]+' "$md" | head -1)
+    [ -n "$id" ] || { echo "no <!-- confluence-page-id: N --> marker in $md" >&2; exit 1; }
+elif [ $# -eq 2 ]; then
+    id="$1"; md="$2"
+else
+    sed -n '/^# Usage:/,/^$/p' "$0" >&2
+    exit 1
+fi
+[ -r "$md" ] || { echo "cannot read $md" >&2; exit 1; }
+
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+# 1. GET current page (need version + ancestors + title)
+curl -sS -u "$ATLASSIAN_EMAIL:$ATLASSIAN_API_TOKEN" \
+     -G --data-urlencode 'expand=version,ancestors' \
+     "$BASE/rest/api/content/$id" \
+     -o "$tmp/cur.json"
+
+# 2. Strip leading H1 (Confluence shows title separately), then md -> html5
+sed '1{/^# /d;}' "$md" | pandoc -f gfm -t html5 > "$tmp/body.html"
+
+# 3. Build PUT payload with version+=1
+python3 - "$tmp/cur.json" "$tmp/body.html" > "$tmp/put.json" <<'PY'
+import json, sys
+cur = json.load(open(sys.argv[1]))
+html = open(sys.argv[2]).read()
+payload = {
+    "id": cur["id"],
+    "type": "page",
+    "title": cur["title"],
+    "version": {"number": cur["version"]["number"] + 1},
+    "body": {"storage": {"value": html, "representation": "storage"}},
+}
+if cur.get("ancestors"):
+    payload["ancestors"] = [{"id": cur["ancestors"][-1]["id"]}]
+json.dump(payload, sys.stdout)
+PY
+
+# 4. PUT
+http=$(curl -sS -u "$ATLASSIAN_EMAIL:$ATLASSIAN_API_TOKEN" \
+     -X PUT -H 'Content-Type: application/json' \
+     --data-binary @"$tmp/put.json" \
+     "$BASE/rest/api/content/$id" \
+     -o "$tmp/resp.json" -w '%{http_code}')
+
+if [ "$http" != "200" ]; then
+    echo "HTTP $http" >&2
+    cat "$tmp/resp.json" >&2
+    exit 1
+fi
+
+python3 - "$tmp/resp.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+print(f"updated  id={r['id']}  version={r['version']['number']}  title={r['title']}")
+print(f"URL: {r['_links']['base']}{r['_links']['webui']}")
+PY
