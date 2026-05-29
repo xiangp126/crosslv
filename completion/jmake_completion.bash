@@ -172,7 +172,7 @@ _jmake_complete() {
                --amend --stat --df --diff --show --burn --burn-official --firmware --ini --device --fw-query --fw-reset \
                --mft-install --mft-start --mft-stop --mft-restart --ofed-restart --ofed-start --ofed-stop \
                --power-cycle --power-on --power-off --docker-group \
-               --reg-query --reg-malloc --reg-mine --reg-idle --reg-cancel"
+               --reg-info --reg-malloc --reg-mine --reg-idle --reg-extend --reg-cancel"
 
     # Handle option arguments
     case $prev in

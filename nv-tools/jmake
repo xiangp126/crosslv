@@ -46,10 +46,11 @@ fOfedStop=
 fPowerCycle=
 fPowerOn=
 fPowerOff=
-fRegQuery=
+fRegInfo=
 fRegMalloc=
 fRegMine=
 fRegIdle=
+fRegExtend=
 fRegCancel=
 fFirmware=
 fIniFile=
@@ -347,10 +348,11 @@ MFT Options (Mellanox Firmware Tools):
                                     if both given, they must agree on the same chip)
 
 Regression Server Options:
-        --reg-query                 Query regression servers (minfo)
-        --reg-malloc <server>       Allocate regression server for 10h (malloc <server> -t 10)
+        --reg-info                  Show regression server inventory (minfo)
+        --reg-malloc <server>       Allocate regression server for 8h (malloc <server> -t 8)
         --reg-mine                  Show my allocated regression servers (sqme)
         --reg-idle                  Show idle regression servers (midle)
+        --reg-extend                Extend my regression-server allocation by 3h (extend_my_alloc)
         --reg-cancel                Cancel my regression-server allocations (scancelme)
 
 Supported Models:
@@ -392,7 +394,7 @@ LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,w
 list,list-extended,link,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,scratch,track,fetch,push,\
 rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,mft-start,\
 mft-stop,mft-restart,ofed-restart,ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:,ini:,\
-reg-query,reg-malloc:,reg-mine,reg-idle,reg-cancel"
+reg-info,reg-malloc:,reg-mine,reg-idle,reg-extend,reg-cancel"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -645,8 +647,8 @@ while true; do
             fPowerOff="$2"
             shift 2
             ;;
-        --reg-query)
-            fRegQuery=true
+        --reg-info)
+            fRegInfo=true
             shift
             ;;
         --reg-malloc)
@@ -659,6 +661,10 @@ while true; do
             ;;
         --reg-idle)
             fRegIdle=true
+            shift
+            ;;
+        --reg-extend)
+            fRegExtend=true
             shift
             ;;
         --reg-cancel)
@@ -2133,12 +2139,17 @@ runFWReset() {
         exit 1
     fi
 
-    sourceFwvAlias
-
     local resetStartTime=$(date +%s)
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Resetting FW via fwreset${chipKey}...${RESET}"
     local cmd="fwreset${chipKey}"
+    # Newer chips (BF-3 'm', CX-8 'gl', CX-9 'ar') require --run_new_fwreset:
+    # the old wrapper (fw_reset_wrapper_shared.sh) dispatches to per-chip
+    # <chip>_fw_reset.sh scripts that don't exist / work for these. The new
+    # wrapper (fw_reset_wrapper.sh) goes through unified fwreset.py.
+    case "$chipKey" in
+        m|gl|ar) cmd="$cmd --run_new_fwreset" ;;
+    esac
     echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
     eval "$cmd"
     if [[ $? -ne 0 ]]; then
@@ -2164,20 +2175,15 @@ runFwQuery() {
 # this file, not standalone executables. Non-interactive bash does not expand
 # aliases by default, so we must shopt + source before eval can resolve them.
 FWV_ALIAS_FILE="/mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias"
-sourceFwvAlias() {
-    if [[ ! -f "$FWV_ALIAS_FILE" ]]; then
-        echo -e "$NOTATION ${RED}Error: required alias file not found: ${YELLOW}$FWV_ALIAS_FILE${RESET}" >&2
-        echo -e "$NOTATION ${YELLOW}--reg-* commands depend on aliases defined in this file${RESET}" >&2
-        exit 1
-    fi
-    shopt -s expand_aliases
-    # shellcheck disable=SC1090
-    source "$FWV_ALIAS_FILE"
-}
+# NOTE: .fwvalias is sourced inline from main() (see maybeSourceFwvAlias).
+# We can't wrap that in a helper function: top-level `declare -A` in .fwvalias
+# becomes LOCAL when source runs inside a function, so the project_full_names
+# arrays vanish on return, leaving func_alias_reset to call fwresetfunc with
+# `-d` as $1 (chip arg empty). Sourcing in main() scope keeps the arrays
+# visible (via dynamic scoping) to every function called from main.
 
-runRegQuery() {
-    [[ -z "$fRegQuery" ]] && return
-    sourceFwvAlias
+runRegInfo() {
+    [[ -z "$fRegInfo" ]] && return
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Querying regression servers...${RESET}"
     local cmd="minfo"
@@ -2188,28 +2194,56 @@ runRegQuery() {
 
 runRegMalloc() {
     [[ -z "$fRegMalloc" ]] && return
-    sourceFwvAlias
     local server="$fRegMalloc"
-    local hours=10
+    local hours=8
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Allocating regression server $server for ${hours}h...${RESET}"
     local cmd="malloc $server -t $hours"
     echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
 
-    # Tee so the user sees malloc's live output AND we can parse the
-    # actual allocated hours afterwards (server may cap the request).
+    # Tee so the user sees malloc's live output AND we can parse:
+    #   - the actual allocated hours (server may cap the request), and
+    #   - the "Resource locked by <holder> until <date> (IST)" error so we can
+    #     translate the IST timestamp to Beijing time. NOTE: in noga_alloc.py
+    #     output, "IST" is *fixed* Israel Standard Time = UTC+2 year-round
+    #     (the noga DB does NOT follow Israel's DST flip to IDT/UTC+3, and
+    #     "IST" here is NOT Indian Standard Time either). We force
+    #     TZ='Etc/GMT-2' (POSIX inverted-sign = UTC+2) so the offset to
+    #     Beijing is a steady +6h, including during DST months.
     local tmpFile
     tmpFile=$(mktemp)
     eval "$cmd" 2>&1 | tee "$tmpFile"
     local status=${PIPESTATUS[0]}
 
-    local actualHours
+    local actualHours lockedLine
     actualHours=$(grep -E '^Going to lock' "$tmpFile" | head -1 \
                   | sed -nE 's/.*for ([0-9]+) hours.*/\1/p')
+    lockedLine=$(grep -E 'Resource locked by' "$tmpFile" | head -1)
     rm -f "$tmpFile"
 
     if [[ $status -ne 0 ]]; then
-        echo -e "$NOTATION ${RED}Error: malloc failed for $server${RESET}"
+        echo "$SEPARATOR"
+        if [[ -n "$lockedLine" ]]; then
+            local holder until_dt
+            holder=$(echo "$lockedLine"   | sed -nE 's/.*locked by ([^ ]+) until.*/\1/p')
+            # Oracle prints "DD-MON-YY HH.MI.SS"; convert dots to colons so
+            # GNU date can parse the time portion.
+            until_dt=$(echo "$lockedLine" | sed -nE 's/.*until (.+) \(IST\).*/\1/p' | tr '.' ':')
+            local epoch beijing=""
+            if [[ -n "$until_dt" ]]; then
+                epoch=$(TZ='Etc/GMT-2' date -d "$until_dt" '+%s' 2>/dev/null)
+                [[ -n "$epoch" ]] && beijing=$(TZ='Asia/Shanghai' date -d "@$epoch" '+%Y-%m-%d %H:%M:%S')
+            fi
+            echo -e "$NOTATION ${RED}✗ $server is locked by ${YELLOW}${holder:-?}${RESET}"
+            if [[ -n "$until_dt" ]]; then
+                echo -e "$NOTATION  until ${CYAN}$until_dt${RESET} ${GREY}(IST, UTC+2 fixed)${RESET}"
+                if [[ -n "$beijing" ]]; then
+                    echo -e "$NOTATION  i.e.  ${CYAN}$beijing${RESET} ${GREY}(Beijing)${RESET}"
+                fi
+            fi
+        else
+            echo -e "$NOTATION ${RED}Error: malloc failed for $server${RESET}"
+        fi
         exit 1
     fi
     if [[ -n "$actualHours" && "$actualHours" != "$hours" ]]; then
@@ -2225,7 +2259,6 @@ runRegMalloc() {
 
 runRegMine() {
     [[ -z "$fRegMine" ]] && return
-    sourceFwvAlias
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Listing my allocated regression servers...${RESET}"
     local cmd="sqme"
@@ -2236,7 +2269,6 @@ runRegMine() {
 
 runRegIdle() {
     [[ -z "$fRegIdle" ]] && return
-    sourceFwvAlias
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Listing idle regression servers...${RESET}"
     local cmd="midle"
@@ -2245,9 +2277,23 @@ runRegIdle() {
     echo "$SEPARATOR"
 }
 
+runRegExtend() {
+    [[ -z "$fRegExtend" ]] && return
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Extending my regression-server allocation by 3h...${RESET}"
+    local cmd="extend_my_alloc"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+    eval "$cmd"
+    if [[ $? -ne 0 ]]; then
+        echo -e "$NOTATION ${RED}Error: extend_my_alloc failed${RESET}"
+        exit 1
+    fi
+    echo -e "$NOTATION ${GREEN}✓ Extended my regression-server allocation${RESET}"
+    echo "$SEPARATOR"
+}
+
 runRegCancel() {
     [[ -z "$fRegCancel" ]] && return
-    sourceFwvAlias
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Cancelling my regression-server allocations...${RESET}"
     local cmd="scancelme"
@@ -2277,10 +2323,11 @@ doEarlyExitJobs() {
     [ -n "$fPowerCycle" ]    && { runPowerCycle; exit 0; }
     [ -n "$fPowerOn" ]       && { runPowerOn; exit 0; }
     [ -n "$fPowerOff" ]      && { runPowerOff; exit 0; }
-    [ -n "$fRegQuery" ]      && { runRegQuery; exit 0; }
+    [ -n "$fRegInfo" ]       && { runRegInfo; exit 0; }
     [ -n "$fRegMalloc" ]     && { runRegMalloc; exit 0; }
     [ -n "$fRegMine" ]       && { runRegMine; exit 0; }
     [ -n "$fRegIdle" ]       && { runRegIdle; exit 0; }
+    [ -n "$fRegExtend" ]     && { runRegExtend; exit 0; }
     [ -n "$fRegCancel" ]     && { runRegCancel; exit 0; }
 }
 
@@ -2289,6 +2336,24 @@ main() {
     preConfigure "$@"
     # Auto-resume from saved state if available (use --scratch to override)
     [[ ${#fModels[@]} -gt 0 ]] && loadLoopState
+    # Source .fwvalias inline here (in main()'s scope) for the commands that
+    # actually need it. MUST be inline — not in a helper function — because
+    # top-level `declare -A project_full_names=(...)` etc. in .fwvalias
+    # become LOCAL when source runs inside a function and vanish on return.
+    # Sourcing in main()'s scope keeps the arrays visible via bash dynamic
+    # scoping to every function called from main (doEarlyExitJobs, runFWReset,
+    # runRegInfo, ...). Aliases are always global so they're unaffected.
+    if [[ -n "$fFwReset" || -n "$fRegInfo" || -n "$fRegMalloc" \
+       || -n "$fRegMine"  || -n "$fRegIdle"  || -n "$fRegExtend" \
+       || -n "$fRegCancel" ]]; then
+        if [[ ! -f "$FWV_ALIAS_FILE" ]]; then
+            echo -e "$NOTATION ${RED}Error: required alias file not found: ${YELLOW}$FWV_ALIAS_FILE${RESET}" >&2
+            exit 1
+        fi
+        shopt -s expand_aliases
+        # shellcheck disable=SC1090
+        source "$FWV_ALIAS_FILE"
+    fi
     doEarlyExitJobs
     validateArguments
     showLogo
