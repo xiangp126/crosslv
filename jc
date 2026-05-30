@@ -3806,11 +3806,15 @@ COUNT_FILE=/var/lib/jc-sslh/failure-count
 mkdir -p "\$(dirname "\$COUNT_FILE")"
 
 # Active SSH banner exchange (tests TCP + sslh demux + sshd liveness in one).
+# head -n 1 reads up to the first newline — the SSH banner per RFC 4253 ends
+# with \\r\\n. This avoids consuming the binary KEX payload that follows
+# (which contains null bytes that bash command substitution would strip and
+# warn about, polluting the journal with "ignored null byte in input").
 banner=\$(timeout "\$TIMEOUT" bash -c '
     exec 3<>/dev/tcp/127.0.0.1/22 || exit 1
     echo "SSH-2.0-jc-monitor" >&3
-    head -c 200 <&3
-' 2>/dev/null)
+    head -n 1 <&3
+' 2>/dev/null | tr -d '\\0')
 
 prev=\$(cat "\$COUNT_FILE" 2>/dev/null || echo 0)
 
@@ -4092,7 +4096,7 @@ MONTIMER
     echo
     echo -e "${BOLD}  Health monitor armed:${RESET}"
     echo -e "${GREY}    Check active health + recent logs:${RESET}  ${BOLD}${GREEN}jc --sslh-status${RESET}"
-    echo -e "${GREY}    Manual rollback at any time:${RESET}       ${BOLD}${GREEN}jc --sslh-rollback${RESET}"
+    echo -e "${GREY}    Manual rollback at any time:${RESET}        ${BOLD}${GREEN}jc --sslh-rollback${RESET}"
     echo -e "${GREY}    Or: systemctl list-timers jc-sslh-monitor.timer${RESET}"
     echo -e "${GREY}    Or: journalctl -u jc-sslh-monitor.service -n 30${RESET}"
     echo -e "${GREY}    If sslh terminates, monitor auto-rollbacks within ~${fSslhMonitorIntervalMin}*${fSslhMonitorThreshold} min.${RESET}"
@@ -4247,22 +4251,45 @@ sslhStatus() {
     else
         echo -e "${LIGHTYELLOW}${count} / ${fSslhMonitorThreshold} (threshold = auto-rollback)${RESET}"
     fi
-    # Extract NEXT / LEFT / LAST / PASSED from `systemctl list-timers` output
-    # (one row only — looks ugly with raw column padding).
-    local _tline
-    _tline=$(systemctl list-timers --all jc-sslh-monitor.timer 2>/dev/null \
-        | awk 'NR==2 && /jc-sslh-monitor/')
-    if [[ -n "$_tline" ]]; then
-        # NEXT (cols 1-4: "Sat 2026-05-30 21:46:59 CST"), LEFT col 5,
-        # LAST (cols 6-9), PASSED (cols 10-11)
-        local _next _left _last _passed
-        _next=$(echo "$_tline" | awk '{print $1, $2, $3, $4}')
-        _left=$(echo "$_tline" | awk '{print $5}')
-        _last=$(echo "$_tline" | awk '{print $6, $7, $8, $9}')
-        _passed=$(echo "$_tline" | awk '{print $10, $11}')
-        printf "    %-15s %s (in %s)\n" "Next check:" "$_next" "$_left"
-        printf "    %-15s %s (%s)\n"    "Last check:" "$_last" "$_passed"
+    # Get next/last timestamps directly from systemd via `systemctl show`
+    # rather than parsing the tabular `list-timers` output — the LEFT and
+    # PASSED columns are variable-width (e.g. "1min" vs "1min 25s"), which
+    # breaks any positional awk parse.
+    local _nextRaw _lastRaw
+    _nextRaw=$(systemctl show jc-sslh-monitor.timer --value -p NextElapseUSecRealtime 2>/dev/null)
+    _lastRaw=$(systemctl show jc-sslh-monitor.timer --value -p LastTriggerUSec 2>/dev/null)
+
+    # Helper: format an integer-seconds delta to "Xh Ymin", "Ymin Zs", or "Zs".
+    _fmtDur() {
+        local s=$1
+        (( s < 0 )) && s=$((-s))
+        if (( s < 60 )); then echo "${s}s"
+        elif (( s < 3600 )); then echo "$((s/60))min $((s%60))s"
+        else echo "$((s/3600))h $(((s%3600)/60))min"
+        fi
+    }
+
+    local _nowEpoch
+    _nowEpoch=$(date +%s)
+    if [[ -n "$_nextRaw" && "$_nextRaw" != "n/a" && "$_nextRaw" != "0" ]]; then
+        local _ne
+        _ne=$(date -d "$_nextRaw" +%s 2>/dev/null)
+        if [[ -n "$_ne" ]]; then
+            printf "    %-15s %s (in %s)\n" "Next check:" "$_nextRaw" "$(_fmtDur $((_ne - _nowEpoch)))"
+        else
+            printf "    %-15s %s\n" "Next check:" "$_nextRaw"
+        fi
     fi
+    if [[ -n "$_lastRaw" && "$_lastRaw" != "n/a" && "$_lastRaw" != "0" ]]; then
+        local _le
+        _le=$(date -d "$_lastRaw" +%s 2>/dev/null)
+        if [[ -n "$_le" ]]; then
+            printf "    %-15s %s (%s ago)\n" "Last check:" "$_lastRaw" "$(_fmtDur $((_nowEpoch - _le)))"
+        else
+            printf "    %-15s %s\n" "Last check:" "$_lastRaw"
+        fi
+    fi
+    unset -f _fmtDur
     echo
 
     echo -e "${BOLD}Last 10 monitor check entries (journald):${RESET}"
