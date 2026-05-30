@@ -3225,12 +3225,20 @@ installSslh() {
 
     echo -e "${COLOR}Installing sslh (port-22 multiplex: SSH + TLS to xray)${RESET}"
 
-    # Warm up sudo BEFORE deep work. On NVIDIA dev machines this triggers
-    # the SSO/MFA prompt now (predictable) rather than mid-cutover.
-    echo -e "${GREY}Warming up sudo (may prompt for password / MFA)...${RESET}"
-    sslhSudoWarmup || return 1
+    # ---------- Preflight: ALL fail-fast checks BEFORE asking for sudo ------
+    # User shouldn't have to enter password / handle MFA only to be told the
+    # environment isn't right. tmux check is FIRST because it's the most
+    # common failure mode for SSH-from-laptop users.
 
-    # ---------- Preflight: refuse if any safety prerequisite missing ----------
+    # Phase 4 sshd restart will drop our SSH session — refuse if we're not
+    # inside a persistent multiplexer.
+    if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
+        echo -e "${RED}Error: --sslh restarts sshd, which will drop this SSH session.${RESET}"
+        echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen) so the script survives the cutover:${RESET}"
+        echo -e "  ${BLUE}tmux new -s sslh '$0 --sslh'${RESET}"
+        echo -e "${GREY}After tmux starts, reconnect via SSH and 'tmux attach -t sslh' to follow.${RESET}"
+        return 1
+    fi
 
     if [[ "$(uname -s)" == "Darwin" ]]; then
         echo -e "${RED}Error: sslh server install is Linux-only.${RESET}"
@@ -3243,15 +3251,11 @@ installSslh() {
         return 1
     fi
 
-    # Phase 4 sshd restart will drop our SSH session — refuse if we're not
-    # inside a persistent multiplexer.
-    if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
-        echo -e "${RED}Error: --sslh restarts sshd, which will drop this SSH session.${RESET}"
-        echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen) so the script survives the cutover:${RESET}"
-        echo -e "  ${BLUE}tmux new -s sslh '$0 --sslh'${RESET}"
-        echo -e "${GREY}After tmux starts, reconnect via SSH and 'tmux attach -t sslh' to follow.${RESET}"
-        return 1
-    fi
+    # Warm up sudo only AFTER preflight passes. NVIDIA SSO/MFA may prompt
+    # here — by getting it out of the way at this point (rather than
+    # mid-cutover) the user faces it once, predictably.
+    echo -e "${GREY}Warming up sudo (may prompt for password / MFA)...${RESET}"
+    sslhSudoWarmup || return 1
 
     # Auto-detect xray port if not explicitly given (--sslh-xray-port).
     # Priority: (1) running xray process from ss, (2) /etc/xray/conf/*.json
@@ -3333,7 +3337,7 @@ installSslh() {
     if ! dpkg-query -W -f='${Status}' sslh 2>/dev/null | grep -q '^install ok installed$'; then
         echo -e "${LIGHTYELLOW}Running apt-get update + install sslh${RESET}"
         sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y sslh || true
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sslh || true
     else
         echo -e "${GREEN}✔${GREY} sslh package already installed.${RESET}"
     fi
@@ -3422,6 +3426,16 @@ EOF
     fi
     rm -f "$sshdTmpErr"
     echo -e "${GREEN}✔${GREY} sshd config syntax check passed.${RESET}"
+
+    # On Ubuntu 22.04+ / Debian 12+, ssh.socket socket-activates sshd and OWNS
+    # the listening ports — sshd_config's ListenAddress is then IGNORED. We
+    # must disable ssh.socket so ssh.service (re)binds ports from sshd_config.
+    # The existing SSH session survives this (kernel keeps established conns;
+    # only new inbound SSH would fail for ~1s until the restart below).
+    if systemctl is-enabled ssh.socket &>/dev/null; then
+        echo -e "${LIGHTYELLOW}ssh.socket is enabled — disabling so sshd_config ListenAddress takes effect.${RESET}"
+        sudo systemctl disable --now ssh.socket 2>/dev/null || true
+    fi
 
     # Reload sshd to pick up new ListenAddress
     sudo systemctl reload ssh
@@ -4032,16 +4046,17 @@ MONTIMER
 sslhRollback() {
     echo -e "${COLOR}Rolling back sslh deployment (sshd back on :22)${RESET}"
 
-    # Warm up sudo (NVIDIA SSO etc.) — may be from console
-    sslhSudoWarmup || return 1
-
     # Refuse if invoked over SSH without tmux — sshd restart will drop us.
+    # Checked BEFORE sudo warmup so user doesn't waste MFA effort.
     if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
         echo -e "${RED}Error: --sslh-rollback restarts sshd; SSH session will drop.${RESET}"
         echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen), or run from VPS console:${RESET}"
         echo -e "  ${BLUE}tmux new -s rollback '$0 --sslh-rollback'${RESET}"
         return 1
     fi
+
+    # Warm up sudo (NVIDIA SSO etc.) — only after tmux check passes
+    sslhSudoWarmup || return 1
 
     # Detect "nothing to roll back" early
     if [[ ! -f /etc/ssh/sshd_config.d/10-sslh.conf ]] \
@@ -4166,20 +4181,21 @@ sslhStatus() {
 removeSslh() {
     echo -e "${COLOR}Removing sslh (restoring sshd on :22, purging package)${RESET}"
 
-    # Warm up sudo (NVIDIA SSO etc.)
-    sslhSudoWarmup || return 1
-
-    # Preflight: same tmux requirement as install (Phase 3 below restarts sshd)
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        echo -e "${RED}Error: --sslh-remove is Linux-only.${RESET}"
-        return 1
-    fi
+    # Preflight BEFORE sudo warmup — fail fast on SSH-no-tmux / Darwin.
     if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
         echo -e "${RED}Error: --sslh-remove restarts sshd, which will drop this SSH session.${RESET}"
         echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen) so the script survives:${RESET}"
         echo -e "  ${BLUE}tmux new -s sslh-remove '$0 --sslh-remove'${RESET}"
         return 1
     fi
+
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo -e "${RED}Error: --sslh-remove is Linux-only.${RESET}"
+        return 1
+    fi
+
+    # Warm up sudo (NVIDIA SSO etc.) — only after preflight passes
+    sslhSudoWarmup || return 1
 
     # If nothing to remove, exit gracefully. Note: Debian's package provides
     # sslh-ev / sslh-select / sslh-fork — no plain `sslh` binary exists, so
