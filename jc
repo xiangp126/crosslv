@@ -3491,7 +3491,10 @@ inetd: false;
 transparent: false;
 timeout: 5;
 user: "sslh";
-pidfile: "/var/run/sslh.pid";
+# No pidfile: we run in foreground under systemd; systemd tracks the PID
+# directly. Setting /var/run/sslh.pid would fail because the unit runs as
+# User=sslh and /run/ is root-owned 0755 (writes denied → sslh exits with
+# status=3 before binding any port).
 
 listen:
 (
@@ -3533,6 +3536,12 @@ ExecStart=$sslhBin --foreground -F /etc/sslh.cfg
 DynamicUser=false
 User=sslh
 Group=sslh
+# Explicitly grant bind-to-low-port capability. The base unit usually has
+# this too, but if it doesn't (or is overridden), sslh as User=sslh can't
+# bind :22. NoNewPrivileges=true (also from base unit) makes setcap on the
+# binary useless, so AmbientCapabilities is the reliable mechanism.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 DROPIN
     echo -e "${GREEN}✔${GREY} Wrote systemd drop-in (10-daemon.conf) overriding ExecStart=$sslhBin${RESET}"
 
@@ -3961,6 +3970,9 @@ MONTIMER
     if (( ! _sslhOk )); then
         echo -e "${RED}✗ sslh did not bind :22 within 10s. Monitor will auto-rollback in ~30 min.${RESET}"
         sudo systemctl status sslh --no-pager 2>&1 | tail -10
+        echo -e "${LIGHTYELLOW}--- last 30 lines of sslh journal (diagnose the actual exit cause) ---${RESET}"
+        sudo journalctl -u sslh -n 30 --no-pager 2>&1 | tail -30
+        echo -e "${LIGHTYELLOW}--- end journal ---${RESET}"
         return 1
     fi
     echo -e "${GREEN}✔${GREY} sslh up on :22.${RESET}"
