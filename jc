@@ -3257,6 +3257,21 @@ installSslh() {
     echo -e "${GREY}Warming up sudo (may prompt for password / MFA)...${RESET}"
     sslhSudoWarmup || return 1
 
+    # Add caller to systemd-journal group so `journalctl -u sslh` / `--sslh-status`
+    # work without sudo. Idempotent: skip if already a member. New group membership
+    # takes effect on next login or via `newgrp`.
+    if [[ -n "$USER" && "$USER" != "root" ]]; then
+        if ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx systemd-journal; then
+            echo -e "${GREY}Adding $USER to 'systemd-journal' group (lets you read system journal without sudo)...${RESET}"
+            if sudo usermod -aG systemd-journal "$USER"; then
+                echo -e "${GREEN}✔${GREY} Added $USER to systemd-journal group.${RESET}"
+                echo -e "${LIGHTYELLOW}  Effective on next login. For current shell, run: ${BLUE}newgrp systemd-journal${RESET}"
+            else
+                echo -e "${LIGHTYELLOW}⚠  Failed to add $USER to systemd-journal (continuing; --sslh-status will need sudo).${RESET}"
+            fi
+        fi
+    fi
+
     # Auto-detect xray port if not explicitly given (--sslh-xray-port).
     # Priority: (1) running xray process from ss, (2) /etc/xray/conf/*.json
     # (jc-managed location), (3) /usr/local/etc/xray/config.json (official
@@ -3897,7 +3912,17 @@ MONTIMER
 
     # Best-effort discovery of public IP for the reconnect-command banner
     local pubIp
-    pubIp=$(curl -4 -s --connect-timeout 2 https://ifconfig.me 2>/dev/null || true)
+    # Pick the IP the user is ACTUALLY reaching us at. Priority:
+    #   1) $SSH_CONNECTION 3rd field (server-side IP of the live ssh session
+    #      — guaranteed reachable from the user's network, since they used
+    #      it to get here). Works for both public-IP and corp-VPN cases.
+    #   2) Public IP via ifconfig.me — fallback if not invoked over SSH.
+    #   3) First non-loopback hostname -I.
+    #   4) Placeholder.
+    if [[ -n "$SSH_CONNECTION" ]]; then
+        pubIp=$(echo "$SSH_CONNECTION" | awk '{print $3}')
+    fi
+    [[ -z "$pubIp" ]] && pubIp=$(curl -4 -s --connect-timeout 2 https://ifconfig.me 2>/dev/null || true)
     [[ -z "$pubIp" ]] && pubIp=$(curl -4 -s --connect-timeout 2 https://api.ipify.org 2>/dev/null || true)
     [[ -z "$pubIp" ]] && pubIp=$(hostname -I 2>/dev/null | awk '{print $1}')
     [[ -z "$pubIp" ]] && pubIp='<VPS-IP>'
@@ -3920,8 +3945,14 @@ MONTIMER
     echo -e "${LIGHTYELLOW}  Your current SSH connection will be terminated.${RESET}"
     echo
     echo -e "${BOLD}  To reconnect (try in order):${RESET}"
-    echo -e "    ${GREEN}1) Normal:${RESET}   ssh ${USER}@${pubIp}             ${GREY}# via sslh on :22${RESET}"
-    echo -e "    ${GREEN}2) Bypass:${RESET}   ssh -p ${fSslhSshPort} ${USER}@${pubIp}        ${GREY}# direct sshd (if firewall allows)${RESET}"
+    # Compute padding so the # comments line up despite different command
+    # lengths (`-p NNNN ` adds 8 chars to cmd 2).
+    local _c1="ssh ${USER}@${pubIp}"
+    local _c2="ssh -p ${fSslhSshPort} ${USER}@${pubIp}"
+    local _w=${#_c2}
+    (( ${#_c1} > _w )) && _w=${#_c1}
+    printf "    ${GREEN}1) Normal:${RESET}   %-${_w}s   ${GREY}# via sslh on :22${RESET}\n" "$_c1"
+    printf "    ${GREEN}2) Bypass:${RESET}   %-${_w}s   ${GREY}# direct sshd (if firewall allows)${RESET}\n" "$_c2"
     echo
     echo -e "${BOLD}  This script keeps running inside tmux. Re-attach with:${RESET}"
     echo -e "    ${BLUE}tmux attach -t ${tmuxSess}${RESET}"
@@ -4049,8 +4080,15 @@ MONTIMER
     echo -e "    ${CYAN}:${fSslhXrayPort}${RESET}    xray           ${GREY}(VLESS+REALITY, localhost only)${RESET}"
     echo
     echo -e "${BOLD}  Reconnect (if your SSH session dropped):${RESET}"
-    echo -e "    ${GREEN}ssh ${USER}@<vps>${RESET}              ${GREY}# normal — via sslh${RESET}"
-    echo -e "    ${GREEN}ssh -p ${fSslhSshPort} ${USER}@<vps>${RESET}         ${GREY}# bypass — direct sshd${RESET}"
+    # Reuse the same pubIp computed in Phase 4 (SSH_CONNECTION's server-side
+    # IP, falling back to public IP / hostname). Use the same printf padding
+    # trick so the # comments align.
+    local _r1="ssh ${USER}@${pubIp:-<VPS-IP>}"
+    local _r2="ssh -p ${fSslhSshPort} ${USER}@${pubIp:-<VPS-IP>}"
+    local _rw=${#_r2}
+    (( ${#_r1} > _rw )) && _rw=${#_r1}
+    printf "    ${GREEN}%-${_rw}s${RESET}   ${GREY}# normal — via sslh${RESET}\n" "$_r1"
+    printf "    ${GREEN}%-${_rw}s${RESET}   ${GREY}# bypass — direct sshd${RESET}\n" "$_r2"
     echo
     echo -e "${BOLD}  Health monitor armed:${RESET}"
     echo -e "${GREY}    Check active health + recent logs:${RESET}  ${BOLD}${GREEN}jc --sslh-status${RESET}"
@@ -4062,6 +4100,18 @@ MONTIMER
     echo -e "${BOLD}  VPS provider ACL reminder:${RESET}"
     echo -e "${GREY}    Open :${fSslhSshPort}/tcp at the provider's outer firewall if you want the${RESET}"
     echo -e "${GREY}    emergency direct-sshd bypass reachable externally.${RESET}"
+
+    # If $USER was just added to systemd-journal but current shell hasn't
+    # picked it up yet, surface the newgrp hint prominently here (so they
+    # see it AFTER the install rather than buried 100 lines above).
+    if [[ -n "$USER" && "$USER" != "root" ]] \
+        && id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx systemd-journal \
+        && ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx systemd-journal; then
+        echo
+        echo -e "${BOLD}  Activate systemd-journal group (one-time, this shell only):${RESET}"
+        echo -e "    ${BOLD}${GREEN}newgrp systemd-journal${RESET}     ${GREY}# so 'journalctl -u sslh' works without sudo${RESET}"
+        echo -e "${GREY}    (or just log out / back in and it sticks permanently)${RESET}"
+    fi
     echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo
     return 0
@@ -4144,66 +4194,111 @@ sslhRollback() {
 # Status command — show current sslh deployment state for the user.
 # All-in-one diagnostic for "is everything OK".
 sslhStatus() {
+    # Auto-detect deployed xray port from /etc/sslh.cfg (the post-install
+    # source of truth). $fSslhXrayPort is only populated during install, so
+    # standalone --sslh-status calls need to recover it themselves.
+    if [[ -z "$fSslhXrayPort" ]] && sudo test -r /etc/sslh.cfg; then
+        fSslhXrayPort=$(sudo grep 'name: "tls"' /etc/sslh.cfg 2>/dev/null \
+            | grep -oE '"[0-9]+"' | tr -d '"' | head -1)
+    fi
+    [[ -z "$fSslhXrayPort" ]] && fSslhXrayPort=5902
+
     echo -e "${COLOR}sslh deployment status${RESET}"
     echo
+
     echo -e "${BOLD}Port topology:${RESET}"
     if command -v ss &>/dev/null; then
         for p in 22 "${fSslhSshPort}" "${fSslhXrayPort}"; do
             local who
             who=$(sudo ss -tlnp 2>/dev/null | awk -v pat=":${p}$" '$4 ~ pat {print $4, $NF}' | head -1)
+            # Use printf for fixed column width (color escapes don't count
+            # toward printf's width when applied to the value).
+            printf "    %-8s " ":${p}"
             if [[ -n "$who" ]]; then
-                echo -e "    ${CYAN}:${p}${RESET}    ${GREY}${who}${RESET}"
+                echo -e "${GREY}${who}${RESET}"
             else
-                echo -e "    ${CYAN}:${p}${RESET}    ${LIGHTYELLOW}(no listener)${RESET}"
+                echo -e "${LIGHTYELLOW}(no listener)${RESET}"
             fi
         done
     fi
     echo
+
     echo -e "${BOLD}Service status:${RESET}"
     for unit in sslh.service jc-sslh-monitor.timer jc-sslh-monitor.service; do
         local state
         state=$(systemctl show -p ActiveState,SubState --value "$unit" 2>/dev/null | paste -sd ' ' -)
+        printf "    %-26s " "${unit}:"
         if [[ -n "$state" && "$state" != " " ]]; then
-            echo -e "    ${unit}: ${state}"
+            echo "${state}"
         else
-            echo -e "    ${unit}: ${GREY}(not installed)${RESET}"
+            echo -e "${GREY}(not installed)${RESET}"
         fi
     done
     echo
+
     echo -e "${BOLD}Health monitor:${RESET}"
     local count
     count=$(sudo cat /var/lib/jc-sslh/failure-count 2>/dev/null || echo "?")
+    printf "    %-15s " "Failure count:"
     if [[ "$count" == "0" ]]; then
-        echo -e "    Failure count:       ${GREEN}0 (healthy)${RESET}"
+        echo -e "${GREEN}0 (healthy)${RESET}"
     elif [[ "$count" == "?" ]]; then
-        echo -e "    Failure count:       ${GREY}(no data)${RESET}"
+        echo -e "${GREY}(no data)${RESET}"
     else
-        echo -e "    Failure count:       ${LIGHTYELLOW}${count} / ${fSslhMonitorThreshold} (threshold = auto-rollback)${RESET}"
+        echo -e "${LIGHTYELLOW}${count} / ${fSslhMonitorThreshold} (threshold = auto-rollback)${RESET}"
+    fi
+    # Extract NEXT / LEFT / LAST / PASSED from `systemctl list-timers` output
+    # (one row only — looks ugly with raw column padding).
+    local _tline
+    _tline=$(systemctl list-timers --all jc-sslh-monitor.timer 2>/dev/null \
+        | awk 'NR==2 && /jc-sslh-monitor/')
+    if [[ -n "$_tline" ]]; then
+        # NEXT (cols 1-4: "Sat 2026-05-30 21:46:59 CST"), LEFT col 5,
+        # LAST (cols 6-9), PASSED (cols 10-11)
+        local _next _left _last _passed
+        _next=$(echo "$_tline" | awk '{print $1, $2, $3, $4}')
+        _left=$(echo "$_tline" | awk '{print $5}')
+        _last=$(echo "$_tline" | awk '{print $6, $7, $8, $9}')
+        _passed=$(echo "$_tline" | awk '{print $10, $11}')
+        printf "    %-15s %s (in %s)\n" "Next check:" "$_next" "$_left"
+        printf "    %-15s %s (%s)\n"    "Last check:" "$_last" "$_passed"
     fi
     echo
-    echo -e "    ${GREY}Next check:${RESET}"
-    systemctl list-timers --all 2>/dev/null | awk '/jc-sslh-monitor/ {print "    " $0}' | head -1
-    echo
+
     echo -e "${BOLD}Last 10 monitor check entries (journald):${RESET}"
     if command -v journalctl &>/dev/null; then
-        journalctl -u jc-sslh-monitor.service -n 10 --no-pager 2>/dev/null \
-            | sed 's/^/    /' \
-            || echo -e "    ${GREY}(no entries yet — monitor hasn't run)${RESET}"
+        # Use sudo -n to read system journal — non-root callers not in adm /
+        # systemd-journal groups see "No entries" via plain journalctl. Fall
+        # back to non-sudo if sudo isn't cached.
+        local _logOut
+        if _logOut=$(sudo -n journalctl -u jc-sslh-monitor.service -n 10 --no-pager 2>/dev/null) && [[ -n "$_logOut" ]]; then
+            echo "$_logOut" | sed 's/^/    /'
+        else
+            _logOut=$(journalctl -u jc-sslh-monitor.service -n 10 --no-pager 2>/dev/null)
+            if [[ -n "$_logOut" ]]; then
+                echo "$_logOut" | sed 's/^/    /'
+            else
+                echo -e "    ${GREY}(no entries visible — monitor hasn't run yet, or need sudo to read system journal)${RESET}"
+            fi
+        fi
     fi
     echo
+
+    # Commands below are flush-left (column 0) so the user can copy a whole
+    # line by triple-click without picking up leading whitespace.
     echo -e "${BOLD}Useful commands for digging deeper:${RESET}"
-    echo -e "    ${GREY}# Full monitor history:${RESET}"
-    echo -e "    ${BLUE}journalctl -u jc-sslh-monitor.service${RESET}"
-    echo -e "    ${GREY}# Follow live (Ctrl+C to stop):${RESET}"
-    echo -e "    ${BLUE}journalctl -u jc-sslh-monitor.service -f${RESET}"
-    echo -e "    ${GREY}# Since today only:${RESET}"
-    echo -e "    ${BLUE}journalctl -u jc-sslh-monitor.service --since today${RESET}"
-    echo -e "    ${GREY}# Rollback events (when monitor or manual triggered):${RESET}"
-    echo -e "    ${BLUE}journalctl -t jc-sslh-rollback${RESET}"
-    echo -e "    ${GREY}# sslh itself (the proxy daemon):${RESET}"
-    echo -e "    ${BLUE}journalctl -u sslh.service -n 50${RESET}"
-    echo -e "    ${GREY}# Timer schedule details (next firing, last firing):${RESET}"
-    echo -e "    ${BLUE}systemctl list-timers jc-sslh-monitor.timer${RESET}"
+    echo -e "${GREY}# Full monitor history:${RESET}"
+    echo -e "${BLUE}sudo journalctl -u jc-sslh-monitor.service${RESET}"
+    echo -e "${GREY}# Follow live (Ctrl+C to stop):${RESET}"
+    echo -e "${BLUE}sudo journalctl -u jc-sslh-monitor.service -f${RESET}"
+    echo -e "${GREY}# Since today only:${RESET}"
+    echo -e "${BLUE}sudo journalctl -u jc-sslh-monitor.service --since today${RESET}"
+    echo -e "${GREY}# Rollback events (when monitor or manual triggered):${RESET}"
+    echo -e "${BLUE}sudo journalctl -t jc-sslh-rollback${RESET}"
+    echo -e "${GREY}# sslh itself (the proxy daemon):${RESET}"
+    echo -e "${BLUE}sudo journalctl -u sslh.service -n 50${RESET}"
+    echo -e "${GREY}# Timer schedule details (next firing, last firing):${RESET}"
+    echo -e "${BLUE}systemctl list-timers jc-sslh-monitor.timer${RESET}"
     echo
     return 0
 }
