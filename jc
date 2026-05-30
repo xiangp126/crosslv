@@ -6259,7 +6259,8 @@ stopSshTunnel() {
     local wasRunning=
     if [ -n "$fSshTunnelAutosshPid" ] || pgrep -f "autossh.*${fSshTunnelLocalPort}:127.0.0.1:${fSshTunnelRemotePort}" >/dev/null; then
         wasRunning=1
-        echo -e "${LIGHTYELLOW}⏻ Tearing down SSH port forward (${fSshTunnelLocalPort} → ${fSshTunnelRemoteIp}:${fSshTunnelRemotePort})${RESET}"
+        echo -e "${LIGHTYELLOW}⏻ Tearing down SSH -L tunnel (autossh):${RESET}"
+        echo -e "${LIGHTYELLOW}   Local 127.0.0.1:${fSshTunnelLocalPort}  →  ssh(${USER}@${fSshTunnelRemoteIp}:22)  →  VPS 127.0.0.1:${fSshTunnelRemotePort} (xray)${RESET}"
     fi
 
     if [ -n "$fSshTunnelAutosshPid" ]; then
@@ -6286,7 +6287,8 @@ startSshTunnel() {
         return 0
     fi
 
-    echo -e "${LIGHTYELLOW}☞ Setting up SSH port forward (${fSshTunnelLocalPort} → ${fSshTunnelRemoteIp}:${fSshTunnelRemotePort})${RESET}"
+    echo -e "${LIGHTYELLOW}☞ Setting up SSH -L tunnel (autossh):${RESET}"
+    echo -e "${LIGHTYELLOW}   Local 127.0.0.1:${fSshTunnelLocalPort}  →  ssh(${USER}@${fSshTunnelRemoteIp}:22)  →  VPS 127.0.0.1:${fSshTunnelRemotePort} (xray)${RESET}"
     if lsof -i ":${fSshTunnelLocalPort}" -sTCP:LISTEN >/dev/null 2>&1; then
         echo -e "${RED}Error: Local port ${fSshTunnelLocalPort} is already in use:${RESET}"
         lsof -i ":${fSshTunnelLocalPort}" -sTCP:LISTEN 2>/dev/null | head -5
