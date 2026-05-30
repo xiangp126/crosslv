@@ -83,7 +83,7 @@ fSslhSshPort=8822             # internal sshd listen port after cutover
 fSslhXrayPort=                # local xray port; empty = auto-detect, fallback 5902
 # Monitor knobs — continuous health check that auto-rollback if sslh terminates.
 # Each check actively opens TCP to :22 and verifies an SSH banner round-trip.
-fSslhMonitorIntervalMin=10    # check every N minutes
+fSslhMonitorIntervalMin=5     # check every N minutes (MTTR = N × Threshold)
 fSslhMonitorThreshold=3       # consecutive fails before triggering rollback
 fSslhMonitorBootDelayMin=2    # first check fires this long after boot
 fSslhMonitorTimeoutSec=5      # per-check TCP+banner timeout
@@ -3867,6 +3867,10 @@ WantedBy=timers.target
 MONTIMER
 
     sudo systemctl daemon-reload
+    # Re-run safety: if timer was already active with old settings (e.g. old
+    # OnUnitActiveSec=10min), `enable --now` won't re-read the rewritten unit
+    # — it only activates inactive units. Stop first to force schedule refresh.
+    sudo systemctl stop jc-sslh-monitor.timer 2>/dev/null
     if ! sudo systemctl enable --now jc-sslh-monitor.timer; then
         echo -e "${RED}Error: failed to arm health monitor. Aborting before destructive changes.${RESET}"
         sudo rm -f /etc/systemd/system/jc-sslh-monitor.{service,timer}
@@ -3940,17 +3944,28 @@ MONTIMER
     fi
     [[ -z "$tmuxSess" ]] && tmuxSess="sslh"
 
-    # ===== BIG RED BANNER — last thing user sees before SSH drops =====
+    # ===== BANNER — what's about to happen + recovery options =====
+    local _mttr=$((fSslhMonitorIntervalMin * fSslhMonitorThreshold))
     echo
     echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${BOLD}${RED}  ⚠  SSH SESSION WILL DROP IN ~2 SECONDS  ⚠${RESET}"
+    echo -e "${BOLD}${RED}  Cutting over :22 from sshd to sslh${RESET}"
     echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${LIGHTYELLOW}  sshd is being restarted to release :22 for sslh.${RESET}"
-    echo -e "${LIGHTYELLOW}  Your current SSH connection will be terminated.${RESET}"
+    echo -e "  ${BOLD}${RED}Your current SSH session will survive${RESET}${LIGHTYELLOW} (sshd KillMode=process).${RESET}"
+    echo -e "${LIGHTYELLOW}  New connections to :22 may be briefly refused (~1-2s) while sslh${RESET}"
+    echo -e "${LIGHTYELLOW}  takes over.${RESET}"
     echo
-    echo -e "${BOLD}  To reconnect (try in order):${RESET}"
-    # Compute padding so the # comments line up despite different command
-    # lengths (`-p NNNN ` adds 8 chars to cmd 2).
+    echo -e "${BOLD}  Recommended belt + suspenders before proceeding:${RESET}"
+    echo -e "    ${GREEN}1)${RESET} Run this script ${BOLD}inside tmux${RESET} (so cutover finishes even if"
+    echo -e "       your client disconnects mid-script)."
+    echo -e "    ${GREEN}2)${RESET} Open a ${BOLD}second SSH session${RESET} in another terminal NOW and keep"
+    echo -e "       it idle — instant recovery shell if anything goes wrong."
+    echo
+    echo -e "${BOLD}  If your shell dies mid-cutover anyway:${RESET}"
+    echo -e "${GREY}    Health monitor auto-rolls back within ~${_mttr} min (${fSslhMonitorIntervalMin}min × ${fSslhMonitorThreshold} fails).${RESET}"
+    echo -e "${GREY}    Or reconnect via :${fSslhSshPort} bypass and run 'jc --sslh-rollback'.${RESET}"
+    echo
+    echo -e "${BOLD}  Reconnect URLs (if you actually need to):${RESET}"
+    # Compute padding so # comments align (cmd 2 is 8 chars longer via -p NNNN ).
     local _c1="ssh ${USER}@${pubIp}"
     local _c2="ssh -p ${fSslhSshPort} ${USER}@${pubIp}"
     local _w=${#_c2}
@@ -3958,12 +3973,10 @@ MONTIMER
     printf "    ${GREEN}1) Normal:${RESET}   %-${_w}s   ${GREY}# via sslh on :22${RESET}\n" "$_c1"
     printf "    ${GREEN}2) Bypass:${RESET}   %-${_w}s   ${GREY}# direct sshd (if firewall allows)${RESET}\n" "$_c2"
     echo
-    echo -e "${BOLD}  This script keeps running inside tmux. Re-attach with:${RESET}"
+    echo -e "${BOLD}  tmux re-attach (if your shell did drop):${RESET}"
     echo -e "    ${BLUE}tmux attach -t ${tmuxSess}${RESET}"
     echo
-    echo -e "${BOLD}${LIGHTYELLOW}  ◉  Health monitor armed.${RESET}"
-    echo -e "${LIGHTYELLOW}  If sslh terminates, monitor auto-rollback within ~${fSslhMonitorIntervalMin}*${fSslhMonitorThreshold} min.${RESET}"
-    echo -e "${LIGHTYELLOW}  Check status anytime: ${BOLD}${GREEN}jc --sslh-status${RESET}"
+    echo -e "${BOLD}${GREEN}  ◉  Health monitor armed.${RESET}  ${GREY}Check anytime: ${BOLD}${GREEN}jc --sslh-status${RESET}"
     echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo
     sleep 2
@@ -4238,18 +4251,56 @@ sslhStatus() {
             echo -e "${GREY}(not installed)${RESET}"
         fi
     done
+    # sslh runtime details: uptime, restart count, main PID
+    local _sslhEnter _sslhPID _sslhRestarts _sslhEnterEpoch
+    _sslhEnter=$(systemctl show sslh.service --value -p ActiveEnterTimestamp 2>/dev/null)
+    _sslhPID=$(systemctl show sslh.service --value -p MainPID 2>/dev/null)
+    _sslhRestarts=$(systemctl show sslh.service --value -p NRestarts 2>/dev/null)
+    if [[ -n "$_sslhEnter" && "$_sslhEnter" != "n/a" && "$_sslhEnter" != "0" ]]; then
+        _sslhEnterEpoch=$(date -d "$_sslhEnter" +%s 2>/dev/null)
+        if [[ -n "$_sslhEnterEpoch" ]]; then
+            local _up=$(( $(date +%s) - _sslhEnterEpoch ))
+            local _upFmt
+            if (( _up < 60 )); then _upFmt="${_up}s"
+            elif (( _up < 3600 )); then _upFmt="$((_up/60))min $((_up%60))s"
+            elif (( _up < 86400 )); then _upFmt="$((_up/3600))h $(((_up%3600)/60))min"
+            else _upFmt="$((_up/86400))d $(((_up%86400)/3600))h"
+            fi
+            printf "    %-26s pid=%s, uptime=%s, restarts=%s\n" "sslh runtime:" "${_sslhPID:-?}" "$_upFmt" "${_sslhRestarts:-0}"
+        fi
+    fi
     echo
 
     echo -e "${BOLD}Health monitor:${RESET}"
+    # Read ACTUAL deployed config from the running unit + monitor-check.sh, not
+    # in-memory defaults — the deployed version may differ if you upgraded jc
+    # but haven't re-run `jc --sslh` yet.
+    local _intervalActual _thresholdActual _timeoutActual _mttrActual
+    # OnUnitActiveSec from systemd, in microseconds — convert to "Nmin Xs".
+    local _onActiveUs
+    _onActiveUs=$(systemctl show jc-sslh-monitor.timer --value -p OnUnitActiveUSec 2>/dev/null)
+    if [[ -n "$_onActiveUs" && "$_onActiveUs" != "0" && "$_onActiveUs" != "infinity" ]]; then
+        # Parse human format like "5min" or "5min 30s" — systemd returns
+        # human form for *USec properties on modern versions.
+        _intervalActual="$_onActiveUs"
+    else
+        _intervalActual="?"
+    fi
+    _thresholdActual=$(sudo grep -E '^THRESHOLD=' /etc/jc-sslh/monitor-check.sh 2>/dev/null | head -1 | cut -d= -f2)
+    _timeoutActual=$(sudo grep -E '^TIMEOUT=' /etc/jc-sslh/monitor-check.sh 2>/dev/null | head -1 | cut -d= -f2)
+    [[ -z "$_thresholdActual" ]] && _thresholdActual="${fSslhMonitorThreshold}"
+    [[ -z "$_timeoutActual" ]]   && _timeoutActual="${fSslhMonitorTimeoutSec}"
+    printf "    %-15s interval=%s, threshold=%s fails, per-check timeout=%ss\n" \
+        "Config:" "$_intervalActual" "$_thresholdActual" "$_timeoutActual"
     local count
     count=$(sudo cat /var/lib/jc-sslh/failure-count 2>/dev/null || echo "?")
     printf "    %-15s " "Failure count:"
     if [[ "$count" == "0" ]]; then
-        echo -e "${GREEN}0 (healthy)${RESET}"
+        echo -e "${GREEN}0 / ${_thresholdActual} (healthy)${RESET}"
     elif [[ "$count" == "?" ]]; then
         echo -e "${GREY}(no data)${RESET}"
     else
-        echo -e "${LIGHTYELLOW}${count} / ${fSslhMonitorThreshold} (threshold = auto-rollback)${RESET}"
+        echo -e "${LIGHTYELLOW}${count} / ${_thresholdActual} (auto-rollback at threshold)${RESET}"
     fi
     # Get next/last timestamps directly from systemd via `systemctl show`
     # rather than parsing the tabular `list-timers` output — the LEFT and
@@ -4288,6 +4339,17 @@ sslhStatus() {
         else
             printf "    %-15s %s\n" "Last check:" "$_lastRaw"
         fi
+    fi
+    # Last rollback event (auto or manual). Pulled from syslog tag.
+    local _rbLine
+    _rbLine=$(sudo -n journalctl -t jc-sslh-rollback -n 1 --no-pager 2>/dev/null | tail -1)
+    if [[ -n "$_rbLine" && "$_rbLine" != *"No entries"* ]]; then
+        # Strip the "<host> jc-sslh-rollback:" prefix that journald adds.
+        local _rbMsg
+        _rbMsg=$(echo "$_rbLine" | sed -E 's/^.*jc-sslh-rollback[^:]*: //')
+        printf "    %-15s %s\n" "Last rollback:" "$_rbMsg"
+    else
+        printf "    %-15s %s\n" "Last rollback:" "(none recorded)"
     fi
     unset -f _fmtDur
     echo
