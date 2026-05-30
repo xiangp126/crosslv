@@ -81,7 +81,7 @@ fSslhRollback=
 fSslhStatus=
 fSslhSshPort=8822             # internal sshd listen port after cutover
 fSslhXrayPort=                # local xray port; empty = auto-detect, fallback 5902
-# Monitor knobs — continuous health check that auto-rollback if sslh dies.
+# Monitor knobs — continuous health check that auto-rollback if sslh terminates.
 # Each check actively opens TCP to :22 and verifies an SSH banner round-trip.
 fSslhMonitorIntervalMin=10    # check every N minutes
 fSslhMonitorThreshold=3       # consecutive fails before triggering rollback
@@ -236,7 +236,7 @@ Xray Options (server-side only — run on the Xray server host):
 SSLH Options (server-side only — run on the proxy VPS):
     --sslh                          Install sslh and multiplex SSH + TLS on port 22
                                     Arms a health-check monitor that auto-rollback if
-                                    sslh dies (3 consecutive 10-min checks fail).
+                                    sslh terminates (3 consecutive 10-min checks fail).
     --sslh-ssh-port <port>          Internal sshd listen port (default: 8822)
     --sslh-xray-port <port>         Xray VLESS+REALITY backend port
                                     (default: auto-detect from running xray; fallback 5902)
@@ -3508,7 +3508,7 @@ DROPIN
         echo -e "${GREEN}✔${GREY} Wrote systemd drop-in (10-daemon.conf) overriding ExecStart=$sslhBin${RESET}"
     fi
 
-    # Layer 3: resilience drop-in — auto-restart sslh on crash.
+    # Layer 3: resilience drop-in — auto-restart sslh on failure.
     # StartLimitBurst=10 over 120s = up to 10 restarts in 2 min before
     # systemd gives up. Tight enough to notice real failures, generous
     # enough to ride out transient issues.
@@ -3886,13 +3886,13 @@ MONTIMER
     echo -e "    ${BLUE}tmux attach -t ${tmuxSess}${RESET}"
     echo
     echo -e "${BOLD}${LIGHTYELLOW}  ◉  Health monitor armed.${RESET}"
-    echo -e "${LIGHTYELLOW}  If sslh dies, monitor will auto-rollback within ~${fSslhMonitorIntervalMin}*${fSslhMonitorThreshold} min.${RESET}"
+    echo -e "${LIGHTYELLOW}  If sslh terminates, monitor auto-rollback within ~${fSslhMonitorIntervalMin}*${fSslhMonitorThreshold} min.${RESET}"
     echo -e "${LIGHTYELLOW}  Check status anytime: ${BOLD}${GREEN}jc --sslh-status${RESET}"
     echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo
     sleep 2
 
-    # ===== THE CUTOVER — current SSH session dies after this =====
+    # ===== THE CUTOVER — current SSH session terminates after this =====
     sudo systemctl restart ssh
 
     # Verify sshd actually came up with the new config (timeout 10s).
@@ -4013,7 +4013,7 @@ MONTIMER
     echo -e "${GREY}    Manual rollback at any time:${RESET}       ${BOLD}${GREEN}jc --sslh-rollback${RESET}"
     echo -e "${GREY}    Or: systemctl list-timers jc-sslh-monitor.timer${RESET}"
     echo -e "${GREY}    Or: journalctl -u jc-sslh-monitor.service -n 30${RESET}"
-    echo -e "${GREY}    If sslh dies, monitor auto-rollbacks within ~${fSslhMonitorIntervalMin}*${fSslhMonitorThreshold} min.${RESET}"
+    echo -e "${GREY}    If sslh terminates, monitor auto-rollbacks within ~${fSslhMonitorIntervalMin}*${fSslhMonitorThreshold} min.${RESET}"
     echo
     echo -e "${BOLD}  VPS provider ACL reminder:${RESET}"
     echo -e "${GREY}    Open :${fSslhSshPort}/tcp at the provider's outer firewall if you want the${RESET}"
