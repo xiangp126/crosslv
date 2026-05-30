@@ -3394,8 +3394,14 @@ installSslh() {
     local sshdDropInContent
     sshdDropInContent="$(cat <<EOF
 # Managed by jc --sslh. Do not edit; rerun jc --sslh to refresh.
-# 0.0.0.0 binding is intentional: defense-in-depth direct-sshd bypass path
-# in case sslh fails. External reachability still gated by VPS firewall.
+# Two binds during the Phase 2/3 window:
+#   :22   — temporary, keeps SSH reachable through pre-cutover. Ubuntu 22.04+
+#           socket-activated sshd_config has no explicit Port directive, so
+#           without this line sshd would bind ONLY :${fSslhSshPort} once
+#           ssh.socket is disabled. Phase 4 strips this line at cutover.
+#   :${fSslhSshPort} — permanent direct-sshd bypass path (defense-in-depth)
+#           in case sslh fails. External reachability still gated by firewall.
+ListenAddress 0.0.0.0:22
 ListenAddress 0.0.0.0:${fSslhSshPort}
 EOF
 )"
@@ -3843,11 +3849,15 @@ MONTIMER
     #   ListenAddress [::]              (bracketed IPv6 wildcard, no port)
     #   ListenAddress [::]:22           (bracketed IPv6 + port 22)
     # Tolerates leading whitespace and optional leading `#`.
+    # Run against BOTH the main config AND our drop-in: Phase 2 added the
+    # temporary "ListenAddress 0.0.0.0:22" line to the drop-in to keep sshd
+    # on :22 during the pre-cutover window (needed on socket-activated
+    # Ubuntu 22.04+); cutover now strips it so sslh can claim :22.
     sudo sed -i -E '
         /^[[:space:]]*#?[[:space:]]*Port[[:space:]]+22[[:space:]]*$/d
         /^[[:space:]]*#?[[:space:]]*ListenAddress[[:space:]]+0\.0\.0\.0([[:space:]]*$|:22[[:space:]]*$)/d
         /^[[:space:]]*#?[[:space:]]*ListenAddress[[:space:]]+(::|\[::\](:22)?)[[:space:]]*$/d
-    ' /etc/ssh/sshd_config
+    ' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/10-sslh.conf
 
     # Validate. If sshd -t fails, restore backup and abort.
     local cutoverTmpErr
