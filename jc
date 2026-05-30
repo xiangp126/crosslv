@@ -3509,24 +3509,32 @@ SSLHCFG
     sudo chmod 644 /etc/sslh.cfg
     echo -e "${GREEN}✔${GREY} Wrote /etc/sslh.cfg${RESET}"
 
-    # DAEMON selector. Prefer /etc/default/sslh (Debian's legacy mechanism);
-    # if missing (newer Debian), write systemd drop-in to override ExecStart.
-    if [[ -f /etc/default/sslh ]]; then
-        if grep -q '^DAEMON=' /etc/default/sslh; then
-            sudo sed -i -E "s|^DAEMON=.*|DAEMON=$sslhBin|" /etc/default/sslh
-        else
-            echo "DAEMON=$sslhBin" | sudo tee -a /etc/default/sslh >/dev/null
-        fi
-        echo -e "${GREEN}✔${GREY} Set DAEMON=$sslhBin in /etc/default/sslh${RESET}"
-    else
-        sudo mkdir -p /etc/systemd/system/sslh.service.d
-        sudo tee /etc/systemd/system/sslh.service.d/10-daemon.conf >/dev/null <<DROPIN
+    # Always override ExecStart via systemd drop-in. We do NOT rely on
+    # /etc/default/sslh because:
+    #   - Debian's packaged sslh.service unit hardcodes ExecStart=/usr/sbin/sslh
+    #     (the wrapper that picks sslh-select/sslh-ev/sslh-fork by reading
+    #     $DAEMON), but on Ubuntu noble the unit reads $DAEMON_OPTS — not
+    #     $DAEMON — and even if it did, the binary path is hardcoded.
+    #   - /etc/default/sslh ships with DAEMON_OPTS containing the literal
+    #     placeholder "<change-me>:443" which makes sslh exit immediately
+    #     (status=6) on first start.
+    # The drop-in below:
+    #   - Clears EnvironmentFile (do NOT read /etc/default/sslh at all,
+    #     so the <change-me> placeholder cannot leak into our ExecStart)
+    #   - Replaces ExecStart with our chosen binary + our /etc/sslh.cfg
+    #   - Pins User/Group to the static sslh user that apt postinst created
+    #     (DynamicUser=false so our config's "user: sslh" directive resolves)
+    sudo mkdir -p /etc/systemd/system/sslh.service.d
+    sudo tee /etc/systemd/system/sslh.service.d/10-daemon.conf >/dev/null <<DROPIN
 [Service]
+EnvironmentFile=
 ExecStart=
-ExecStart=$sslhBin -F /etc/sslh.cfg
+ExecStart=$sslhBin --foreground -F /etc/sslh.cfg
+DynamicUser=false
+User=sslh
+Group=sslh
 DROPIN
-        echo -e "${GREEN}✔${GREY} Wrote systemd drop-in (10-daemon.conf) overriding ExecStart=$sslhBin${RESET}"
-    fi
+    echo -e "${GREEN}✔${GREY} Wrote systemd drop-in (10-daemon.conf) overriding ExecStart=$sslhBin${RESET}"
 
     # Layer 3: resilience drop-in — auto-restart sslh on failure.
     # StartLimitBurst=10 over 120s = up to 10 restarts in 2 min before
@@ -4079,7 +4087,10 @@ sslhRollback() {
     # The rollback script is the single source of truth — same script the
     # monitor runs. If missing, user never ran `jc --sslh` here (or removed
     # the file manually); refuse rather than improvise inline.
-    if [[ ! -x /etc/jc-sslh/rollback.sh ]]; then
+    # NOTE: file is root:root mode 700; bash test -x runs as the unprivileged
+    # invoker and returns false even when the file exists. We sudo-execute
+    # the script below anyway, so check existence + exec bit via sudo.
+    if ! sudo test -x /etc/jc-sslh/rollback.sh; then
         echo -e "${RED}Error: /etc/jc-sslh/rollback.sh missing or not executable.${RESET}"
         echo -e "${GREY}This file is installed by 'jc --sslh'. If you've never run that here,${RESET}"
         echo -e "${GREY}there's nothing to roll back. Otherwise reinstall sslh or use --sslh-remove.${RESET}"
