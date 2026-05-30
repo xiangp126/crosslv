@@ -1,6 +1,6 @@
 # Deploy `sslh` on the VPS to multiplex SSH + VLESS/REALITY on port 22
 
-A reusable plan to put **`sslh-ev`** in front of port 22 on the VPS so that a
+A reusable plan to put **`sslh`** in front of port 22 on the VPS so that a
 single externally-reachable port carries both ordinary SSH logins **and** the
 VLESS+REALITY proxy stream (xray on `127.0.0.1:5902`). This replaces the old
 autossh-tunnel architecture, eliminating TCP-over-TCP and double encryption.
@@ -12,22 +12,72 @@ the laptop can be retired.
 
 ---
 
+## 0. Quick path — `jc --sslh` (recommended)
+
+For the common case (Debian/Ubuntu VPS with xray already installed on
+`127.0.0.1:5902`), the entire deploy is automated by the `jc` script:
+
+```sh
+# On the VPS, inside a tmux session (required — sshd restart drops your shell):
+tmux new -s sslh 'jc --sslh'
+
+# Re-attach from a fresh SSH session after cutover:
+tmux attach -t sslh
+
+# Check status / view monitor history anytime:
+jc --sslh-status
+```
+
+What `jc --sslh` does, mapped to the manual sections below:
+
+| Manual section | Automated by |
+|---|---|
+| §3 Pre-flight checks | Preflight (refuses if Darwin / no apt-get / no tmux when run over SSH / xray unreachable warns) |
+| §4 Install sslh        | Phase 1 (apt + binary autodetect: `sslh-ev` > `sslh-select` > `sslh-fork`; sets `cap_net_bind_service`) |
+| §5 Move sshd off :22   | Phase 2 (write `/etc/ssh/sshd_config.d/10-sslh.conf` adding `ListenAddress 0.0.0.0:8822`) + Phase 4 (strip `:22` from main config) |
+| §6 Configure and start sslh | Phase 3 (write `/etc/sslh.cfg` + DAEMON selector + Layer-3 `Restart=on-failure` drop-in) |
+| §7 End-to-end verification  | Phase 3.5 sandbox test on `:22222` (verifies SSH demux before touching `:22`) + Phase 5 loopback verification |
+| §8 Hardening (firewall)     | Phase 3.6 (`ufw allow 8822/tcp` / `firewall-cmd --add-port`) |
+| Safety net                  | Phase 4 arms a **continuous health monitor** (systemd timer, every 10 min) that auto-rollback if sslh fails 3 consecutive checks |
+
+The CLI also offers:
+
+- `--sslh-ssh-port <port>` — change the internal sshd port (default 8822)
+- `--sslh-xray-port <port>` — change the xray TLS backend port (default 5902)
+- `--sslh-status` — show current deployment status: port topology, monitor state, recent health checks
+- `--sslh-rollback` — manual emergency revert. Stops sslh, restores sshd on :22, keeps the sslh package and configs intact for fast re-deploy via `jc --sslh`.
+- `--sslh-remove` — full teardown: stop sslh, restore sshd:22, apt purge package
+
+The manual sections below (§3-§7) remain documented for reference and for
+non-Debian distros where `jc --sslh` doesn't apply. The teardown path (§10)
+also has a one-command equivalent: `jc --sslh-remove`.
+
+---
+
 ## 1. Goal
 
 After the plan:
 
-- Port 22 is the only externally exposed port on the VPS.
-- `sslh-ev` listens on `0.0.0.0:22`, inspects the first bytes of every new
+- Port 22 is the only externally exposed port on the VPS (typical constraint).
+- `sslh` listens on `0.0.0.0:22`, inspects the first bytes of every new
   connection, then internally splices it to one of two backends:
   - SSH (banner `SSH-2.0-...`) → `127.0.0.1:8822` (sshd)
   - TLS (`0x16 0x03 0x0?` ClientHello) → `127.0.0.1:5902` (xray VLESS+REALITY)
+- sshd ALSO listens on `0.0.0.0:8822` as a **defense-in-depth direct-sshd
+  bypass** — reachable if you've opened :8822 at the VPS firewall (the
+  automated path opens it in local ufw/firewalld; the provider's outer ACL
+  is up to you).
 - `ssh user@vps` (still targeting port 22) continues to work, no client-side
   change needed.
 - Sing-box on the laptop dials `vps:22` with VLESS+REALITY directly, no SSH
   wrapping. End-to-end TLS, one layer of encryption, ~95% of native VLESS
   throughput.
-- A documented **teardown** path exists to revert to plain sshd on 22 +
-  xray-on-some-other-port if `sslh` ever proves unstable.
+- A continuous systemd health monitor (armed by `jc --sslh`, lives in
+  `/etc/systemd/system/jc-sslh-monitor.{service,timer}`, survives reboot)
+  actively checks sslh's :22 every 10 min; 3 consecutive failures (~30 min)
+  auto-rollback to plain sshd:22.
+- A documented **teardown** path exists (`jc --sslh-remove` or §10 manual
+  steps) to revert to plain sshd on 22 + xray-on-localhost.
 
 ---
 
@@ -382,6 +432,34 @@ entry, otherwise `/var/log/syslog` grows fast under load.
 Use this if sslh proves unreliable or you need to roll back fast. Order is
 the inverse of setup. **Keep your emergency back-channel open** during the
 teardown too.
+
+### 10.0 Quick path: `jc --sslh-remove`
+
+The full teardown (steps 10.1-10.6 below) is automated:
+
+```sh
+ssh root@<VPS>
+tmux new -s sslh-remove 'jc --sslh-remove'
+# Reconnect and re-attach if your session dropped during the sshd restart:
+tmux attach -t sslh-remove
+```
+
+What it does, mirror-image of install:
+
+1. Disable and remove the health monitor timer
+2. Restore `Port 22` / `ListenAddress 0.0.0.0` / `ListenAddress ::` in
+   sshd_config (idempotent — checks each line independently)
+3. Stop and disable sslh
+4. Restart sshd → reclaims `:22` (emergency-restore retry if it fails)
+5. Remove the `/etc/ssh/sshd_config.d/10-sslh.conf` drop-in (kills :8822
+   bypass) and reload sshd
+6. `apt purge sslh` + clean up `/etc/sslh.cfg`, systemd drop-ins, and the
+   `/etc/jc-sslh/` and `/var/lib/jc-sslh/` state directories
+7. Timestamped `sshd_config.bak.sslh*` backups are **preserved** for
+   forensics — delete manually when confident
+
+The manual steps below remain for non-Debian distros or for understanding
+what the automated path is doing under the hood.
 
 ### 10.1 Stop sslh
 

@@ -74,6 +74,20 @@ fWireguardRemove=
 fWireguardPort=
 fWireguardServer=
 fWireguardClientName=
+# SSLH server (TCP port-22 mux: SSH + TLS to xray) — only used server-side
+fSslhInstall=
+fSslhRemove=
+fSslhRollback=
+fSslhStatus=
+fSslhSshPort=8822             # internal sshd listen port after cutover
+fSslhXrayPort=5902            # local xray VLESS+REALITY port to forward TLS to
+# Monitor knobs — continuous health check that auto-rollback if sslh dies.
+# Each check actively opens TCP to :22 and verifies an SSH banner round-trip.
+fSslhMonitorIntervalMin=10    # check every N minutes
+fSslhMonitorThreshold=3       # consecutive fails before triggering rollback
+fSslhMonitorBootDelayMin=2    # first check fires this long after boot
+fSslhMonitorTimeoutSec=5      # per-check TCP+banner timeout
+# Add Swap File
 fSwapReq=
 # RTSP Stream Playback
 fRtspFlag=
@@ -219,6 +233,16 @@ Xray Options (server-side only — run on the Xray server host):
     --xray-server <ip>              Set server IP in share URL (auto-detected if omitted)
     --xray-remove                   Remove Xray from system
 
+SSLH Options (server-side only — run on the proxy VPS):
+    --sslh                          Install sslh and multiplex SSH + TLS on port 22
+                                    Arms a health-check monitor that auto-rollback if
+                                    sslh dies (3 consecutive 10-min checks fail).
+    --sslh-ssh-port <port>          Internal sshd listen port (default: 8822)
+    --sslh-xray-port <port>         Xray VLESS+REALITY backend port (default: 5902)
+    --sslh-status                   Show port topology, monitor state, recent health checks
+    --sslh-rollback                 Manually revert NOW: stop sslh, restore sshd:22 (package kept)
+    --sslh-remove                   Stop sslh, restore sshd on :22, purge package
+
 WireGuard Options (server-side only — run on the WireGuard server host):
     --wg                            Install/configure WireGuard VPN server
     --wg-port <port>                Set WireGuard listen port (default: 51820)
@@ -276,6 +300,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           gemini,gemini-remove,cursor-backup,cursor-restore,\
           singbox,singbox-xray,singbox-xray-autossh,singbox-wg,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
+          sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
           acl-block:,acl-unblock:,acl-status:,acl-restart:"
 
 # Use getopt to parse command-line options
@@ -878,6 +903,39 @@ while true; do
             ;;
         --xray-remove)
             fXrayRemove=true
+            shift
+            ;;
+
+        --sslh)
+            fSslhInstall=true
+            shift
+            ;;
+        --sslh-ssh-port)
+            fSslhSshPort="$2"
+            if ! [[ "$fSslhSshPort" =~ ^[0-9]+$ ]] || (( fSslhSshPort < 1 || fSslhSshPort > 65535 )); then
+                echo -e "${RED}Error: Invalid sslh internal sshd port: $fSslhSshPort${RESET}"
+                exit 1
+            fi
+            shift 2
+            ;;
+        --sslh-xray-port)
+            fSslhXrayPort="$2"
+            if ! [[ "$fSslhXrayPort" =~ ^[0-9]+$ ]] || (( fSslhXrayPort < 1 || fSslhXrayPort > 65535 )); then
+                echo -e "${RED}Error: Invalid sslh xray-port: $fSslhXrayPort${RESET}"
+                exit 1
+            fi
+            shift 2
+            ;;
+        --sslh-status)
+            fSslhStatus=true
+            shift
+            ;;
+        --sslh-rollback)
+            fSslhRollback=true
+            shift
+            ;;
+        --sslh-remove)
+            fSslhRemove=true
             shift
             ;;
 
@@ -3115,6 +3173,1140 @@ removeWireguard() {
     fi
 }
 
+# =============================================================================
+# sslh server-side install/remove. Multiplexes SSH + TLS on TCP/22 so that a
+# single externally-reachable port can carry both ordinary SSH logins and the
+# VLESS+REALITY proxy stream (xray on 127.0.0.1:$fSslhXrayPort).
+# Full design: plans/jc-sslh-cli.md
+# =============================================================================
+
+# Helper: warm up sudo cache. On NVIDIA dev machines (and other SSO-bound
+# sudoers), the first sudo invocation may prompt for password and trigger
+# a browser-based MFA challenge. Running `sudo -v` upfront surfaces that
+# prompt at a predictable point — before any destructive operation — so
+# the user isn't surprised mid-cutover. Subsequent sudo calls within the
+# (typically 5-15 min) timeout reuse the cached credential without prompt.
+sslhSudoWarmup() {
+    if ! sudo -v; then
+        echo -e "${RED}Error: sudo authentication failed or unavailable.${RESET}"
+        echo -e "${LIGHTYELLOW}If your shell requires interactive SSO/MFA, run this from a TTY.${RESET}"
+        echo -e "${LIGHTYELLOW}If sudo is fundamentally not available, this command cannot proceed.${RESET}"
+        return 1
+    fi
+    return 0
+}
+
+# Helper: detect if monitor unit files are installed (proxy for "is sslh
+# deployed via jc"). Used by removeSslh / sslhRollback to decide cleanup.
+sslhMonitorInstalled() {
+    [[ -f /etc/systemd/system/jc-sslh-monitor.timer ]]
+}
+
+# Install or refresh sslh on this VPS.
+#
+#   jc --sslh [--sslh-ssh-port PORT] [--sslh-xray-port PORT]
+#
+installSslh() {
+    # ---------- Concurrency guard: take an exclusive flock so two ----------
+    # ---- simultaneous --sslh runs can't race on sshd_config edits or -----
+    # ---- monitor setup. Lock released automatically on script exit. ------
+    if ! command -v flock &>/dev/null; then
+        echo -e "${RED}Error: flock not available; install util-linux first.${RESET}"
+        return 1
+    fi
+    local _sslhLockFd
+    exec {_sslhLockFd}>/var/lock/jc-sslh.lock
+    if ! flock -n -x "$_sslhLockFd"; then
+        echo -e "${RED}Error: another jc --sslh is running (lock held). Aborting.${RESET}"
+        exec {_sslhLockFd}>&-
+        return 1
+    fi
+
+    echo -e "${COLOR}Installing sslh (port-22 multiplex: SSH + TLS to xray)${RESET}"
+
+    # Warm up sudo BEFORE deep work. On NVIDIA dev machines this triggers
+    # the SSO/MFA prompt now (predictable) rather than mid-cutover.
+    echo -e "${GREY}Warming up sudo (may prompt for password / MFA)...${RESET}"
+    sslhSudoWarmup || return 1
+
+    # ---------- Preflight: refuse if any safety prerequisite missing ----------
+
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo -e "${RED}Error: sslh server install is Linux-only.${RESET}"
+        return 1
+    fi
+
+    if ! command -v apt-get &>/dev/null; then
+        echo -e "${RED}Error: --sslh requires apt-get (Debian/Ubuntu).${RESET}"
+        echo -e "${GREY}Other distros are out of scope. See plans/vps-sslh-port22-multiplex.md for manual steps.${RESET}"
+        return 1
+    fi
+
+    # Phase 4 sshd restart will drop our SSH session — refuse if we're not
+    # inside a persistent multiplexer.
+    if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
+        echo -e "${RED}Error: --sslh restarts sshd, which will drop this SSH session.${RESET}"
+        echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen) so the script survives the cutover:${RESET}"
+        echo -e "  ${BLUE}tmux new -s sslh '$0 --sslh'${RESET}"
+        echo -e "${GREY}After tmux starts, reconnect via SSH and 'tmux attach -t sslh' to follow.${RESET}"
+        return 1
+    fi
+
+    # Xray reachability — WARN only. sslh works without xray (SSH demux still
+    # OK); TLS demux silently fails until xray is up.
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/${fSslhXrayPort}" 2>/dev/null; then
+        echo -e "${GREEN}✔${GREY} xray reachable on 127.0.0.1:${fSslhXrayPort}.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Warning: xray not reachable on 127.0.0.1:${fSslhXrayPort}.${RESET}"
+        echo -e "${GREY}sslh will still install; TLS demux will fail until xray is up.${RESET}"
+    fi
+
+    echo -e "${GREEN}✔${GREY} Preflight passed.${RESET}"
+
+    # ---------- Phase 1: apt install + binary autodetect + setcap ----------
+    echo -e "${COLOR}[Phase 1/6] Installing sslh package${RESET}"
+
+    # Ensure setcap is available — needed at end of this phase
+    if ! command -v setcap &>/dev/null; then
+        echo -e "${LIGHTYELLOW}Installing libcap2-bin (provides setcap)${RESET}"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libcap2-bin || {
+            echo -e "${RED}Error: failed to install libcap2-bin.${RESET}"
+            return 1
+        }
+    fi
+
+    # Install sslh package. Tolerate postinst start failure (no /etc/sslh.cfg
+    # yet → service fails to start, harmless). We only need the binary.
+    if ! dpkg-query -W -f='${Status}' sslh 2>/dev/null | grep -q '^install ok installed$'; then
+        echo -e "${LIGHTYELLOW}Running apt-get update + install sslh${RESET}"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y sslh || true
+    else
+        echo -e "${GREEN}✔${GREY} sslh package already installed.${RESET}"
+    fi
+
+    # Auto-pick best available sslh variant: ev > select > fork.
+    # Steady-state perf identical (all use splice(2)); only new-connection
+    # setup differs (μs for ev/select, ms for fork).
+    local sslhBin=""
+    for candidate in /usr/sbin/sslh-ev /usr/sbin/sslh-select /usr/sbin/sslh-fork; do
+        if [[ -x "$candidate" ]]; then
+            sslhBin="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$sslhBin" ]]; then
+        echo -e "${RED}Error: no sslh binary found in /usr/sbin/ after install.${RESET}"
+        echo -e "${GREY}Inspect 'apt-get install sslh' output above; package may have failed to unpack.${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} Using $(basename "$sslhBin") for sslh runtime.${RESET}"
+
+    # Verify the sslh system user exists (created by Debian's package postinst).
+    # If postinst failed silently this catches it before later phases trip on it.
+    if ! getent passwd sslh >/dev/null 2>&1; then
+        echo -e "${RED}Error: 'sslh' system user is missing — package postinst likely failed.${RESET}"
+        echo -e "${GREY}Try: sudo apt-get install --reinstall sslh${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} sslh system user present.${RESET}"
+
+    # Set CAP_NET_BIND_SERVICE so the unprivileged sslh user can bind :22.
+    # Debian's postinst usually does this but we re-apply defensively (idempotent).
+    if ! sudo setcap cap_net_bind_service+ep "$sslhBin"; then
+        echo -e "${RED}Error: setcap failed on $sslhBin.${RESET}"
+        return 1
+    fi
+    if ! sudo getcap "$sslhBin" 2>/dev/null | grep -q cap_net_bind_service; then
+        echo -e "${RED}Error: cap_net_bind_service did not stick on $sslhBin.${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} cap_net_bind_service set on $sslhBin.${RESET}"
+
+    # ---------- Phase 2: sshd listen on 0.0.0.0:$fSslhSshPort (non-disruptive) ----------
+    echo -e "${COLOR}[Phase 2/6] Adding sshd listen on 0.0.0.0:${fSslhSshPort} (drop-in)${RESET}"
+
+    # Verify main sshd_config sources /etc/ssh/sshd_config.d/*.conf — modern
+    # Debian/Ubuntu have this by default; add if absent.
+    if ! grep -qE '^\s*Include\s+/etc/ssh/sshd_config\.d/\*\.conf\s*$' /etc/ssh/sshd_config 2>/dev/null; then
+        echo -e "${LIGHTYELLOW}Main sshd_config lacks Include for drop-ins; adding it.${RESET}"
+        echo 'Include /etc/ssh/sshd_config.d/*.conf' | sudo tee -a /etc/ssh/sshd_config >/dev/null
+    fi
+
+    local sshdDropIn=/etc/ssh/sshd_config.d/10-sslh.conf
+    local sshdDropInContent
+    sshdDropInContent="$(cat <<EOF
+# Managed by jc --sslh. Do not edit; rerun jc --sslh to refresh.
+# 0.0.0.0 binding is intentional: defense-in-depth direct-sshd bypass path
+# in case sslh fails. External reachability still gated by VPS firewall.
+ListenAddress 0.0.0.0:${fSslhSshPort}
+EOF
+)"
+
+    # Idempotent write: skip if content already matches
+    local needSshdWrite=1
+    if [[ -f "$sshdDropIn" ]]; then
+        if [[ "$(sudo cat "$sshdDropIn" 2>/dev/null)" == "$sshdDropInContent" ]]; then
+            echo -e "${GREEN}✔${GREY} sshd drop-in already up to date.${RESET}"
+            needSshdWrite=0
+        fi
+    fi
+    if (( needSshdWrite )); then
+        echo "$sshdDropInContent" | sudo tee "$sshdDropIn" >/dev/null
+        sudo chmod 644 "$sshdDropIn"
+        echo -e "${GREEN}✔${GREY} Wrote $sshdDropIn${RESET}"
+    fi
+
+    # Validate sshd config syntax. On failure, remove the drop-in and abort.
+    local sshdTmpErr
+    sshdTmpErr="$(mktemp /tmp/sshd-t.XXXXXX)"
+    if ! sudo sshd -t 2>"$sshdTmpErr"; then
+        echo -e "${RED}Error: sshd -t failed after writing $sshdDropIn:${RESET}"
+        cat "$sshdTmpErr"
+        sudo rm -f "$sshdDropIn"
+        rm -f "$sshdTmpErr"
+        return 1
+    fi
+    rm -f "$sshdTmpErr"
+    echo -e "${GREEN}✔${GREY} sshd config syntax check passed.${RESET}"
+
+    # Reload sshd to pick up new ListenAddress
+    sudo systemctl reload ssh
+    sleep 1
+
+    # Verify new port is actually bound. If reload didn't pick it up (rare,
+    # but seen with old OpenSSH), escalate to restart. Still safe — :22 listen
+    # hasn't been removed yet, so existing sessions survive.
+    if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":${fSslhSshPort}$"; then
+        echo -e "${LIGHTYELLOW}Reload did not pick up :${fSslhSshPort}; escalating to restart...${RESET}"
+        sudo systemctl restart ssh
+        sleep 1
+        if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":${fSslhSshPort}$"; then
+            echo -e "${RED}Error: sshd did not bind :${fSslhSshPort} even after restart.${RESET}"
+            ss -tln 2>/dev/null | awk '{print $4}' | grep -E ":22$|:${fSslhSshPort}$" || true
+            return 1
+        fi
+    fi
+    echo -e "${GREEN}✔${GREY} sshd now listening on :${fSslhSshPort} (alongside :22).${RESET}"
+
+    # Sanity: :22 must still be listening — Phase 2 doesn't remove it.
+    if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":22$"; then
+        echo -e "${RED}Error: sshd no longer listening on :22 after Phase 2.${RESET}"
+        echo -e "${RED}This is unexpected — Phase 2 only ADDS a listen.${RESET}"
+        return 1
+    fi
+
+    # ---------- Phase 3: sslh.cfg + DAEMON + resilience drop-in + enable ----------
+    echo -e "${COLOR}[Phase 3/6] Configuring sslh (config + systemd)${RESET}"
+
+    # Backup existing /etc/sslh.cfg if present (from prior install or apt postinst)
+    if [[ -f /etc/sslh.cfg ]]; then
+        local cfgBak
+        cfgBak="/etc/sslh.cfg.bak.$(date +%Y%m%d-%H%M%S)"
+        sudo cp -a /etc/sslh.cfg "$cfgBak"
+        echo -e "${GREEN}✔${GREY} Backed up existing /etc/sslh.cfg to $cfgBak${RESET}"
+    fi
+
+    # Write /etc/sslh.cfg. Compatible with sslh 1.20+ (avoids fields added in
+    # 1.21 like `numeric:` and `probe: "builtin"` so it works on focal too).
+    # The unquoted heredoc tag SSLHCFG lets ${fSslhSshPort} / ${fSslhXrayPort} interpolate.
+    sudo tee /etc/sslh.cfg >/dev/null <<SSLHCFG
+# Generated by jc --sslh. Rerun jc --sslh to regenerate.
+verbose: 0;
+foreground: false;
+inetd: false;
+transparent: false;
+timeout: 5;
+user: "sslh";
+pidfile: "/var/run/sslh.pid";
+
+listen:
+(
+    { host: "0.0.0.0"; port: "22"; }
+);
+
+# Probes are implicit by name: "ssh" -> SSH banner detection,
+# "tls" -> TLS ClientHello detection.
+protocols:
+(
+    { name: "ssh";  host: "127.0.0.1"; port: "${fSslhSshPort}";  service: "ssh"; },
+    { name: "tls";  host: "127.0.0.1"; port: "${fSslhXrayPort}"; }
+);
+SSLHCFG
+    sudo chmod 644 /etc/sslh.cfg
+    echo -e "${GREEN}✔${GREY} Wrote /etc/sslh.cfg${RESET}"
+
+    # DAEMON selector. Prefer /etc/default/sslh (Debian's legacy mechanism);
+    # if missing (newer Debian), write systemd drop-in to override ExecStart.
+    if [[ -f /etc/default/sslh ]]; then
+        if grep -q '^DAEMON=' /etc/default/sslh; then
+            sudo sed -i -E "s|^DAEMON=.*|DAEMON=$sslhBin|" /etc/default/sslh
+        else
+            echo "DAEMON=$sslhBin" | sudo tee -a /etc/default/sslh >/dev/null
+        fi
+        echo -e "${GREEN}✔${GREY} Set DAEMON=$sslhBin in /etc/default/sslh${RESET}"
+    else
+        sudo mkdir -p /etc/systemd/system/sslh.service.d
+        sudo tee /etc/systemd/system/sslh.service.d/10-daemon.conf >/dev/null <<DROPIN
+[Service]
+ExecStart=
+ExecStart=$sslhBin -F /etc/sslh.cfg
+DROPIN
+        echo -e "${GREEN}✔${GREY} Wrote systemd drop-in (10-daemon.conf) overriding ExecStart=$sslhBin${RESET}"
+    fi
+
+    # Layer 3: resilience drop-in — auto-restart sslh on crash.
+    # StartLimitBurst=10 over 120s = up to 10 restarts in 2 min before
+    # systemd gives up. Tight enough to notice real failures, generous
+    # enough to ride out transient issues.
+    sudo mkdir -p /etc/systemd/system/sslh.service.d
+    sudo tee /etc/systemd/system/sslh.service.d/20-resilience.conf >/dev/null <<'RESILIENCE'
+# Managed by jc --sslh. Layer-3 of safety architecture: auto-recovery.
+[Service]
+Restart=on-failure
+RestartSec=2s
+StartLimitBurst=10
+StartLimitIntervalSec=120
+RESILIENCE
+    echo -e "${GREEN}✔${GREY} Wrote resilience drop-in (20-resilience.conf, Restart=on-failure)${RESET}"
+
+    # Reload systemd to pick up drop-ins
+    sudo systemctl daemon-reload
+
+    # Idempotent enable — handles re-run after a previous monitor-triggered rollback
+    # (which disabled sslh).
+    sudo systemctl enable sslh 2>/dev/null || true
+    echo -e "${GREEN}✔${GREY} sslh enabled (will auto-start on boot once running).${RESET}"
+
+    # ---------- Phase 3.5: Layer-2 sandbox test on scratch port ----------
+    echo -e "${COLOR}[Phase 3.5/6] Sandbox test (no impact on :22)${RESET}"
+
+    # Find an unused high port for the sandbox
+    local sandboxPort="" p
+    for p in 22222 22223 22224 22225 22226 22227 22228 22229 22230 22231; do
+        if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":${p}$"; then
+            sandboxPort=$p
+            break
+        fi
+    done
+    if [[ -z "$sandboxPort" ]]; then
+        echo -e "${RED}Error: ports 22222-22231 all busy; cannot run sandbox test.${RESET}"
+        return 1
+    fi
+    echo -e "${GREY}Using sandbox port :${sandboxPort} (127.0.0.1 only)${RESET}"
+
+    # Sandbox config: foreground=true so sslh runs attached to our background process
+    local sandboxCfg=/tmp/sslh-sandbox.cfg
+    sudo tee "$sandboxCfg" >/dev/null <<SANDBOX
+verbose: 0;
+foreground: true;
+inetd: false;
+transparent: false;
+timeout: 5;
+user: "sslh";
+pidfile: "/tmp/sslh-sandbox.pid";
+
+listen:
+(
+    { host: "127.0.0.1"; port: "${sandboxPort}"; }
+);
+
+protocols:
+(
+    { name: "ssh";  host: "127.0.0.1"; port: "${fSslhSshPort}";  service: "ssh"; },
+    { name: "tls";  host: "127.0.0.1"; port: "${fSslhXrayPort}"; }
+);
+SANDBOX
+    sudo chmod 644 "$sandboxCfg"
+
+    # Spawn sandbox sslh in background
+    sudo "$sslhBin" -F "$sandboxCfg" >/tmp/sslh-sandbox.log 2>&1 &
+    local sandboxPid=$!
+
+    # Wait up to 3s for bind
+    local waited=0 bound=0
+    while (( waited < 3 )); do
+        if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":${sandboxPort}$"; then
+            bound=1
+            break
+        fi
+        sleep 1
+        ((waited++))
+    done
+
+    if (( ! bound )); then
+        echo -e "${RED}Error: sandbox sslh failed to bind :${sandboxPort} within 3s.${RESET}"
+        echo -e "${GREY}Sandbox log:${RESET}"
+        sudo tail -20 /tmp/sslh-sandbox.log 2>/dev/null
+        sudo kill "$sandboxPid" 2>/dev/null || true
+        sudo pkill -f "$sandboxCfg" 2>/dev/null || true
+        sudo rm -f "$sandboxCfg" /tmp/sslh-sandbox.log /tmp/sslh-sandbox.pid
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} Sandbox sslh listening on :${sandboxPort}.${RESET}"
+
+    # Test 1: SSH demux. Sandbox forwards SSH to 127.0.0.1:$fSslhSshPort (sshd).
+    # Any auth result other than "Connection refused" proves demux worked
+    # (Permission denied / publickey rejection = success — banner exchange completed).
+    local sshTestOut sshTestOk=0
+    sshTestOut="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
+                      -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
+                      -p "$sandboxPort" root@127.0.0.1 true 2>&1)"
+    if ! echo "$sshTestOut" | grep -qE 'Connection refused|Connection timed out'; then
+        sshTestOk=1
+        echo -e "${GREEN}✔${GREY} SSH demux: works (sandbox -> sshd).${RESET}"
+    else
+        echo -e "${RED}✗ SSH demux failed:${RESET}"
+        echo -e "${GREY}${sshTestOut}${RESET}"
+    fi
+
+    # Note: no TLS demux end-to-end test here. sslh's builtin SSH and TLS
+    # probes are symmetric — if SSH demux works (above), TLS demux works too;
+    # the only thing a TLS handshake test would exercise beyond that is
+    # xray's REALITY config correctness, which is out of sslh's scope.
+    # User validates TLS path by connecting their sing-box client.
+
+    # Tear down sandbox
+    sudo kill "$sandboxPid" 2>/dev/null || true
+    sudo pkill -f "$sandboxCfg" 2>/dev/null || true
+    sudo rm -f "$sandboxCfg" /tmp/sslh-sandbox.log /tmp/sslh-sandbox.pid
+    echo -e "${GREEN}✔${GREY} Sandbox cleaned up.${RESET}"
+
+    # SSH demux failure is fatal — sslh's protocol-dispatch engine is broken.
+    if (( ! sshTestOk )); then
+        echo -e "${RED}Sandbox SSH demux failed. Aborting before Phase 4 — system externally unchanged.${RESET}"
+        return 1
+    fi
+
+    # ---------- Phase 3.6: Layer-1 firewall allow :$fSslhSshPort (best-effort) ----------
+    echo -e "${COLOR}[Phase 3.6/6] Opening local firewall for :${fSslhSshPort} (sshd bypass)${RESET}"
+
+    # Try ufw first, then firewalld. ufw stages the rule even when inactive
+    # (takes effect when activated later); firewalld needs to be running for
+    # permanent rules to be added.
+    if command -v ufw &>/dev/null; then
+        sudo ufw allow "${fSslhSshPort}/tcp" >/dev/null 2>&1
+        if sudo ufw status 2>/dev/null | grep -q '^Status: active'; then
+            echo -e "${GREEN}✔${GREY} ufw: allowed :${fSslhSshPort}/tcp (active).${RESET}"
+        else
+            echo -e "${GREEN}✔${GREY} ufw: staged rule for :${fSslhSshPort}/tcp (ufw is inactive — rule takes effect when enabled).${RESET}"
+        fi
+    elif command -v firewall-cmd &>/dev/null && sudo firewall-cmd --state 2>/dev/null | grep -q running; then
+        sudo firewall-cmd --permanent --add-port="${fSslhSshPort}/tcp" >/dev/null 2>&1
+        sudo firewall-cmd --reload >/dev/null 2>&1
+        echo -e "${GREEN}✔${GREY} firewalld: allowed :${fSslhSshPort}/tcp (permanent).${RESET}"
+    else
+        echo -e "${GREY}No ufw/firewalld present; skipping local firewall.${RESET}"
+    fi
+    echo -e "${LIGHTYELLOW}Reminder: VPS provider's outer ACL must also allow :${fSslhSshPort} for the${RESET}"
+    echo -e "${LIGHTYELLOW}emergency direct-sshd bypass to be reachable from outside.${RESET}"
+
+    # ---------- Phase 4: cutover — strip :22 from sshd_config, restart sshd + sslh ----------
+    echo -e "${COLOR}[Phase 4/6] Cutover: handing :22 over to sslh${RESET}"
+
+    # Backup main sshd_config before sed edits. HARD FAIL if cp fails — the
+    # rollback script depends on this file existing.
+    local sshdBak
+    sshdBak="/etc/ssh/sshd_config.bak.sslh.$(date +%Y%m%d-%H%M%S)"
+    if ! sudo cp -a /etc/ssh/sshd_config "$sshdBak"; then
+        echo -e "${RED}Error: failed to back up sshd_config. Aborting before any changes.${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} Backed up sshd_config to $sshdBak${RESET}"
+
+    # ---------- INSTALL ROLLBACK SCRIPT + MONITOR (always) -----------------
+    # /etc/jc-sslh/rollback.sh is the SINGLE SOURCE OF TRUTH for the rollback
+    # action. It is run:
+    #   (1) by jc-sslh-monitor.service when N consecutive health checks fail
+    #   (2) by `jc --sslh-rollback` (manual rollback from console)
+    # Both paths execute the same bytes.
+    sudo mkdir -p /etc/jc-sslh /var/lib/jc-sslh
+
+    sudo tee /etc/jc-sslh/rollback.sh >/dev/null <<'ROLLBACK'
+#!/bin/bash
+# Roll back sslh deployment: stop sslh, restore sshd on :22 from backup.
+# Triggered by jc-sslh-monitor.service (auto) or jc --sslh-rollback (manual).
+# Output goes to stdout — captured by journald via systemd unit context, or
+# shown on user's terminal in manual mode.
+set +e
+
+# Take exclusive lock to prevent monitor and manual rollback from racing.
+exec 9>/var/lock/jc-sslh-rollback.lock
+if ! flock -n 9; then
+    echo "Another rollback already in progress; this invocation does nothing."
+    exit 0
+fi
+
+echo "=== $(date -Is) rollback action begin ==="
+logger -t jc-sslh-rollback "Rollback triggered."
+
+# 1) Stop AND disable sslh — package stays installed, service paused
+systemctl disable --now sslh
+
+# 2) Restore main sshd_config from latest install backup
+LATEST_BAK=$(ls -t /etc/ssh/sshd_config.bak.sslh.* 2>/dev/null | head -1)
+if [ -n "$LATEST_BAK" ]; then
+    cp -a "$LATEST_BAK" /etc/ssh/sshd_config
+    echo "Restored sshd_config from $LATEST_BAK"
+else
+    echo "WARNING: no sshd_config backup found; skipping config restore."
+fi
+
+# 3) CRITICAL: remove our drop-in. Otherwise its explicit
+#    "ListenAddress 0.0.0.0:8822" disables sshd's default :22 binding —
+#    OpenSSH binds ONLY to the explicit ListenAddress when any is present.
+rm -f /etc/ssh/sshd_config.d/10-sslh.conf
+
+# 4) Re-enable AND start ssh.socket (Ubuntu 22.04+ socket activation).
+systemctl enable --now ssh.socket 2>/dev/null
+
+# 5) Restart sshd → reclaims :22 (defaults restored).
+systemctl restart ssh
+sleep 1
+if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ':22$'; then
+    echo "sshd restart did not bind :22; trying ssh.socket start fallback."
+    systemctl start ssh.socket 2>/dev/null
+    sleep 2
+fi
+if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ':22$'; then
+    echo "Verified :22 bound after rollback."
+    logger -t jc-sslh-rollback "Rollback complete. sshd on :22."
+else
+    echo "WARNING: :22 STILL unbound after rollback. Manual recovery needed."
+    logger -t jc-sslh-rollback "ROLLBACK INCOMPLETE — :22 unbound."
+fi
+
+# 6) Disable monitor — there's nothing to monitor anymore (sslh stopped).
+#    User redeploys via `jc --sslh` to re-arm everything.
+systemctl disable --now jc-sslh-monitor.timer 2>/dev/null
+
+exit 0
+ROLLBACK
+    sudo chmod 700 /etc/jc-sslh/rollback.sh
+
+    # ---------- INSTALL HEALTH-CHECK SCRIPT ---------------------------------
+    # Runs every $fSslhMonitorIntervalMin minutes via jc-sslh-monitor.timer.
+    # If $fSslhMonitorThreshold consecutive checks fail, triggers rollback.
+    # Tracks failure count in /var/lib/jc-sslh/failure-count.
+    sudo tee /etc/jc-sslh/monitor-check.sh >/dev/null <<MONITOR
+#!/bin/bash
+# Continuous sslh health check. Triggered by jc-sslh-monitor.timer.
+# Active test: TCP connect to :22, send SSH banner, expect sshd banner reply.
+# Output goes to stdout → journald via systemd unit context.
+set +e
+
+THRESHOLD=${fSslhMonitorThreshold}
+TIMEOUT=${fSslhMonitorTimeoutSec}
+COUNT_FILE=/var/lib/jc-sslh/failure-count
+mkdir -p "\$(dirname "\$COUNT_FILE")"
+
+# Active SSH banner exchange (tests TCP + sslh demux + sshd liveness in one).
+banner=\$(timeout "\$TIMEOUT" bash -c '
+    exec 3<>/dev/tcp/127.0.0.1/22 || exit 1
+    echo "SSH-2.0-jc-monitor" >&3
+    head -c 200 <&3
+' 2>/dev/null)
+
+prev=\$(cat "\$COUNT_FILE" 2>/dev/null || echo 0)
+
+if [[ "\$banner" == SSH-2.0-* ]]; then
+    # Healthy. Only log if state changed from unhealthy → healthy.
+    if [[ "\$prev" != "0" ]]; then
+        echo "\$(date -Is) health RECOVERED after \$prev fail(s); banner=\$(echo "\$banner" | head -c 50)"
+    fi
+    echo 0 > "\$COUNT_FILE"
+    exit 0
+fi
+
+# Unhealthy: increment counter.
+count=\$((prev + 1))
+echo "\$count" > "\$COUNT_FILE"
+echo "\$(date -Is) health FAIL \$count/\$THRESHOLD; banner='\$banner'"
+logger -t jc-sslh-monitor "health fail \$count/\$THRESHOLD"
+
+if (( count >= THRESHOLD )); then
+    echo "\$(date -Is) THRESHOLD REACHED — triggering /etc/jc-sslh/rollback.sh"
+    logger -t jc-sslh-monitor "Threshold reached, triggering rollback"
+    /etc/jc-sslh/rollback.sh
+fi
+exit 0
+MONITOR
+    sudo chmod 700 /etc/jc-sslh/monitor-check.sh
+
+    # ---------- INSTALL MONITOR systemd UNITS ------------------------------
+    sudo tee /etc/systemd/system/jc-sslh-monitor.service >/dev/null <<'MONSVC'
+[Unit]
+Description=jc sslh health check (active SSH banner test on :22)
+
+[Service]
+Type=oneshot
+ExecStart=/etc/jc-sslh/monitor-check.sh
+MONSVC
+
+    sudo tee /etc/systemd/system/jc-sslh-monitor.timer >/dev/null <<MONTIMER
+[Unit]
+Description=jc sslh monitor timer (every ${fSslhMonitorIntervalMin}min after a ${fSslhMonitorBootDelayMin}min boot delay)
+
+[Timer]
+OnBootSec=${fSslhMonitorBootDelayMin}min
+OnUnitActiveSec=${fSslhMonitorIntervalMin}min
+Persistent=false
+Unit=jc-sslh-monitor.service
+
+[Install]
+WantedBy=timers.target
+MONTIMER
+
+    sudo systemctl daemon-reload
+    if ! sudo systemctl enable --now jc-sslh-monitor.timer; then
+        echo -e "${RED}Error: failed to arm health monitor. Aborting before destructive changes.${RESET}"
+        sudo rm -f /etc/systemd/system/jc-sslh-monitor.{service,timer}
+        sudo systemctl daemon-reload
+        return 1
+    fi
+    # Reset failure count so a re-deploy starts from zero
+    echo 0 | sudo tee /var/lib/jc-sslh/failure-count >/dev/null
+    echo -e "${GREEN}✔${GREY} Health monitor armed (check every ${fSslhMonitorIntervalMin}min, ${fSslhMonitorThreshold} consecutive fails → auto rollback).${RESET}"
+
+    # Strip top-level lines that bind :22 publicly. Matches:
+    #   Port 22
+    #   ListenAddress 0.0.0.0           (no port = defaults to all configured Port)
+    #   ListenAddress 0.0.0.0:22
+    #   ListenAddress ::                (bare IPv6 wildcard, no brackets)
+    #   ListenAddress [::]              (bracketed IPv6 wildcard, no port)
+    #   ListenAddress [::]:22           (bracketed IPv6 + port 22)
+    # Tolerates leading whitespace and optional leading `#`.
+    sudo sed -i -E '
+        /^[[:space:]]*#?[[:space:]]*Port[[:space:]]+22[[:space:]]*$/d
+        /^[[:space:]]*#?[[:space:]]*ListenAddress[[:space:]]+0\.0\.0\.0([[:space:]]*$|:22[[:space:]]*$)/d
+        /^[[:space:]]*#?[[:space:]]*ListenAddress[[:space:]]+(::|\[::\](:22)?)[[:space:]]*$/d
+    ' /etc/ssh/sshd_config
+
+    # Validate. If sshd -t fails, restore backup and abort.
+    local cutoverTmpErr
+    cutoverTmpErr="$(mktemp /tmp/sshd-t.XXXXXX)"
+    if ! sudo sshd -t 2>"$cutoverTmpErr"; then
+        echo -e "${RED}Error: sshd -t failed after stripping :22 lines. Restoring backup.${RESET}"
+        cat "$cutoverTmpErr"
+        sudo cp -a "$sshdBak" /etc/ssh/sshd_config
+        rm -f "$cutoverTmpErr"
+        return 1
+    fi
+    rm -f "$cutoverTmpErr"
+    echo -e "${GREEN}✔${GREY} sshd config syntax OK after :22 strip.${RESET}"
+
+    # Disable ssh.socket if active — otherwise it keeps :22 bound regardless of sshd_config.
+    if systemctl is-enabled ssh.socket &>/dev/null; then
+        sudo systemctl disable --now ssh.socket 2>/dev/null || true
+        echo -e "${GREEN}✔${GREY} Disabled ssh.socket (was holding :22).${RESET}"
+    fi
+
+    # Best-effort discovery of public IP for the reconnect-command banner
+    local pubIp
+    pubIp=$(curl -4 -s --connect-timeout 2 https://ifconfig.me 2>/dev/null || true)
+    [[ -z "$pubIp" ]] && pubIp=$(curl -4 -s --connect-timeout 2 https://api.ipify.org 2>/dev/null || true)
+    [[ -z "$pubIp" ]] && pubIp=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$pubIp" ]] && pubIp='<VPS-IP>'
+
+    # tmux session name for the re-attach hint
+    local tmuxSess=""
+    if [[ -n "$TMUX" ]]; then
+        tmuxSess=$(tmux display-message -p '#S' 2>/dev/null || echo "")
+    elif [[ -n "$STY" ]]; then
+        tmuxSess="$STY"
+    fi
+    [[ -z "$tmuxSess" ]] && tmuxSess="sslh"
+
+    # ===== BIG RED BANNER — last thing user sees before SSH drops =====
+    echo
+    echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}${RED}  ⚠  SSH SESSION WILL DROP IN ~2 SECONDS  ⚠${RESET}"
+    echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${LIGHTYELLOW}  sshd is being restarted to release :22 for sslh.${RESET}"
+    echo -e "${LIGHTYELLOW}  Your current SSH connection will be terminated.${RESET}"
+    echo
+    echo -e "${BOLD}  To reconnect (try in order):${RESET}"
+    echo -e "    ${GREEN}1) Normal:${RESET}   ssh ${USER}@${pubIp}             ${GREY}# via sslh on :22${RESET}"
+    echo -e "    ${GREEN}2) Bypass:${RESET}   ssh -p ${fSslhSshPort} ${USER}@${pubIp}        ${GREY}# direct sshd (if firewall allows)${RESET}"
+    echo
+    echo -e "${BOLD}  This script keeps running inside tmux. Re-attach with:${RESET}"
+    echo -e "    ${BLUE}tmux attach -t ${tmuxSess}${RESET}"
+    echo
+    echo -e "${BOLD}${LIGHTYELLOW}  ◉  Health monitor armed.${RESET}"
+    echo -e "${LIGHTYELLOW}  If sslh dies, monitor will auto-rollback within ~${fSslhMonitorIntervalMin}*${fSslhMonitorThreshold} min.${RESET}"
+    echo -e "${LIGHTYELLOW}  Check status anytime: ${BOLD}${GREEN}jc --sslh-status${RESET}"
+    echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo
+    sleep 2
+
+    # ===== THE CUTOVER — current SSH session dies after this =====
+    sudo systemctl restart ssh
+
+    # Verify sshd actually came up with the new config (timeout 10s).
+    local _sshOk=0 _w=0
+    while (( _w < 10 )); do
+        if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":${fSslhSshPort}$"; then
+            _sshOk=1
+            break
+        fi
+        sleep 1
+        ((_w++))
+    done
+    if (( ! _sshOk )); then
+        echo -e "${RED}✗ sshd did not bind :${fSslhSshPort} within 10s. Monitor will auto-rollback in ~30 min.${RESET}"
+        sudo systemctl status ssh --no-pager 2>&1 | tail -10
+        # Monitor will catch this and trigger rollback. Just exit.
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} sshd up on :${fSslhSshPort}.${RESET}"
+
+    sudo systemctl restart sslh
+
+    # Verify sslh actually came up on :22 (timeout 10s).
+    local _sslhOk=0
+    _w=0
+    while (( _w < 10 )); do
+        if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":22$"; then
+            _sslhOk=1
+            break
+        fi
+        sleep 1
+        ((_w++))
+    done
+    if (( ! _sslhOk )); then
+        echo -e "${RED}✗ sslh did not bind :22 within 10s. Monitor will auto-rollback in ~30 min.${RESET}"
+        sudo systemctl status sslh --no-pager 2>&1 | tail -10
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} sslh up on :22.${RESET}"
+
+    # ---------- Phase 5: loopback verification (non-fatal) ----------
+    # All checks below WARN on failure but do NOT abort, because the health
+    # monitor is already armed (Phase 4). If something is genuinely broken,
+    # monitor will fire rollback after ~30 min. If just transient (e.g.
+    # ss racy during restart), monitor counter resets when sslh recovers.
+    echo -e "${COLOR}[Phase 5/6] Verifying cutover (loopback, non-fatal)${RESET}"
+
+    local _verifyWarnings=0
+
+    # Port topology check
+    local p22who p_ssh_who
+    p22who=$(sudo ss -tlnp 2>/dev/null | awk '$4 ~ /:22$/ {print $NF}' | head -1)
+    p_ssh_who=$(sudo ss -tlnp 2>/dev/null | awk -v p=":${fSslhSshPort}$" '$4 ~ p {print $NF}' | head -1)
+    if echo "$p22who" | grep -qi sslh; then
+        echo -e "${GREEN}✔${GREY} :22 owned by sslh.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}⚠  :22 not owned by sslh (saw: ${p22who:-nothing}). Monitor will catch this.${RESET}"
+        ((_verifyWarnings++))
+    fi
+    if echo "$p_ssh_who" | grep -qi sshd; then
+        echo -e "${GREEN}✔${GREY} :${fSslhSshPort} owned by sshd.${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}⚠  :${fSslhSshPort} not owned by sshd (saw: ${p_ssh_who:-nothing}).${RESET}"
+        ((_verifyWarnings++))
+    fi
+
+    # Test A: SSH via sslh on :22
+    local sshVia
+    sshVia="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
+                  -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
+                  -p 22 root@127.0.0.1 true 2>&1)"
+    if echo "$sshVia" | grep -qE 'Connection refused|Connection timed out'; then
+        echo -e "${LIGHTYELLOW}⚠  SSH-via-sslh failed: ${sshVia}${RESET}"
+        ((_verifyWarnings++))
+    else
+        echo -e "${GREEN}✔${GREY} SSH-via-sslh (port 22): demux works.${RESET}"
+    fi
+
+    # Test B: SSH direct bypass on :$fSslhSshPort
+    local sshDirect
+    sshDirect="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=no \
+                     -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 \
+                     -p "$fSslhSshPort" root@127.0.0.1 true 2>&1)"
+    if echo "$sshDirect" | grep -qE 'Connection refused|Connection timed out'; then
+        echo -e "${LIGHTYELLOW}⚠  SSH-direct bypass failed: ${sshDirect}${RESET}"
+        ((_verifyWarnings++))
+    else
+        echo -e "${GREEN}✔${GREY} SSH-direct bypass (port ${fSslhSshPort}): works.${RESET}"
+    fi
+
+    # No TLS handshake test here — see Phase 3.5 rationale. SSH demux passing
+    # above implies TLS demux works too (same sslh probe engine). Validate
+    # the full TLS path via your sing-box client, not via this script.
+    # (xray reachability was already checked in preflight as a warning.)
+
+    if (( _verifyWarnings > 0 )); then
+        echo -e "${LIGHTYELLOW}Phase 5 had ${_verifyWarnings} warning(s). Monitor is armed; if real failure, it will auto-rollback.${RESET}"
+    fi
+
+    # ---------- Phase 6: summary ----------
+    echo -e "${COLOR}[Phase 6/6] Summary${RESET}"
+
+    echo
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}${GREEN}  ✅ sslh deployment complete${RESET}"
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}  Port topology:${RESET}"
+    echo -e "    ${CYAN}:22${RESET}      sslh           ${GREY}(mux: SSH and TLS)${RESET}"
+    echo -e "    ${CYAN}:${fSslhSshPort}${RESET}    sshd (bypass) ${GREY}(direct SSH, defense in depth)${RESET}"
+    echo -e "    ${CYAN}:${fSslhXrayPort}${RESET}    xray           ${GREY}(VLESS+REALITY, localhost only)${RESET}"
+    echo
+    echo -e "${BOLD}  Reconnect (if your SSH session dropped):${RESET}"
+    echo -e "    ${GREEN}ssh ${USER}@<vps>${RESET}              ${GREY}# normal — via sslh${RESET}"
+    echo -e "    ${GREEN}ssh -p ${fSslhSshPort} ${USER}@<vps>${RESET}         ${GREY}# bypass — direct sshd${RESET}"
+    echo
+    echo -e "${BOLD}  Health monitor armed:${RESET}"
+    echo -e "${GREY}    Check active health + recent logs:${RESET}  ${BOLD}${GREEN}jc --sslh-status${RESET}"
+    echo -e "${GREY}    Manual rollback at any time:${RESET}       ${BOLD}${GREEN}jc --sslh-rollback${RESET}"
+    echo -e "${GREY}    Or: systemctl list-timers jc-sslh-monitor.timer${RESET}"
+    echo -e "${GREY}    Or: journalctl -u jc-sslh-monitor.service -n 30${RESET}"
+    echo -e "${GREY}    If sslh dies, monitor auto-rollbacks within ~${fSslhMonitorIntervalMin}*${fSslhMonitorThreshold} min.${RESET}"
+    echo
+    echo -e "${BOLD}  VPS provider ACL reminder:${RESET}"
+    echo -e "${GREY}    Open :${fSslhSshPort}/tcp at the provider's outer firewall if you want the${RESET}"
+    echo -e "${GREY}    emergency direct-sshd bypass reachable externally.${RESET}"
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo
+    return 0
+}
+
+# Manual emergency revert. Thin wrapper around /etc/jc-sslh/rollback.sh —
+# the EXACT same script the health monitor runs when it triggers. Single
+# source of truth: manual and auto rollback share the same code path.
+#
+# Use case: sslh died / misconfigured / want to undo before monitor's
+# ~30 min reaction. Run `jc --sslh-rollback` (from console or SSH-in-tmux).
+sslhRollback() {
+    echo -e "${COLOR}Rolling back sslh deployment (sshd back on :22)${RESET}"
+
+    # Warm up sudo (NVIDIA SSO etc.) — may be from console
+    sslhSudoWarmup || return 1
+
+    # Refuse if invoked over SSH without tmux — sshd restart will drop us.
+    if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
+        echo -e "${RED}Error: --sslh-rollback restarts sshd; SSH session will drop.${RESET}"
+        echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen), or run from VPS console:${RESET}"
+        echo -e "  ${BLUE}tmux new -s rollback '$0 --sslh-rollback'${RESET}"
+        return 1
+    fi
+
+    # Detect "nothing to roll back" early
+    if [[ ! -f /etc/ssh/sshd_config.d/10-sslh.conf ]] \
+       && ! systemctl is-active --quiet sslh 2>/dev/null \
+       && ! sslhMonitorInstalled; then
+        echo -e "${GREY}sslh appears already rolled back (no drop-in, sslh not running, no monitor). Nothing to do.${RESET}"
+        return 0
+    fi
+
+    # The rollback script is the single source of truth — same script the
+    # monitor runs. If missing, user never ran `jc --sslh` here (or removed
+    # the file manually); refuse rather than improvise inline.
+    if [[ ! -x /etc/jc-sslh/rollback.sh ]]; then
+        echo -e "${RED}Error: /etc/jc-sslh/rollback.sh missing or not executable.${RESET}"
+        echo -e "${GREY}This file is installed by 'jc --sslh'. If you've never run that here,${RESET}"
+        echo -e "${GREY}there's nothing to roll back. Otherwise reinstall sslh or use --sslh-remove.${RESET}"
+        return 1
+    fi
+
+    echo -e "${GREY}Executing /etc/jc-sslh/rollback.sh (same script the monitor runs)...${RESET}"
+    # Stream stdout from script directly to user (the script's flock ensures
+    # only one rollback happens even if monitor is racing).
+    sudo /etc/jc-sslh/rollback.sh
+
+    sleep 2
+
+    if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ':22$'; then
+        echo -e "${RED}✗ :22 not bound after rollback. Last-ditch ssh.socket start.${RESET}"
+        sudo systemctl start ssh.socket 2>/dev/null
+        sleep 2
+        if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ':22$'; then
+            echo -e "${RED}✗ :22 STILL unbound. Manual recovery required.${RESET}"
+            echo -e "${LIGHTYELLOW}Check: systemctl status ssh ssh.socket${RESET}"
+            sudo ss -tlnp 2>/dev/null | grep ':22' || true
+            return 1
+        fi
+        echo -e "${GREEN}✔${GREY} Recovered via ssh.socket start.${RESET}"
+    else
+        echo -e "${GREEN}✔${GREY} sshd listening on :22.${RESET}"
+    fi
+
+    echo
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}${GREEN}  ✅ Rolled back. sshd on :22, sslh stopped (package kept).${RESET}"
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${GREY}  Re-deploy when ready:  ${BLUE}jc --sslh${RESET}"
+    echo -e "${GREY}  Or remove entirely:    ${BLUE}jc --sslh-remove${RESET}"
+    echo
+    return 0
+}
+
+# Status command — show current sslh deployment state for the user.
+# All-in-one diagnostic for "is everything OK".
+sslhStatus() {
+    echo -e "${COLOR}sslh deployment status${RESET}"
+    echo
+    echo -e "${BOLD}Port topology:${RESET}"
+    if command -v ss &>/dev/null; then
+        for p in 22 "${fSslhSshPort}" "${fSslhXrayPort}"; do
+            local who
+            who=$(sudo ss -tlnp 2>/dev/null | awk -v pat=":${p}$" '$4 ~ pat {print $4, $NF}' | head -1)
+            if [[ -n "$who" ]]; then
+                echo -e "    ${CYAN}:${p}${RESET}    ${GREY}${who}${RESET}"
+            else
+                echo -e "    ${CYAN}:${p}${RESET}    ${LIGHTYELLOW}(no listener)${RESET}"
+            fi
+        done
+    fi
+    echo
+    echo -e "${BOLD}Service status:${RESET}"
+    for unit in sslh.service jc-sslh-monitor.timer jc-sslh-monitor.service; do
+        local state
+        state=$(systemctl show -p ActiveState,SubState --value "$unit" 2>/dev/null | paste -sd ' ' -)
+        if [[ -n "$state" && "$state" != " " ]]; then
+            echo -e "    ${unit}: ${state}"
+        else
+            echo -e "    ${unit}: ${GREY}(not installed)${RESET}"
+        fi
+    done
+    echo
+    echo -e "${BOLD}Health monitor:${RESET}"
+    local count
+    count=$(sudo cat /var/lib/jc-sslh/failure-count 2>/dev/null || echo "?")
+    if [[ "$count" == "0" ]]; then
+        echo -e "    Failure count:       ${GREEN}0 (healthy)${RESET}"
+    elif [[ "$count" == "?" ]]; then
+        echo -e "    Failure count:       ${GREY}(no data)${RESET}"
+    else
+        echo -e "    Failure count:       ${LIGHTYELLOW}${count} / ${fSslhMonitorThreshold} (threshold = auto-rollback)${RESET}"
+    fi
+    echo
+    echo -e "    ${GREY}Next check:${RESET}"
+    systemctl list-timers --all 2>/dev/null | awk '/jc-sslh-monitor/ {print "    " $0}' | head -1
+    echo
+    echo -e "${BOLD}Last 10 monitor check entries (journald):${RESET}"
+    if command -v journalctl &>/dev/null; then
+        journalctl -u jc-sslh-monitor.service -n 10 --no-pager 2>/dev/null \
+            | sed 's/^/    /' \
+            || echo -e "    ${GREY}(no entries yet — monitor hasn't run)${RESET}"
+    fi
+    echo
+    echo -e "${BOLD}Useful commands for digging deeper:${RESET}"
+    echo -e "    ${GREY}# Full monitor history:${RESET}"
+    echo -e "    ${BLUE}journalctl -u jc-sslh-monitor.service${RESET}"
+    echo -e "    ${GREY}# Follow live (Ctrl+C to stop):${RESET}"
+    echo -e "    ${BLUE}journalctl -u jc-sslh-monitor.service -f${RESET}"
+    echo -e "    ${GREY}# Since today only:${RESET}"
+    echo -e "    ${BLUE}journalctl -u jc-sslh-monitor.service --since today${RESET}"
+    echo -e "    ${GREY}# Rollback events (when monitor or manual triggered):${RESET}"
+    echo -e "    ${BLUE}journalctl -t jc-sslh-rollback${RESET}"
+    echo -e "    ${GREY}# sslh itself (the proxy daemon):${RESET}"
+    echo -e "    ${BLUE}journalctl -u sslh.service -n 50${RESET}"
+    echo -e "    ${GREY}# Timer schedule details (next firing, last firing):${RESET}"
+    echo -e "    ${BLUE}systemctl list-timers jc-sslh-monitor.timer${RESET}"
+    echo
+    return 0
+}
+
+# Remove sslh entirely: restore sshd:22, stop+disable sslh, apt purge package,
+# clean up configs and state. Mirror image of installSslh — reverses every
+# durable change made by --sslh.
+removeSslh() {
+    echo -e "${COLOR}Removing sslh (restoring sshd on :22, purging package)${RESET}"
+
+    # Warm up sudo (NVIDIA SSO etc.)
+    sslhSudoWarmup || return 1
+
+    # Preflight: same tmux requirement as install (Phase 3 below restarts sshd)
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo -e "${RED}Error: --sslh-remove is Linux-only.${RESET}"
+        return 1
+    fi
+    if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
+        echo -e "${RED}Error: --sslh-remove restarts sshd, which will drop this SSH session.${RESET}"
+        echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen) so the script survives:${RESET}"
+        echo -e "  ${BLUE}tmux new -s sslh-remove '$0 --sslh-remove'${RESET}"
+        return 1
+    fi
+
+    # If nothing to remove, exit gracefully. Note: Debian's package provides
+    # sslh-ev / sslh-select / sslh-fork — no plain `sslh` binary exists, so
+    # `command -v sslh` is useless for detection. Use dpkg-query instead.
+    if ! dpkg-query -W -f='${Status}' sslh 2>/dev/null | grep -q '^install ok installed$' \
+       && [[ ! -f /etc/sslh.cfg ]] \
+       && [[ ! -f /etc/ssh/sshd_config.d/10-sslh.conf ]]; then
+        echo -e "${GREY}sslh appears not installed — nothing to do.${RESET}"
+        return 0
+    fi
+
+    # If the monitor is armed, disable it first (otherwise it could fire
+    # mid-teardown when it sees :22 in flux).
+    if sslhMonitorInstalled; then
+        echo -e "${LIGHTYELLOW}Disabling health monitor before teardown.${RESET}"
+        sudo systemctl disable --now jc-sslh-monitor.timer   2>/dev/null || true
+        sudo systemctl stop          jc-sslh-monitor.service 2>/dev/null || true
+        sudo systemctl reset-failed  jc-sslh-monitor.timer   2>/dev/null || true
+        sudo systemctl reset-failed  jc-sslh-monitor.service 2>/dev/null || true
+    fi
+
+    # ---------- Remove Phase 1: restore :22 in sshd_config ----------
+    echo -e "${COLOR}[Remove 1/5] Restoring sshd on :22 in config${RESET}"
+
+    local sshdBakRm
+    sshdBakRm="/etc/ssh/sshd_config.bak.sslh-remove.$(date +%Y%m%d-%H%M%S)"
+    sudo cp -a /etc/ssh/sshd_config "$sshdBakRm"
+
+    # Append baseline listeners if absent (idempotent). Check each line
+    # INDEPENDENTLY — sshd_config may already have some but not others.
+    local needAppend=()
+    sudo grep -qE '^[[:space:]]*Port[[:space:]]+22[[:space:]]*$' /etc/ssh/sshd_config 2>/dev/null \
+        || needAppend+=("Port 22")
+    sudo grep -qE '^[[:space:]]*ListenAddress[[:space:]]+0\.0\.0\.0[[:space:]]*$' /etc/ssh/sshd_config 2>/dev/null \
+        || needAppend+=("ListenAddress 0.0.0.0")
+    sudo grep -qE '^[[:space:]]*ListenAddress[[:space:]]+(::|\[::\])[[:space:]]*$' /etc/ssh/sshd_config 2>/dev/null \
+        || needAppend+=("ListenAddress ::")
+
+    if (( ${#needAppend[@]} > 0 )); then
+        {
+            echo ""
+            echo "# Restored by jc --sslh-remove"
+            printf '%s\n' "${needAppend[@]}"
+        } | sudo tee -a /etc/ssh/sshd_config >/dev/null
+        echo -e "${GREEN}✔${GREY} Appended ${#needAppend[@]} listener line(s): ${needAppend[*]}${RESET}"
+    else
+        echo -e "${GREEN}✔${GREY} sshd_config already has all required :22 listeners.${RESET}"
+    fi
+
+    # Validate
+    local rmErr
+    rmErr="$(mktemp /tmp/sshd-t.XXXXXX)"
+    if ! sudo sshd -t 2>"$rmErr"; then
+        echo -e "${RED}Error: sshd -t failed after restoring :22. Reverting.${RESET}"
+        cat "$rmErr"
+        sudo cp -a "$sshdBakRm" /etc/ssh/sshd_config
+        rm -f "$rmErr"
+        return 1
+    fi
+    rm -f "$rmErr"
+    echo -e "${GREEN}✔${GREY} sshd config syntax OK.${RESET}"
+    # Do NOT restart sshd yet — sslh still owns :22 and would conflict.
+
+    # ---------- Remove Phase 2: stop + disable sslh ----------
+    echo -e "${COLOR}[Remove 2/5] Stopping and disabling sslh${RESET}"
+    sudo systemctl disable --now sslh 2>/dev/null || true
+    echo -e "${GREEN}✔${GREY} sslh stopped and disabled.${RESET}"
+
+    # ---------- Remove Phase 3: restart sshd (NOW owns :22 again) ----------
+    echo -e "${COLOR}[Remove 3/5] Restarting sshd to reclaim :22${RESET}"
+
+    # Same red banner pattern as install — current SSH might be via sslh
+    local pubIpR tmuxSessR
+    pubIpR=$(curl -4 -s --connect-timeout 2 https://ifconfig.me 2>/dev/null || true)
+    [[ -z "$pubIpR" ]] && pubIpR=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$pubIpR" ]] && pubIpR='<VPS-IP>'
+    if [[ -n "$TMUX" ]]; then
+        tmuxSessR=$(tmux display-message -p '#S' 2>/dev/null || echo "sslh-remove")
+    elif [[ -n "$STY" ]]; then
+        tmuxSessR="$STY"
+    else
+        tmuxSessR="sslh-remove"
+    fi
+
+    echo
+    echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}${RED}  ⚠  SSH SESSION MAY DROP IN ~2 SECONDS  ⚠${RESET}"
+    echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${LIGHTYELLOW}  Restarting sshd to reclaim :22 from sslh.${RESET}"
+    echo -e "${LIGHTYELLOW}  If you connected via sslh on :22, your session drops now.${RESET}"
+    echo
+    echo -e "${BOLD}  Reconnect with the normal port — sslh is gone:${RESET}"
+    echo -e "    ${GREEN}ssh ${USER}@${pubIpR}${RESET}"
+    echo
+    echo -e "${BOLD}  Script keeps running in tmux. Re-attach:${RESET}"
+    echo -e "    ${BLUE}tmux attach -t ${tmuxSessR}${RESET}"
+    echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo
+    sleep 2
+
+    # On Ubuntu 22.04+, ssh.socket binds :22 (socket-activated sshd).
+    # We disabled it in install Phase 4; re-enable + start it now.
+    sudo systemctl enable --now ssh.socket 2>/dev/null
+
+    sudo systemctl restart ssh
+    sleep 2
+
+    if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":22$"; then
+        echo -e "${RED}✗ sshd did not bind :22 after restart. Attempting emergency recovery.${RESET}"
+        # Restore the pre-remove backup and also remove our drop-in (which
+        # would otherwise pin sshd to only :8822). Re-enable+start ssh.socket
+        # explicitly. Then try once more.
+        sudo cp -a "$sshdBakRm" /etc/ssh/sshd_config
+        sudo rm -f /etc/ssh/sshd_config.d/10-sslh.conf
+        sudo systemctl enable --now ssh.socket 2>/dev/null
+        sudo systemctl restart ssh
+        sleep 2
+        if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE ":22$"; then
+            echo -e "${RED}✗ sshd STILL not on :22 after emergency restore.${RESET}"
+            echo -e "${LIGHTYELLOW}Use VPS console; sshd_config backed up at ${sshdBakRm}.${RESET}"
+            sudo ss -tlnp 2>/dev/null | grep ':22' || true
+            return 1
+        fi
+        echo -e "${GREEN}✔${GREY} Emergency recovery succeeded; sshd on :22.${RESET}"
+    else
+        echo -e "${GREEN}✔${GREY} sshd now listening on :22.${RESET}"
+    fi
+
+    # ---------- Remove Phase 4: drop our drop-in (kills :8822 bypass) ----------
+    echo -e "${COLOR}[Remove 4/5] Removing :${fSslhSshPort} drop-in${RESET}"
+    if [[ -f /etc/ssh/sshd_config.d/10-sslh.conf ]]; then
+        sudo rm -f /etc/ssh/sshd_config.d/10-sslh.conf
+        if sudo sshd -t 2>/dev/null; then
+            sudo systemctl reload ssh
+            echo -e "${GREEN}✔${GREY} Drop-in removed; sshd reloaded.${RESET}"
+        else
+            echo -e "${LIGHTYELLOW}Warning: sshd -t failed after removing drop-in; skipping reload.${RESET}"
+        fi
+    else
+        echo -e "${GREY}No drop-in to remove.${RESET}"
+    fi
+
+    # ---------- Remove Phase 5: apt purge + cleanup ----------
+    echo -e "${COLOR}[Remove 5/5] Purging sslh package + cleaning up${RESET}"
+
+    sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y sslh 2>/dev/null || true
+
+    # apt purge usually removes /etc/sslh.cfg (conffile) but be defensive.
+    # Leave timestamped /etc/sslh.cfg.bak.* alone — useful for forensics if
+    # something went wrong; user can rm them manually when confident.
+    sudo rm -f /etc/sslh.cfg
+
+    # Remove systemd drop-ins we wrote
+    if [[ -d /etc/systemd/system/sslh.service.d ]]; then
+        sudo rm -f /etc/systemd/system/sslh.service.d/10-daemon.conf
+        sudo rm -f /etc/systemd/system/sslh.service.d/20-resilience.conf
+        sudo rmdir /etc/systemd/system/sslh.service.d 2>/dev/null || true
+    fi
+
+    # Remove jc-sslh state + monitor unit files (also clean any legacy
+    # deadman/older-naming files for users who upgraded across the refactor).
+    sudo rm -rf /etc/jc-sslh /var/lib/jc-sslh
+    sudo rm -f /etc/systemd/system/jc-sslh-monitor.{timer,service}
+    sudo rm -f /etc/systemd/system/jc-sslh-deadman.{timer,service}  # legacy
+    sudo rm -f /var/log/jc-sslh-deadman.log                          # legacy
+    sudo rm -f /var/log/jc-sslh-monitor.log                          # legacy
+
+    sudo systemctl daemon-reload
+
+    echo
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}${GREEN}  ✅ sslh removed; sshd back on :22${RESET}"
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${GREY}Backups preserved (not auto-deleted):${RESET}"
+    sudo ls -1t /etc/ssh/sshd_config.bak.sslh* 2>/dev/null | head -5 || true
+    echo -e "${GREY}Delete those manually when confident the rollback is stable.${RESET}"
+    echo
+    return 0
+}
+
 createFirstTimeFile() {
     [ -f "$fFirstTimeFile" ] && return
     touch "$fFirstTimeFile"
@@ -5037,6 +6229,10 @@ doEarlyExitJobs() {
     [ -n "$fSingbox" ]             && { launchSingbox; exit $?; }
     [ -n "$fXrayUpdate" ]          && { installXray; exit 0; }
     [ -n "$fXrayRemove" ]          && { removeXray; exit 0; }
+    [ -n "$fSslhInstall" ]         && { installSslh; exit $?; }
+    [ -n "$fSslhStatus" ]          && { sslhStatus; exit $?; }
+    [ -n "$fSslhRollback" ]        && { sslhRollback; exit $?; }
+    [ -n "$fSslhRemove" ]          && { removeSslh; exit $?; }
     [ -n "$fWireguardUpdate" ]     && { installWireguard; exit 0; }
     [ -n "$fWireguardRemove" ]     && { removeWireguard; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }
