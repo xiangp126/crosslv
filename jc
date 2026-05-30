@@ -3230,14 +3230,29 @@ installSslh() {
     # environment isn't right. tmux check is FIRST because it's the most
     # common failure mode for SSH-from-laptop users.
 
-    # Phase 4 sshd restart will drop our SSH session — refuse if we're not
-    # inside a persistent multiplexer.
+    # tmux/screen is no longer required. sshd has KillMode=process so the
+    # restart in Phase 4 leaves our existing session intact (the old sshd
+    # child handling our ESTAB :22 socket keeps running, orphaned to PID 1).
+    # We still RECOMMEND tmux: if the user's *client side* drops (laptop
+    # sleep, network blip, closed window) mid-Phase-4, bash gets SIGHUP and
+    # the jc script dies in the middle of the cutover — leaving :22 without
+    # a listener until the health monitor auto-rolls back ~${fSslhMonitorIntervalMin}×${fSslhMonitorThreshold} min later.
     if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
-        echo -e "${RED}Error: --sslh restarts sshd, which will drop this SSH session.${RESET}"
-        echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen) so the script survives the cutover:${RESET}"
-        echo -e "  ${BLUE}tmux new -s sslh '$0 --sslh'${RESET}"
-        echo -e "${GREY}After tmux starts, reconnect via SSH and 'tmux attach -t sslh' to follow.${RESET}"
-        return 1
+        echo -e "${LIGHTYELLOW}Note: running over SSH without tmux/screen.${RESET}"
+        echo -e "${GREY}  Your current SSH session will survive the cutover (sshd KillMode=process${RESET}"
+        echo -e "${GREY}  keeps existing children alive). But if your *client* disconnects mid-${RESET}"
+        echo -e "${GREY}  cutover (laptop sleep, network blip, closed window), this script dies${RESET}"
+        echo -e "${GREY}  and :22 stays unbound until the health monitor auto-rolls back within${RESET}"
+        echo -e "${GREY}  ~$((fSslhMonitorIntervalMin * fSslhMonitorThreshold)) min. Recommended belt + suspenders:${RESET}"
+        echo -e "    ${BLUE}tmux new -s sslh '$0 --sslh'${RESET}    ${GREY}# script survives client disconnect${RESET}"
+        echo -e "${GREY}  Also: keep a second SSH session open in another terminal as a${RESET}"
+        echo -e "${GREY}  recovery shell.${RESET}"
+        echo
+        read -r -p "Proceed without tmux? [y/N] " _ans
+        if [[ "$_ans" != "y" && "$_ans" != "Y" ]]; then
+            echo -e "${GREY}Aborted. Start tmux and re-run.${RESET}"
+            return 1
+        fi
     fi
 
     if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -4143,13 +4158,21 @@ MONTIMER
 sslhRollback() {
     echo -e "${COLOR}Rolling back sslh deployment (sshd back on :22)${RESET}"
 
-    # Refuse if invoked over SSH without tmux — sshd restart will drop us.
-    # Checked BEFORE sudo warmup so user doesn't waste MFA effort.
+    # tmux/screen is recommended but no longer mandatory — sshd KillMode=process
+    # keeps existing sessions alive across the restart. We protect against the
+    # *client* dropping mid-script (laptop sleep, etc.).
     if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
-        echo -e "${RED}Error: --sslh-rollback restarts sshd; SSH session will drop.${RESET}"
-        echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen), or run from VPS console:${RESET}"
-        echo -e "  ${BLUE}tmux new -s rollback '$0 --sslh-rollback'${RESET}"
-        return 1
+        echo -e "${LIGHTYELLOW}Note: running over SSH without tmux/screen.${RESET}"
+        echo -e "${GREY}  Your current SSH session will survive the rollback (sshd KillMode=process).${RESET}"
+        echo -e "${GREY}  But if your client disconnects mid-script the rollback can stall halfway.${RESET}"
+        echo -e "${GREY}  Recommended:${RESET}"
+        echo -e "    ${BLUE}tmux new -s rollback '$0 --sslh-rollback'${RESET}"
+        echo
+        read -r -p "Proceed without tmux? [y/N] " _ans
+        if [[ "$_ans" != "y" && "$_ans" != "Y" ]]; then
+            echo -e "${GREY}Aborted. Start tmux and re-run.${RESET}"
+            return 1
+        fi
     fi
 
     # Warm up sudo (NVIDIA SSO etc.) — only after tmux check passes
@@ -4398,12 +4421,21 @@ sslhStatus() {
 removeSslh() {
     echo -e "${COLOR}Removing sslh (restoring sshd on :22, purging package)${RESET}"
 
-    # Preflight BEFORE sudo warmup — fail fast on SSH-no-tmux / Darwin.
+    # tmux/screen is recommended but no longer mandatory — sshd KillMode=process
+    # keeps existing sessions alive across the restart. We only need protection
+    # against the *client* dropping mid-script.
     if [[ -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$STY" ]]; then
-        echo -e "${RED}Error: --sslh-remove restarts sshd, which will drop this SSH session.${RESET}"
-        echo -e "${LIGHTYELLOW}Re-run inside tmux (or screen) so the script survives:${RESET}"
-        echo -e "  ${BLUE}tmux new -s sslh-remove '$0 --sslh-remove'${RESET}"
-        return 1
+        echo -e "${LIGHTYELLOW}Note: running over SSH without tmux/screen.${RESET}"
+        echo -e "${GREY}  Your current SSH session will survive the sshd restart (KillMode=process).${RESET}"
+        echo -e "${GREY}  But if your client disconnects mid-script (laptop sleep, network blip),${RESET}"
+        echo -e "${GREY}  the remove can leave the system half-torn-down. Recommended:${RESET}"
+        echo -e "    ${BLUE}tmux new -s sslh-remove '$0 --sslh-remove'${RESET}"
+        echo
+        read -r -p "Proceed without tmux? [y/N] " _ans
+        if [[ "$_ans" != "y" && "$_ans" != "Y" ]]; then
+            echo -e "${GREY}Aborted. Start tmux and re-run.${RESET}"
+            return 1
+        fi
     fi
 
     if [[ "$(uname -s)" == "Darwin" ]]; then
