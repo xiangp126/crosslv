@@ -93,6 +93,7 @@ _jc_complete() {
                --codex --codex-remove --codex-backup --codex-restore \
                --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-wg \
                --xray --xray-port --xray-server --xray-remove \
+               --sslh --sslh-ssh-port --sslh-xray-port --sslh-status --sslh-rollback --sslh-remove \
                --wg --wg-port --wg-server --wg-client --wg-remove \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-1080 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"
@@ -120,6 +121,18 @@ _jc_complete() {
             ;;
         --xray-port|--wg-port)
             local ports="22 443 3389 5900 5902 5903 5904 5905 5906 5907 5908 5909 6000"
+            COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
+            return 0
+            ;;
+        --sslh-ssh-port)
+            # Internal sshd port after sslh takes over :22. Default 8822.
+            local ports="8822 8802 8022 2222 22022 22122 22222 22322"
+            COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
+            return 0
+            ;;
+        --sslh-xray-port)
+            # Local xray VLESS+REALITY port (sslh's TLS backend). Default 5902.
+            local ports="5902 5903 5904 5905 443"
             COMPREPLY=( $(compgen -W "${ports}" -- ${cur}) )
             return 0
             ;;

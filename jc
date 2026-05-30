@@ -80,7 +80,7 @@ fSslhRemove=
 fSslhRollback=
 fSslhStatus=
 fSslhSshPort=8822             # internal sshd listen port after cutover
-fSslhXrayPort=5902            # local xray VLESS+REALITY port to forward TLS to
+fSslhXrayPort=                # local xray port; empty = auto-detect, fallback 5902
 # Monitor knobs — continuous health check that auto-rollback if sslh dies.
 # Each check actively opens TCP to :22 and verifies an SSH banner round-trip.
 fSslhMonitorIntervalMin=10    # check every N minutes
@@ -238,7 +238,8 @@ SSLH Options (server-side only — run on the proxy VPS):
                                     Arms a health-check monitor that auto-rollback if
                                     sslh dies (3 consecutive 10-min checks fail).
     --sslh-ssh-port <port>          Internal sshd listen port (default: 8822)
-    --sslh-xray-port <port>         Xray VLESS+REALITY backend port (default: 5902)
+    --sslh-xray-port <port>         Xray VLESS+REALITY backend port
+                                    (default: auto-detect from running xray; fallback 5902)
     --sslh-status                   Show port topology, monitor state, recent health checks
     --sslh-rollback                 Manually revert NOW: stop sslh, restore sshd:22 (package kept)
     --sslh-remove                   Stop sslh, restore sshd on :22, purge package
@@ -3250,6 +3251,58 @@ installSslh() {
         echo -e "  ${BLUE}tmux new -s sslh '$0 --sslh'${RESET}"
         echo -e "${GREY}After tmux starts, reconnect via SSH and 'tmux attach -t sslh' to follow.${RESET}"
         return 1
+    fi
+
+    # Auto-detect xray port if not explicitly given (--sslh-xray-port).
+    # Priority: (1) running xray process from ss, (2) /etc/xray/conf/*.json
+    # (jc-managed location), (3) /usr/local/etc/xray/config.json (official
+    # xray installer location), (4) fall back to 5902.
+    if [[ -z "$fSslhXrayPort" ]]; then
+        local _detectedPort=""
+
+        # Method 1: live xray process listening port
+        if command -v ss &>/dev/null; then
+            _detectedPort=$(sudo ss -tlnp 2>/dev/null \
+                | awk '/users:\(\("xray"/ {print $4}' \
+                | grep -oE ':[0-9]+$' | tr -d ':' \
+                | head -1)
+        fi
+        if [[ "$_detectedPort" =~ ^[0-9]+$ ]]; then
+            echo -e "${GREEN}✔${GREY} Auto-detected xray port ${_detectedPort} (from running process).${RESET}"
+            fSslhXrayPort="$_detectedPort"
+        fi
+
+        # Method 2: jc-managed xray config
+        if [[ -z "$fSslhXrayPort" ]] && command -v jq &>/dev/null; then
+            if sudo ls /etc/xray/conf/*.json &>/dev/null; then
+                _detectedPort=$(sudo jq -r '.inbounds[]?.port // empty' /etc/xray/conf/*.json 2>/dev/null \
+                                | grep -E '^[0-9]+$' | head -1)
+                if [[ "$_detectedPort" =~ ^[0-9]+$ ]]; then
+                    echo -e "${GREEN}✔${GREY} Auto-detected xray port ${_detectedPort} (from /etc/xray/conf/).${RESET}"
+                    fSslhXrayPort="$_detectedPort"
+                fi
+            fi
+        fi
+
+        # Method 3: official xray installer config
+        if [[ -z "$fSslhXrayPort" ]] && command -v jq &>/dev/null \
+           && [[ -f /usr/local/etc/xray/config.json ]]; then
+            _detectedPort=$(sudo jq -r '.inbounds[]?.port // empty' /usr/local/etc/xray/config.json 2>/dev/null \
+                            | grep -E '^[0-9]+$' | head -1)
+            if [[ "$_detectedPort" =~ ^[0-9]+$ ]]; then
+                echo -e "${GREEN}✔${GREY} Auto-detected xray port ${_detectedPort} (from /usr/local/etc/xray/).${RESET}"
+                fSslhXrayPort="$_detectedPort"
+            fi
+        fi
+
+        # Final fallback
+        if [[ -z "$fSslhXrayPort" ]]; then
+            fSslhXrayPort=5902
+            echo -e "${LIGHTYELLOW}Could not auto-detect xray port; falling back to default 5902.${RESET}"
+            echo -e "${GREY}If xray runs elsewhere, re-run with --sslh-xray-port <port>.${RESET}"
+        fi
+    else
+        echo -e "${GREY}Using user-specified xray port ${fSslhXrayPort}.${RESET}"
     fi
 
     # Xray reachability — WARN only. sslh works without xray (SSH demux still
