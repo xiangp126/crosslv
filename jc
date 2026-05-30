@@ -4426,20 +4426,34 @@ sslhStatus() {
             # Compress 3-lines-per-fire (Starting / Deactivated / Finished) into
             # 1 line per fire: timestamp + outcome. Surface anything monitor-check.sh
             # itself logged (warnings, FAIL, RECOVERED, THRESHOLD messages).
-            echo "$_logOut" | awk '
+            # journald format example:
+            #   May 31 00:14:15 host systemd[1]: Starting jc-sslh-monitor.service - jc sslh health check (...)...
+            #   May 31 00:14:15 host monitor-check.sh[504698]: <optional warning>
+            #   May 31 00:14:15 host systemd[1]: jc-sslh-monitor.service: Deactivated successfully.
+            #   May 31 00:14:15 host systemd[1]: Finished jc-sslh-monitor.service - jc sslh health check (...).
+            local _compressed
+            _compressed=$(echo "$_logOut" | awk '
                 /Starting jc-sslh-monitor/ { ts = $1" "$2" "$3; result = "ok"; warn = "" }
                 /monitor-check.sh\[/        {
-                    # Strip "May 30 23:59:06 host monitor-check.sh[pid]:" prefix
                     sub(/^[^]]+\]: /, "")
                     warn = warn "  " $0
                 }
-                /jc sslh health check.*Finished/ {
+                /Finished jc-sslh-monitor/ {
                     if (ts != "") {
                         printf "    %s  %s%s\n", ts, result, warn
                         ts = ""; result = ""; warn = ""
                     }
                 }
-            ' | tail -10
+            ' | tail -10)
+            if [[ -n "$_compressed" ]]; then
+                echo "$_compressed"
+            else
+                # Awk produced nothing — journal has entries but they don't match
+                # our Starting/Finished patterns (e.g. only monitor-check.sh
+                # output without surrounding systemd lines). Show raw tail as
+                # fallback so something is visible.
+                echo "$_logOut" | tail -10 | sed 's/^/    /'
+            fi
         else
             echo -e "    ${GREY}(no entries — monitor hasn'\''t run yet)${RESET}"
         fi
