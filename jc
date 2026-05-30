@@ -3218,26 +3218,26 @@ _sslhTmuxPrompt() {
     [[ -z "$_bypassIp" ]] && _bypassIp='<server-ip>'
 
     echo
-    echo -e "${BOLD}${LIGHTYELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${BOLD}${LIGHTYELLOW}  ${_title}${RESET}"
-    echo -e "${BOLD}${LIGHTYELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "  ${BOLD}${RED}Your current SSH session will survive${RESET}${LIGHTYELLOW} (sshd KillMode=process${RESET}"
-    echo -e "${LIGHTYELLOW}  keeps existing children alive across the restart).${RESET}"
+    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}${_title}${RESET}"
+    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}${RED}Your current SSH session will survive${RESET} (sshd KillMode=process"
+    echo "keeps existing children alive across the restart)."
     echo
-    echo -e "${LIGHTYELLOW}  But if your ${BOLD}client${RESET}${LIGHTYELLOW} disconnects mid-script (laptop sleep, network${RESET}"
-    echo -e "${LIGHTYELLOW}  blip, closed window), the script dies and the cutover may stall${RESET}"
-    echo -e "${LIGHTYELLOW}  halfway. Health monitor auto-rolls back within ~${_mttr} min${RESET}"
-    echo -e "${LIGHTYELLOW}  (${fSslhMonitorIntervalMin}min × ${fSslhMonitorThreshold} fails) if that happens.${RESET}"
+    echo -e "But if your ${BOLD}client${RESET} disconnects mid-script (laptop sleep, network"
+    echo "blip, closed window), the script dies and the cutover may stall"
+    echo "halfway. Health monitor auto-rolls back within ~${_mttr} min"
+    echo "(${fSslhMonitorIntervalMin}min x ${fSslhMonitorThreshold} fails) if that happens."
     echo
-    echo -e "  ${BOLD}▶ Recommended belt + suspenders before proceeding:${RESET}"
-    echo -e "    ${GREEN}1)${RESET} Run inside tmux so the script finishes regardless:"
-    echo -e "       ${BLUE}${_tmuxCmd}${RESET}"
-    echo -e "    ${GREEN}2)${RESET} Open a ${BOLD}second SSH session${RESET} in another terminal NOW —"
-    echo -e "       keep it idle as a recovery shell."
+    echo -e "${BOLD}Recommended belt + suspenders before proceeding:${RESET}"
+    echo -e "${GREEN}1)${RESET} Run inside tmux so the script finishes regardless:"
+    echo -e "   ${BLUE}${_tmuxCmd}${RESET}"
+    echo -e "${GREEN}2)${RESET} Open a ${BOLD}second SSH session${RESET} in another terminal NOW --"
+    echo "   keep it idle as a recovery shell."
     echo
-    echo -e "  ${BOLD}Emergency bypass (after install, if anything breaks):${RESET}"
-    echo -e "    ${BLUE}ssh -p ${fSslhSshPort} ${USER}@${_bypassIp}${RESET}"
-    echo -e "${BOLD}${LIGHTYELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}Emergency bypass (after install, if anything breaks):${RESET}"
+    echo -e "   ${BLUE}ssh -p ${fSslhSshPort} ${USER}@${_bypassIp}${RESET}"
+    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo
     local _ans
     read -r -p "Proceed without tmux? [y/N] " _ans
@@ -4368,7 +4368,7 @@ sslhStatus() {
     count=$(sudo cat /var/lib/jc-sslh/failure-count 2>/dev/null || echo "?")
     printf "    %-15s " "Failure count:"
     if [[ "$count" == "0" ]]; then
-        echo -e "${GREEN}0 / ${_thresholdActual} (healthy)${RESET}"
+        echo -e "${GREEN}0/${_thresholdActual} (healthy)${RESET}"
     elif [[ "$count" == "?" ]]; then
         echo -e "${GREY}(no data)${RESET}"
     else
