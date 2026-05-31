@@ -403,8 +403,7 @@ _ai_start_ja_if_needed() {
     # plain `& disown` — ja will still work, but --status will say
     # foreground in <pane>, which is technically true for that case.
     if command -v setsid &>/dev/null; then
-        setsid ja --daemon -t "$target" </dev/null >"$logfile" 2>&1 &
-        disown
+        ( setsid ja --daemon -t "$target" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
     else
         ( ja --daemon -t "$target" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
     fi
