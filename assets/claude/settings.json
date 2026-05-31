@@ -23,7 +23,6 @@
       "/auto/fwgwork1/$USER/golan_fw3"
     ]
   },
-  "model": "claude-opus-4-7[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -40,7 +39,9 @@
   "sandbox": {
     "enabled": false
   },
+  "effortLevel": "xhigh",
   "skipDangerousModePermissionPrompt": true,
+  "theme": "dark-ansi",
   "mcpServers": {
     "nvidia-redmine": {
       "type": "http",
@@ -186,6 +187,5 @@
       "type": "http",
       "url": "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
     }
-  },
-  "theme": "dark-ansi"
+  }
 }

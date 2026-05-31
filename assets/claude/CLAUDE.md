@@ -14,9 +14,25 @@
 - Helpers in bashrc: `aipim-shell` (interactive bash inside the container) — though the simple wrappers are usually enough.
 - On any other NVIDIA host: native `~/.local/bin/*-cli` binaries work directly; the bashrc guard skips the docker wrap.
 
+### After reboot (on m-fwdev-167)
+
+- **No manual step needed.** The `pim` container persists in Docker's storage but transitions to `Exited` on shutdown. The bashrc wrapper `pim_ensure` does `docker start pim` on the next CLI call, which boots the existing container in ~1 s. Subsequent calls are `docker exec`.
+- If you ever want to start it eagerly without invoking a CLI: `docker start pim`.
+- All state in `~/.ai-pim-utils/` (tokens, config) and `~/.confluence_env` is on NFS home and survives the reboot.
+
+### After reimaging m-fwdev-167 (or moving to a fresh box that still needs the wrap)
+
+The image and container live on local disk under `/var/lib/docker/` and are **lost** on reimage. NFS-home state (`~/.confluence_env`, `~/.ai-pim-utils/`, `~/myGit/crosslv/`) survives. Recovery:
+
+1. **Install Docker** — run `~/myGit/crosslv/jc --docker` (Peter's bootstrap script installs from the official Docker PPA).
+2. **Add yourself to the docker group:** `sudo usermod -aG docker $USER`, then log out / back in so the new group is active. Verify: `id | grep docker`.
+3. **Build the image:** `docker build -t ai-pim:latest ~/myGit/crosslv/assets/aipim` (~25 s — the Dockerfile fetches `install.sh` from a GitLab Pages URL and runs it inside ubuntu:24.04).
+4. **First CLI call** auto-creates the `pim` container via the bashrc wrapper. No manual `docker run` needed.
+5. **Token/credentials** are already in place under NFS home; no re-auth needed unless tokens have been rotated.
+
 ## Confluence writes (AI-only path)
 
-- **For AI agents publishing/updating Confluence pages, use `~/myGit/crosslv/nv-tools/confluence-update`** (raw curl). The user does NOT run this helper themselves — it is solely for AI use.
+- **For AI agents publishing/updating Confluence pages, use `~/myGit/crosslv/assets/aipim/confluence-update`** (raw curl). The user does NOT run this helper themselves — it is solely for AI use.
 - **Do NOT use `confluence-cli page create/update`** for writes — those require an interactive TTY for typed confirmation, which AI sessions cannot provide. Reads (`page get`, etc.) are fine.
 - Credentials in `~/.confluence_env` (mode 600), exporting `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`, `CONFLUENCE_BASE` (= `https://nvidia.atlassian.net/wiki`). User: `pexiang@nvidia.com`.
 - Same Atlassian token works for `jira-cli` (Cloud Jira shares Atlassian auth).
