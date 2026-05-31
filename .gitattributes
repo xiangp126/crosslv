@@ -1,3 +1,4 @@
 assets/xray/sing-box-config.jsonc filter=secrets
 assets/xray/sing-box-config-autossh.jsonc filter=secrets
+assets/xray/sing-box-config-sslh.jsonc filter=secrets
 assets/wireguard/sing-box-config.jsonc filter=secrets

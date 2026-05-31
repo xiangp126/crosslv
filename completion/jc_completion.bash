@@ -91,7 +91,7 @@ _jc_complete() {
                --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status --acl-restart \
                --claude-backup --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
                --codex --codex-remove --codex-backup --codex-restore \
-               --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-wg \
+               --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-xray-sslh --singbox-wg \
                --xray --xray-port --xray-server --xray-remove \
                --sslh --sslh-ssh-port --sslh-xray-port --sslh-status --sslh-rollback --sslh-remove \
                --bbr --bbr-status \

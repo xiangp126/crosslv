@@ -228,6 +228,7 @@ Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
     --singbox-xray                  Link xray sing-box config to ~/Documents
     --singbox-xray-autossh          Link xray autossh sing-box config to ~/Documents
+    --singbox-xray-sslh             Link xray sslh sing-box config to ~/Documents
     --singbox-wg                    Link WireGuard sing-box config to ~/Documents
 
 Xray Options (server-side only — run on the Xray server host):
@@ -308,7 +309,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           claude-backup,claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
           codex,codex-remove,codex-backup,codex-restore,\
           gemini,gemini-remove,cursor-backup,cursor-restore,\
-          singbox,singbox-xray,singbox-xray-autossh,singbox-wg,\
+          singbox,singbox-xray,singbox-xray-autossh,singbox-xray-sslh,singbox-wg,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
           bbr,bbr-status,\
@@ -1002,6 +1003,10 @@ while true; do
             ;;
         --singbox-xray-autossh)
             fSingboxLink="xray-autossh"
+            shift
+            ;;
+        --singbox-xray-sslh)
+            fSingboxLink="xray-sslh"
             shift
             ;;
         --singbox-wg)
@@ -6488,6 +6493,8 @@ linkSingboxConfig() {
     local target
     if [[ "$1" == "xray-autossh" ]]; then
         target="$fMainDir/assets/xray/sing-box-config-autossh.jsonc"
+    elif [[ "$1" == "xray-sslh" ]]; then
+        target="$fMainDir/assets/xray/sing-box-config-sslh.jsonc"
     else
         target="$fMainDir/assets/$1/sing-box-config.jsonc"
     fi

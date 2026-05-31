@@ -95,7 +95,7 @@
       "tag": "proxy",
       "server": "127.0.0.1",
       "server_port": 5902,
-      "uuid": "ca4290a0-b151-40c2-8e79-518ccd3bda04",
+      "uuid": "XRAY_UUID",
       "flow": "xtls-rprx-vision",
       "network": [
         "tcp"
@@ -109,8 +109,8 @@
         },
         "reality": {
           "enabled": true,
-          "public_key": "02YK6TOmUT7ROk_6OyKyV3mImLig18F7rgjQM0j_7T4",
-          "short_id": "3a050ce1"
+          "public_key": "XRAY_PUBLIC_KEY",
+          "short_id": "XRAY_SHORT_ID"
         }
       }
     },
@@ -182,6 +182,7 @@
             "domain_suffix": [
               "anthropic.com",
               "claude.ai",
+              "claude.com",
               "workos.com",
               "claudeusercontent.com",
               "intercom.io",
