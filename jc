@@ -87,6 +87,9 @@ fSslhMonitorIntervalMin=5     # check every N minutes (MTTR = N × Threshold)
 fSslhMonitorThreshold=3       # consecutive fails before triggering rollback
 fSslhMonitorBootDelayMin=2    # first check fires this long after boot
 fSslhMonitorTimeoutSec=5      # per-check TCP+banner timeout
+# BBR (TCP congestion control)
+fBbrEnable=
+fBbrStatus=
 # Add Swap File
 fSwapReq=
 # RTSP Stream Playback
@@ -244,6 +247,12 @@ SSLH Options (server-side only — run on the proxy VPS):
     --sslh-rollback                 Manually revert NOW: stop sslh, restore sshd:22 (package kept)
     --sslh-remove                   Stop sslh, restore sshd on :22, purge package
 
+BBR Options (Linux server-side — enables Google BBR TCP congestion control):
+    --bbr                           Enable BBR + fq qdisc, persist across reboots.
+                                    1.5-3x throughput on high-RTT/lossy links vs CUBIC.
+                                    Safe, instant, only affects NEW TCP connections.
+    --bbr-status                    Show current cc/qdisc, module load, persistence
+
 WireGuard Options (server-side only — run on the WireGuard server host):
     --wg                            Install/configure WireGuard VPN server
     --wg-port <port>                Set WireGuard listen port (default: 51820)
@@ -302,6 +311,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           singbox,singbox-xray,singbox-xray-autossh,singbox-wg,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
+          bbr,bbr-status,\
           acl-block:,acl-unblock:,acl-status:,acl-restart:"
 
 # Use getopt to parse command-line options
@@ -937,6 +947,15 @@ while true; do
             ;;
         --sslh-remove)
             fSslhRemove=true
+            shift
+            ;;
+
+        --bbr)
+            fBbrEnable=true
+            shift
+            ;;
+        --bbr-status)
+            fBbrStatus=true
             shift
             ;;
 
@@ -4681,6 +4700,129 @@ removeSslh() {
     return 0
 }
 
+# Enable BBR TCP congestion control + fq qdisc. Idempotent and persistent.
+# BBR (Bottleneck Bandwidth and RTT, Google 2016) is in mainline Linux since
+# 4.9. On high-RTT or lossy WAN links it routinely outperforms CUBIC by
+# 1.5-3x for single-stream throughput. Only affects NEW TCP connections;
+# existing connections keep their old cc. Reversible by editing
+# /etc/sysctl.d/99-bbr.conf or removing it.
+enableBbr() {
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        echo -e "${RED}Error: --bbr is Linux-only (macOS uses BSD TCP stack; FreeBSD has its own BBR).${RESET}"
+        return 1
+    fi
+
+    echo -e "${COLOR}Enabling BBR TCP congestion control${RESET}"
+
+    local cc_current qdisc_current available
+    cc_current=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    qdisc_current=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    available=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null)
+
+    echo -e "${GREY}Before:${RESET}"
+    printf "  %-15s %s\n" "cc:"        "$cc_current"
+    printf "  %-15s %s\n" "qdisc:"     "$qdisc_current"
+    printf "  %-15s %s\n" "available:" "$available"
+
+    if [[ "$cc_current" == "bbr" && "$qdisc_current" == "fq" ]] \
+        && [[ -f /etc/sysctl.d/99-bbr.conf ]] \
+        && [[ -f /etc/modules-load.d/bbr.conf ]]; then
+        echo -e "${GREEN}✔ BBR already active and persisted. Nothing to do.${RESET}"
+        return 0
+    fi
+
+    sslhSudoWarmup || return 1
+
+    # 1) Load module (no-op if already loaded; fails on kernels < 4.9).
+    if ! lsmod 2>/dev/null | grep -q '^tcp_bbr'; then
+        echo -e "${GREY}Loading tcp_bbr kernel module...${RESET}"
+        if ! sudo modprobe tcp_bbr 2>/dev/null; then
+            echo -e "${RED}Error: modprobe tcp_bbr failed.${RESET}"
+            echo -e "${GREY}  Likely cause: kernel older than 4.9 (current: $(uname -r)).${RESET}"
+            return 1
+        fi
+    fi
+
+    # 2) Persist module load across reboots.
+    echo -e "${GREY}Persisting module load: /etc/modules-load.d/bbr.conf${RESET}"
+    echo "tcp_bbr" | sudo tee /etc/modules-load.d/bbr.conf >/dev/null
+
+    # 3) Persist sysctl.
+    echo -e "${GREY}Persisting sysctl: /etc/sysctl.d/99-bbr.conf${RESET}"
+    sudo tee /etc/sysctl.d/99-bbr.conf >/dev/null <<'BBRCONF'
+# Managed by jc --bbr. Reverse by deleting this file + /etc/modules-load.d/bbr.conf.
+# BBR (Bottleneck Bandwidth and RTT) — Google's TCP cc, mainline since Linux 4.9.
+# Outperforms CUBIC on high-RTT or lossy paths. The fq qdisc pairs with BBR's
+# pacing model; without fq, BBR still works but with slightly degraded behavior.
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+BBRCONF
+
+    # 4) Apply now.
+    echo -e "${GREY}Applying sysctl changes...${RESET}"
+    if ! sudo sysctl -p /etc/sysctl.d/99-bbr.conf >/dev/null; then
+        echo -e "${RED}Error: sysctl -p failed.${RESET}"
+        return 1
+    fi
+
+    # 5) Verify.
+    local cc_new qdisc_new
+    cc_new=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    qdisc_new=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    echo
+    echo -e "${GREY}After:${RESET}"
+    printf "  %-15s %s\n" "cc:"    "$cc_new"
+    printf "  %-15s %s\n" "qdisc:" "$qdisc_new"
+
+    if [[ "$cc_new" == "bbr" && "$qdisc_new" == "fq" ]]; then
+        echo
+        echo -e "${BOLD}${GREEN}✅ BBR enabled.${RESET}"
+        echo -e "${GREY}Takes effect on NEW TCP connections (existing ones keep their old cc).${RESET}"
+        echo -e "${GREY}For best comparison: restart sing-box/xray to pick up new cc on their flows.${RESET}"
+        return 0
+    fi
+
+    echo -e "${RED}✗ Verification failed: cc=$cc_new qdisc=$qdisc_new (expected bbr/fq).${RESET}"
+    return 1
+}
+
+# Show current TCP congestion-control state + persistence info.
+bbrStatus() {
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        echo -e "${LIGHTYELLOW}BBR is Linux-only. This system is $(uname -s).${RESET}"
+        return 0
+    fi
+
+    local cc qdisc available loaded persisted_sysctl persisted_module
+    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    available=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null)
+    loaded=$(lsmod 2>/dev/null | awk '/^tcp_bbr/{print $1" (refcnt="$3")"; exit}')
+    [[ -z "$loaded" ]] && loaded="(not loaded)"
+    persisted_sysctl=$([[ -f /etc/sysctl.d/99-bbr.conf ]] && echo "yes  (/etc/sysctl.d/99-bbr.conf)" || echo "no")
+    persisted_module=$([[ -f /etc/modules-load.d/bbr.conf ]] && echo "yes  (/etc/modules-load.d/bbr.conf)" || echo "no")
+
+    echo -e "${BOLD}${COLOR}TCP congestion control status${RESET}${GREY} — $(hostname -s)${RESET}"
+    echo
+    local ccColor="${LIGHTYELLOW}"
+    [[ "$cc" == "bbr" ]] && ccColor="${GREEN}"
+    local qdiscColor="${LIGHTYELLOW}"
+    [[ "$qdisc" == "fq" ]] && qdiscColor="${GREEN}"
+    printf "  %-22s ${ccColor}%s${RESET}\n"    "Active cc:"        "$cc"
+    printf "  %-22s ${qdiscColor}%s${RESET}\n" "Active qdisc:"     "$qdisc"
+    printf "  %-22s %s\n"                      "Available cc algos:" "$available"
+    printf "  %-22s %s\n"                      "tcp_bbr module:"    "$loaded"
+    printf "  %-22s %s\n"                      "Persistent (sysctl):" "$persisted_sysctl"
+    printf "  %-22s %s\n"                      "Persistent (module):" "$persisted_module"
+    echo
+
+    if [[ "$cc" == "bbr" && "$qdisc" == "fq" ]]; then
+        echo -e "${GREEN}✔ BBR is active.${RESET}"
+    else
+        echo -e "${GREY}BBR is not active. Enable with:${RESET}  ${BOLD}${GREEN}jc --bbr${RESET}"
+    fi
+}
+
 createFirstTimeFile() {
     [ -f "$fFirstTimeFile" ] && return
     touch "$fFirstTimeFile"
@@ -6609,6 +6751,8 @@ doEarlyExitJobs() {
     [ -n "$fSslhStatus" ]          && { sslhStatus; exit $?; }
     [ -n "$fSslhRollback" ]        && { sslhRollback; exit $?; }
     [ -n "$fSslhRemove" ]          && { removeSslh; exit $?; }
+    [ -n "$fBbrEnable" ]           && { enableBbr; exit $?; }
+    [ -n "$fBbrStatus" ]           && { bbrStatus; exit $?; }
     [ -n "$fWireguardUpdate" ]     && { installWireguard; exit 0; }
     [ -n "$fWireguardRemove" ]     && { removeWireguard; exit 0; }
     [ -n "$fSwapReq" ]             && { addSwap "$1"; exit 0; }

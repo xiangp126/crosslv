@@ -94,6 +94,7 @@ _jc_complete() {
                --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-wg \
                --xray --xray-port --xray-server --xray-remove \
                --sslh --sslh-ssh-port --sslh-xray-port --sslh-status --sslh-rollback --sslh-remove \
+               --bbr --bbr-status \
                --wg --wg-port --wg-server --wg-client --wg-remove \
                --rtsp --rtsp-all --rtsp-kill --rtsp-list --rtsp-raw --rtsp-1080 \
                --rtsp-stream --rtsp-ip --rtsp-resolution"
