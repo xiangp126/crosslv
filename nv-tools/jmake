@@ -2204,12 +2204,10 @@ runRegMalloc() {
     # Tee so the user sees malloc's live output AND we can parse:
     #   - the actual allocated hours (server may cap the request), and
     #   - the "Resource locked by <holder> until <date> (IST)" error so we can
-    #     translate the IST timestamp to Beijing time. NOTE: in noga_alloc.py
-    #     output, "IST" is *fixed* Israel Standard Time = UTC+2 year-round
-    #     (the noga DB does NOT follow Israel's DST flip to IDT/UTC+3, and
-    #     "IST" here is NOT Indian Standard Time either). We force
-    #     TZ='Etc/GMT-2' (POSIX inverted-sign = UTC+2) so the offset to
-    #     Beijing is a steady +6h, including during DST months.
+    #     show the unlock time in the local machine's timezone. noga reports
+    #     Israel local time, so we just hand the timestamp to `date` as
+    #     Asia/Jerusalem and let tzdata do the DST math and the conversion to
+    #     local time -- no manual offset/DST handling here.
     local tmpFile
     tmpFile=$(mktemp)
     eval "$cmd" 2>&1 | tee "$tmpFile"
@@ -2226,20 +2224,22 @@ runRegMalloc() {
         if [[ -n "$lockedLine" ]]; then
             local holder until_dt
             holder=$(echo "$lockedLine"   | sed -nE 's/.*locked by ([^ ]+) until.*/\1/p')
-            # Oracle prints "DD-MON-YY HH.MI.SS"; convert dots to colons so
-            # GNU date can parse the time portion.
-            until_dt=$(echo "$lockedLine" | sed -nE 's/.*until (.+) \(IST\).*/\1/p' | tr '.' ':')
-            local epoch beijing=""
-            if [[ -n "$until_dt" ]]; then
-                epoch=$(TZ='Etc/GMT-2' date -d "$until_dt" '+%s' 2>/dev/null)
-                [[ -n "$epoch" ]] && beijing=$(TZ='Asia/Shanghai' date -d "@$epoch" '+%Y-%m-%d %H:%M:%S')
-            fi
+            # noga prints "DD-MON-YY HH.MI.SS (IST)" in Israel local time. Strip
+            # the trailing "(...)" label and turn the dots into colons so `date`
+            # can parse the time part.
+            until_dt=$(echo "$lockedLine" | sed -nE 's/.*until[[:space:]]+(.+)[[:space:]]+\([A-Za-z]+\).*/\1/p' | tr '.' ':')
+
+            # Interpret it as Asia/Jerusalem and let the local machine convert to
+            # its own timezone -- tzdata handles Israel's DST for us.
+            local localTime=""
+            [[ -n "$until_dt" ]] && \
+                localTime=$(date -d "TZ=\"Asia/Jerusalem\" $until_dt" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null)
+
             echo -e "$NOTATION ${RED}✗ $server is locked by ${YELLOW}${holder:-?}${RESET}"
             if [[ -n "$until_dt" ]]; then
-                echo -e "$NOTATION  until ${CYAN}$until_dt${RESET} ${GREY}(IST, UTC+2 fixed)${RESET}"
-                if [[ -n "$beijing" ]]; then
-                    echo -e "$NOTATION  i.e.  ${CYAN}$beijing${RESET} ${GREY}(Beijing)${RESET}"
-                fi
+                echo -e "$NOTATION until ${CYAN}$until_dt${RESET} ${GREY}(Israel)${RESET}"
+                [[ -n "$localTime" ]] && \
+                    echo -e "$NOTATION →     ${CYAN}$localTime${RESET} ${GREY}(local)${RESET}"
             fi
         else
             echo -e "$NOTATION ${RED}Error: malloc failed for $server${RESET}"

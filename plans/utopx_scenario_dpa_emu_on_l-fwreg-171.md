@@ -31,7 +31,7 @@ https://mars.mellanox.com/web/server/php/view_log.php?
   &name=...&key_id=...&status=Passed
 ```
 
-The web view needs auth, but the **`results_dir` path is an NFS share** mounted on every dev box. So instead of fetching via the web, just read the same files directly:
+The web view needs auth, but the `**results_dir` path is an NFS share** mounted on every dev box. So instead of fetching via the web, just read the same files directly:
 
 ```bash
 ls /auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/MUSTANG_FW-l-fwreg-171_eth_ARM_AGENT_P1/11047756/
@@ -44,8 +44,8 @@ Every MARS session's full logs are packed in one `<sid>.tgz` under that path. Th
 
 Two MARS steps capture the exact versions used in a session:
 
-1. **`new_burn_fw`** — the FW burn step. The log shows what `.mlx`, `.ini`, FW version, and PSID were burned.
-2. **`get_last_commit`** — runs before the build/install of utopx in regression. It calls a helper that does `git describe` inside the utopx checkout in the MARS workspace and prints the commit hash.
+1. `**new_burn_fw**` — the FW burn step. The log shows what `.mlx`, `.ini`, FW version, and PSID were burned.
+2. `**get_last_commit**` — runs before the build/install of utopx in regression. It calls a helper that does `git describe` inside the utopx checkout in the MARS workspace and prints the commit hash.
 
 Find their step IDs by listing the tarball:
 
@@ -84,7 +84,7 @@ Burning FW:     timeout 1500 sudo -E env MFT_ICMD_TIMEOUT=60000 mlxburn -d /dev/
                 -fw <fw_file> -conf <new_ini_file> -force
 ```
 
-The **`new_ini_file`** path is the *actual* file BurnFw.py generated and passed to `mlxburn`. That's the one you want to copy locally — it has all the regression-injected overrides baked in.
+The `**new_ini_file**` path is the *actual* file BurnFw.py generated and passed to `mlxburn`. That's the one you want to copy locally — it has all the regression-injected overrides baked in.
 
 ### Step 1C: read `get_last_commit` for the utopx commit hash
 
@@ -102,28 +102,29 @@ INFO: Executing cmd: /.../HcaCoreRegression/RegTools/get_last_commit_db.py \
 ```
 
 That gave me:
-- **utopx git short SHA**: `07de3b4`
-- **branch**: `master_rc` (from the tag stem `..._branch_master`)
-- **utopx DB name**: `HCA_CORE_FW-utopx_carveout_master_rc.db` — also useful if you want to find the same regression suite for a different setup later
+
+- **utopx regression tag** (canonical reference, captured directly from the log): `host_fwv_20260527_FW_version_50_0222_branch_master`. This tag points exactly at the build the regression ran. Prefer this over the bare SHA when documenting which utopx revision was used — the tag encodes verification stream + date + FW version + branch in one string.
+  - Verify the tag still resolves locally: `git tag --points-at 07de3b4` → should print the tag.
+  - Resolve tag → SHA: `git rev-parse host_fwv_20260527_FW_version_50_0222_branch_master`.
+- **utopx git short SHA** (alternate reference): `07de3b4`. Equivalent to the tag for checkout purposes.
+- **utopx branch**: `master` (from the tag stem `..._branch_master`). Verify with `git branch -a --contains 07de3b4` in the local repo — should show `master` and `remotes/origin/master`. The repo has no `master_rc` branch at all.
+- **utopx regression DB name**: `HCA_CORE_FW-utopx_carveout_master_rc.db` — the `_rc` suffix is **part of the regression-suite carveout name, not the branch**. Don't confuse the two.
 
 ### Step 1D: translate the FW version number to a golan_fw commit
 
 `get_last_commit` only describes utopx — there's no equivalent step for the FW source tree (the FW is burned as a pre-built `.mlx` from `/auto/sw/release/host_fw2/...`, not built from sources during the session). To find the corresponding **golan_fw** commit, two options:
 
 1. **By git log + version string** — every release point in golan_fw has a commit titled `Updated version <X>.<Y>.<Z>  Issue: NNNNNN`. Grep:
-
-   ```bash
+  ```bash
    cd /auto/fwgwork1/pexiang/golan_fw
    git log --all --oneline --grep="Updated version 12.50.0222"
    # 1bd3640336 Updated version 12.50.0222  Issue: 373899
-   ```
-
+  ```
    Note the version-number convention: regression / tools report the **product** number `32.50.0222`, but the **source-tree** number is `12.50.0222` (BF-3 family prefix differs). The build-number `0222` matches; the family digits don't. Grep on the trailing portion (`.50.0222`) to be safe.
-
 2. **By date cross-reference** — the FW release path tells you the build date:
-   ```
+  ```
    /auto/sw/release/host_fw2/fw-41692/fw-41692-rel-32_50_0222-build-001/
-   ```
+  ```
    `build-001` means first build of that day. Combined with the regression session timestamp (2026-05-27 21:22), look for the most recent `Updated version` commit before that timestamp on `master_rc`.
 
 Verified the commit exists in the local repo:
@@ -136,6 +137,45 @@ git log -1 --format='%H %ci %s' 1bd3640336
 ```
 
 19:02 commit, 21:22 burn — matches: the official build server compiled this commit and the regression picked up that build a couple hours later.
+
+#### golan_fw branch and release tag
+
+The MARS log doesn't print the golan_fw branch directly (FW is burned as a pre-built `.mlx`, not git-cloned during the session). Recover the branch with `git branch -a --contains 1bd3640336`:
+
+```bash
+cd /auto/fwgwork1/pexiang/golan_fw
+git fetch --all --tags          # IMPORTANT: tags may be remote-only
+git branch -a --contains 1bd3640336
+# * fr_1351156_libfhi_QPC               ← your current local branch (whichever)
+#   master_rc                            ← the regression branch
+#   remotes/origin/HEAD -> origin/master_rc
+#   remotes/origin/master_rc
+```
+
+**golan_fw branch is `master_rc`** — and this **differs from utopx's branch (`master`)**: the two repos use different branch-naming conventions for the release-candidate line. Don't assume both repos share a branch name.
+
+**The matching release tag is `rel-12_50_0222`** — derivable directly from the FW version printed in `new_burn_fw` (`FW Version: 32.50.0222`):
+
+```
+FW version  32.50.0222   →   drop product-family prefix "32"   →   12.50.0222 (source-tree form)
+                          →   dots to underscores              →   12_50_0222
+                          →   add "rel-" prefix                →   rel-12_50_0222
+```
+
+Verify:
+
+```bash
+git tag --points-at 1bd3640336
+# rel-12_50_0222
+git rev-parse rel-12_50_0222
+# 1bd364033669a37a34acefc32b559a6e9b60d935
+git describe --tags 1bd3640336
+# rel-12_50_0222
+```
+
+So for golan_fw you can `git checkout rel-12_50_0222` (more memorable / self-documenting than the SHA) and the result is identical to `git checkout 1bd3640336`.
+
+**Crucial gotcha:** the tag is only on `origin` after a fresh clone — `git tag --points-at` may return empty until you run `git fetch --all --tags`. If you ever see `git describe` produce something like `rel-12_50_0125-658-g1bd3640336` (a "nearest preceding tag plus N commits past it" form), that's the signal that your local tag list is stale, not that the build has no tag. Always fetch tags first before declaring "no tag exists".
 
 ### Step 1E: also worth grabbing (but optional)
 
@@ -152,29 +192,53 @@ This was for `utopx_1_scenario_dpa`, NOT `scenario_dpa_emu`. So `scenario_dpa_em
 
 ## Phase 2 — Match local repos to regression versions
 
-Checked current state of both repos under `/auto/fwgwork1/pexiang/`:
+Both repos under `/auto/fwgwork1/pexiang/` must match the regression's pair. Keep all three identifiers — they're interchangeable cross-references for the same point:
+
+| Repo | Branch | Tag | Commit SHA |
+|---|---|---|---|
+| utopx | `master` | `host_fwv_20260527_FW_version_50_0222_branch_master` | `07de3b4319491c961586206c1a6ece0967c37e7f` (short: `07de3b4`) |
+| golan_fw | `master_rc` | `rel-12_50_0222` | `1bd364033669a37a34acefc32b559a6e9b60d935` (short: `1bd3640336`) |
+
+Tag is the most self-documenting — prefer it for checkout. SHA is the most stable (always resolves, even if a tag gets moved). Branch tells you which line of development this came from. Always `git fetch --all --tags` first — tags may be remote-only in a stale clone.
+
+### utopx
 
 ```bash
 cd /auto/fwgwork1/pexiang/utopx
+git fetch --all --tags
 git log -1 --format='%H %h %ci %s'
 # 07de3b4319491c961586206c1a6ece0967c37e7f 07de3b431 2026-05-27 ... — already at target ✓
 ```
 
+If utopx is NOT already at the target, stash any local edits and check out the regression tag:
+
+```bash
+cd /auto/fwgwork1/pexiang/utopx
+git status                                              # check for local mods
+git stash push -u -m "auto-stash before checkout to regression tag (Mustang match)"
+git fetch --all --tags
+git checkout host_fwv_20260527_FW_version_50_0222_branch_master
+git log -1 --format='%H %ci %s'                         # verify (expect SHA 07de3b4319491c...)
+```
+
+### golan_fw
+
 ```bash
 cd /auto/fwgwork1/pexiang/golan_fw
+git fetch --all --tags                                  # crucial — rel-12_50_0222 may be remote-only
 git status
 # HEAD detached at rel-12_25_0222    ← wrong (12.25.0222 from 2019)
 # Changes not staged: shared/algorithm modified
-git rev-parse 1bd3640336   # confirmed the target commit exists in this repo
+git rev-parse rel-12_50_0222                            # confirm tag resolves
 # 1bd364033669a37a34acefc32b559a6e9b60d935
 ```
 
-To fix golan_fw — stash local change to `shared/algorithm`, checkout target commit:
+Fix — stash local change to `shared/algorithm`, checkout the regression tag:
 
 ```bash
 cd /auto/fwgwork1/pexiang/golan_fw
-git stash push -u -m "auto-stash before checkout to 1bd3640336 (Mustang regression match)"
-git checkout 1bd3640336
+git stash push -u -m "auto-stash before checkout to rel-12_50_0222 (Mustang regression match)"
+git checkout rel-12_50_0222
 git log -1 --format='%H %ci %s'
 # 1bd364033669a37a34acefc32b559a6e9b60d935 2026-05-27 19:02:06 +0300 Updated version 12.50.0222  Issue: 373899
 ```
@@ -205,7 +269,7 @@ nv_config.global.pci.settings.num_pfs_valid     = 0x1
 internal_use.ddr_log_2_bar_size                 = 0x22
 ```
 
-These are what make BAR2 visible on the rshim function — exactly what the dev-box run was missing. The rest of the diff is whitespace normalization (the default INI has comments and `=`-without-spaces; the burned one has comments stripped and `= ` formatting).
+These are what make BAR2 visible on the rshim function — exactly what the dev-box run was missing. The rest of the diff is whitespace normalization (the default INI has comments and `=`-without-spaces; the burned one has comments stripped and `=`  formatting).
 
 ### 3b — Verify which setups have Jerry's emulation flags
 
@@ -275,12 +339,14 @@ nv_config.global.emulation_virtio_fs_conf.virtio_fs_emu_num_msix = 0x2
 
 Notes on the value choices (all match Jerry's email exactly):
 
-| Section | Key values |
-|---|---|
-| NVMe | vendor=`0x15b3` (NVIDIA), device=`0x6001`, 2 PFs enabled |
+
+| Section    | Key values                                                                                                                                                 |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NVMe       | vendor=`0x15b3` (NVIDIA), device=`0x6001`, 2 PFs enabled                                                                                                   |
 | virtio-net | vendor=`0x1af4` (Red Hat / virtio), device=`0x1041` (virtio-net PCI), class=`0x028000` (Ethernet), 0 PFs at boot (added dynamically), max 16 PFs / 255 VFs |
-| virtio-blk | vendor=`0x1af4`, device=`0x1042` (virtio-blk PCI), class=`0x010800` (NVMe / Mass Storage), 0 PFs at boot, max 16 PFs / 255 VFs |
-| virtio-fs | vendor=`0x1af4`, device=`0x105a` (virtio-fs PCI), class=`0x010800`, 0 PFs at boot, max 16 PFs / 255 VFs |
+| virtio-blk | vendor=`0x1af4`, device=`0x1042` (virtio-blk PCI), class=`0x010800` (NVMe / Mass Storage), 0 PFs at boot, max 16 PFs / 255 VFs                             |
+| virtio-fs  | vendor=`0x1af4`, device=`0x105a` (virtio-fs PCI), class=`0x010800`, 0 PFs at boot, max 16 PFs / 255 VFs                                                    |
+
 
 ### 3d — Final state of the burned INI
 
@@ -383,7 +449,7 @@ Before: 114, After: 11
 FW reset completed at 05/28/2026 13:43:27 in 18s
 ```
 
-Out of the box `jk --fw-reset` does **not** work on BF-3/CX-8/CX-9 — required two patches to `~/myGit/crosslv/nv-tools/jmake` (see *Files modified* at the bottom).
+`jk --fw-reset` works on every model — it dispatches to the appropriate reset path per chip. Two specific bugs in our local `~/myGit/crosslv/nv-tools/jmake` fork blocked the BF-3 path; both were patched (see *Files modified* at the bottom). After the patches, `jk --fw-reset` is the standard between-runs reset on this box.
 
 ## Phase 8 — Verify FW + NVCONFIG
 
@@ -481,28 +547,33 @@ After a fresh power cycle, the device is already in clean state. `modprobe udriv
 
 We saw three different failure modes across repeat runs of the same command:
 
-| Run | Seed | Outcome | Cause |
-|---|---|---|---|
-| 1 | 3969039850 | ✅ PASSED 300 iters | clean state |
-| 2 | 444217356 | ❌ `Gen() outside phase` at iter 138 | leftover state + seed race |
-| 3 | 1000726046 | ❌ `Virtio device_status 0xf` at init | virtio device left in `DRIVER_OK` state from prior run |
-| 4 | (after stuck `[utopx.exe]` zombie) | ❌ wedged setup | un-killable D-state zombie holding kernel resources |
-| 5 | 3435089955 (after a passing run) | ❌ `Virtio device_status 0xf` at init | same — utopx leaves virtio emu in `DRIVER_OK` |
+
+| Run | Seed                               | Outcome                              | Cause                                                  |
+| --- | ---------------------------------- | ------------------------------------ | ------------------------------------------------------ |
+| 1   | 3969039850                         | ✅ PASSED 300 iters                   | clean state                                            |
+| 2   | 444217356                          | ❌ `Gen() outside phase` at iter 138  | leftover state + seed race                             |
+| 3   | 1000726046                         | ❌ `Virtio device_status 0xf` at init | virtio device left in `DRIVER_OK` state from prior run |
+| 4   | (after stuck `[utopx.exe]` zombie) | ❌ wedged setup                       | un-killable D-state zombie holding kernel resources    |
+| 5   | 3435089955 (after a passing run)   | ❌ `Virtio device_status 0xf` at init | same — utopx leaves virtio emu in `DRIVER_OK`          |
+
 
 Lessons:
+
 - The virtio emulated devices retain state between utopx runs. The MARS regression flow runs `fw_reset + modprobe_udriver` before **every** utopx test for exactly this reason.
 - A D-state utopx zombie (uninterruptible-sleep on device I/O) cannot be cleared by `kill -9`. Only `jk --power-cycle` reliably clears it.
 
 ## Reset spectrum between utopx runs (lightest → heaviest)
 
-| Method | Resets virtio state? | Time | When to use |
-|---|---|---|---|
-| `modprobe -r udriver && modprobe udriver` | ❌ no | <1s | Driver-binding cleanup only. Won't fix `Virtio device_status 0xf`. |
-| **`jk --fw-reset`** (our patched jmake) | ✅ **yes** | ~20s | **Default between-runs reset.** Routes through `fwreset.py`, acquires `/tmp/udriver_lockfile.lock`, knows about udriver, does a chip-level reset that clears emulated-device state. |
-| `sudo mlxfwreset -d ... -y r` | depends | ~20s | The underlying MFT tool. Works when `mlx5_core` is bound; on BF-3 with only `udriver`, tool-owner sync is "not supported" and it may fail. Prefer `jk --fw-reset` instead. |
-| `mustang_fw_reset.sh --next_driver udriver` (no `--remove_rescan`) | ✅ yes | ~30s | Heavier; explicit re-bind of all functions. |
-| `mustang_fw_reset.sh --remove_rescan` | ✅ yes when works | ⚠️ | **DANGEROUS** — hangs in `wait_woken` on PCIe parent bridge remove. Only recovery is power cycle. Avoid. |
-| `jk --power-cycle l-fwreg-171` | ✅ always | ~3 min | Last resort. Always works. Use only when the lighter resets fail (D-state zombies, `rev ff` lspci). |
+
+| Method                                                             | Resets virtio state? | Time   | When to use                                                                                                                                                                         |
+| ------------------------------------------------------------------ | -------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `modprobe -r udriver && modprobe udriver`                          | ❌ no                 | <1s    | Driver-binding cleanup only. Won't fix `Virtio device_status 0xf`.                                                                                                                  |
+| `**jk --fw-reset`** (our patched jmake)                            | ✅ **yes**            | ~20s   | **Default between-runs reset.** Routes through `fwreset.py`, acquires `/tmp/udriver_lockfile.lock`, knows about udriver, does a chip-level reset that clears emulated-device state. |
+| `sudo mlxfwreset -d ... -y r`                                      | depends              | ~20s   | The underlying MFT tool. Works when `mlx5_core` is bound; on BF-3 with only `udriver`, tool-owner sync is "not supported" and it may fail. Prefer `jk --fw-reset` instead.          |
+| `mustang_fw_reset.sh --next_driver udriver` (no `--remove_rescan`) | ✅ yes                | ~30s   | Heavier; explicit re-bind of all functions.                                                                                                                                         |
+| `mustang_fw_reset.sh --remove_rescan`                              | ✅ yes when works     | ⚠️     | **DANGEROUS** — hangs in `wait_woken` on PCIe parent bridge remove. Only recovery is power cycle. Avoid.                                                                            |
+| `jk --power-cycle l-fwreg-171`                                     | ✅ always             | ~3 min | Last resort. Always works. Use only when the lighter resets fail (D-state zombies, `rev ff` lspci).                                                                                 |
+
 
 ### Why `jk --fw-reset` works where bare `mlxfwreset` may not
 
@@ -521,6 +592,7 @@ chip reset register write
 ```
 
 `fwreset.py` adds:
+
 - `/tmp/fwreset_lock` + `/tmp/udriver_lockfile.lock` (one reset at a time, udriver-aware)
 - Multi-host BF coordination
 - Per-device function enumeration / rebind
@@ -565,10 +637,10 @@ sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
 ## Key learnings
 
 - **INI overrides matter most**: `internal_use.eliminate_pcie_switch_hier=0x1`, `ddr_mapping_en=0x1`, `ddr_log_2_bar_size=0x22` are what expose BAR2 on the CM-shared-memory function (`83:01.5`). Without these, ArmAgent BareMetal can't mmap shared memory. **These come from the regression's burned INI, not the release default INI** — must merge.
-- **`modprobe udriver` is the right binding step** post-burn / post-reset. The kernel auto-binds udriver to every PCI function whose device ID matches its supported table (41692 for NIC, 24577 for emulated NVMe controllers, 4161 for virtio-net). No script needed.
-- **`jk --fw-reset` is the right between-runs reset** on BF-3 with udriver bound — it clears virtio device state via `fwreset.py`'s chip reset, while handling udriver lockfile coordination. Takes ~20s, no power cycle needed.
-- **`jk --fw-reset` ≠ `mlxfwreset`** — `mlxfwreset` is the underlying MFT tool; `jk --fw-reset` wraps it with udriver-aware locking and orchestration. Bare `mlxfwreset` on BF-3 with udriver-only binding may fail "Tool is owner: Not supported".
-- **`mustang_fw_reset.sh --remove_rescan` is dangerous** — triggers a `wait_woken` hang on the PCIe parent bridge that requires power-cycle to recover. Avoid in interactive use.
+- `**modprobe udriver` is the right binding step** post-burn / post-reset. The kernel auto-binds udriver to every PCI function whose device ID matches its supported table (41692 for NIC, 24577 for emulated NVMe controllers, 4161 for virtio-net). No script needed.
+- `**jk --fw-reset` is the right between-runs reset** on BF-3 with udriver bound — it clears virtio device state via `fwreset.py`'s chip reset, while handling udriver lockfile coordination. Takes ~20s, no power cycle needed.
+- `**jk --fw-reset` ≠ `mlxfwreset`** — `mlxfwreset` is the underlying MFT tool; `jk --fw-reset` wraps it with udriver-aware locking and orchestration. Bare `mlxfwreset` on BF-3 with udriver-only binding may fail "Tool is owner: Not supported".
+- `**mustang_fw_reset.sh --remove_rescan` is dangerous** — triggers a `wait_woken` hang on the PCIe parent bridge that requires power-cycle to recover. Avoid in interactive use.
 - **State leak between back-to-back utopx runs** is real and well-defined: virtio emulated devices retain `DRIVER_OK` state. Resolution: `jk --fw-reset` between every run (same pattern MARS regression uses).
 - **Different seeds = different bugs**. utopx is stochastic. A pass with one seed doesn't guarantee a pass with the next. For repeatability, pin `-s <seed>`.
 
@@ -588,14 +660,63 @@ sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
 - ✅ **utopx `scenario_dpa_emu` PASSED** on l-fwreg-171 (300 iter × 30 ops/it, ~10 min, multiple seeds)
 - 📌 Power cycle (`jk --power-cycle l-fwreg-171`) reserved for cases where `jk --fw-reset` itself fails (D-state zombies, `rev ff` lspci)
 
+## Run history
+
+
+| Date                     | Seed          | Result     | Wall time   | Notes                                                             |
+| ------------------------ | ------------- | ---------- | ----------- | ----------------------------------------------------------------- |
+| 2026-05-28/29            | (multiple)    | ✅ PASS     | ~10 min     | Initial bring-up runs after burn                                  |
+| **2026-05-31 23:25 IDT** | **877500556** | ✅ **PASS** | **511.7 s** | Re-run from m-fwdev-167 over SSH; 300 iter × 30 ops/it = 9000 ops |
+
+
+### 2026-05-31 run notes (latest)
+
+- Stdout-tail log: `/labhome/pexiang/utopx_171_20260531_232525.log` (162 lines — only the last `tail -150` of utopx stdout plus the driver-state preamble)
+- **Full utopx log**: `/auto/fwgwork1/pexiang/utopx/verix_test_20260531_182531_629_0.log` (~19 MB, 134 867 lines). UTC timestamp in filename. This is the file to actually analyze; the stdout-tail one is just a sentinel for pass/fail.
+- Peak memory: 4920.78 MB. CR READ/WRITE count: 617 712. PCI READ/WRITE: 2 643.
+- **Coverage gap observed:** `EmuDevOverDpaLiveUpdate` scenario fired **0 times** in 300 iterations despite `dpa_agent_dev_emu_live_update.prob = 20` in `scenario_dpa_emu.conf:11`. Likely cause: precondition (an existing emu manager + emu object created earlier in the iteration) wasn't met because base scenarios in this conf don't bring emu objects to a runnable state first. Relevant to the OCI BF-4 MAS milestone *Live Update* (Aug-1 2026). Scenarios that DID fire: 7× `DpaBasicResScenario`, 3× `DpaAgentApp StartThreads`, 3× `DpaAgentApp LoadProcess`, 1× `GenericEmulationOverDpaScenario`.
+- Did NOT run `jk --fw-reset` before this run because no prior utopx run had touched virtio state on this box that day. Best practice: do `jk --fw-reset` between runs if you're iterating.
+
+## Re-run quick reference
+
+Assumes the one-time setup in Phases 1-5 has been done and FW is already burned on l-fwreg-171.
+
+```bash
+# From any dev box (e.g. m-fwdev-167)
+# 0. Verify lock
+python3 /.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py \
+  -q -n l-fwreg-171 -D 2>&1 | grep -E 'Status\.(status|lock_owner|lock_time_out)'
+# want: Status.status = Lock, Status.lock_owner = pexiang
+
+# 1. Between-runs reset (skip on the very first run after a fresh burn)
+ssh l-fwreg-171 'sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset && sudo modprobe udriver'
+
+# 2. Kick off the test in the background
+LOG="$HOME/utopx_171_$(date +%Y%m%d_%H%M%S).log"
+ssh l-fwreg-171 "bash ~/run_utopx_171.sh > '$LOG' 2>&1" &
+wait $!
+
+# 3. Verdict (short)
+tail -50 "$LOG" ; grep -E 'TEST PASSED|TEST FAILED|Test-status' "$LOG"
+
+# 4. Find the FULL run log (the one to actually analyze)
+ls -lt /auto/fwgwork1/pexiang/utopx/verix_test_*.log | head -1
+```
+
+In Claude Code sessions, run step 2 with `run_in_background: true` on the Bash tool; the script's internal `tail -150` only flushes when utopx exits, so the log appears idle during the ~8 min run — don't `tail -f` it, wait for the harness's completion notification.
+
+To reproduce a specific seed, modify `~/run_utopx_171.sh:23-26` to append `--seed=<N>` (or invoke utopx directly with the seed flag — see Phase 9 above).
+
 ## Files modified by this work
 
-| File | Change |
-|---|---|
-| `~/myGit/crosslv/nv-tools/jmake` | Bug A: pass `--run_new_fwreset` for chips `m`/`gl`/`ar` in `runFWReset`. Bug B: replaced `sourceFwvAlias()` with a doc-only stub; added conditional inline source in `main()`; removed five `sourceFwvAlias` calls from `runRegQuery`/`runRegMalloc`/`runRegMine`/`runRegIdle`/`runRegCancel`. |
-| `/auto/fwgwork1/pexiang/utopx/regression_ini/burned_session_11047756_v32_50_0222_psid_MT_0000000998.ini` | Appended Jerry's 36 emulation flags to `[fw_boot_config]`. |
-| `/auto/fwgwork1/pexiang/utopx/regression_ini/default_900-9D3B6-00CV-AAB_Ax.ini` | Copy of the regression's release default INI (unmodified). |
-| `/auto/fwgwork1/pexiang/golan_fw` | `git stash` of `shared/algorithm` local mod, then `git checkout 1bd364033669` (Mustang regression match). |
+
+| File                                                                                                     | Change                                                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/myGit/crosslv/nv-tools/jmake`                                                                         | Bug A: pass `--run_new_fwreset` for chips `m`/`gl`/`ar` in `runFWReset`. Bug B: replaced `sourceFwvAlias()` with a doc-only stub; added conditional inline source in `main()`; removed five `sourceFwvAlias` calls from `runRegQuery`/`runRegMalloc`/`runRegMine`/`runRegIdle`/`runRegCancel`. |
+| `/auto/fwgwork1/pexiang/utopx/regression_ini/burned_session_11047756_v32_50_0222_psid_MT_0000000998.ini` | Appended Jerry's 36 emulation flags to `[fw_boot_config]`.                                                                                                                                                                                                                                     |
+| `/auto/fwgwork1/pexiang/utopx/regression_ini/default_900-9D3B6-00CV-AAB_Ax.ini`                          | Copy of the regression's release default INI (unmodified).                                                                                                                                                                                                                                     |
+| `/auto/fwgwork1/pexiang/golan_fw`                                                                        | `git stash` of `shared/algorithm` local mod, then `git checkout 1bd364033669` (Mustang regression match).                                                                                                                                                                                      |
+
 
 ## Related context
 
@@ -605,4 +726,5 @@ sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
   - `/auto/mswg/projects/fw/fw_ver/MARS_HCA_CORE/MARS_conf/setups/ARGAMAN_FW-l-fwreg-225_P2/`
   - `/auto/mswg/projects/fw/fw_ver/MARS_HCA_CORE/MARS_conf/setups/ARGAMAN_FW-l-fwreg-226_eth_P2/`
 - MARS results root for Mustang regression:
-  `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/MUSTANG_FW-l-fwreg-171_eth_ARM_AGENT_P1/`
+`/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/MUSTANG_FW-l-fwreg-171_eth_ARM_AGENT_P1/`
+
