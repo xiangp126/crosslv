@@ -1220,7 +1220,7 @@ mainLoop() {
             # damaging variants) can find the rationale and the proposed
             # fixes (see brainstorm in commit history).
             local _preSendFp="$fingerprint"
-            local _maxRetries=3
+            local _maxRetries=5
             local _attempt=0
             local _postFp="$_preSendFp"
             while true; do

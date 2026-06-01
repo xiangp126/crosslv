@@ -1,4 +1,15 @@
-# Plan: open a guest Wi-Fi on the main gateway (192.168.10.1)
+# Guest Wi-Fi on the main gateway (192.168.10.1) — deployment plan + ops runbook
+
+> **⚠️ DESIGN CHANGED 2026-06-01 — the passwall bypass was removed.** The guest
+> network now rides passwall exactly like the `.10` LAN; `.20` is kept purely as
+> an **isolated** subnet (own firewall zone, no `guest→lan`). Robust — nothing
+> to maintain — at the cost of guests sharing whatever passwall does for the
+> LAN. **Steps 6–8's bypass parts and the "Operations & recurrence runbook" are
+> now SUPERSEDED**, kept only as history / a revert recipe. See the **Design
+> change — 2026-06-01** section just below Context.
+>
+> Steps 1–5 (wireless/network/dhcp/firewall-zone) remain the current, valid
+> deployment. The **Incident log** is retained as history.
 
 ## Context
 
@@ -30,6 +41,78 @@ User decisions captured:
 Hardware verified-supported: both radios advertise `#{ AP, mesh point } <= 16`
 in `iw phy info`, currently using 1 AP each — plenty of headroom for a second
 BSS per radio.
+
+---
+
+## Design change — 2026-06-01 (part 2): guest = clone of lan, blocked only from .10
+
+Dropping the bypass (part 1, below) left guests with **no usable internet** —
+DNS and all foreign/GFW destinations failed; only direct China traffic worked.
+
+**Root cause:** passwall does not proxy at the gateway edge — it
+redirects/tproxies traffic to **router-local ports** (`:1041` proxy, `:11400`
+DNS). After the redirect the destination is a local port, so the packet must
+pass the zone's **input** chain. The `lan` zone is `input=ACCEPT` so it passes;
+the guest zone was `input=REJECT` (only `udp/67` + `53` allowed), so the
+redirected DNS (→`:11400`) and proxy (→`:1041`) traffic was dropped in
+`reject_from_guest`. Direct China traffic worked because passwall `return`s it
+un-redirected.
+
+**Fix (current state):** make the guest zone **mirror lan**, with one carve-out:
+
+```sh
+uci set firewall.guest_zone.input='ACCEPT'      # was REJECT — this is the fix
+uci set firewall.guest_zone.forward='ACCEPT'    # mirror lan
+# the single exception — block guest -> .10 LAN:
+uci add firewall rule; uci rename firewall.@rule[-1]='block_guest_to_lan'
+uci set firewall.block_guest_to_lan.name='Block-guest-to-LAN'
+uci set firewall.block_guest_to_lan.src='guest'
+uci set firewall.block_guest_to_lan.dest='lan'
+uci set firewall.block_guest_to_lan.proto='all'
+uci set firewall.block_guest_to_lan.family='any'
+uci set firewall.block_guest_to_lan.target='REJECT'
+uci commit firewall; /etc/init.d/firewall reload
+```
+
+NAT needs nothing extra — the `wan` zone's `masq=1` masquerades guest→wan just
+like lan→wan. Result: guest is handled identically to `.10` (same passwall
+smart-DNS + selective proxy), and the only thing guests can't do is reach the
+`.10` subnet (NAS/cameras).
+
+> ⚠️ **Tradeoff:** `input=ACCEPT` means guests can also reach the router's own
+> admin (LuCI :80/:443, SSH :8822) — same as any `.10` client. To deny guest
+> admin while keeping internet, add targeted `src=guest` dport REJECTs for those
+> ports — **do NOT** revert `input` to REJECT (that re-breaks passwall DNS/proxy).
+
+---
+
+## Design change — 2026-06-01 (part 1): drop the passwall bypass
+
+After the bypass proved fragile (silently wiped on every passwall
+restart/node-switch — see Incident log), the decision was reversed: **stop
+bypassing passwall for guests; treat `.20` like `.10`.** Passwall here runs with
+`tcp_proxy_mode=disable` / `udp_proxy_mode=disable` and DNS-redirect on, so for
+clients it's mostly smart-DNS (chinadns-ng), not a full tunnel — the "guests
+shouldn't share the proxy" concern that motivated the bypass is minor.
+
+**What changed (partial rollback — only the bypass):**
+- Stripped the 5 `iifname "br-guest" return` rules from `inet passwall`.
+- Deleted `/usr/local/bin/guest-passwall-bypass.sh`,
+  `/etc/hotplug.d/firewall/95-guest-passwall-bypass`, and the `/etc/rc.local`
+  line.
+
+**What stayed (current deployment = Steps 1–5):** SSIDs `GGargoyle` /
+`GGargoyle_5G`, `br-guest` `192.168.20.1/24`, guest DHCP, and the **isolated**
+`guest` firewall zone (no `guest→lan` forwarding). Visitors still cannot reach
+the NAS / cameras / admin UIs.
+
+**Result:** `.20` is handled identically to `.10` by passwall, inheriting the
+LAN's proven-working behavior, with **no bypass to maintain** — the recurrence
+problem is gone. Guests get chinadns-ng DNS and share the proxy only for
+whatever the LAN proxies.
+
+**To revert** (put guests back on a direct/bypassed path): re-deploy Steps 6–8
+below (recreate the script + hotplug + rc.local line, then run the script).
 
 ---
 
@@ -176,6 +259,10 @@ LuCI are all unreachable. The two `rule` stanzas punch only the holes needed
 for DHCP and DNS *to the router itself*. No `guest→lan` forwarding is
 declared, so visitors can't even ping LAN hosts.
 
+> **⚠️ Steps 6–7 SUPERSEDED 2026-06-01** — the bypass was removed (see *Design
+> change* above). The following is retained only as history and as the recipe to
+> re-enable a guest passwall bypass if ever wanted.
+
 **Step 6 — passwall bypass script.** ⚠ **Important correction discovered during
 deployment:** passwall's `PSW_*` chains live in their own nft table
 **`inet passwall`**, not in `inet fw4`. A static `/etc/nftables.d/*.nft`
@@ -212,7 +299,9 @@ logger -t guest-bypass "applied bypass to PSW chains in $TABLE"
 `/etc/init.d/passwall restart` — at which point our bypass rules are gone.
 Cover two pathways:
 
-(a) **Hotplug on fw4 reload** at `/etc/hotplug.d/firewall/95-guest-passwall-bypass`:
+(a) **Hotplug on firewall reload** at `/etc/hotplug.d/firewall/95-guest-passwall-bypass`
+— note this fires on `/etc/init.d/firewall reload`, **not** on a bare `fw4
+reload` (see the Operations runbook below):
 
 ```sh
 #!/bin/sh
@@ -230,10 +319,10 @@ Cover two pathways:
 
 The 30-second sleep lets passwall fully initialize before we try to insert.
 
-> **Manual passwall restart** (e.g. via `/etc/init.d/passwall restart` or LuCI
-> Passwall page) does NOT fire the firewall hotplug, so after such a restart
-> re-run `/usr/local/bin/guest-passwall-bypass.sh` manually. Or wrap passwall's
-> init.d to call it on restart.
+> **A manual passwall restart** (`/etc/init.d/passwall restart` / LuCI Passwall
+> page) **and a bare `fw4 reload`** both do NOT fire the firewall hotplug, so
+> after either, re-run `/usr/local/bin/guest-passwall-bypass.sh` manually (or
+> wrap passwall's init.d to call it). See the Operations runbook below.
 
 **Step 8 — commit & apply.**
 
@@ -399,6 +488,106 @@ done
 - Cron service (`/etc/init.d/cron`) — wasn't touched by this plan.
 - Passwall itself, fw4 rules for the existing LAN/WAN zones, and the original
   `Gargoyle` / `Gargoyle_5G` SSIDs — all untouched.
+
+---
+
+## Operations & recurrence runbook
+
+> **⚠️ SUPERSEDED 2026-06-01** — this runbook existed to *maintain* the guest
+> passwall bypass, which has since been removed (see *Design change* above).
+> With no bypass, there is nothing here to keep healthy. Retained as history of
+> the failure mode and the `fw4 reload` ≠ hotplug finding.
+
+### The failure mode (why the bypass disappears)
+
+`inet passwall` is owned by the passwall package and is **rebuilt from scratch
+whenever passwall (re)starts, switches nodes, or reloads its own config**. Each
+rebuild discards the `iifname "br-guest" return` rules this plan inserts, so the
+guest network silently reverts to being routed *through* the proxy — guest DNS
+hijacked to `:11400`, guest TCP/UDP steered into sing-box.
+
+Only three things re-apply the bypass, and **none fire on a passwall restart**:
+
+| Re-trigger | Fires on |
+|---|---|
+| `/etc/hotplug.d/firewall/95-guest-passwall-bypass` | `/etc/init.d/firewall reload` **only** |
+| `/etc/rc.local` (`sleep 30; …`) | boot |
+| manual run | you |
+
+### ⚠️ Correction to Step 7: `fw4 reload` does NOT fire the hotplug
+
+Observed 2026-06-01: after a bare **`fw4 reload`** the bypass count was still
+`0` — the firewall hotplug did **not** run. Only the init wrapper
+**`/etc/init.d/firewall reload`** fires `/etc/hotplug.d/firewall/*`; calling the
+`fw4` binary directly does not. Practical rule:
+
+> After **any** `fw4 reload`, `/etc/init.d/passwall restart`, or passwall
+> node-switch/auto-restart, **re-run `/usr/local/bin/guest-passwall-bypass.sh`
+> by hand** (or use `/etc/init.d/firewall reload` instead of `fw4 reload`).
+
+### 30-second health check + fix (from the Mac)
+
+```sh
+ssh -p 8822 root@192.168.10.1 \
+  'echo "guest bypass: $(nft list table inet passwall | grep -c "iifname \"br-guest\".*return") / 5"'
+# If < 5, remediate:
+ssh -p 8822 root@192.168.10.1 '/usr/local/bin/guest-passwall-bypass.sh'
+```
+
+Symptom that should make you check: guest clients suddenly resolving through the
+proxy / odd DNS / proxy bandwidth shared — almost always follows a passwall
+restart or node switch.
+
+### Not-yet-done hardening (closes the gap permanently)
+
+The hotplug + rc.local cover fw4-reload and boot, but **not** a bare passwall
+restart — the exact path that bit us 2026-06-01. Pick one:
+
+- **passwall post-start hook** — have passwall call the bypass script after it
+  rebuilds its table (passwall ships a user-include / post-start mechanism).
+  The proper fix.
+- **cron watchdog** — every 5 min, `grep -c` the bypass count and re-apply if
+  `< 5`. Cruder but bulletproof.
+
+---
+
+## Incident log
+
+### 2026-06-01 — guest bypass wiped + Block_C700 never applied
+
+Found during a routine gateway health-check.
+
+**Issue A — guest bypass missing.** `nft list table inet passwall | grep -c
+'iifname "br-guest".*return'` returned `0` (expected `5`); head of `PSW_DNS` was
+the `:11400` DNS redirect, i.e. guest DNS was hijacked into passwall. Root
+cause: passwall's sing-box had restarted after boot and rebuilt the `inet
+passwall` table, discarding the bypass rules; neither the hotplug nor rc.local
+re-fired. Fix: ran `/usr/local/bin/guest-passwall-bypass.sh` → back to `5/5`,
+verified the `br-guest return` now sits above the `:11400` redirect in
+`PSW_DNS`. **This also surfaced the Step 7 correction above** (`fw4 reload`
+alone did not re-apply it).
+
+**Issue B (co-occurring, separate control) — `Block_C700`.** The four
+camera→WAN block rules (`/etc/config/firewall` rules `Block_C700_01..04`,
+MAC-only) existed in UCI but were **absent from the live ruleset** — edited
+without a `fw4 reload`, so the cameras could reach the internet. `fw4 reload`
+applied them. Within minutes the reject counters climbed to **460–540 packets
+each** (~60 B/pkt = bare TCP SYNs) — all four cameras continuously trying to
+"phone home" to vendor cloud/telemetry, now blocked. LAN/SMB recording to the
+NAS is unaffected (L2/LAN traffic, never on the WAN forward path).
+
+Quick check / re-apply for the camera block:
+
+```sh
+ssh -p 8822 root@192.168.10.1 '
+  nft list ruleset | grep -i Block_C700          # 4 rules, counters > 0 = working
+  # if present in "uci show firewall | grep C700" but missing from nft:
+  fw4 reload
+  /usr/local/bin/guest-passwall-bypass.sh         # ALWAYS re-run after fw4 reload
+'
+```
+
+Camera MACs: `01 b8:88:80:97:4a:38` · `02 b8:88:80:a0:fd:7c` · `03 b8:88:80:97:6d:02` · `04 b8:88:80:97:6d:36`.
 
 ---
 
