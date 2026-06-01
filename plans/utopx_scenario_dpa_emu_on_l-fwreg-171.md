@@ -6,7 +6,7 @@ This is not a how-to guide — it's the log of what happened, with the diagnosti
 
 ---
 
-## Phase 0 — Starting point
+## debugPhase 0 — Starting point
 
 On dev box `m-fwdev-167`, running
 
@@ -194,10 +194,12 @@ This was for `utopx_1_scenario_dpa`, NOT `scenario_dpa_emu`. So `scenario_dpa_em
 
 Both repos under `/auto/fwgwork1/pexiang/` must match the regression's pair. Keep all three identifiers — they're interchangeable cross-references for the same point:
 
-| Repo | Branch | Tag | Commit SHA |
-|---|---|---|---|
-| utopx | `master` | `host_fwv_20260527_FW_version_50_0222_branch_master` | `07de3b4319491c961586206c1a6ece0967c37e7f` (short: `07de3b4`) |
-| golan_fw | `master_rc` | `rel-12_50_0222` | `1bd364033669a37a34acefc32b559a6e9b60d935` (short: `1bd3640336`) |
+
+| Repo     | Branch      | Tag                                                  | Commit SHA                                                       |
+| -------- | ----------- | ---------------------------------------------------- | ---------------------------------------------------------------- |
+| utopx    | `master`    | `host_fwv_20260527_FW_version_50_0222_branch_master` | `07de3b4319491c961586206c1a6ece0967c37e7f` (short: `07de3b4`)    |
+| golan_fw | `master_rc` | `rel-12_50_0222`                                     | `1bd364033669a37a34acefc32b559a6e9b60d935` (short: `1bd3640336`) |
+
 
 Tag is the most self-documenting — prefer it for checkout. SHA is the most stable (always resolves, even if a tag gets moved). Branch tells you which line of development this came from. Always `git fetch --all --tags` first — tags may be remote-only in a stale clone.
 
@@ -473,13 +475,23 @@ ssh l-fwreg-171 'sudo timeout 30 mlxconfig -d /dev/mst/mt41692_pciconf0 q | grep
 
 All 36 flags loaded and active.
 
-## Phase 9 — Bring up udriver and run utopx
+## Phase 9 — Bring up udriver, clear rshim DROP_MODE, run utopx
 
-After the FW is pivoted and host is in a clean state, the bring-up is just two steps:
+After the FW is pivoted and host is in a clean state, the bring-up is three steps:
 
 ```bash
 ssh l-fwreg-171
 sudo modprobe udriver
+echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc      # see note below
+```
+
+**Why the DROP_MODE step matters:** the rshim daemon often comes back from `jk --fw-reset` with `DROP_MODE 1` set as a safety measure (it silently discards every write to `/dev/rshim0/boot`). utopx's BareMetal ArmAgent uses that same `/dev/rshim0/boot` path to push the BFB to ARM. If the rshim is dropping, utopx will retry `cat <bfb> > /dev/rshim0/boot` ten times, each time getting `sh: /dev/rshim0/boot: Invalid argument`, then FATAL out at `ArmAgentApiBareMetal.cpp:20`. Always clear `DROP_MODE` after a fwreset and before invoking utopx. Verify:
+
+```bash
+sudo cat /dev/rshim0/misc | grep -E "DROP_MODE|BF_MODE|UP_TIME"
+# DROP_MODE       0 (0:normal, 1:drop)              ← must be 0
+# BF_MODE         <whatever>
+# UP_TIME         <seconds since rshim last (re)connected>
 ```
 
 That alone auto-binds udriver to **all four** BF-3 host functions because the udriver module's PCI ID table includes both the NIC device ID (41692) and the emulated storage device ID (24577) that the 36 emulation INI flags create:
@@ -498,17 +510,21 @@ done
 # 83:00.1: Kernel driver in use: udriver
 # 83:00.2: Kernel driver in use: udriver
 # 83:00.3: Kernel driver in use: udriver
-# 83:00.4: Kernel driver in use: vfio-pci    ← rshim, intentionally not udriver
+# 83:00.4: Kernel driver in use: vfio-pci    ← rshim. Also valid: uio_pci_generic.
+#                                              Either way the rshim daemon must be running
+#                                              AND have DROP_MODE=0 — see step above.
 ```
 
-Now run utopx:
+Now run utopx (`debug_conf.xml`, not `conf.xml` — see note below):
 
 ```bash
 cd /auto/fwgwork1/pexiang/utopx
 sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
-             --xml_conf_file conf.xml --conf_file config/scenario_dpa_emu.conf \
+             --xml_conf_file debug_conf.xml --conf_file config/scenario_dpa_emu.conf \
              --iter=300 --ops_per_it=30
 ```
+
+> The 2026-05-31 baseline run used `conf.xml`. Starting 2026-06-01 we use `debug_conf.xml` to get extra logging/diagnostics that the default conf.xml suppresses. If you want to reproduce the original baseline exactly, swap back to `conf.xml`.
 
 Result (~10 minutes, varies with seed):
 
@@ -542,6 +558,28 @@ sudo /mswg/release/host_fw/fw-41692/fw-41692-rel-32_50_0222/../etc/mustang_fw_re
 We tried this several times — **the `--remove_rescan` flag causes a kernel `wait_woken` hang** when it does `echo 1 > /sys/devices/pci0000:80/0000:80:03.0/remove` on the parent PCIe bridge. The bridge remove never completes; the script hangs indefinitely; the parent shell can be killed but the kernel I/O stays wedged. lspci then shows BF-3 functions as `rev ff` (unresponsive). Only path out: power cycle the host (`jk --power-cycle l-fwreg-171`). Glean confirms this is a known hang class — see Confluence "Debug Festival October 2025" / Bug SW #4980709 / MSFT/CX-8 HOT_RESET remove_rescan hang.
 
 After a fresh power cycle, the device is already in clean state. `modprobe udriver` alone is sufficient — the reset script's only useful effect was to bind udriver to all 4 functions, which the kernel does automatically on module load.
+
+### Don't forget to clear rshim `DROP_MODE` after `jk --fw-reset`
+
+The rshim daemon (`systemctl status rshim.service`) frequently sets `DROP_MODE 1` after any PCIe-level transition (including `jk --fw-reset`). In drop mode, every write to `/dev/rshim0/boot` returns `Invalid argument` and is silently discarded. utopx in BareMetal mode pushes the BFB through that path, so it FATALs with:
+
+```
+ArmAgentApiBareMetal.cpp:30  Install BFB command: cat <bfb> > /dev/rshim0/boot
+sh: /dev/rshim0/boot: Invalid argument       (×10 retries)
+shared_global_function.cpp:350  FATAL: failed to run cmd: cat ... > /dev/rshim0/boot for 10 attempts
+ArmAgentApiBareMetal.cpp:20  Could not enable ArmAgentApiBareMetal
+[TEST FAILED]
+```
+
+Diagnose with `sudo cat /dev/rshim0/misc | grep DROP_MODE`. If it shows `1`, clear it:
+
+```bash
+echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc
+```
+
+Done **after every `jk --fw-reset`**, before running utopx. The Phase 9 / Re-run quick reference flow has this step inline now.
+
+Side-effect to notice: clearing `DROP_MODE` may bump `UP_TIME` from `0` to a non-zero value as the rshim re-establishes a connection to ARM — this is harmless and confirms the daemon is back to normal. `BF_MODE Unknown` is also normal pre-BFB-push.
 
 ### Don't run utopx back-to-back without a clean reset
 
@@ -603,6 +641,45 @@ chip reset register write
 
 ## Final recipe (minimum steps to get a working run on l-fwreg-171)
 
+### Reuse a single SSH connection across all steps
+
+Each `ssh l-fwreg-171 '<cmd>'` invocation incurs ~~1-2s of TCP handshake + auth — adds up when you do 5-10 of them per run cycle. Use **SSH connection multiplexing** so subsequent invocations reuse the first connection's socket (~~10ms instead of ~1s).
+
+**Option 1 — interactive: open one SSH session and stay in it**
+
+```bash
+ssh l-fwreg-171
+# now all commands run in this shell with no per-command overhead
+cd /auto/fwgwork1/pexiang/utopx
+sudo ./utopx ...
+exit
+```
+
+This is the natural flow for humans. The recipe below uses `ssh ... '<cmd>'` form for clarity, but you can just open one shell and run them sequentially inside it.
+
+**Option 2 — scripted: enable persistent control sockets in `~/.ssh/config`**
+
+```
+Host l-fwreg-*
+    ControlMaster   auto
+    ControlPath     ~/.ssh/cm-%r@%h:%p
+    ControlPersist  10m
+```
+
+After the first `ssh l-fwreg-171 ...` opens the master socket, every subsequent `ssh l-fwreg-171 '<cmd>'` from any shell on the same client reuses it for up to 10 min. Subsequent commands return in ~10ms.
+
+**Option 3 — one-off, no config edit**
+
+```bash
+SSH_OPTS=(-o ControlMaster=auto -o ControlPath="$HOME/.ssh/cm-%r@%h:%p" -o ControlPersist=10m)
+ssh "${SSH_OPTS[@]}" l-fwreg-171 'sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset'
+ssh "${SSH_OPTS[@]}" l-fwreg-171 'cd /auto/fwgwork1/pexiang/utopx && sudo ./utopx ...'
+```
+
+To close the persistent connection early: `ssh -O exit l-fwreg-171`.
+
+### Steps
+
 ```bash
 # === One-time setup (FW persists on flash, only needed once) ===
 ssh l-fwreg-171
@@ -622,17 +699,22 @@ sudo modprobe udriver
 sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset
 
 # (Only if jk --fw-reset itself fails, e.g. D-state zombies / rev:ff lspci):
-exit
-/labhome/pexiang/.usr/bin/jmake --power-cycle l-fwreg-171   # ~3 min
-ssh l-fwreg-171
+exit                                                          # leave SSH first
+/labhome/pexiang/.usr/bin/jmake --power-cycle l-fwreg-171     # ~3 min
+ssh -O exit l-fwreg-171 2>/dev/null || true                   # drop any stale ControlMaster socket
+ssh l-fwreg-171                                                # fresh connection after the power cycle
 sudo modprobe udriver
 
-# === Run utopx ===
+# === Run utopx (uses debug_conf.xml for extra diagnostics; swap to conf.xml to match the 2026-05-31 baseline) ===
 cd /auto/fwgwork1/pexiang/utopx
 sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
-             --xml_conf_file conf.xml --conf_file config/scenario_dpa_emu.conf \
+             --xml_conf_file debug_conf.xml --conf_file config/scenario_dpa_emu.conf \
              --iter=300 --ops_per_it=30
 ```
+
+### Why the power-cycle path explicitly drops the ControlMaster socket
+
+When the remote host reboots, the kernel/socket on the *client* side doesn't know the TCP peer is gone for many minutes (waiting for FIN/keepalive timeout). Subsequent `ssh` invocations get routed to the stale ControlPath socket and hang. Always run `ssh -O exit <host>` after any reboot/power-cycle to evict the dead socket and force a fresh connection.
 
 ## Key learnings
 
@@ -663,10 +745,12 @@ sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
 ## Run history
 
 
-| Date                     | Seed          | Result     | Wall time   | Notes                                                             |
-| ------------------------ | ------------- | ---------- | ----------- | ----------------------------------------------------------------- |
-| 2026-05-28/29            | (multiple)    | ✅ PASS     | ~10 min     | Initial bring-up runs after burn                                  |
-| **2026-05-31 23:25 IDT** | **877500556** | ✅ **PASS** | **511.7 s** | Re-run from m-fwdev-167 over SSH; 300 iter × 30 ops/it = 9000 ops |
+| Date                     | Seed                   | Result       | Wall time   | Notes                                                                                                                                                                                                                                                       |
+| ------------------------ | ---------------------- | ------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-28/29            | (multiple)             | ✅ PASS       | ~10 min     | Initial bring-up runs after burn                                                                                                                                                                                                                            |
+| **2026-05-31 23:25 IDT** | **877500556**          | ✅ **PASS**   | **511.7 s** | Re-run from m-fwdev-167 over SSH; 300 iter × 30 ops/it = 9000 ops                                                                                                                                                                                           |
+| 2026-06-01 ~14:12 IDT    | 3384525166             | ❌ FAIL early | ~16 s       | First attempt after re-burning 0222 + 2× `jk --fw-reset`. FATAL at `ArmAgentApiBareMetal.cpp:20`: `sh: /dev/rshim0/boot: Invalid argument` ×10. Root cause: rshim daemon left in `DROP_MODE 1` by the fwreset. Logged the failure mode in *What NOT to do*. |
+| 2026-06-01 (post-fix)    | (passed run, seed TBD) | ✅ PASS       | TBD         | After `echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc`. Confirmed the DROP_MODE step is the missing piece in Phase 9.                                                                                                                                       |
 
 
 ### 2026-05-31 run notes (latest)
@@ -691,6 +775,10 @@ python3 /.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py \
 # 1. Between-runs reset (skip on the very first run after a fresh burn)
 ssh l-fwreg-171 'sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset && sudo modprobe udriver'
 
+# 1b. Clear rshim DROP_MODE — REQUIRED after any fwreset (whether or not utopx ran before).
+# Without this, utopx's BFB push gets `sh: /dev/rshim0/boot: Invalid argument` ×10 and FATALs.
+ssh l-fwreg-171 'echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc; sudo cat /dev/rshim0/misc | grep DROP_MODE'
+
 # 2. Kick off the test in the background
 LOG="$HOME/utopx_171_$(date +%Y%m%d_%H%M%S).log"
 ssh l-fwreg-171 "bash ~/run_utopx_171.sh > '$LOG' 2>&1" &
@@ -706,6 +794,36 @@ ls -lt /auto/fwgwork1/pexiang/utopx/verix_test_*.log | head -1
 In Claude Code sessions, run step 2 with `run_in_background: true` on the Bash tool; the script's internal `tail -150` only flushes when utopx exits, so the log appears idle during the ~8 min run — don't `tail -f` it, wait for the harness's completion notification.
 
 To reproduce a specific seed, modify `~/run_utopx_171.sh:23-26` to append `--seed=<N>` (or invoke utopx directly with the seed flag — see Phase 9 above).
+
+### Escalation ladder when step 1 doesn't behave
+
+
+| Symptom after fwreset                                                               | Likely cause                                                 | Fix                                                                                         |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `jk --fw-reset` hangs > 90 s                                                        | D-state utopx zombie holding kernel resources                | `jk --power-cycle l-fwreg-171` (~3 min)                                                     |
+| `lspci` shows `rev ff` on any `83:00.*`                                             | Device wedged                                                | `jk --power-cycle l-fwreg-171`                                                              |
+| fwreset completes but utopx fails at `cat ... > /dev/rshim0/boot: Invalid argument` | DROP_MODE didn't get cleared in step 1b                      | Re-run step 1b and verify `grep DROP_MODE /dev/rshim0/misc` shows `0`                       |
+| utopx fails at `Virtio device_status 0xf` at init                                   | virtio state not drained                                     | `jk --fw-reset` again (sometimes one isn't enough); if still failing, power-cycle           |
+| `jk --fw-reset` itself errors out                                                   | rare; usually means lock-file or `mlxfwreset` upstream issue | inspect `/tmp/fwreset_lock`, `/tmp/udriver_lockfile.lock`, then power-cycle if still wedged |
+
+
+### What you do NOT need between runs
+
+- **No re-burn** — FW 32.50.0222 stays on flash through resets. You burn again only if you want a different version or you cleared flash for some reason.
+- **No repo re-checkout** — utopx + golan_fw2 stay at the regression tags (`07de3b4` / `rel-12_50_0222`) until you explicitly `git stash pop`, change branches, or another tool moves HEAD.
+- **No `mustang_fw_reset.sh --remove_rescan`** — see "What NOT to do". Hangs the PCIe parent bridge; recovery requires power cycle.
+- **No power cycle** in the normal case. Reserve it for the symptoms in the table above.
+
+### When you're done iterating
+
+If you want your prior in-progress work back (test prep stashed it):
+
+```bash
+cd /auto/fwgwork1/pexiang/utopx     && git stash pop    # restores .claude/, adabe/PacketFields.{cpp,h}, genid_dump
+cd /auto/fwgwork1/pexiang/golan_fw2 && git stash pop    # restores shared/* mods and .bash_profile
+```
+
+`git stash list` in each repo shows the saved entry (top of stack is from 2026-06-01 prep).
 
 ## Files modified by this work
 

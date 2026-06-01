@@ -129,6 +129,7 @@ alias cdN='__cd /auto/fwgwork1/$USER/nicx'
 alias cdU='__cd /auto/fwgwork1/pexiang/utopx'
 for i in {2..3}; do
     alias "cdw$i=__cd /auto/fwgwork1/$USER/golan_fw$i"
+    alias "cdU$i=__cd /auto/fwgwork1/pexiang/utopx$i"
 done
 
 # Print entry names without quotation marks
@@ -340,7 +341,7 @@ _ai_start_ja_if_needed() {
     # globals into the rest of bashrc.
     local _C_RED=$'\033[31m'   _C_GREEN=$'\033[32m'   _C_MAGENTA=$'\033[35m'
     local _C_CYAN=$'\033[36m'  _C_YELLOW=$'\033[93m'  _C_GREY=$'\033[90m'
-    local _C_BLUE=$'\033[34m'  _C_RESET=$'\033[0m'
+    local _C_RESET=$'\033[0m'
 
     if [[ -z "$TMUX" ]]; then
         printf '%s%s:%s --auto-approve requires running inside tmux. %sFalling back.%s\n' \
@@ -441,17 +442,27 @@ _ai_start_ja_if_needed() {
 _ai_nvm_tools=(codex claude)
 for _ai_cmd in "${_ai_nvm_tools[@]}"; do
     _AI_NAME_UC="${_ai_cmd^^}"   # CLAUDE / CODEX (bash 4+)
+    # Baked-in per-invocation defaults. Both tools auto-approve (-y) by
+    # default; only claude also defaults to --verbose (codex has no such
+    # flag). Expanded NOW (unescaped), so each function gets its own literal.
+    _AI_DEFAULTS='-y'
+    [[ "$_ai_cmd" == claude ]] && _AI_DEFAULTS='-y --verbose'
     eval "$_ai_cmd() {
+        # Prepend the baked defaults, then let the loop below normalise them.
+        set -- $_AI_DEFAULTS \"\$@\"
         # Strip --auto-approve / -y from \$@; record whether it appeared.
         # Also honor ${_AI_NAME_UC}_AUTO_APPROVE=1 env var as a persistent default.
-        local _auto=0 _args=() _arg
+        # --verbose is collapsed to a single flag (default + explicit don't stack).
+        local _auto=0 _verbose=0 _args=() _arg
         [[ \"\$${_AI_NAME_UC}_AUTO_APPROVE\" == 1 ]] && _auto=1
         for _arg in \"\$@\"; do
             case \"\$_arg\" in
                 --auto-approve|-y) _auto=1 ;;
+                --verbose) _verbose=1 ;;
                 *) _args+=(\"\$_arg\") ;;
             esac
         done
+        (( _verbose )) && _args+=(--verbose)
 
         # NVM activation. Idempotent — skip if the AI's binary is already
         # findable. If not, source nvm.sh directly (rather than calling the
@@ -478,7 +489,7 @@ for _ai_cmd in "${_ai_nvm_tools[@]}"; do
         command $_ai_cmd \"\${_args[@]}\"
     }"
 done
-unset _ai_cmd _AI_NAME_UC
+unset _ai_cmd _AI_NAME_UC _AI_DEFAULTS
 
 # For fzf-tab-completion vim plugin (requires Bash 4.0+)
 if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
