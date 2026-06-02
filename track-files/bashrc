@@ -286,13 +286,13 @@ fi
 #      set, we skip the (slow) `nvm use` call.
 #
 #   2. Recognise auto-approve flags / env vars (see knobs below) and
-#      launch ja in daemon mode against the current tmux pane, so
+#      launch a ja background daemon against the current tmux pane, so
 #      permission prompts get auto-confirmed for the lifetime of the
 #      daemon. The wrapper persists across invocations (no unset -f) —
 #      otherwise we'd lose the ability to parse --auto-approve on the
-#      second call. ja's daemon mode is the part that survives across
-#      claude restarts, so subsequent plain `claude` invocations get
-#      auto-approve "for free" via ja's ▶ Resumed mechanism.
+#      second call. ja persists across claude restarts by default, so
+#      subsequent plain `claude` invocations get auto-approve "for free"
+#      via ja's ▶ Resumed mechanism.
 #
 # User-facing knobs (per AI; replace <TOOL> with CLAUDE or CODEX):
 #
@@ -321,27 +321,19 @@ fi
 #
 # Stop the daemon at any time with: ja --stop  (or ja --stop -t <pane>).
 #
-# Helper: start a ja daemon for the current tmux pane if one isn't
-# already running. Four guards before launching:
+# Helper: start a ja background daemon for the current tmux pane. Two
+# guards, then delegate to ja:
 #   1. inside tmux (ja can't monitor without a pane to watch)
 #   2. ja is on PATH
-#   3. no existing daemon for this pane (lockfile w/ live pid)
-#   4. log file goes to ~/.local/ja so ja's stdout doesn't pollute the
-#      claude TUI and isn't subject to /tmp reapers (macOS periodic
-#      cleanup, tmpwatch on some Linux distros). Path layout MUST
-#      match nv-tools/ja's _runtimeDir + sanitisation rule — see the
-#      comment block above _lockFilePath() in that script.
-# Prints a one-line status to inform the user what was launched (or that
-# an existing daemon was reused) — short enough not to disrupt the
-# claude/codex banner, long enough to teach `ja --stop` exists.
+# Everything else — detaching (setsid), the log file under ~/.local/ja,
+# single-instance dedup, and the user-facing status line — is handled by
+# `ja --daemon` itself (it self-daemonizes and keys all its runtime files
+# by the pane_id). The wrapper just resolves the current pane_id and hands
+# off, so there's a single source of truth for ja's runtime layout.
 _ai_start_ja_if_needed() {
     local ai="$1"            # "claude" or "codex"
-    # ANSI escapes — match the palette ja itself uses (see top of nv-tools/ja).
-    # Defined locally to keep the wrapper self-contained without leaking
-    # globals into the rest of bashrc.
-    local _C_RED=$'\033[31m'   _C_GREEN=$'\033[32m'   _C_MAGENTA=$'\033[35m'
-    local _C_CYAN=$'\033[36m'  _C_YELLOW=$'\033[93m'  _C_GREY=$'\033[90m'
-    local _C_RESET=$'\033[0m'
+    # ANSI escapes for the fallback messages — match the palette ja uses.
+    local _C_RED=$'\033[31m' _C_CYAN=$'\033[36m' _C_GREY=$'\033[90m' _C_RESET=$'\033[0m'
 
     if [[ -z "$TMUX" ]]; then
         printf '%s%s:%s --auto-approve requires running inside tmux. %sFalling back.%s\n' \
@@ -353,82 +345,27 @@ _ai_start_ja_if_needed() {
             "$_C_RED" "$ai" "$_C_RESET" "$_C_CYAN" "$_C_RESET" "$_C_GREY" "$_C_RESET" >&2
         return 0
     fi
-    local target
-    target=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-    if [[ -z "$target" ]]; then
-        printf '%s%s:%s --auto-approve could not resolve current tmux target. %sFalling back.%s\n' \
+    local paneid
+    paneid=$(tmux display-message -p '#{pane_id}' 2>/dev/null)
+    if [[ -z "$paneid" ]]; then
+        printf '%s%s:%s --auto-approve could not resolve current tmux pane. %sFalling back.%s\n' \
             "$_C_RED" "$ai" "$_C_RESET" "$_C_GREY" "$_C_RESET" >&2
         return 0
     fi
-    local sanitized="${target//[:.]/-}"
-    # Path layout mirrors nv-tools/ja's _runtimeDir/_lockFilePath/_logFilePath.
-    # mkdir -p so the shell redirection below can open the log file
-    # before ja itself runs (ja's own _runtimeDir creation happens after
-    # the wrapper has already opened the fd).
-    local jadir="$HOME/.local/ja"
-    mkdir -p "$jadir" 2>/dev/null
-    local lockfile="$jadir/${sanitized}.lock"
-    local logfile="$jadir/${sanitized}.log"
-    if [[ -f "$lockfile" ]]; then
-        local pid
-        pid=$(cat "$lockfile" 2>/dev/null)
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            # ▶ ja already running · pid 24085 · ~/.local/ja/M-7-1.log · stop: ja --stop
-            printf '%s▶%s %sja already running%s %s·%s pid %s%s%s %s·%s %s%s%s %s·%s stop: %sja --stop%s\n' \
-                "$_C_MAGENTA" "$_C_RESET" \
-                "$_C_CYAN" "$_C_RESET" \
-                "$_C_GREY" "$_C_RESET" \
-                "$_C_CYAN" "$pid" "$_C_RESET" \
-                "$_C_GREY" "$_C_RESET" \
-                "$_C_GREY" "$logfile" "$_C_RESET" \
-                "$_C_GREY" "$_C_RESET" \
-                "$_C_YELLOW" "$_C_RESET"
-            return 0
-        fi
-    fi
-    # Launch ja in daemon mode, redirected to log + disowned. & disown
-    # detaches from the wrapper's job table so the daemon survives the
-    # wrapper exiting (which it will, when claude itself exits).
+    # Delegate everything to ja. `--daemon` makes ja self-detach (new
+    # session via setsid, its own log file under ~/.local/ja keyed by the
+    # pane_id), dedup against an already-running daemon for this pane, and
+    # print its own "daemon started / already running" status line — so the
+    # wrapper no longer mirrors ja's path rule, redirects logs, or races on
+    # the lockfile. Persistence across AI restarts is ja's default, so no
+    # extra flag is needed. Binding by pane_id (not the M:7.1 index) means
+    # the daemon follows the pane if it is later moved/relinked.
     #
-    # Note: we deliberately do NOT pass --$ai as an AI filter. -y means
-    # "auto-approve", not "only approve <this AI>". If the user later
-    # switches the same pane from claude to codex (or vice versa), the
-    # daemon should keep working. Users who want a strict filter can
-    # launch ja manually: ja -d --claude.
-    # Detach from controlling tty if possible. bash's `& disown` only
-    # backgrounds + removes from the job table — it does NOT release the
-    # ctty, so the launched ja still inherits this pane's tty and gets
-    # mis-classified as foreground by `ja --status`. Real detach requires
-    # setsid(2). Use the `setsid` command when available (Linux ships it
-    # by default; macOS users can `brew install util-linux`). Fallback to
-    # plain `& disown` — ja will still work, but --status will say
-    # foreground in <pane>, which is technically true for that case.
-    if command -v setsid &>/dev/null; then
-        ( setsid ja --daemon -t "$target" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
-    else
-        ( ja --daemon -t "$target" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
-    fi
-    # Brief pause so ja can claim its lockfile before we return — avoids
-    # racing the next invocation that might re-launch a duplicate.
-    local i
-    for i in 1 2 3 4 5 6; do
-        [[ -f "$lockfile" ]] && break
-        sleep 0.1
-    done
-    local pid=""
-    [[ -f "$lockfile" ]] && pid=$(cat "$lockfile" 2>/dev/null)
-    # ▶ ja running · pid 24085 · ~/.local/ja/M-7-1.log · stop: ja --stop
-    printf '%s▶%s %sja running%s' \
-        "$_C_MAGENTA" "$_C_RESET" \
-        "$_C_GREEN" "$_C_RESET"
-    [[ -n "$pid" ]] && printf ' %s·%s pid %s%s%s' \
-        "$_C_GREY" "$_C_RESET" \
-        "$_C_CYAN" "$pid" "$_C_RESET"
-    printf ' %s·%s %s%s%s %s·%s stop: %sja --stop%s\n' \
-        "$_C_GREY" "$_C_RESET" \
-        "$_C_GREY" "$logfile" "$_C_RESET" \
-        "$_C_GREY" "$_C_RESET" \
-        "$_C_YELLOW" "$_C_RESET"
+    # We intentionally do NOT pass --$ai as an AI filter: -y means
+    # "auto-approve", not "only approve <this AI>", so the daemon keeps
+    # working if the pane later switches claude<->codex. Users who want a
+    # strict filter can launch ja manually: ja -D --claude.
+    ja --daemon -t "$paneid"
 }
 
 # Per-AI wrapper. Runs every invocation (no unset -f) — overhead is one
