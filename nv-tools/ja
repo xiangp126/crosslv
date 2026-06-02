@@ -345,7 +345,7 @@ _drawBox() {
 #     "approved_count":   <int>,
 #     "paused":           <true|false>,
 #     "last_event_ts":    <unix seconds>,
-#     "last_event_type":  "<start|approve|paused|resumed|dropped|plan_review>",
+#     "last_event_type":  "<start|approve|paused|resumed|dropped|plan_review|moved>",
 #     "log_file":         "<runtime_dir>/<sanitized>.log",
 #     "host":             "<sess:win.pane>" | "<tty>" | "",  # see fHost
 #     "target_pane_id":   "<%N>"                              # see fTargetPaneId
@@ -1047,6 +1047,9 @@ mainLoop() {
     # already resolved by resolveTarget — the stable pane_id we bind to.
     fStartedTs=$(date +%s)
     fHost=$(_resolveHostLocation || true)
+    # Track the pane's live index location so we can log relink/move events
+    # (the pane_id is constant; only the session:window.pane index changes).
+    local lastLoc=$(_liveLocation "$fTargetPaneId")
     _writeState start
 
     # Compact two-line banner: title + watch summary on the first line,
@@ -1108,6 +1111,21 @@ mainLoop() {
             # stops ja in every mode (foreground or background daemon).
             _log "${RED}Target pane ${fTargetPaneId} destroyed. Exiting.${RESET}"
             break
+        fi
+
+        # Relink/move detection: the pane_id is stable, but its index
+        # (session:window.pane) changes when the pane is moved to another
+        # window/session or its siblings are re-indexed. Log such a move so
+        # the daemon's history shows where the pane has been, and refresh
+        # the state file so --status reflects the new index immediately.
+        # Runs every iteration (even while paused) since a pane can be moved
+        # while no AI is running. Cheap: one display-message per poll.
+        local curLoc
+        curLoc=$(_liveLocation "$fTargetPaneId")
+        if [ -n "$curLoc" ] && [ "$curLoc" != "$lastLoc" ]; then
+            _log "${CYAN}↪ Pane moved${RESET} ${BLUE}${lastLoc}${RESET} ${GREY}→${RESET} ${BLUE}${curLoc}${RESET} ${GREY}(${fTargetPaneId})${RESET}"
+            lastLoc="$curLoc"
+            _writeState moved
         fi
 
         # Sanity check: AI process still running in the pane?
