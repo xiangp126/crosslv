@@ -19,9 +19,9 @@ _ja_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    short_opts="-h -t -w -l -v -D -s -S -L -R"
+    short_opts="-h -t -w -l -v -D -s -S -L -R -A"
     long_opts="--help --target --wait --list --verbose --daemon \
-               --stop --restart --status --log --log-full"
+               --stop --restart --all --status --log --log-full"
 
     # Complete tmux targets in session[:window[.pane]] format.
     # Generates candidates with raw colons, then uses

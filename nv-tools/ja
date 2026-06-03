@@ -46,6 +46,7 @@ fTargetPaneId=    # tmux pane_id (eg. "%47") — the STABLE identity ja binds
 fPaused=          # 1 while daemon is paused (no AI in pane); empty otherwise
 fStop=            # 1 = --stop:     stop the daemon for the resolved target
 fRestart=         # 1 = --restart:  stop then relaunch a daemon for the target
+fAll=             # 1 = --all:      launch a daemon for every running AI pane
 fStatus=          # 1 = --status:   show daemon status (single or all)
 fLog=             # 1 = --log:      tail -F the daemon's log file
 fLogFull=         # 1 = --log-full: print full log then tail -F it
@@ -131,6 +132,8 @@ Daemon control (operate on already-running daemons):
                      a fresh background daemon for it. Handy after upgrading
                      $SCRIPT_NAME. Carries over -w/-v if given; otherwise uses
                      defaults. (default target: current pane; pass -t for one)
+    -A, --all        Launch a background daemon for EVERY tmux pane currently
+                     running a known AI, skipping panes already monitored.
     -s, --status     Show all running daemons (summary row + detail block
                      each). Inside tmux, the daemon for the current pane is
                      marked with '*' in the index column.
@@ -150,6 +153,7 @@ Examples:
     $SCRIPT_NAME -w 3              # wait 3s before each approval (Ctrl+C to abort)
     $SCRIPT_NAME -s                # see what daemons are running
     $SCRIPT_NAME -L                # follow current pane's daemon log
+    $SCRIPT_NAME -A                # launch a daemon for every running AI pane
 
 Stop:
     Press Ctrl+C, run $SCRIPT_NAME -S, or: pkill -f '$SCRIPT_NAME'
@@ -166,8 +170,8 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
 
-    local SHORTOPTS="ht:w:lvDsSLR"
-    local LONGOPTS="help,target:,wait:,list,verbose,daemon,stop,restart,status,log,log-full"
+    local SHORTOPTS="ht:w:lvDsSLRA"
+    local LONGOPTS="help,target:,wait:,list,verbose,daemon,stop,restart,all,status,log,log-full"
 
     local PARSED
     if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
@@ -209,6 +213,10 @@ parseOptions() {
                 ;;
             -R|--restart)
                 fRestart=1
+                shift
+                ;;
+            -A|--all)
+                fAll=1
                 shift
                 ;;
             -s|--status)
@@ -1410,6 +1418,7 @@ doEarlyExitJobs() {
     [ -n "$fList" ]    && { handleListMode;            exit 0;  }
     [ -n "$fStop" ]    && { handleStopRequest;         exit $?; }
     [ -n "$fRestart" ] && { handleRestartRequest;      exit $?; }
+    [ -n "$fAll" ]     && { handleStartAll;            exit $?; }
     [ -n "$fStatus" ]  && { handleStatusRequest;       exit $?; }
     [ -n "$fLogFull" ] && { handleLogRequest full;     exit $?; }
     [ -n "$fLog" ]     && { handleLogRequest tail;     exit $?; }
@@ -1619,6 +1628,50 @@ handleRestartRequest() {
     exec "$self" "${args[@]}"
 }
 
+# Launch a background daemon for every tmux pane currently running a known
+# AI, skipping panes already monitored. Reuses findAiPanes so detection
+# matches `ja -l` exactly (including node-wrapped codex). Carries over -w/-v.
+# Output is a scannable per-pane list (▶ started / ● already running) plus a
+# summary — a list fits a multi-pane action better than one box per pane.
+handleStartAll() {
+    local panes=() line
+    while IFS= read -r line; do [ -n "$line" ] && panes+=("$line"); done < <(findAiPanes)
+    if [ ${#panes[@]} -eq 0 ]; then
+        _drawBox \
+            "○ ${SCRIPT_NAME} no AI panes found" \
+            "${LIGHTYELLOW}○${RESET} ${SCRIPT_NAME} ${GREY}no AI panes found${RESET}" \
+            "$(_boxRow note "start $(_aiNamesPretty) in a tmux pane first" "${GREY}start $(_aiNamesPretty) in a tmux pane first${RESET}")"
+        return 0
+    fi
+
+    local self
+    self=$(command -v "$0" 2>/dev/null) || self="$0"
+    # Optional launch flags to carry into each daemon.
+    local extra=()
+    [ "$fApproveDelay" != "0" ] && extra+=(-w "$fApproveDelay")
+    [ -n "$fVerbose" ] && extra+=(-v)
+
+    echo -e "${MAGENTA}▶${RESET} ${SCRIPT_NAME} ${CYAN}launching daemons for all AI panes${RESET} ${GREY}(${#panes[@]})${RESET}"
+    echo
+    local pid target paneid cmd loc mon newpid started=0 existing=0
+    for line in "${panes[@]}"; do
+        IFS='|' read -r pid target paneid cmd <<<"$line"
+        loc=$(_liveLocation "$paneid"); [ -z "$loc" ] && loc="$target"
+        if mon=$(_monitorPid "$paneid"); then
+            echo -e "  ${LIGHTYELLOW}●${RESET} ${GREY}already${RESET} ${BLUE}${loc} (${paneid})${RESET} ${GREY}·${RESET} ${CYAN}${cmd}${RESET} ${GREY}·${RESET} pid ${CYAN}${mon}${RESET}"
+            existing=$((existing + 1))
+        else
+            # Self-daemonizing launch; suppress its own box (we print a line).
+            "$self" --daemon -t "$paneid" "${extra[@]}" >/dev/null 2>&1
+            newpid=$(cat "$(_lockFilePath "$paneid")" 2>/dev/null)
+            echo -e "  ${GREEN}▶${RESET} ${GREEN}started${RESET} ${BLUE}${loc} (${paneid})${RESET} ${GREY}·${RESET} ${CYAN}${cmd}${RESET} ${GREY}·${RESET} pid ${CYAN}${newpid:-?}${RESET}"
+            started=$((started + 1))
+        fi
+    done
+    echo
+    echo -e "${SCRIPT_NAME}: ${GREEN}${started} started${RESET}${GREY},${RESET} ${LIGHTYELLOW}${existing} already running${RESET} ${GREY}·${RESET} ${GREY}see${RESET} ${CYAN}${SCRIPT_NAME} -s${RESET}"
+}
+
 # Pretty-format a duration in seconds as "Xm Ys" or "Xh Ym Zs".
 _fmtDuration() {
     local s="$1" h m
@@ -1689,6 +1742,9 @@ handleStatusRequest() {
     # _valW=19 fits state_pad, PID, target label, event type.
     # Hoisted to loop top because state_pad's padding reuses _valW.
     local _labW=12 _valW=19 _lab2W=12
+    # Width of the per-daemon split banner — spans the two-column grid
+    # (marker + label1 + val1 + label2 + val2) so it reads as a section rule.
+    local _sepW=$(( 5 + _labW + 1 + _valW + 1 + _lab2W + 1 + _valW ))
 
     local i=1 f target target_pane_id pid ai daemon_int started approved paused
     local last_ts last_type host state_plain state_colored state_pad last_when
@@ -1793,6 +1849,12 @@ handleStatusRequest() {
         # printf (not echo -e): color vars are already-expanded ANSI bytes
         # by the time printf sees them. %b on state_pad / mode_label since
         # they carry pre-baked ANSI (width pre-applied for state_pad).
+
+        # Split banner between daemons — a grey rule so each block (and its
+        # Target) is easy to pick out. Reuses _hr (same rule the run banner
+        # uses). Printed before every block; with the trailing blank line
+        # each daemon already emits, consecutive daemons are clearly split.
+        echo -e "${GREY}$(_hr "$_sepW")${RESET}"
 
         # [N] + Target / AI. Target shows "index (%pane_id)".
         printf "${CYAN}%-5s${RESET}${GREY}%-${_labW}s${RESET} ${BLUE}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} ${CYAN}%s${RESET}\n" \
