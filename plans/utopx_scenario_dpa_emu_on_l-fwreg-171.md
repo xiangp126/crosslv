@@ -1,8 +1,15 @@
-# Today's flow — reproducing the Mustang DPA + ARM-agent regression on l-fwreg-171
+# FWV test env on l-fwreg-171 — for OCI BF-4 Satellite PF Emulation Manager Capability Delegation
 
-Chronological record of what was done across 2026-05-28 and 2026-05-29 to take a failing `utopx scenario_dpa_emu` run from "fails on dev box at `resource2_wc` open" all the way to a clean **PASS** on l-fwreg-171. Includes the recipe for repeat runs, the failure modes we hit along the way, and how to recover from each.
+**Feature:** `OCI BF-4 Satellite PF Emulation Manager Capability Delegation`. [HLD (Confluence page 3395678597)](https://nvidia.atlassian.net/wiki/spaces/FW/pages/3395678597). [FWV MAS (Confluence page 3530037909)](https://nvidia.atlassian.net/wiki/spaces/FW/pages/3530037909). Peter is the FWV owner.
 
-This is not a how-to guide — it's the log of what happened, with the diagnostic dead-ends included.
+**Aim:** stand up the BlueField-3 test environment on `l-fwreg-171` that this feature's FW verification will eventually run against. Two layers:
+
+1. **Baseline utopx layer** — `utopx scenario_dpa_emu` running successfully on 171 with the right FW + INI (Jerry's 36 NVMe/virtio emulation flags). This is the existing test that exercises emulation paths and gives us a regression-known-good state to build on.
+2. **Satellite PF layer** — `PF_NUM_SAT_PF=1` enabled on the ECPF so a satellite PF (ARM-side PF, BDF `00:00.2`) is exposed. This is the **prerequisite infrastructure**: cap delegation lets the ECPF delegate emulation-manager capability to a satellite PF via `SET_HCA_CAP(other_function=1)`, so without a satellite PF present there's nothing to delegate to. See [[feedback-satellite-pf-vs-cap-delegation]] — satellite PF enablement is independent of the FW cap-delegation patches; the satellite-PF infrastructure is BF3+-supported FW feature that pre-exists this feature work.
+
+**Status of the FW feature on the implementation side (as of 2026-06-03):** **in progress, not yet ready for verification runs**. Li Zeng's gerrit [`nbu:golan_fw~1426433`](https://git-nbu.nvidia.com/r/c/golan_fw/+/1426433) is only *part* of the FW-side implementation — additional commits are still being written. Do **not** treat the current code on master_rc as a testable build. This plan focuses on **env preparation** so that when Li's feature work is complete, the test bench is already standing. Until then, only the baseline utopx scenario_dpa_emu layer is exercised; the satellite-PF layer just sits ready.
+
+**For a fresh AI agent** picking this up: follow Phase 0 → 9 (utopx scenario_dpa_emu baseline) then Phase 10 (satellite PF). The "Final recipe" and "Re-run quick reference" sections at the bottom collapse it to a runnable script once the one-time setup is done. The phases below are the diagnostic log with every dead-end we hit so future debug is faster; phases marked "OPTIONAL" can be skipped if you just want to re-execute.
 
 ---
 
@@ -339,7 +346,19 @@ nv_config.global.emulation_virtio_fs_conf.virtio_fs_emu_class_code = 0x010800
 nv_config.global.emulation_virtio_fs_conf.virtio_fs_emu_num_msix = 0x2
 ```
 
-Notes on the value choices (all match Jerry's email exactly):
+**Additionally, for the satellite PF layer (added 2026-06-03)**, two more lines immediately after `mac_params.external_hosts_count = 2` (the existing line 54), i.e. inserted at line 55-56:
+
+```ini
+mac_params.satellite_pf_en = 1
+mac_params.device_type     = 3        ; DPU_WITH_NON_INTEGRATED_CPU — required by satellite_pf_en
+```
+
+These two are the gate that lets `iron_prep` emit the `PF_NUM_SAT_PF` nvconfig TLV at all. Without them, the TLV is reduced and mlxconfig reports `Failed to find Param / TLV with name 'PF_NUM_SAT_PF'` — see Phase 10 §"Root cause of TLV invisibility". Constraints from `src/common/mac_guid_handler.c:431-441`:
+- `DEVICE_IS(X)` macro = `mac_p.device_type == X`. So `device_type = 3` literally means "DPU_WITH_NON_INTEGRATED_CPU".
+- `satellite_pf_en=1` requires `device_type=3`; otherwise FW boot fwasserts `0x80C1`.
+- This is the **minimum** patch — BF-4 OCI MLI PRS sets a 6-field bundle (dedicated_dpu_bmc, dedicated_mcu, etc), but on BF-3 these 2 are enough.
+
+Notes on the value choices for the 36 emulation flags (all match Jerry's email exactly):
 
 
 | Section    | Key values                                                                                                                                                 |
@@ -354,22 +373,22 @@ Notes on the value choices (all match Jerry's email exactly):
 
 ```
 File:    /auto/fwgwork1/pexiang/utopx/regression_ini/burned_session_11047756_v32_50_0222_psid_MT_0000000998.ini
-Before:  670 lines, sections [image_info], [mfg_info], [device_info], [boot_record],
-                    [fw_boot_config] (lines 34-64), [fw_main_config] (lines 66+),
-                    [hw_boot_config], [hw_main_config]
-After:   714 lines (added 44 in [fw_boot_config] tail)
+Before:  670 lines (release default)
+After  (Jerry's 36 emu flags appended): 714 lines
+After  (+ 2 satellite_pf lines, 2026-06-03): 716 lines
 
 Verify:
   grep -cE "emulation_nvme|emulation_virtio_(net|blk|fs)" <file>       → 36
-  grep -n "^\[" <file>                                                  → sections unchanged, indices shifted:
-    [image_info]      line 1   (unchanged)
+  grep -nE "mac_params\.(satellite_pf_en|device_type)" <file>           → 2 lines
+  grep -n "^\[" <file>                                                  → section indices shifted:
+    [image_info]      line 1
     [mfg_info]        line 7
     [device_info]     line 11
     [boot_record]     line 15
     [fw_boot_config]  line 34
-    [fw_main_config]  line 110  (was line 66 — 44 lines moved by insertion)
-    [hw_boot_config]  line 146
-    [hw_main_config]  line 610
+    [fw_main_config]  line 112  (was line 66 — 46 lines moved by insertions)
+    [hw_boot_config]  line 148
+    [hw_main_config]  line 612
 ```
 
 This is the `--ini` argument fed to `jmake --burn ... --ini <this file>` in Phase 5.
@@ -406,6 +425,22 @@ Please compile odd-numbered version only.
 
 Version `12.50.0222` has subminor=0222 (even), reserved for the official build server. Local builds are restricted to odd subminors.
 
+**Workaround when you DO need to locally build (e.g. you have source edits and can't use the official .mlx):** checkout the *next odd-numbered* tag, which shares the same code as the even-numbered one — only the version-number tag itself differs. Concretely:
+
+```bash
+cd /auto/fwgwork1/pexiang/golan_fw
+git tag -l 'rel-12_50_*' --sort=-version:refname | head -5
+# rel-12_50_0223        ← odd, locally buildable, same code as 0222
+# rel-12_50_0222        ← even, official-only
+# rel-12_50_0221        ← odd, locally buildable, same code as 0220
+# ...
+
+git checkout rel-12_50_0223         # or whichever odd tag immediately follows the even one you want
+# now `jk -o --clean --models mustang` will build without the even-subminor block
+```
+
+For Phase 10 / Li's feature work we did NOT take this path — we used the official 0222 `.mlx` with a custom INI (Phase 5) because we only needed an INI change, not a source rebuild. The odd-version checkout matters when you've actually modified golan_fw source.
+
 Then `--fw-reset` also failed:
 
 ```
@@ -417,6 +452,8 @@ Error: fwresetm failed
 Two distinct problems to peel off.
 
 ## Phase 5 — Burn the official .mlx + custom INI via jmake, no rebuild
+
+Use this path when you don't need source edits (you're only changing the INI). For source-edit builds, use Phase 4's odd-version checkout workaround instead and run `jk -o --clean --models mustang` to produce a `.mlx` locally.
 
 jmake has two flags that skip the build entirely (replicating what regression's `BurnFw.py` does):
 
@@ -515,7 +552,7 @@ done
 #                                              AND have DROP_MODE=0 — see step above.
 ```
 
-Now run utopx (`debug_conf.xml`, not `conf.xml` — see note below):
+Now run utopx — **always use `debug_conf.xml`** (not `conf.xml`):
 
 ```bash
 cd /auto/fwgwork1/pexiang/utopx
@@ -524,7 +561,7 @@ sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
              --iter=300 --ops_per_it=30
 ```
 
-> The 2026-05-31 baseline run used `conf.xml`. Starting 2026-06-01 we use `debug_conf.xml` to get extra logging/diagnostics that the default conf.xml suppresses. If you want to reproduce the original baseline exactly, swap back to `conf.xml`.
+> The 2026-05-31 historical baseline run used `conf.xml`; this plan's earlier phases reference that for archeology. **For all re-runs from 2026-06-01 onward, use `debug_conf.xml`** — extra logging/diagnostics, no functional behavior change relative to the regression. Do not swap back to `conf.xml`.
 
 Result (~10 minutes, varies with seed):
 
@@ -541,6 +578,407 @@ General : Test-status is 0
 To rerun use seed 2136434584
 MemoryCheckThread : Done! Peak usage = 4091.34 MB
 ```
+
+## Phase 10 — Enable satellite PF (prereq for Li's cap delegation)
+
+Done on 2026-06-03 after Phases 1-9 were already passing. Builds on top of the burned-INI state from Phase 3 (which now includes the 2 `mac_params` lines — make sure they're there before doing this phase, otherwise PF_NUM_SAT_PF won't exist as a TLV).
+
+### 10.0 Why this needs both an INI change AND an ARM-side mlxconfig set
+
+`PF_NUM_SAT_PF` is documented in `adabe/EAS_nvconfig_tlvs.adb:513-514` as **"Currently only supported for ECPF which is also the eswitch owner"** — i.e. it's a per-PF nvconfig stored on the ECPF, not on the host PF. So enablement is two-step:
+
+1. **INI gate** (Phase 3): `mac_params.satellite_pf_en=1 + device_type=3` tells `iron_prep` to even emit the `PF_NUM_SAT_PF` TLV in the image. Without this, `mlxconfig` reports "Failed to find Param / TLV with name 'PF_NUM_SAT_PF'" — TLV is reduced out entirely. This is a one-time FW-burn change.
+2. **ECPF NVRAM write**: actually set `PF_NUM_SAT_PF=1` in the ECPF's per-PF NVRAM area. Must be done from the **ARM side** because host-side mst devs (`/dev/mst/mt41692_pciconf0`/`.1`) point to host PFs, whose per-PF NVRAM for this field is ignored by FW. The host has no ECPF mst dev (ECPF is in ARM's internal PCIe domain).
+
+### 10.1 Upgrade MFT on host (required) — mft ≥ 4.36 to recognize PF_NUM_SAT_PF
+
+Old mft (4.35.0 shipped with the box) doesn't know the `PF_NUM_SAT_PF` symbol name; you'll get `-E- You have an unsupported configuration name`. Upgrade:
+
+```bash
+ssh l-fwreg-171 'sudo /labhome/pexiang/.usr/bin/jmake --mft-install'
+# wraps /mswg/release/mft/last_stable/install.sh; takes ~30s
+# verify: mlxconfig --version  →  mft 4.37.0-75 or newer
+```
+
+### 10.2 ssh into the ARM side — root@192.168.100.1 / 3tango
+
+#### 10.2.1 How to find the ARM IP (the question that tripped me up)
+
+BF-3 is a SoC with an ARM core running its own Linux. From the host, the only physical path to ARM is via **rshim** — the BlueField management interface exposed as PCIe BDF `83:00.7` (see `lspci -nn -d 15b3:`, look for `BlueField-3 SoC Management Interface [15b3:c2d5]`). The rshim kernel driver creates two virtual devices on the host:
+
+1. `/dev/rshim0/*` — character devices (`console`, `boot`, `misc`, `rshim`) for low-level UART / BFB-push / control access.
+2. `tmfifo_net0` — a virtual Ethernet NIC implementing a **point-to-point tunnel over the rshim FIFO**. This is how `ssh` reaches ARM.
+
+The tmfifo link is a /24 with two endpoints; by NVIDIA convention:
+- **Host gets `192.168.100.2`**
+- **ARM gets `192.168.100.1`**
+
+Three independent ways to figure this out:
+
+1. **`/etc/hosts` on the host pre-declares every rshim port's ARM IP** (this is the most authoritative source — populated by NVIDIA dev-box image):
+   ```bash
+   ssh l-fwreg-171 'grep -E "arm|bf" /etc/hosts'
+   # 192.168.100.1 arm0 bf0
+   # 192.168.110.1 arm1 bf1
+   # 192.168.120.1 arm2 bf2
+   # 192.168.130.1 arm3 bf3
+   # 192.168.140.1 arm4 bf4
+   ```
+   `arm0`/`bf0` = the ARM behind rshim 0 (= our BF-3 SoC). The other ports are for boxes with multiple DPUs.
+
+2. **Inspect host's tmfifo NIC** and infer the peer from /24 + the convention:
+   ```bash
+   ssh l-fwreg-171 'ip -br addr show tmfifo_net0'
+   # tmfifo_net0      UP             192.168.100.2/24 fe80::6c36:bb29:192a:80c0/64
+   ```
+   Host is `.2/24` → ARM (the only other endpoint on the /24) is `.1`. The `.2 vs .1` allocation is fixed by the rshim driver: it always assigns the higher of the two to the host side.
+
+3. **Read rshim misc to confirm rshim is talking to a real DPU at all**:
+   ```bash
+   ssh l-fwreg-171 'sudo cat /dev/rshim0/misc | grep -E "DEV_NAME|DEV_INFO|UP_TIME|BF_MODE"'
+   # DEV_NAME    pcie-0000:83:00.7
+   # DEV_INFO    BlueField-3(Rev 1)
+   # UP_TIME     1234(s)
+   # BF_MODE     Unknown        (or "Live" if ARM OS has reported ready)
+   ```
+   `DEV_NAME` is the host-side PCIe BDF that rshim binds to. Multiple DPUs → multiple `/dev/rshim*` devices, each with its own tmfifo /24 (100/110/120/...).
+
+#### 10.2.2 Watch out for the .2 trap
+
+`ssh root@192.168.100.2` "works" — port 22 listens — but it's the **host's own sshd answering on its tmfifo NIC**. You'll be SSH'ing back into the host you're already on. Symptoms:
+
+- `uname -m` → `x86_64` (host) instead of `aarch64` (ARM). **Always check this.**
+- `mst status` shows host PFs (`83:00.x`), not ARM PCIe domain (`00:00.x`).
+- `root/3tango` works (host's root password) but it gives you nothing useful for ECPF work.
+
+The point-to-point convention is unambiguous: ARM is **never** `.2`; it's always `.1` (or `.3`, `.5`, ... for multi-DPU boxes' subsequent rshims).
+
+#### 10.2.3 Alternative access methods when ssh doesn't work
+
+The hierarchy of fallbacks (more fragile → more reliable):
+
+| Method | Use when | Command |
+|---|---|---|
+| `ssh root@192.168.100.1` | ARM is fully up, ssh daemon running, network OK | `ssh root@192.168.100.1` (or sshpass for scripts) |
+| `/dev/rshim0/console` | ARM boot is hung, ssh daemon not yet up, or you need to see kernel logs | `sudo minicom -D /dev/rshim0/console` or `sudo screen /dev/rshim0/console` |
+| BFB push via `/dev/rshim0/boot` | Rootfs is broken; you want to reinstall ARM OS from scratch | See §10.10 below |
+| BMC (separate physical NIC on DPU, OOB) | Both rshim console and ssh are dead; the box has a DPU BMC | ssh `root@<bmc-oob-ip>` / `0penBmc` |
+
+The rshim console is the canonical "low-level access" — it's a UART tunneled over tmfifo, so it works even when ARM kernel has no network yet (early boot, panic, dropbear-only single-user mode). On 171 the BMC OOB IP is whatever lab DHCP gave it; check `ipmitool -H <box> lan print` from a privileged box.
+
+#### 10.2.4 Default credentials sweep
+
+We didn't know in advance which OS / password combo was installed on 171's ARM. The 10-combo sweep (~30s) reveals it without breaking anything:
+
+```bash
+ssh l-fwreg-171 '
+for combo in "ubuntu:ubuntu" "ubuntu:3Tango11!" "ubuntu:3tango" "root:3tango" \
+             "root:0penBmc" "root:oracle" "root:centos" "root:root" \
+             "ubuntu:password" "ubuntu:nvidia"; do
+  user=$(echo $combo | cut -d: -f1); pass=$(echo $combo | cut -d: -f2)
+  result=$(SSHPASS=$pass sshpass -e ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no \
+           -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 \
+           $user@192.168.100.1 "uname -a; echo OK" 2>&1 | head -1)
+  echo "[$user / $pass] → $result"
+done
+'
+```
+
+Reference table of defaults we expected to see (see also [[reference-171-arm-access]]):
+
+| OS / image | User | Password | Notes |
+|---|---|---|---|
+| Fresh DOCA BFB (Ubuntu) | ubuntu | ubuntu | First login forces password change. Team-after-customization is often `3Tango11!` or `3tango`. |
+| CentOS BFB | root | centos | Older BSP releases. |
+| Oracle Linux UEK BFB | root | oracle | OCI-flavored installs. |
+| DPU BMC (not ARM OS) | root | 0penBmc | Number-zero, not letter-O. Only relevant via BMC OOB port. |
+
+**171's actual combo**: `root` / `3tango`. The lab team (or whoever set this box up before us) replaced the default `ubuntu/ubuntu` flow with an explicit `root` account using `3tango` as the dev-shared password. This is non-standard but common on internal dev boxes. After we discovered it, single-test cmd:
+
+```bash
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 "uname -a"'
+# expected: Linux l-fwreg-171-bf0 5.15.0-1019.21.5.g2a61d1d-bluefield #g2a61d1d SMP ... aarch64
+```
+
+The `aarch64` in `uname -a` is the definitive marker — that's the ARM. Host's uname will say `x86_64`.
+
+### 10.3 Upgrade MFT on the ARM side too (also required — ARM ships with 4.25)
+
+The ARM rootfs has its own mft installation, also too old. Same upgrade script, runs over the ARM's NFS mount of `/mswg/release/mft/last_stable/`:
+
+```bash
+SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password \
+    root@192.168.100.1 '/mswg/release/mft/last_stable/install.sh; mst restart; mlxconfig --version'
+# expect: mlxconfig, mft 4.37.0-75
+```
+
+The ARM rootfs has both `/mswg` and `/auto/mswg_release_mft` already mounted (NFS), so no extra setup. Default gateway via `tmfifo_net0` (192.168.100.2 = host) also works for general internet (DNS, apt-get).
+
+### 10.4 Set PF_NUM_SAT_PF=1 on ECPF (from ARM)
+
+```bash
+SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password \
+    root@192.168.100.1 '
+    mst start >/dev/null 2>&1
+    mst status
+    # Expected: 2 BlueField3 devices, /dev/mst/mt41692_pciconf0 (00:00.0, ECPF0)
+    #                                  /dev/mst/mt41692_pciconf0.1 (00:00.1, ECPF1)
+
+    mlxconfig -d /dev/mst/mt41692_pciconf0 q PF_NUM_SAT_PF
+    # Expected: PF_NUM_SAT_PF = 0  (no longer "Failed to find Param / TLV")
+
+    mlxconfig -d /dev/mst/mt41692_pciconf0 -y s PF_NUM_SAT_PF=1
+    # Expected: "Apply new Configuration? y / Applying... Done! / Please reboot..."
+'
+```
+
+If you see `-E- Unknown Parameter: PF_NUM_SAT_PF`, ARM mft is still old (step 10.3 didn't run).
+
+If you see `-E- Failed to find Param / TLV with name 'PF_NUM_SAT_PF'`, the FW image doesn't have the TLV — re-check Phase 3 INI patch (the 2 mac_params lines) and re-burn.
+
+### 10.5 Apply NVconfig — power cycle is the cleanest path
+
+You'll be tempted to use `mlxfwreset -l3` (the level-3 chip reset that loads new nvconfig). On this box it doesn't work cleanly:
+
+```bash
+# from ARM:
+mlxfwreset -d /dev/mst/mt41692_pciconf0 -l3 -y r
+# → -E- Synchronization by driver is not supported in the current state of this device.
+
+# from host with udriver bound:
+sudo mlxfwreset -d /dev/mst/mt41692_pciconf0 -l3 -y r
+# → -E- mlxfwreset doesn't support 3rd party driver (udriver)!
+
+# from host after rmmod udriver + --skip_driver:
+sudo rmmod udriver
+sudo mlxfwreset -d /dev/mst/mt41692_pciconf0 -l3 --skip_driver -y r
+# → -E- The reset flow encountered a failure because the ARM OS is up and needs to be shut down.
+
+# from host with jk --fw-reset (which wraps fwreset.py):
+sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset
+# → Failed to add MST device: 0000:83:00.0  (also fails — chip half-resets)
+```
+
+After exhausting all three, the path that works is **`jk --power-cycle l-fwreg-171`** (~3 min). NVRAM is persistent through power cycle, so the write from 10.4 stays. Fresh boot guarantees `PF_NUM_SAT_PF=1` is loaded into the running NVconfig.
+
+```bash
+# From the dev box (e.g. m-fwdev-167), not from inside the SSH session:
+ssh -O exit l-fwreg-171 2>/dev/null    # drop ControlMaster socket if any
+/labhome/pexiang/.usr/bin/jmake --power-cycle l-fwreg-171
+# 3m6s typical; ipmi off → 20s wait → ipmi on → ping-back
+```
+
+### 10.6 Verify satellite PF is exposed
+
+After power cycle, on **ARM side** (not host — satellite PF is ARM-only; host lspci will never show it):
+
+```bash
+SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password \
+    root@192.168.100.1 '
+    mst start >/dev/null 2>&1
+
+    lspci -nn | grep -iE "mellanox|bluefield"
+    # Expected: THREE ConnectX-7 PFs now (was two):
+    #   00:00.0  ECPF0
+    #   00:00.1  ECPF1
+    #   00:00.2  ← the new satellite PF
+
+    mst status
+    # Expected: THREE mst devs:
+    #   /dev/mst/mt41692_pciconf0       (00:00.0)
+    #   /dev/mst/mt41692_pciconf0.1     (00:00.1)
+    #   /dev/mst/mt41692_pciconf0.2     ← satellite PF mst dev
+
+    mlxconfig -d /dev/mst/mt41692_pciconf0 -e q PF_NUM_SAT_PF
+    # Expected:
+    #   Default=0  Current=1  Next Boot=1
+    # The "Current=1" is the proof that NVconfig is applied to running.
+
+    mlxconfig -d /dev/mst/mt41692_pciconf0.2 q PF_NUM_SAT_PF PER_PF_NUM_SF PF_TOTAL_SF
+    # Expected on the satellite PF itself:
+    #   PF_NUM_SAT_PF = 0  (a sat PF cannot itself spawn more sat PFs)
+    #   PER_PF_NUM_SF = True(1)
+    #   PF_TOTAL_SF   = 0
+
+    mlxprivhost -d /dev/mst/mt41692_pciconf0.2 q | head
+    # Expected: query works, default PRIVILEGED (BF4 OCI MLI Phase 2 will tighten to RESTRICTED later)
+'
+```
+
+Host side after the cycle is the usual 5-PF set (NO sat PF), which is correct:
+
+```bash
+ssh l-fwreg-171 'lspci -nn -d 15b3: | grep -v "PCI bridge"'
+# 83:00.0  ConnectX-7 PF0
+# 83:00.1  ConnectX-7 PF1
+# 83:00.2  NVMe SNAP
+# 83:00.3  NVMe SNAP
+# 83:00.7  BF-3 SoC Management
+# — no sat PF visible. By design (sat PF is ARM-side PF per HLD).
+```
+
+### 10.7 What's installed for downstream Li-cap-delegation tests
+
+After this phase: utopx running on host (Phases 1-9) PLUS one satellite PF on ARM (BDF `00:00.2`). The cap-delegation tests under [[plans/utopx_verification_emu_mgr_delegation.md]] will exercise `SET_HCA_CAP(other_function=1)` from utopx-on-host targeting the satellite PF via FW vhca_id routing. utopx side only needs to know the sat PF exists in FW (queryable via `QUERY_HCA_CAP` / `QUERY_HOST_NET_FUNCTIONS`); it does NOT need to talk to it through the ARM-side mst dev.
+
+### 10.8 Reproducible re-execution (for fresh-AI-agent picking this plan up)
+
+If FW is already burned (Phases 1-5 done, with the 2 `mac_params` lines in the INI) but sat PF hasn't been enabled yet, the minimum to get there:
+
+```bash
+# === 1. Upgrade mft on both sides (idempotent — skip if already 4.37+) ===
+ssh l-fwreg-171 'sudo /labhome/pexiang/.usr/bin/jmake --mft-install'
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 \
+    "/mswg/release/mft/last_stable/install.sh && mst restart"'
+
+# === 2. Set PF_NUM_SAT_PF=1 on ECPF (from ARM) ===
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 \
+    "mst start >/dev/null; mlxconfig -d /dev/mst/mt41692_pciconf0 -y s PF_NUM_SAT_PF=1"'
+
+# === 3. Power cycle to apply ===
+ssh -O exit l-fwreg-171 2>/dev/null
+/labhome/pexiang/.usr/bin/jmake --power-cycle l-fwreg-171   # ~3 min
+
+# === 4. Verify ===
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 \
+    "mst start >/dev/null && lspci -nn | grep -c ConnectX-7"'
+# Expected: 3 (was 2 before, now 2 ECPFs + 1 sat PF)
+
+# === 5. Restore host-side env for utopx ===
+ssh l-fwreg-171 'echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc && sudo modprobe udriver'
+```
+
+If step 4 prints `2` (sat PF didn't appear), the most common failure modes:
+- INI patch missing — re-check `grep -nE "mac_params\.(satellite_pf_en|device_type)" /auto/fwgwork1/pexiang/utopx/regression_ini/burned_session_11047756_v32_50_0222_psid_MT_0000000998.ini` should return 2 lines.
+- mft on ARM still old — `mlxconfig --version` on ARM must be 4.37+.
+- Power cycle didn't actually pivot — `mlxconfig -d /dev/mst/mt41692_pciconf0 -e q PF_NUM_SAT_PF` on ARM must show `Current=1` not `Current=0`.
+
+### 10.9 Configure the satellite PF for SF creation (OPTIONAL — only for downstream tests that need SFs)
+
+After Phase 10.6 the sat PF exists as a vhca but has the adabe defaults: `PF_TOTAL_SF=0`, `PF_BAR2_ENABLE=True`, `PF_SF_BAR_SIZE=8`. Cap-delegation tests against Li's feature do NOT need SFs created on the sat PF (they only need the sat PF to exist as a delegation target). But if you're running the QA team's BF4 OCI MLI sat-PF security suite or anything that does `mlnx-sf --action create` against the sat PF, configure it first.
+
+Recipe from [Confluence QA page 3328961648 — "BF4 OCI MLI SAT PF Zero Trust"](https://nvidia.atlassian.net/wiki/spaces/QA/pages/3328961648), adapted for BF-3 BDF `00:00.2`:
+
+```bash
+# 1. Set BAR2 + SF capacity on the sat PF (from ARM):
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 "
+    mst start >/dev/null
+    mlxconfig -d /dev/mst/mt41692_pciconf0.2 -y s \
+        PF_BAR2_ENABLE=0 \
+        PER_PF_NUM_SF=1 \
+        PF_TOTAL_SF=64 \
+        PF_SF_BAR_SIZE=10
+"'
+
+# 2. Apply via power cycle (mlxfwreset -l3 has the same gating issues as in 10.5):
+ssh -O exit l-fwreg-171 2>/dev/null
+/labhome/pexiang/.usr/bin/jmake --power-cycle l-fwreg-171
+
+# 3. Verify on ARM after cycle:
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 "
+    mst start >/dev/null
+    mlxconfig -d /dev/mst/mt41692_pciconf0.2 q PF_BAR2_ENABLE PER_PF_NUM_SF PF_TOTAL_SF PF_SF_BAR_SIZE
+"'
+# expect:
+#   PF_BAR2_ENABLE  False(0)
+#   PER_PF_NUM_SF   True(1)
+#   PF_TOTAL_SF     64
+#   PF_SF_BAR_SIZE  10
+
+# 4. Create an SF on the sat PF (controller index is 2 on BF-3, 3 on BF-4):
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 "
+    /sbin/mlnx-sf --action create \
+        --device 0000:00:00.0 \
+        --sfnum 0 \
+        --pfnum 2 \
+        --controller 2 \
+        --hwaddr 02:52:88:f3:13:bd
+    /sbin/mlnx-sf -a show
+"'
+```
+
+Why `controller 2` on BF-3 vs `controller 3` on BF-4: BF-4 has the additional SmartNIC-HIX host counted; BF-3 does not. [QA page 3328961648](https://nvidia.atlassian.net/wiki/spaces/QA/pages/3328961648) documents both values explicitly.
+
+The MAC `02:52:88:f3:13:bd` is a per-SF locally-administered address — any unique LA-bit MAC works; pick from the Mellanox `02:52:88:00:00:XX` convention (see [Confluence SW page 3271938371 — "BlueField 4 OCI MLI design VM and configuration guide"](https://nvidia.atlassian.net/wiki/spaces/SW/pages/3271938371) §3.3 "Software flow for provisioning satellite PF" for the per-SF MAC allocation loop if you need 64 SFs).
+
+### 10.10 BFB reinstall on ARM (recovery — only if ARM rootfs is broken)
+
+If ssh to ARM stops working after a reboot, or `BF_MODE` stays at `Unknown` indefinitely past `UP_TIME` of a few minutes, or you want a fresh ARM Ubuntu, push a DOCA BFB. **Warning: this wipes the ARM rootfs** — any local installs (including the MFT 4.37 upgrade from 10.3) are gone and must be redone.
+
+```bash
+ssh l-fwreg-171
+
+# 1. Pick a BFB from the standard release tree. List what's available:
+ls /auto/sw_mc_soc_release/doca_dpu/
+# doca_2.0.2/  doca_2.5.0/  doca_2.6.0/  doca_2.7.0/  ...
+
+# Inside each version, BFBs are organized by signing flavor:
+ls /auto/sw_mc_soc_release/doca_dpu/doca_2.6.0/20240128/bfbs/
+# qp/   pk/   ...
+# qp/ = QP "Non secured" (dev), pk/ = PK "Production"
+
+ls /auto/sw_mc_soc_release/doca_dpu/doca_2.6.0/20240128/bfbs/qp/
+# DOCA_2.6.0_BSP_4.6.0_Ubuntu_22.04-1.20240128.bfb
+
+# 2. rshim DROP_MODE must be 0 (else the push fails with "Invalid argument"):
+echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc
+sudo cat /dev/rshim0/misc | grep DROP_MODE   # confirm "0"
+
+# 3. Push the BFB — this reboots ARM with the new image:
+BFB=/auto/sw_mc_soc_release/doca_dpu/doca_2.6.0/20240128/bfbs/qp/DOCA_2.6.0_BSP_4.6.0_Ubuntu_22.04-1.20240128.bfb
+sudo cat $BFB > /dev/rshim0/boot
+# 30-60s for the push; ARM then auto-reboots and runs first-boot setup
+# (filesystem expansion, package config, network init). Allow ~2-3 min total.
+
+# 4. Watch ARM come up via rshim console (optional but useful):
+sudo cat /dev/rshim0/console
+# You should see U-Boot → kernel → systemd → login prompt within ~2 min.
+# Ctrl-C to exit (won't disturb ARM).
+
+# 5. /dev/rshim0/misc should show BF_MODE becoming non-Unknown:
+sudo cat /dev/rshim0/misc | grep -E "BF_MODE|UP_TIME"
+# BF_MODE  Live              ← ARM Ubuntu reported ready
+# UP_TIME  120(s)            ← rshim's view of how long ARM has been up
+
+# 6. SSH in. Default for a fresh DOCA BFB is ubuntu/ubuntu with forced password change:
+ssh ubuntu@192.168.100.1
+# password: ubuntu
+# (you'll be prompted to set a new password on first login)
+
+# 7. (Recommended) set root password explicitly for scripted access:
+sudo passwd root        # set to whatever your team standard is; 171 had 3tango
+sudo passwd ubuntu      # also set ubuntu's password if you'll script with sshpass
+
+# 8. Re-do the Phase 10.3 MFT upgrade — required because the new BFB ships old mft:
+/mswg/release/mft/last_stable/install.sh
+mst restart
+mlxconfig --version    # should show 4.37+
+
+# 9. Re-do Phase 10.4 set PF_NUM_SAT_PF if NVRAM was cleared during the BFB reboot
+# (it shouldn't be — NVRAM survives BFB push — but verify):
+mlxconfig -d /dev/mst/mt41692_pciconf0 q PF_NUM_SAT_PF
+# expect: Current=1 still. If 0, redo set + power cycle.
+```
+
+**When BFB reinstall is the right answer vs. wrong answer**:
+
+| Symptom | Right answer |
+|---|---|
+| ssh ARM Permission denied with every default password | BFB reinstall — someone changed creds and didn't document; reinstall resets to ubuntu/ubuntu |
+| ssh ARM connection refused (port 22 closed) | BFB reinstall if rshim console also dead; otherwise debug via console first |
+| ARM rootfs full / out of disk / package corruption | BFB reinstall to get fresh rootfs |
+| `BF_MODE Unknown` forever, ARM hung in early boot | Try rshim console first; BFB reinstall as last resort |
+| Just need to update MFT on ARM | **DO NOT BFB-reinstall** — just run `/mswg/release/mft/last_stable/install.sh` directly |
+| Just need to set a new NVconfig | **DO NOT BFB-reinstall** — ssh in, mlxconfig set, done |
+
+**171 today**: BFB reinstall **NOT needed**. The existing ARM Ubuntu (`l-fwreg-171-bf0`, kernel `5.15.0-1019.21.5.g2a61d1d-bluefield`) is functional, and the team's `root/3tango` works. Section 10.10 is documented as recovery procedure only.
 
 ## What NOT to do (failure modes we hit and learned from)
 
@@ -580,6 +1018,26 @@ echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc
 Done **after every `jk --fw-reset`**, before running utopx. The Phase 9 / Re-run quick reference flow has this step inline now.
 
 Side-effect to notice: clearing `DROP_MODE` may bump `UP_TIME` from `0` to a non-zero value as the rshim re-establishes a connection to ARM — this is harmless and confirms the daemon is back to normal. `BF_MODE Unknown` is also normal pre-BFB-push.
+
+### Don't try to set PF_NUM_SAT_PF from the host side
+
+`mlxconfig -d /dev/mst/mt41692_pciconf0 -y s PF_NUM_SAT_PF=1` on the host writes to host PF0's per-PF NVRAM area; FW ignores that value when deciding sat-PF enablement. The host-PF NVRAM is harmless garbage. Symptoms if you do this thinking it will work:
+
+- After mlxfwreset / power cycle: host lspci unchanged, mst dev count unchanged, no sat PF.
+- `mlxconfig -d /dev/mst/mt41692_pciconf0 q PF_NUM_SAT_PF` on host shows `1` (the value you set) — misleading; the field exists per-PF, so each PF's mst dev reports its own area.
+- The host_id / pf_index mlxconfig flags don't help: those only target class-3 per-host TLVs. PF_NUM_SAT_PF isn't class-3.
+
+Always set this from ARM-side `mst dev` for ECPF — see Phase 10.4.
+
+### Don't ssh to 192.168.100.2 expecting ARM
+
+That's the **host's own tmfifo NIC IP** (point-to-point tmfifo link: host = .2, ARM = .1). SSH'ing to .2 connects you to the host itself (port 22 is the host's sshd). Misleading because:
+
+- The SSH connection succeeds.
+- `root@192.168.100.2 / 3tango` (host's root password) works.
+- `mst status` and `mlxconfig` all run successfully but operate on host PFs, not ECPF.
+
+Symptom: `uname -m` returns `x86_64`. For ARM, expected is `aarch64`. Always check. Use `192.168.100.1` for ARM.
 
 ### Don't run utopx back-to-back without a clean reset
 
@@ -694,6 +1152,29 @@ cd /auto/fwgwork1/pexiang/golan_fw && \
 /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset
 sudo modprobe udriver
 
+# === Satellite PF setup (one-time, Phase 10) — required for Li's cap delegation tests ===
+# 4. Upgrade mft on host (jk wraps /mswg/release/mft/last_stable/install.sh)
+sudo /labhome/pexiang/.usr/bin/jmake --mft-install
+# 5. Upgrade mft on ARM + set PF_NUM_SAT_PF=1 on ECPF
+SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password \
+    root@192.168.100.1 '
+    /mswg/release/mft/last_stable/install.sh
+    mst restart
+    mst start >/dev/null
+    mlxconfig -d /dev/mst/mt41692_pciconf0 -y s PF_NUM_SAT_PF=1
+'
+exit  # leave SSH first
+# 6. Power cycle to apply (NVconfig only loads on fresh boot — mlxfwreset doesn't work cleanly)
+ssh -O exit l-fwreg-171 2>/dev/null
+/labhome/pexiang/.usr/bin/jmake --power-cycle l-fwreg-171     # ~3 min
+# 7. Verify sat PF appeared on ARM side (BDF 00:00.2)
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 \
+    "mst start >/dev/null && lspci -nn | grep -c ConnectX-7"'
+# Expected: 3
+# 8. Restore host-side env
+ssh l-fwreg-171 'echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc && sudo modprobe udriver'
+
 # === Before each utopx run (after the first) ===
 # This clears virtio device state left by the previous run:
 sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset
@@ -705,12 +1186,14 @@ ssh -O exit l-fwreg-171 2>/dev/null || true                   # drop any stale C
 ssh l-fwreg-171                                                # fresh connection after the power cycle
 sudo modprobe udriver
 
-# === Run utopx (uses debug_conf.xml for extra diagnostics; swap to conf.xml to match the 2026-05-31 baseline) ===
+# === Run utopx (always use debug_conf.xml) ===
 cd /auto/fwgwork1/pexiang/utopx
 sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
              --xml_conf_file debug_conf.xml --conf_file config/scenario_dpa_emu.conf \
              --iter=300 --ops_per_it=30
 ```
+
+**Note on power cycle and sat PF persistence**: the `PF_NUM_SAT_PF=1` NVRAM write is persistent across power cycles, reboots, and FW reburns of the **same INI**. The only thing that clears it is reburning a FW image whose INI lacks the 2 `mac_params` gate lines (then the TLV stops existing and the value is lost), or `mlxconfig reset` on the ECPF. After Phase 10 is done once, the routine "between-runs `jk --fw-reset`" doesn't disturb it — the sat PF stays exposed.
 
 ### Why the power-cycle path explicitly drops the ControlMaster socket
 
@@ -728,8 +1211,9 @@ When the remote host reboots, the kernel/socket on the *client* side doesn't kno
 
 ---
 
-## Status as of 2026-05-29
+## Status as of 2026-06-03
 
+### Baseline utopx layer
 - ✅ MARS regression baseline (FW + utopx commits) identified from session 11047756
 - ✅ Local utopx + golan_fw checked out to matching commits
 - ✅ Regression's INI files downloaded and stored in `utopx/regression_ini/`
@@ -742,6 +1226,17 @@ When the remote host reboots, the kernel/socket on the *client* side doesn't kno
 - ✅ **utopx `scenario_dpa_emu` PASSED** on l-fwreg-171 (300 iter × 30 ops/it, ~10 min, multiple seeds)
 - 📌 Power cycle (`jk --power-cycle l-fwreg-171`) reserved for cases where `jk --fw-reset` itself fails (D-state zombies, `rev ff` lspci)
 
+### Satellite PF layer (Phase 10, added 2026-06-03)
+- ✅ INI patched with `mac_params.satellite_pf_en = 1` + `mac_params.device_type = 3` (gates `PF_NUM_SAT_PF` TLV emission in `iron_prep`)
+- ✅ MFT upgraded on host: 4.35.0 → 4.37.0-75
+- ✅ MFT upgraded on ARM:  4.25.0  → 4.37.0-75
+- ✅ ARM SSH access established: `root@192.168.100.1` / `3tango` (the host's tmfifo NIC is `.2`, ARM is `.1`)
+- ✅ `PF_NUM_SAT_PF = 1` set on ECPF NVRAM from ARM side
+- ✅ `jk --power-cycle l-fwreg-171` applied the NVconfig
+- ✅ **Satellite PF appears** at ARM BDF `00:00.2` with mst dev `/dev/mst/mt41692_pciconf0.2`; mlxconfig + mlxprivhost both queryable on it
+- ✅ Host-side state unchanged after sat PF setup — `scenario_dpa_emu` baseline still runnable
+- 📌 Ready for downstream Li-cap-delegation tests (see [[plans/utopx_verification_emu_mgr_delegation.md]])
+
 ## Run history
 
 
@@ -751,6 +1246,7 @@ When the remote host reboots, the kernel/socket on the *client* side doesn't kno
 | **2026-05-31 23:25 IDT** | **877500556**          | ✅ **PASS**   | **511.7 s** | Re-run from m-fwdev-167 over SSH; 300 iter × 30 ops/it = 9000 ops                                                                                                                                                                                           |
 | 2026-06-01 ~14:12 IDT    | 3384525166             | ❌ FAIL early | ~16 s       | First attempt after re-burning 0222 + 2× `jk --fw-reset`. FATAL at `ArmAgentApiBareMetal.cpp:20`: `sh: /dev/rshim0/boot: Invalid argument` ×10. Root cause: rshim daemon left in `DROP_MODE 1` by the fwreset. Logged the failure mode in *What NOT to do*. |
 | 2026-06-01 (post-fix)    | (passed run, seed TBD) | ✅ PASS       | TBD         | After `echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc`. Confirmed the DROP_MODE step is the missing piece in Phase 9.                                                                                                                                       |
+| **2026-06-03** | n/a (env work) | ✅ **Phase 10 done** | ~30 min | Satellite PF enabled on ARM (BDF `00:00.2`). INI patched with 2 `mac_params` lines + reburn + ARM mft 4.25→4.37 + `mlxconfig set PF_NUM_SAT_PF=1` on ECPF + `jk --power-cycle` to apply. Discovered `root@192.168.100.1/3tango` is the right ARM login (NOT `.2` — that's host's tmfifo NIC). |
 
 
 ### 2026-05-31 run notes (latest)
@@ -763,7 +1259,18 @@ When the remote host reboots, the kernel/socket on the *client* side doesn't kno
 
 ## Re-run quick reference
 
-Assumes the one-time setup in Phases 1-5 has been done and FW is already burned on l-fwreg-171.
+Assumes the one-time setup in Phases 1-5 AND Phase 10 (satellite PF) have both been done and FW is already burned on l-fwreg-171.
+
+### Optional sanity check: is the satellite PF still there?
+
+```bash
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no \
+    -o PreferredAuthentications=password root@192.168.100.1 \
+    "mst start >/dev/null && lspci -nn | grep -c ConnectX-7"'
+# want: 3   (= 2 ECPFs + 1 sat PF)
+# If output is 2: sat PF is gone — re-run Phase 10.8 reproducible re-execution.
+# If ssh times out: ARM Linux didn't boot; need rshim console intervention or BFB re-push.
+```
 
 ```bash
 # From any dev box (e.g. m-fwdev-167)
@@ -831,12 +1338,33 @@ cd /auto/fwgwork1/pexiang/golan_fw2 && git stash pop    # restores shared/* mods
 | File                                                                                                     | Change                                                                                                                                                                                                                                                                                         |
 | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `~/myGit/crosslv/nv-tools/jmake`                                                                         | Bug A: pass `--run_new_fwreset` for chips `m`/`gl`/`ar` in `runFWReset`. Bug B: replaced `sourceFwvAlias()` with a doc-only stub; added conditional inline source in `main()`; removed five `sourceFwvAlias` calls from `runRegQuery`/`runRegMalloc`/`runRegMine`/`runRegIdle`/`runRegCancel`. |
-| `/auto/fwgwork1/pexiang/utopx/regression_ini/burned_session_11047756_v32_50_0222_psid_MT_0000000998.ini` | Appended Jerry's 36 emulation flags to `[fw_boot_config]`.                                                                                                                                                                                                                                     |
+| `/auto/fwgwork1/pexiang/utopx/regression_ini/burned_session_11047756_v32_50_0222_psid_MT_0000000998.ini` | (2026-05-28) Appended Jerry's 36 emulation flags to `[fw_boot_config]`. (2026-06-03) Added 2 more lines for satellite PF: `mac_params.satellite_pf_en = 1` and `mac_params.device_type = 3` (line 55-56).                                                                                       |
 | `/auto/fwgwork1/pexiang/utopx/regression_ini/default_900-9D3B6-00CV-AAB_Ax.ini`                          | Copy of the regression's release default INI (unmodified).                                                                                                                                                                                                                                     |
-| `/auto/fwgwork1/pexiang/golan_fw`                                                                        | `git stash` of `shared/algorithm` local mod, then `git checkout 1bd364033669` (Mustang regression match).                                                                                                                                                                                      |
+| `/auto/fwgwork1/pexiang/golan_fw`                                                                        | `git stash` of `shared/algorithm` local mod, then `git checkout 1bd364033669` (Mustang regression match). 2026-06-03: also checked out a private branch `pexiang/sat_pf_setup_171` for sat PF infra work (no source edits; only working-tree isolation).                                       |
+| l-fwreg-171 host MFT                                                                                     | 2026-06-03: upgraded 4.35.0-138 → 4.37.0-75 via `jmake --mft-install` (needed for `PF_NUM_SAT_PF` symbol recognition).                                                                                                                                                                          |
+| l-fwreg-171 ARM MFT                                                                                       | 2026-06-03: upgraded 4.25.0-27 → 4.37.0-75 via `/mswg/release/mft/last_stable/install.sh` over `ssh root@192.168.100.1`.                                                                                                                                                                       |
+| l-fwreg-171 ECPF NVRAM                                                                                    | 2026-06-03: `PF_NUM_SAT_PF = 1` written via `mlxconfig` from ARM side. Persistent through power cycle.                                                                                                                                                                                         |
 
 
 ## Related context
+
+### OCI BF-4 Satellite PF Emulation Manager Capability Delegation (the feature this env exists for)
+
+- **Feature owner (FW side)**: Li Zeng
+- **FWV owner**: Peter Xiang
+- **HLD**: [Confluence page 3395678597 — "[HLD] [OCI][BF-4] Satellite PF Emulation Manager Capability Delegation"](https://nvidia.atlassian.net/wiki/spaces/FW/pages/3395678597)
+- **FWV MAS**: [Confluence page 3530037909](https://nvidia.atlassian.net/wiki/spaces/FW/pages/3530037909) (published)
+- **FW-side gerrit (in progress)**: [`nbu:golan_fw~1426433`](https://git-nbu.nvidia.com/r/c/golan_fw/+/1426433) — Li's first commit, **not the complete feature**. More commits are still being written. **Do not test against this single commit alone.**
+- **FWV verification plan**: `plans/utopx_verification_emu_mgr_delegation.md` — utopx-side test code design (6 work items, 3 PRs, ~490 LOC). Implementation paused pending Li's FW work to finish.
+
+### Satellite PF underlying feature (the FW capability we're enabling via Phase 10)
+
+- **FWV MAS**: [Confluence page 2830146343 — "[FWV][MAS][OCI] PF without page supplier and MPFS on DPU host side"](https://nvidia.atlassian.net/wiki/spaces/FW/pages/2830146343) — Marie Chagny, target FW `xx_49_xxxx`
+- **HLD**: [Confluence page 2830143951 — "[HLD][BF4] VR - OCI MLI Partition"](https://nvidia.atlassian.net/wiki/spaces/FW/pages/2830143951) — "Device need to be BF3+, this is the lowest generation device that FW verification supports ATM"
+- **QA test plan**: [Confluence page 3328961648 — "BF4 OCI MLI SAT PF Zero Trust & Host Restrictions Security Test Plan"](https://nvidia.atlassian.net/wiki/spaces/QA/pages/3328961648) — origin of the `mlxconfig -d $ECPF -y s PF_NUM_SAT_PF=1` recipe
+- **SW design**: [Confluence page 3271938371 — "BlueField 4 OCI MLI design VM and configuration guide"](https://nvidia.atlassian.net/wiki/spaces/SW/pages/3271938371) — system provisioning flow
+
+### Baseline utopx scenario_dpa_emu context
 
 - Feature wiki: "MTBC-+4690480+OCI+BF-4+virtio-net+needs+emulation+capabilities..." (Confluence)
 - Redmine tickets: [#4650230](https://redmine.mellanox.com/issues/4650230), [#4690480](https://redmine.mellanox.com/issues/4690480), [#4690593](https://redmine.mellanox.com/issues/4690593)

@@ -292,7 +292,7 @@ Common Options:
 
 Build Options:
     -D, --debug                     Enable debug mode
-    -c, --clean                     Run make clean ($BUILD_SCRIPT -C)
+    -c, --clean                     Clean the build ($BUILD_SCRIPT -C)
         --clean-db                  Also remove $fCompileCommandsJson during clean
     -o, --build                     Run build commands
         --no-verbose                Suppress full compilation output (default: verbose)
@@ -962,9 +962,10 @@ cleanTheRepo() {
         ((mlxCount++))
     done
 
-    # Fast clean: run 'make clean' directly, bypassing Docker overhead in build.sh
-    # local cleanCmd="$BUILD_SCRIPT -C"
-    local cleanCmd="DOCKER=DOCKER make clean"
+    # Clean via the repo's own build script for all repo types ($BUILD_SCRIPT == ./build.sh):
+    #   golan/nicx -> build.sh runs 'make clean' inside the container
+    #   utopx      -> build.sh forwards -C to proj_build.sh, which rm -rf's the CMake/Ninja build tree
+    local cleanCmd="$BUILD_SCRIPT -C"
     echo -e "$NOTATION Running: ${BLUE}$cleanCmd${RESET}"
     echo $SEPARATOR
     COLOR=$MAGENTA
@@ -1352,9 +1353,18 @@ linkFile() {
 
 linkWorkspaceFiles() {
     [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkWorkspace" ] && return
-    # utopx has no per-model compile_db; skip linking entirely.
+    # utopx has no per-model compile_db; CMake emits a single compile_commands.json
+    # under cmakeBuild. Link the most recently generated one at the repo root for clangd.
     if [[ "$fRepoType" == "utopx" ]]; then
-        echo -e "$NOTATION ${GREY}Skipping compile database link (utopx has no per-model compile_db)${RESET}"
+        cd "$fWorkingDir" || exit
+        local utopxDb
+        utopxDb=$(ls -t "$fWorkingDir"/cmakeBuild/ninja/*/*/*/*/ABI_0/*/compile_commands.json 2>/dev/null | head -1)
+        if [[ -n "$utopxDb" && -f "$utopxDb" ]]; then
+            echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
+            linkFile "$utopxDb" "$fWorkingDir" "$fCompileCommandsJson"
+        else
+            echo -e "$NOTATION ${GREY}Skipping compile database link (no compile_commands.json under cmakeBuild yet — build utopx first)${RESET}"
+        fi
         return
     fi
     # Skip linking when in loop mode (multiple models)

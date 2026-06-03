@@ -93,6 +93,7 @@ LIGHTYELLOW='\033[93m'
 LIGHTMAGENTA='\033[95m'
 GREY='\033[90m'
 BLUE='\033[34m'
+BOLD='\033[1m'
 RESET='\033[0m'
 
 usage() {
@@ -1702,11 +1703,100 @@ _readStateField() {
         | head -1
 }
 
-# Single status renderer — one entry per daemon, formatted as a summary
-# row plus an indented detail block. Always shows every daemon, no -t /
-# --all / tmux-aware branching. If the caller is currently inside tmux,
-# the row corresponding to the caller's pane is marked with `*` in the
-# `#` column (decorative only — doesn't change layout or behavior).
+# Render one instance's detail block (no leading rule) given its state file
+# and a pre-formatted index marker (e.g. "[3]" or "[3*]"). Extracted from
+# handleStatusRequest so the session-grouping loop stays readable; the block
+# layout is identical to before. Two-column grid: marker(5) + label1(_labW)
+# + value1(_valW) + label2(_lab2W) + value2, then full-width path rows.
+_renderInstanceBlock() {
+    local f="$1" index_label="$2"
+    local _labW=12 _valW=19 _lab2W=12
+    local now=$(date +%s)
+    local target target_pane_id pid ai daemon_int started approved paused
+    local last_ts last_type host state_plain state_colored state_pad last_when
+    local target_label live_loc uptime
+
+    target=$(_readStateField "$f" target)
+    target_pane_id=$(_readStateField "$f" target_pane_id)
+    pid=$(_readStateField "$f" pid)
+    ai=$(_readStateField "$f" ai)
+    daemon_int=$(_readStateField "$f" daemon)
+    started=$(_readStateField "$f" started_ts)
+    approved=$(_readStateField "$f" approved_count)
+    paused=$(_readStateField "$f" paused)
+    last_ts=$(_readStateField "$f" last_event_ts)
+    last_type=$(_readStateField "$f" last_event_type)
+    host=$(_readStateField "$f" host)
+
+    # Target label: live index re-resolved from pane_id (reflects moves),
+    # falling back to the recorded index; always suffixed with the pane_id.
+    live_loc=$(_liveLocation "$target_pane_id")
+    [ -z "$live_loc" ] && live_loc="$target"
+    if [ -n "$target_pane_id" ]; then
+        target_label="$live_loc ($target_pane_id)"
+    else
+        target_label="$live_loc"
+    fi
+
+    # State: pad-then-color (ANSI escapes throw off %-Ns downstream).
+    if ! kill -0 "$pid" 2>/dev/null; then
+        state_plain="dead";    state_colored="${RED}dead${RESET}"
+    elif [ "$paused" = "true" ]; then
+        state_plain="paused";  state_colored="${LIGHTYELLOW}paused${RESET}"
+    else
+        state_plain="active";  state_colored="${GREEN}active${RESET}"
+    fi
+    state_pad=$(printf "%-${_valW}s" "$state_plain")
+    state_pad="${state_colored}${state_pad#$state_plain}"
+
+    last_when=$(_fmtEventTime "$last_ts")
+    uptime="?"
+    [[ "$started" =~ ^[0-9]+$ ]] && uptime=$(_fmtDuration $((now - started)))
+
+    local daemon_label="no"
+    [ "$daemon_int" = "1" ] && daemon_label="yes"
+
+    local mode_label
+    if [ -z "$host" ]; then
+        mode_label="${MAGENTA}detached${RESET}"
+    else
+        mode_label="attached to ${GREY}${host}${RESET}"
+    fi
+
+    # Derive lock/log from THIS state file's own name so paths always pair
+    # with the file we read (correct for legacy index-keyed files too).
+    local _dir=$(dirname "$f")
+    local _base="${f##*/}"; _base="${_base%.state.json}"
+    local logf="$_dir/${_base}.log"
+    local lockf="$_dir/${_base}.lock"
+
+    # [N] + Target / AI. Target shows "index (%pane_id)".
+    printf "${CYAN}%-5s${RESET}${GREY}%-${_labW}s${RESET} ${BLUE}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} ${CYAN}%s${RESET}\n" \
+        "$index_label" "Target:" "$target_label" "AI:" "$ai"
+    # State / Approved
+    printf "     ${GREY}%-${_labW}s${RESET} %b ${GREY}%-${_lab2W}s${RESET} ${GREEN}%s${RESET}\n" \
+        "State:" "$state_pad" "Approved:" "$approved"
+    # Last Event / Event Time
+    printf "     ${GREY}%-${_labW}s${RESET} %-${_valW}s ${GREY}%-${_lab2W}s${RESET} %s\n" \
+        "Last Event:" "$last_type" "Event Time:" "$last_when"
+    # PID / Uptime
+    printf "     ${GREY}%-${_labW}s${RESET} ${CYAN}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} %s\n" \
+        "PID:" "$pid" "Uptime:" "$uptime"
+    # Daemon / Mode
+    printf "     ${GREY}%-${_labW}s${RESET} %-${_valW}s ${GREY}%-${_lab2W}s${RESET} %b\n" \
+        "Daemon:" "$daemon_label" "Mode:" "$mode_label"
+    # Paths — full-width.
+    printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Lockfile:"  "$lockf"
+    printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Logfile:"   "$logf"
+    printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Statefile:" "$f"
+    echo
+}
+
+# Status renderer — instances grouped by their tmux session. Each group gets
+# a "─── session: NAME (N instances) ───" header; within a group instances
+# are ordered by window.pane. A plain heading summarizes total instances and
+# distinct sessions. Always shows every instance, no -t / --all branching.
+# If the caller is inside tmux, the row for the caller's pane is marked `*`.
 handleStatusRequest() {
     local files=( "$(_runtimeDir)"/*.state.json )
     # Glob with no match expands to a literal that doesn't exist — guard.
@@ -1730,159 +1820,99 @@ handleStatusRequest() {
         current_pane_id=$(tmux display-message -p '#{pane_id}' 2>/dev/null)
     fi
 
-    echo -e "${LIGHTYELLOW}${SCRIPT_NAME} daemons running (${#files[@]})${RESET}"
+    # Pass 1 — derive each instance's session + spatial sort keys. Session is
+    # the part of the live location before the first ':'; the "window.pane"
+    # after it drives the within-session order. The live index is re-resolved
+    # from the stable pane_id; if the pane is gone we fall back to the
+    # recorded target. Instances with no resolvable session (sort prefix 1)
+    # land in a trailing "(no session)" group; everything else is prefix 0.
+    local entries=() f loc winpane win pane pfx sdisp
+    for f in "${files[@]}"; do
+        local tpid tgt sess
+        tpid=$(_readStateField "$f" target_pane_id)
+        tgt=$(_readStateField "$f" target)
+        loc=$(_liveLocation "$tpid")
+        [ -z "$loc" ] && loc="$tgt"
+        sess=""; win=999999; pane=999999
+        if [[ "$loc" == *:* ]]; then
+            sess="${loc%%:*}"
+            winpane="${loc#*:}"
+            win="${winpane%%.*}"
+            pane="${winpane#*.}"
+            [[ "$win"  =~ ^[0-9]+$ ]] || win=999999
+            [[ "$pane" =~ ^[0-9]+$ ]] || pane=999999
+        fi
+        if [ -n "$sess" ]; then
+            pfx="0"; sdisp="$sess"
+        else
+            pfx="1"; sdisp="(no session)"; win=999999; pane=999999
+        fi
+        entries+=( "${pfx}"$'\t'"${sdisp}"$'\t'"${win}"$'\t'"${pane}"$'\t'"${f}" )
+    done
+
+    # Sort by session group (prefix, then name), then window then pane numeric
+    # — so real sessions come alphabetically, "(no session)" last, and within
+    # a session the panes read in tmux spatial order.
+    local sorted=() line
+    while IFS= read -r line; do sorted+=("$line"); done \
+        < <(printf '%s\n' "${entries[@]}" | sort -t$'\t' -k1,1 -k2,2 -k3,3n -k4,4n)
+
+    # Per-group counts in display order (sorted is contiguous per group), so
+    # the header can show "(N instances)" before rendering the group.
+    local grpKeys=() grpCnts=() gk prevK="" _last
+    for line in "${sorted[@]}"; do
+        IFS=$'\t' read -r pfx sdisp win pane f <<<"$line"
+        gk="${pfx}"$'\t'"${sdisp}"
+        if [ "$gk" != "$prevK" ]; then
+            grpKeys+=("$gk"); grpCnts+=(1); prevK="$gk"
+        else
+            _last=$(( ${#grpCnts[@]} - 1 ))
+            grpCnts[$_last]=$(( ${grpCnts[$_last]} + 1 ))
+        fi
+    done
+
+    # Summary heading — a plain line (no rule, no box), reporting total
+    # instances across distinct sessions. Singular-aware.
+    local N=${#files[@]} M=${#grpKeys[@]}
+    local instNoun="INSTANCES"; [ "$N" -eq 1 ] && instNoun="INSTANCE"
+    local sessNoun="SESSIONS";  [ "$M" -eq 1 ] && sessNoun="SESSION"
+    # Tool name as a bold uppercase title (tr, not ${..^^}, for bash 3.2/macOS).
+    local _disp; _disp=$(printf '%s' "$SCRIPT_NAME" | tr '[:lower:]' '[:upper:]')
+    printf "${BOLD}${CYAN}%s${RESET} ${GREY}·${RESET} ${CYAN}%s${RESET} ${GREY}%s · ${RESET}${CYAN}%s${RESET} ${GREY}%s${RESET}\n" \
+        "$_disp" "$N" "$instNoun" "$M" "$sessNoun"
     echo
 
-    # Layout: every line is `Label: value` in a two-column grid. First
-    # line starts with "[N] " (or "[N*] ") as index marker; subsequent
-    # lines indent with 5 spaces. Per-line:
-    #   indent/marker(5) + label1(_labW) + " " + value1(_valW)
-    #                    + " " + label2(_lab2W) + " " + value2
-    # _labW/_lab2W=12 fit longest labels ("Last Event:", "Event Time:").
-    # _valW=19 fits state_pad, PID, target label, event type.
-    # Hoisted to loop top because state_pad's padding reuses _valW.
+    # Width of the per-session header rule — spans the two-column instance
+    # grid (marker + label1 + val1 + label2 + val2) so it aligns with blocks.
     local _labW=12 _valW=19 _lab2W=12
-    # Width of the per-daemon split banner — spans the two-column grid
-    # (marker + label1 + val1 + label2 + val2) so it reads as a section rule.
     local _sepW=$(( 5 + _labW + 1 + _valW + 1 + _lab2W + 1 + _valW ))
 
-    local i=1 f target target_pane_id pid ai daemon_int started approved paused
-    local last_ts last_type host state_plain state_colored state_pad last_when
-    local target_label live_loc
-    local now=$(date +%s)
-    local uptime index_label
-    for f in "${files[@]}"; do
-        target=$(_readStateField "$f" target)
-        target_pane_id=$(_readStateField "$f" target_pane_id)
-        pid=$(_readStateField "$f" pid)
-        ai=$(_readStateField "$f" ai)
-        daemon_int=$(_readStateField "$f" daemon)
-        started=$(_readStateField "$f" started_ts)
-        approved=$(_readStateField "$f" approved_count)
-        paused=$(_readStateField "$f" paused)
-        last_ts=$(_readStateField "$f" last_event_ts)
-        last_type=$(_readStateField "$f" last_event_type)
-        host=$(_readStateField "$f" host)
-
-        # Target label: re-resolve the pane's live index from its pane_id so
-        # the row reflects where the pane is right now (after a move). If the
-        # pane is gone, fall back to the last-known index recorded in the
-        # state file, still suffixed with the pane_id. Always shows both.
-        live_loc=$(_liveLocation "$target_pane_id")
-        [ -z "$live_loc" ] && live_loc="$target"
-        if [ -n "$target_pane_id" ]; then
-            target_label="$live_loc ($target_pane_id)"
-        else
-            target_label="$live_loc"
+    # Render — a session header before each group, then its instances with a
+    # global continuous "[N]" index ("[N*]" marks the caller's current pane,
+    # matched by pane_id so it follows the pane across moves).
+    local i=1 g=-1 prevKey="" cnt _title _noun _plain _lead _tail index_label tpid2
+    for line in "${sorted[@]}"; do
+        IFS=$'\t' read -r pfx sdisp win pane f <<<"$line"
+        gk="${pfx}"$'\t'"${sdisp}"
+        if [ "$gk" != "$prevKey" ]; then
+            g=$((g + 1)); prevKey="$gk"
+            cnt="${grpCnts[$g]}"
+            _noun="instances"; [ "$cnt" -eq 1 ] && _noun="instance"
+            if [ "$pfx" = "1" ]; then _title="(no session)"; else _title="session: ${sdisp}"; fi
+            _plain="${_title} (${cnt} ${_noun})"
+            _lead=3
+            _tail=$(( _sepW - _lead - 1 - ${#_plain} - 1 ))
+            [ "$_tail" -lt 3 ] && _tail=3
+            printf "${GREY}%s ${LIGHTYELLOW}%s${GREY} (%s %s) %s${RESET}\n" \
+                "$(_hr "$_lead")" "$_title" "$cnt" "$_noun" "$(_hr "$_tail")"
         fi
-
-        # State: pad-then-color (ANSI escapes throw off %-Ns downstream).
-        if ! kill -0 "$pid" 2>/dev/null; then
-            state_plain="dead";    state_colored="${RED}dead${RESET}"
-        elif [ "$paused" = "true" ]; then
-            state_plain="paused";  state_colored="${LIGHTYELLOW}paused${RESET}"
-        else
-            state_plain="active";  state_colored="${GREEN}active${RESET}"
-        fi
-        state_pad=$(printf "%-${_valW}s" "$state_plain")
-        state_pad="${state_colored}${state_pad#$state_plain}"
-
-        last_when=$(_fmtEventTime "$last_ts")
-        uptime="?"
-        [[ "$started" =~ ^[0-9]+$ ]] && uptime=$(_fmtDuration $((now - started)))
-
-        # Index marker — "[N]" or "[N*]" if this is the caller's current
-        # pane (matched by pane_id). Fits 5 chars for N=1..99; overflows
-        # gracefully for 100+.
-        if [ -n "$current_pane_id" ] && [ "$target_pane_id" = "$current_pane_id" ]; then
+        tpid2=$(_readStateField "$f" target_pane_id)
+        if [ -n "$current_pane_id" ] && [ "$tpid2" = "$current_pane_id" ]; then
             index_label="[${i}*]"
         else
             index_label="[${i}]"
         fi
-
-        # Daemon label — reflects the startup-time `-D/--daemon` flag the ja
-        # was launched with, i.e. whether it self-daemonized (backgrounded +
-        # detached). Persistence (pause/resume across AI restarts) is always
-        # on now, so it's no longer a per-daemon variable worth showing; the
-        # useful fact is whether this instance is a background daemon. The
-        # actual ctty binding is shown separately as Mode below.
-        local daemon_label="no"
-        [ "$daemon_int" = "1" ] && daemon_label="yes"
-
-        # Mode label — describes the daemon's controlling-tty binding,
-        # which determines whether closing the host pane / terminal will
-        # send the daemon SIGHUP. Two states:
-        #
-        #   • "attached to <X>" — daemon has a controlling tty inheriting
-        #     from the shell where it was launched. Closing that pane (or
-        #     terminal) will send SIGHUP and kill the daemon. This is the
-        #     case for `claude -y` launches today, because bash's
-        #     `& disown` only detaches from the job table — it does NOT
-        #     release the ctty, which requires setsid(2).
-        #
-        #   • "detached" — no ctty. The daemon survives pane / terminal
-        #     close. This is what `ja -D` (self-daemonize) produces, and is
-        #     the normal state for any background daemon.
-        #
-        # Mode (ctty binding) and Daemon (was `-D` passed) usually agree
-        # now — a `-D` launch self-detaches, so it reads "detached" here —
-        # but they answer different questions, so both are shown.
-        local mode_label
-        if [ -z "$host" ]; then
-            mode_label="${MAGENTA}detached${RESET}"
-        else
-            mode_label="attached to ${GREY}${host}${RESET}"
-        fi
-
-        # Derive lock/log from THIS state file's own name (not recomputed
-        # from target_pane_id), so the displayed paths always pair with the
-        # state file we actually read. For current daemons the basename is
-        # the pane_id slug, so the result is identical; for a legacy
-        # index-keyed file written by a pre-upgrade daemon (e.g.
-        # 0-4-2.state.json) it correctly shows 0-4-2.lock/.log — the files
-        # that really exist — instead of a phantom pane_id-keyed path.
-        local _dir=$(dirname "$f")
-        local _base="${f##*/}"; _base="${_base%.state.json}"
-        local logf="$_dir/${_base}.log"
-        local lockf="$_dir/${_base}.lock"
-
-        # printf (not echo -e): color vars are already-expanded ANSI bytes
-        # by the time printf sees them. %b on state_pad / mode_label since
-        # they carry pre-baked ANSI (width pre-applied for state_pad).
-
-        # Split banner between daemons — a grey rule so each block (and its
-        # Target) is easy to pick out. Reuses _hr (same rule the run banner
-        # uses). Printed before every block; with the trailing blank line
-        # each daemon already emits, consecutive daemons are clearly split.
-        echo -e "${GREY}$(_hr "$_sepW")${RESET}"
-
-        # [N] + Target / AI. Target shows "index (%pane_id)".
-        printf "${CYAN}%-5s${RESET}${GREY}%-${_labW}s${RESET} ${BLUE}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} ${CYAN}%s${RESET}\n" \
-            "$index_label" "Target:" "$target_label" "AI:" "$ai"
-
-        # State / Approved
-        printf "     ${GREY}%-${_labW}s${RESET} %b ${GREY}%-${_lab2W}s${RESET} ${GREEN}%s${RESET}\n" \
-            "State:" "$state_pad" "Approved:" "$approved"
-
-        # Last Event / Event Time
-        printf "     ${GREY}%-${_labW}s${RESET} %-${_valW}s ${GREY}%-${_lab2W}s${RESET} %s\n" \
-            "Last Event:" "$last_type" "Event Time:" "$last_when"
-
-        # PID / Uptime
-        printf "     ${GREY}%-${_labW}s${RESET} ${CYAN}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} %s\n" \
-            "PID:" "$pid" "Uptime:" "$uptime"
-
-        # Daemon / Mode
-        printf "     ${GREY}%-${_labW}s${RESET} %-${_valW}s ${GREY}%-${_lab2W}s${RESET} %b\n" \
-            "Daemon:" "$daemon_label" "Mode:" "$mode_label"
-
-        # Paths — full-width. `Statefile:` (renamed from `State:`)
-        # disambiguates the path label from the daemon-state field above.
-        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Lockfile:"  "$lockf"
-        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Logfile:"   "$logf"
-        printf "     ${GREY}%-${_labW}s %s${RESET}\n" "Statefile:" "$f"
-        echo
-
+        _renderInstanceBlock "$f" "$index_label"
         i=$((i + 1))
     done
 }
