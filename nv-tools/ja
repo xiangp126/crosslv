@@ -9,6 +9,34 @@
 # Usage:
 #   ja                        # auto-detect the pane running claude/codex
 #   ja -t main:0.1            # explicit tmux target (session:window.pane)
+#
+# =============================================================================
+# PANE CAPTURE — SIZING NOTES (why ja keeps working without a client)
+# =============================================================================
+#
+# `tmux capture-pane -t <pane_id> -p` reads the pane's visible region from
+# the tmux SERVER, not from any client. The server is what runs the AI
+# (claude/codex) and stores the pane buffer, so capture works regardless
+# of whether a terminal is currently attached. There is, however, one
+# knob that affects what the capture LOOKS LIKE — the pane's column/row
+# size — and that is driven by clients. Three cases worth knowing:
+#
+#   1. No client has ever attached to this session
+#      The pane uses the server-side default geometry (typically 80x24).
+#      Anything ja matches against (the plan-review sentence, the cursor
+#      glyph + numbered options) must fit inside that width or tmux will
+#      wrap it across multiple lines, breaking the literal grep.
+#
+#   2. A client attached then detached
+#      The pane keeps the last attached client's geometry. Detaching
+#      does not shrink anything, so as long as a normal-sized terminal
+#      attached at some point, captures stay readable indefinitely.
+#
+#   3. Multiple clients attached
+#      The pane sizes down to the SMALLEST attached client (so every
+#      client can render it). `setw aggressive-resize on` flips this so
+#      the size tracks the ACTIVE client instead of the smallest.
+#
 
 SCRIPT_NAME=$(basename "$0")
 
