@@ -55,7 +55,9 @@
     "terminal.integrated.env.osx": {},
     "terminal.integrated.env.linux": {},
     "terminal.integrated.fontSize": 13,
-    "terminal.integrated.copyOnSelection": true,
+    "terminal.integrated.macOptionClickForcesSelection": true,  // hold Option + drag to force a local selection
+    "terminal.integrated.copyOnSelection": true,                // copy to the system clipboard as soon as you release
+    "terminal.integrated.altClickMovesCursor": false,           // disable Alt+click cursor move, stops bash from cycling history
     "terminal.integrated.focusAfterRun": "terminal",
     "terminal.integrated.ignoreBracketedPasteMode": true,
     "terminal.integrated.enablePersistentSessions": false,
@@ -527,7 +529,6 @@
     "telemetry.feedback.enabled": false,
     "terminal.integrated.macOptionIsMeta": true,
     "terminal.external.osxExec": "iTerm2",
-    "bookmarks.keepBookmarksOnLineDelete": true,
     "editor.stickyScroll.maxLineCount": 2,
     "codeium.snoozeTime": 120,
     "gitlens.views.repositories.autoRefresh": false,
@@ -549,5 +550,6 @@
     "workbench.editor.enablePreview": false,
     "terminal.integrated.stickyScroll.enabled": false,
     "window.zoomLevel": 0.6,
-    "claudeCode.preferredLocation": "panel"
+    "claudeCode.preferredLocation": "panel",
+    "bookmarks.keepBookmarksOnLineDelete": true
 }
