@@ -2249,7 +2249,7 @@ runRegMalloc() {
             if [[ -n "$until_dt" ]]; then
                 echo -e "$NOTATION until ${CYAN}$until_dt${RESET} ${GREY}(Israel)${RESET}"
                 [[ -n "$localTime" ]] && \
-                    echo -e "$NOTATION →     ${CYAN}$localTime${RESET} ${GREY}(local)${RESET}"
+                    echo -e "$NOTATION ====> ${CYAN}$localTime${RESET} ${GREY}(local)${RESET}"
             fi
         else
             echo -e "$NOTATION ${RED}Error: malloc failed for $server${RESET}"

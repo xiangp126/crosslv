@@ -103,8 +103,10 @@ alias yt-dlp='yt-dlp --verbose'
 alias rsync='rsync -azPv'
 alias jn='jr --no-clipboard'
 alias jk='jmake'
-alias jas='ja --status'
 alias jx='xray-manager'
+alias jas='ja --status'
+alias jal='ja --list'
+alias jaL='ja --log'
 
 function __cd () {
     if [ -d "$1" ]; then
@@ -368,6 +370,31 @@ _ai_start_ja_if_needed() {
     ja --daemon -t "$paneid"
 }
 
+# Decide whether an AI invocation will open the interactive TUI (the only
+# place approval prompts appear) and therefore warrants a ja auto-approver.
+# Returns 1 (skip ja) for:
+#   * help / version flags          — claude -h, --help, --version, -V
+#   * headless print mode           — -p / --print (runs non-interactively)
+#   * non-interactive subcommands   — mcp, doctor, update, install, config,
+#                                     migrate-installer, setup-token,
+#                                     completion (claude) and exec, login,
+#                                     logout, apply (codex)
+# Returns 0 (start ja) otherwise: bare REPL, a one-shot prompt, --continue,
+# --resume, etc. Arg-only — no tmux/env side effects (that's _ai_start_ja).
+_ai_wants_ja() {
+    local _a
+    for _a in "$@"; do
+        case "$_a" in
+            -h|--help|--version|-V|-p|--print) return 1 ;;
+        esac
+    done
+    case "${1:-}" in
+        mcp|doctor|update|install|migrate-installer|config|setup-token|completion|exec|login|logout|apply)
+            return 1 ;;
+    esac
+    return 0
+}
+
 # Per-AI wrapper. Runs every invocation (no unset -f) — overhead is one
 # nvm gate check + one $@ scan, both negligible.
 #
@@ -419,7 +446,10 @@ for _ai_cmd in "${_ai_nvm_tools[@]}"; do
         #     [[ -d \"\$HOME/.vscode-server/cli/servers\" || -d \"\$HOME/.cursor-server/bin\" ]] && \\
         #     code -p &>/dev/null
 
-        if (( _auto )); then
+        # Only start ja for invocations that actually open the interactive
+        # TUI. Help/version, headless print mode and subcommands like mcp or
+        # doctor never show approval prompts, so a daemon for them is waste.
+        if (( _auto )) && _ai_wants_ja \"\${_args[@]}\"; then
             _ai_start_ja_if_needed $_ai_cmd
         fi
 

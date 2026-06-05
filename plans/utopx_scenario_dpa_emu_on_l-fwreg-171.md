@@ -2,14 +2,33 @@
 
 **Feature:** `OCI BF-4 Satellite PF Emulation Manager Capability Delegation`. [HLD (Confluence page 3395678597)](https://nvidia.atlassian.net/wiki/spaces/FW/pages/3395678597). [FWV MAS (Confluence page 3530037909)](https://nvidia.atlassian.net/wiki/spaces/FW/pages/3530037909). Peter is the FWV owner.
 
-**Aim:** stand up the BlueField-3 test environment on `l-fwreg-171` that this feature's FW verification will eventually run against. Two layers:
+**Aim:** stand up the BlueField-3 test environment on `l-fwreg-171` that this feature's FW verification will eventually run against. Three layers (revised 2026-06-05):
 
-1. **Baseline utopx layer** — `utopx scenario_dpa_emu` running successfully on 171 with the right FW + INI (Jerry's 36 NVMe/virtio emulation flags). This is the existing test that exercises emulation paths and gives us a regression-known-good state to build on.
-2. **Satellite PF layer** — `PF_NUM_SAT_PF=1` enabled on the ECPF so a satellite PF (ARM-side PF, BDF `00:00.2`) is exposed. This is the **prerequisite infrastructure**: cap delegation lets the ECPF delegate emulation-manager capability to a satellite PF via `SET_HCA_CAP(other_function=1)`, so without a satellite PF present there's nothing to delegate to. See [[feedback-satellite-pf-vs-cap-delegation]] — satellite PF enablement is independent of the FW cap-delegation patches; the satellite-PF infrastructure is BF3+-supported FW feature that pre-exists this feature work.
+1. **Baseline utopx layer** — `utopx scenario_dpa_emu` running successfully on 171 with the right FW + INI (Jerry's 36 NVMe/virtio emulation flags). This is the existing test that exercises emulation paths and gives us a regression-known-good state to build on. **See Phases 0-9.**
+2. **utopx native sat-PF FWV layer (Phase 11) — PASS-verified 2026-06-05**. utopx has built-in sat-PF code (`IsDpuPf`, `HandleDpuPfCreateEswVport`, `force_dpu_pf_emu_manager`, `num_sat_pf` NVconfig gen, etc.). To exercise sat-PF logic in utopx, pass three **separate** `-e` flags (one per knob): `force_fw_cap.enable_mask_2.fw_feature_support_bits.force_dpu_pf_emu_manager=1`, `nvconfig_registers.pf_pci_conf.num_sat_pf=1`, `nvconfig_registers.pf_pci_conf.num_sat_pf_valid=1`. Verified PASS: seed `226259204`, ~8m57s on utopx `07de3b4` rebuilt binary + FW `32.50.0222`. **No FW-level sat-PF instantiation needed for this path.** See §Phase 11.
+3. **FW-level sat-PF instantiation layer (Phase 10) — OPTIONAL / BLOCKED.** To make sat PF physically exist (ARM lspci shows BDF `00:00.2`, mst dev `mt41692_pciconf0.2`) requires INI burn + ARM-side mlxconfig set + power cycle. **Currently blocked on 171 hardware** — no INI permutation tested (incl. Marie's MAS recipe) yields both sat PF Current=1 AND no FW assert 0x821d. Needs Marie's dedicated `l-fwreg-146` setup or FW fix from Li. **Phase 11 doesn't need Phase 10**; Phase 10 is only required for end-to-end ARM-side SF / traffic tests.
 
-**Status of the FW feature on the implementation side (as of 2026-06-03):** **in progress, not yet ready for verification runs**. Li Zeng's gerrit [`nbu:golan_fw~1426433`](https://git-nbu.nvidia.com/r/c/golan_fw/+/1426433) is only *part* of the FW-side implementation — additional commits are still being written. Do **not** treat the current code on master_rc as a testable build. This plan focuses on **env preparation** so that when Li's feature work is complete, the test bench is already standing. Until then, only the baseline utopx scenario_dpa_emu layer is exercised; the satellite-PF layer just sits ready.
+**Status of the FW feature on the implementation side (as of 2026-06-05):** **in progress, not yet ready for verification runs**. Li Zeng's gerrit [`nbu:golan_fw~1426433`](https://git-nbu.nvidia.com/r/c/golan_fw/+/1426433) is only *part* of the FW-side implementation — additional commits are still being written. Do **not** treat the current code on master_rc as a testable build. This plan focuses on **env preparation** so that when Li's feature work is complete, the test bench is already standing.
 
-**For a fresh AI agent** picking this up: follow Phase 0 → 9 (utopx scenario_dpa_emu baseline) then Phase 10 (satellite PF). The "Final recipe" and "Re-run quick reference" sections at the bottom collapse it to a runnable script once the one-time setup is done. The phases below are the diagnostic log with every dead-end we hit so future debug is faster; phases marked "OPTIONAL" can be skipped if you just want to re-execute.
+**For a fresh AI agent** picking this up: follow Phase 0 → 9 (baseline utopx) then Phase 11 (utopx-native sat-PF FWV — verified PASS 2026-06-05). Phase 10 (FW-level sat-PF infra) is **OPTIONAL** and currently blocked on 171 — skip it unless you specifically need end-to-end ARM-side enumeration. **If `mars_reg` has just run on the box and left a fresh env, follow §Phase 12 first** — regression rebuilds `utopx.exe` and changes FW, so you'll need to repin + rebuild before utopx works. The "Final recipe" and "Re-run quick reference" sections at the bottom collapse it to a runnable script. Phases below are the diagnostic log with every dead-end included so future debug is faster.
+
+---
+
+## ⚡ Quick re-setup — read this first (2026-06-04 lessons)
+
+The original plan assumed a static, already-prepared box. In practice the box drifts and several heavy steps dominate the wall-clock. If you're re-setting up, expect these (each was a real time-sink on 2026-06-04):
+
+1. **FW drifts daily — don't assume `0222`.** The MARS regression re-burns a fresh FW every day (`0222 → 0238 → 0250 → 0256 → …`) and re-pins utopx to match it. Find the current pairing from the **newest** session dir under `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/MUSTANG_FW-l-fwreg-171_eth_ARM_AGENT_P1/`: read `new_burn_fw` (FW ver + `.mlx`/INI paths) and `get_last_commit` (`git_describe=(host_fwv_<date>_FW_version_50_<bld>_branch_master-0-g<sha>)`, `commit_id=(<sha>)`). Verify the box's running FW with `flint q`. golan_fw tag = `rel-12_50_<bld>` (drop the `32`→`12` family prefix).
+2. **Local repos may be on YOUR dev branches** (e.g. utopx on a PRDMA branch, golan_fw on a QPC branch) with uncommitted work — not the regression pairing. To match: `git stash -u` → **checkout the exact regression SHA** (the daily tag can be stale/force-moved; `git fetch --force` or just `git checkout <sha>` from `get_last_commit`) → **`git submodule update --init`** (utopx has 3: `hca_fw_core_platform`, `hca_fwv_shared`, `steering_ul`; `steering_ul`'s recorded commit may need a fetch).
+3. **utopx build is Docker-containerized (~8 min)** — `cd /auto/fwgwork1/pexiang/utopx && jk -o` (or `jk -c -o` for clean after a big branch switch). It runs `./build.sh` in a harbor container; the product is **`utopx.exe`** (the `utopx` file is a ~1.5 KB wrapper that execs `./utopx.exe`). Build on a docker-capable box (m-fwdev-167, has the image/toolchain/udriver artifacts); output is on NFS so 171 sees it.
+4. **The INI must be the `scenario_dpa_emu` INI** — not whatever the box was last burned with. A box burned with virtio `num_pf=1` (static virtio PFs at boot) and/or no sat-PF gate makes `scenario_dpa_emu` fail *and* the sat PF not appear. Use `regression_ini/burned_session_*.ini` (virtio `num_pf=0` → dynamic; nvme `num_pf=2`; 5 BAR2 `[fw_boot_config]` lines; + the 2 `mac_params` gate lines). The `0222` and `0256` release-default INIs are byte-identical except the header comment, so one burned INI is reusable across builds. Reburn: `cd golan_fw && jk --burn --firmware <rel-XX_dist/fw-BlueField-3.mlx> --ini <burned INI>` (~8 min; do **not** chain `--fw-reset`).
+5. **The sat-PF gate must be IN THE BURNED IMAGE — being able to *query* `PF_NUM_SAT_PF` is NOT proof the gate is present.** (This corrects Phase 10.0/10.4.) Without `mac_params.satellite_pf_en=1` + `device_type=3` baked into the burned INI, FW **reduces** `PF_NUM_SAT_PF` to `Current=0` on load even when you've set `Next=1` — you'll see `Default 0 / Current 0 / Next 1` and ConnectX-7 count stays 2. With the gate burned in: set `PF_NUM_SAT_PF=1` from ARM → power cycle → `Current=1`, count 3, sat PF at `00:00.2`. **Caveat (observed 2026-06-05):** even with the gate burned in and `Next=1` already, a fresh power cycle sometimes lands on `Default 0 / Current 0 / Next 1` (iron_prep still reduced it). Re-issue `mlxconfig -d /dev/mst/mt41692_pciconf0 -e -y s PF_NUM_SAT_PF=1` from ARM and power cycle a second time — Current then comes up =1. **Always verify ARM-side `Current` after every cycle before running utopx; don't assume Next=1 implies Current=1.**
+6. **Persistent mlxconfig overrides survive a reburn.** A reburn sets the image *default*, but a prior `mlxconfig set` shadows it (e.g. virtio shows `Default 0 / Current 1` after burning a `num_pf=0` INI). Clear it explicitly: `mlxconfig -d <dev> -y s VIRTIO_{NET,BLK,FS}_EMULATION_NUM_PF=0` + power cycle.
+7. **Post-power-cycle races (each cycle ~3 min, and you'll do several).** After `jk --power-cycle`, **wait** for: (a) NFS `/labhome` automount — pubkey `ssh` fails with `Permission denied (publickey,password)` until it mounts; (b) `/dev/rshim0/*` to appear (`sudo systemctl start rshim` if needed) — utopx needs it; (c) ARM to finish booting. Use background `until`-loops (foreground `sleep` is blocked in this harness), e.g. `until ssh -o BatchMode=yes l-fwreg-171 true; do sleep 8; done`.
+8. **utopx pushes its own BFB to the ARM** (BareMetal ArmAgent, via `/dev/rshim0/boot`) to run its ARM-side agent for DPA/emulation. So **after any run the ARM is NOT the normal sshable DOCA OS** — `ssh root@192.168.100.1` returns `No route to host` until you power-cycle (which reboots ARM from eMMC). The sat PF persists across this (`PF_NUM_SAT_PF` is in NVRAM).
+9. **`debug_conf.xml` currently FAILS on `0256`.** It sets `allow_icmd_access_reg_on_all_registers=0x1`, which ICMD-walks every nvconfig TLV; one TLV on FW `0256` returns `ICMD_ACCESS_REG → BAD_PARAM` (deterministic; independent of seed and of virtio `num_pf`). The same walk passed on `0222`. This is a FW/utopx register-access incompatibility, not an env problem. For a functional baseline use `conf.xml`; to chase the bug, identify the failing TLV (the dump before the fault showed nvme-emu TLV `type=0x8b`, then `0x8d`, `0x80`).
+
+**SSH to ARM** (after the box is up): from `l-fwreg-171`, bare `ssh` is shadowed by the Noga lab wrapper (mangles `root@…` → `pexiang@root@…`). Bypass it: `/usr/bin/ssh root@192.168.100.1` (pw `3tango`), or scripted `SSHPASS=3tango sshpass -e ssh -o PreferredAuthentications=password root@192.168.100.1`. `sshpass` execs the real binary, so it sidesteps the wrapper. Confirm with `uname -m` → `aarch64`.
 
 ---
 
@@ -399,8 +418,10 @@ This is the `--ini` argument fed to `jmake --burn ... --ini <this file>` in Phas
 ssh l-fwreg-171
 hostname; uptime
 # l-fwreg-171, idle, no MARS sessions running
-sudo cat /dev/rshim0/misc | grep -E "BF_MODE|UP_TIME"
-# BF_MODE Unknown, UP_TIME 0(s)  — ARM not booted
+sudo cat /dev/rshim0/misc | grep -E "DPU is ready|Linux up|UP_TIME"
+# no "DPU is ready" / "Linux up" line, UP_TIME 0(s)  — ARM not booted
+# (BF_MODE is NOT a boot-state field — it reports DPU-vs-NIC mode, so don't
+#  read "BF_MODE Unknown" as "ARM down". Use "DPU is ready" for OS readiness.)
 sudo timeout 8 flint -d /dev/mst/mt41692_pciconf0 q | head -3
 # FW Version: 32.50.0222   (already regression-burned)
 ```
@@ -579,9 +600,15 @@ To rerun use seed 2136434584
 MemoryCheckThread : Done! Peak usage = 4091.34 MB
 ```
 
-## Phase 10 — Enable satellite PF (prereq for Li's cap delegation)
+## Phase 10 — Enable satellite PF (FW-level instantiation)
 
-Done on 2026-06-03 after Phases 1-9 were already passing. Builds on top of the burned-INI state from Phase 3 (which now includes the 2 `mac_params` lines — make sure they're there before doing this phase, otherwise PF_NUM_SAT_PF won't exist as a TLV).
+> ⚠️ **2026-06-05 重大修正**：本 phase 描述的是"通过 INI 改动让 FW 真正 instantiate sat PF (PF_NUM_SAT_PF Current=1, ARM lspci 多一个 PF)"这条路径。**但 utopx 测试 sat PF 不一定需要这条路径** —— utopx 有原生 sat PF 支持代码（`IsDpuPf()` / `HandleDpuPfCreateEswVport` / `force_dpu_pf_emu_manager` / `num_sat_pf` nvconfig gen 等），通过 conf knob 在 utopx 测试中模拟 sat PF NVconfig，**不需要 FW 真的把 sat PF 烒进硬件**。看 §Phase 11 (新增) "utopx 原生 sat PF 测试入口"。
+>
+> **Phase 10 真正的用处**：要看 sat PF 真实 PCIe enumerate（ARM lspci 多 1 个 PF）、要从 SF 创建测起，或要 FW 端集成测试时。对 **Li cap delegation FW verification (utopx 端)**，Phase 11 路径就够，**Phase 10 INI burn 不一定要做**。
+>
+> 今天 2026-06-04~05 在 171 上试了 0/2/4/5/7/9-line INI 各种组合 + 两个 FW build (32.50.0222 + 32.49.9906)，**没找到能让 sat PF Current=1 + 不撞 FW assert 0x821d 的纯 INI 配置**。MAS 文档（Marie Chagny, Confluence [2830146343](https://nvidia.atlassian.net/wiki/spaces/FW/pages/2830146343)）的 9-line BF-3 recipe 在 171 上 sat PF 也起不来。下面的 INI / mlxconfig 流程作为 documentation 保留，但 **执行 Phase 10 在当前 FW + 171 hardware 上不能 yield 一个 utopx-runnable sat PF env**。
+
+Done partially on 2026-06-03 after Phases 1-9 were already passing. Builds on top of the burned-INI state from Phase 3.
 
 ### 10.0 Why this needs both an INI change AND an ARM-side mlxconfig set
 
@@ -609,11 +636,55 @@ BF-3 is a SoC with an ARM core running its own Linux. From the host, the only ph
 1. `/dev/rshim0/*` — character devices (`console`, `boot`, `misc`, `rshim`) for low-level UART / BFB-push / control access.
 2. `tmfifo_net0` — a virtual Ethernet NIC implementing a **point-to-point tunnel over the rshim FIFO**. This is how `ssh` reaches ARM.
 
-The tmfifo link is a /24 with two endpoints; by NVIDIA convention:
-- **Host gets `192.168.100.2`**
-- **ARM gets `192.168.100.1`**
+**Don't memorize whether ARM is `.1` or `.2`** — that's per-box configuration, set by the BFB image, the ARM netplan, and the host's tmfifo config independently. Both conventions exist:
 
-Three independent ways to figure this out:
+- **Public DOCA default** ([RShim docs](https://docs.nvidia.com/networking/display/bluefieldbsp4120/soc+management+interface+(rshim))): BFB statically configures ARM to `192.168.100.2/30`; host side is set manually to `192.168.100.1/30`. So `ssh ubuntu@192.168.100.2` reaches ARM.
+- **l-fwreg-171 actual** (lab-customized, verified 2026-06-03): ARM's `/etc/netplan/*.yaml` overrides tmfifo to `192.168.100.1/24`; host's rshim setup runs `192.168.100.2/24`. So `ssh root@192.168.100.1` reaches ARM here.
+
+The rshim driver does **not** auto-assign both endpoints or "give the higher address to the host" — the ARM IP is baked into the BFB (or the BFB's netplan override), the host IP comes from the host's own network config. Always **discover** the running state instead of assuming.
+
+**Discovery method — works on any BlueField box, host-side only, no guessing:**
+
+```bash
+# Step 1: read host's tmfifo IP and subnet (the local end of the point-to-point link)
+ssh <host> 'ip -br addr show tmfifo_net0'
+# tmfifo_net0  UP  192.168.100.X/N ...        ← host is .X on /N subnet
+
+# Step 2: read the ARM's IP directly from the host's neighbor cache.
+#         This is DETERMINISTIC if any IP traffic has ever crossed the tmfifo link
+#         (the cache populates automatically on the first ARP/IP exchange).
+ssh <host> 'ip neigh show dev tmfifo_net0'
+# 192.168.100.Y lladdr 00:1a:ca:00:00:00 STALE     ← ARM's actual IP and MAC
+
+# Step 3 (only if Step 2 is empty — fresh-boot or cache flushed): force an ARP entry.
+#   Easiest: sweep the candidate unicasts on the subnet to trigger ARP replies.
+#   For /30 only 2 unicasts exist; for /24 enumerate the few /etc/hosts hints first.
+ssh <host> 'grep -E "arm|bf" /etc/hosts'              # collect candidate hints
+ssh <host> 'ping -c1 -W1 192.168.100.<candidate> >/dev/null 2>&1; ip neigh show dev tmfifo_net0'
+
+# Step 4: confirm you reached ARM (defense against weird routing / sshd loopback)
+ssh root@<Y> 'uname -m'
+# aarch64 → ARM ✓
+# x86_64  → host (you somehow looped back; check tmfifo setup)
+```
+
+`ip neigh show dev tmfifo_net0` is the **canonical, deterministic** way to read ARM's IP from the host alone — it's literally the kernel's view of the peer of the point-to-point link, populated by ARP. No guessing, no /etc/hosts trust required. `uname -m = aarch64` is the **final correctness check** (catches setup pathologies where ssh sometimes loops back).
+
+Alternative when even the host-side network is broken: log in via any **serial-terminal client** pointed at `/dev/rshim0/console` (UART tunnel, no IP needed), then run `ip addr show tmfifo_net0` on ARM directly. This is the "no IP at all" fallback. Pick whichever tool the box has installed:
+
+```bash
+sudo screen /dev/rshim0/console        # screen's char-device mode (not multiplexer use)
+sudo minicom -D /dev/rshim0/console
+sudo picocom /dev/rshim0/console
+sudo tio /dev/rshim0/console
+sudo cu -l /dev/rshim0/console
+```
+
+Note: **`tmux` won't work** here — tmux is a pure shell multiplexer, it doesn't have a char-device terminal mode. screen does (legacy feature), which is why I used it.
+
+The specific address (`.1` or `.2`) doesn't matter; the method does.
+
+Three corroborating evidence sources you'll use along the way:
 
 1. **`/etc/hosts` on the host pre-declares every rshim port's ARM IP** (this is the most authoritative source — populated by NVIDIA dev-box image):
    ```bash
@@ -626,22 +697,28 @@ Three independent ways to figure this out:
    ```
    `arm0`/`bf0` = the ARM behind rshim 0 (= our BF-3 SoC). The other ports are for boxes with multiple DPUs.
 
-2. **Inspect host's tmfifo NIC** and infer the peer from /24 + the convention:
+2. **Inspect host's tmfifo NIC** — tells you host's own end, not ARM's directly:
    ```bash
    ssh l-fwreg-171 'ip -br addr show tmfifo_net0'
    # tmfifo_net0      UP             192.168.100.2/24 fe80::6c36:bb29:192a:80c0/64
    ```
-   Host is `.2/24` → ARM (the only other endpoint on the /24) is `.1`. The `.2 vs .1` allocation is fixed by the rshim driver: it always assigns the higher of the two to the host side.
+   This only tells you the host's own address (here `.2/24`). The ARM's address is set on the ARM side by its `/etc/netplan/*.yaml` — read that side independently if you have ssh access, or guess + verify with `uname -m`. Don't assume "ARM = the other unicast on the /24" because the BFB's static IP may not match what host's tmfifo NIC config implies.
 
 3. **Read rshim misc to confirm rshim is talking to a real DPU at all**:
    ```bash
-   ssh l-fwreg-171 'sudo cat /dev/rshim0/misc | grep -E "DEV_NAME|DEV_INFO|UP_TIME|BF_MODE"'
+   ssh l-fwreg-171 'sudo cat /dev/rshim0/misc | grep -E "DEV_NAME|DEV_INFO|UP_TIME"'
    # DEV_NAME    pcie-0000:83:00.7
    # DEV_INFO    BlueField-3(Rev 1)
    # UP_TIME     1234(s)
-   # BF_MODE     Unknown        (or "Live" if ARM OS has reported ready)
    ```
    `DEV_NAME` is the host-side PCIe BDF that rshim binds to. Multiple DPUs → multiple `/dev/rshim*` devices, each with its own tmfifo /24 (100/110/120/...).
+
+   To confirm the **ARM OS itself is up** (not just that rshim sees the DPU), grep the rshim status log for the readiness markers. Note `BF_MODE` does **not** report OS state — per NVIDIA's [RShim docs](https://docs.nvidia.com/networking/display/bluefieldbsp4120/soc+management+interface+(rshim)) it reports DPU-vs-NIC mode (values `DPU mode` / `NIC mode` / `Unknown` / `Reserved`); `Unknown` just means BIOS/ATF didn't set the mode (common on older BF3 BIOS), not that ARM is down:
+   ```bash
+   ssh l-fwreg-171 'sudo cat /dev/rshim0/misc | grep -E "Linux up|DPU is ready"'
+   # INFO[MISC]: Linux up
+   # INFO[MISC]: DPU is ready        ← ARM-side Linux booted and operational
+   ```
 
 #### 10.2.2 Watch out for the .2 trap
 
@@ -651,7 +728,45 @@ Three independent ways to figure this out:
 - `mst status` shows host PFs (`83:00.x`), not ARM PCIe domain (`00:00.x`).
 - `root/3tango` works (host's root password) but it gives you nothing useful for ECPF work.
 
-The point-to-point convention is unambiguous: ARM is **never** `.2`; it's always `.1` (or `.3`, `.5`, ... for multi-DPU boxes' subsequent rshims).
+On **this box** ARM is `.1` and the host is `.2` — but that split is box config, not a law (the public DOCA default is the reverse; see the warning in §10.2.1). The only reliable test is `uname -m`: `aarch64` = ARM, `x86_64` = host. Always run it after connecting, before doing any ECPF work. (On multi-DPU boxes the subsequent rshims sit on their own /24s — 110/120/… — each with its own host/ARM pair.)
+
+#### 10.2.2b ⚠️ The `run_ssh` alias trap on 171 (interactive shells)
+
+171's `~/.bashrc` sources `/mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias`, which sets:
+
+```bash
+alias ssh='run_ssh 0'
+```
+
+`run_ssh` is a wrapper that does NVIDIA's "user allocation verification" before invoking the real ssh. **It expects a bare hostname** — `ssh <host>`, no `user@`. If you write `ssh user@host` interactively on 171, the wrapper prepends your current login as another user prefix and produces password prompts like `pexiang@root@192.168.100.1's password:`. You'll also see `[1] <PID>` and `Starting user allocation verification...` on the side.
+
+Check whether the alias is in your way:
+
+```bash
+type -a ssh
+# ssh is aliased to `run_ssh 0'    ← interactive shell: alias is active
+# ssh is /bin/ssh
+```
+
+When the alias is **NOT** active (the cases where this plan's prescribed commands work without hitting the trap):
+
+| Context | Alias active? |
+|---|---|
+| Interactive bash on 171 (login shell) | ✅ Yes (the trap fires) |
+| `bash -c '...'` from outside (e.g. `ssh l-fwreg-171 'ssh root@...'` from dev box) | ❌ No — aliases off in non-interactive bash by default |
+| `sshpass -e ssh ...` (any shell) | ❌ No — sshpass spawns `/usr/bin/ssh` via execve, bypassing shell aliases |
+| Scripts run as `bash script.sh` (not `bash -i`) | ❌ No |
+
+Bypasses inside an interactive 171 shell — pick any:
+
+```bash
+\ssh root@192.168.100.1                  # backslash disables alias for this invocation
+command ssh root@192.168.100.1           # explicit non-alias
+/usr/bin/ssh root@192.168.100.1          # full path
+unalias ssh; ssh root@192.168.100.1      # remove alias for the rest of this shell
+```
+
+This plan's recipes use the `ssh l-fwreg-171 '<cmd>'` form from a dev box like `m-fwdev-167`, so the inner `<cmd>` runs in non-interactive bash on 171 and is safe by default. The trap matters when you're logged in interactively on 171 typing commands by hand.
 
 #### 10.2.3 Alternative access methods when ssh doesn't work
 
@@ -717,13 +832,20 @@ The ARM rootfs has both `/mswg` and `/auto/mswg_release_mft` already mounted (NF
 
 ### 10.4 Set PF_NUM_SAT_PF=1 on ECPF (from ARM)
 
+**Important HLD constraint: only `=1` is supported per ECPF.** Although `PF_NUM_SAT_PF` is a 5-bit unsigned count (writable 0..31 by the NVconfig schema), the FW HLD pins the limit:
+
+> "FW will support only 1 DPU PF; more PFs should be an additional feature request."
+>
+> "No max cap for nvconfig, it will be relying on the reduction flow in FW for invalid config."
+
+So `mlxconfig set PF_NUM_SAT_PF=2` on one ECPF doesn't give you 2 sat PFs — FW's `iron_prep` **reduction flow** silently drops it back to 1 (with `scratchpad.dpu_pf_not_supported_globally` bit set; see `adabe/scratchpad_st.adb:12117`). The supported way to have 2 system-wide sat PFs is **`PF_NUM_SAT_PF=1` on each of the two ECPFs** (one per port) — see §10.4b below. There's also an in-flight "Disable NUM_SAT_PF NVconfig" feature (Yongheng Li) that may further gate this nvconfig, so check current FW behavior before assuming the field is writable on whatever build you have.
+
 ```bash
 SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password \
     root@192.168.100.1 '
     mst start >/dev/null 2>&1
-    mst status
-    # Expected: 2 BlueField3 devices, /dev/mst/mt41692_pciconf0 (00:00.0, ECPF0)
-    #                                  /dev/mst/mt41692_pciconf0.1 (00:00.1, ECPF1)
+    ls /dev/mst/                     # truth: lists actual device files
+    mst status                       # CLI display: see caveat below
 
     mlxconfig -d /dev/mst/mt41692_pciconf0 q PF_NUM_SAT_PF
     # Expected: PF_NUM_SAT_PF = 0  (no longer "Failed to find Param / TLV")
@@ -733,9 +855,32 @@ SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentica
 '
 ```
 
-If you see `-E- Unknown Parameter: PF_NUM_SAT_PF`, ARM mft is still old (step 10.3 didn't run).
+### 10.4b OPTIONAL: 2 sat PFs system-wide (one per port) — set =1 on BOTH ECPFs
 
-If you see `-E- Failed to find Param / TLV with name 'PF_NUM_SAT_PF'`, the FW image doesn't have the TLV — re-check Phase 3 INI patch (the 2 mac_params lines) and re-burn.
+The supported "2 sat PFs" topology: each ECPF gets one sat PF on its port. On ARM you have 2 ECPF mst devs (`/dev/mst/mt41692_pciconf0` = ECPF0 = port 0, `.1` = ECPF1 = port 1):
+
+```bash
+SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password \
+    root@192.168.100.1 '
+    mst start >/dev/null 2>&1
+    mlxconfig -d /dev/mst/mt41692_pciconf0   -y s PF_NUM_SAT_PF=1   # ECPF0 → 1 sat PF on port 0
+    mlxconfig -d /dev/mst/mt41692_pciconf0.1 -y s PF_NUM_SAT_PF=1   # ECPF1 → 1 sat PF on port 1
+'
+# Then power cycle (10.5), and on ARM expect 4 ConnectX-7 PFs:
+#   00:00.0  ECPF0
+#   00:00.1  ECPF1
+#   00:00.2  sat PF (port 0, managed by ECPF0)
+#   00:00.3  sat PF (port 1, managed by ECPF1)
+```
+
+This 4-PF topology is the BF-4 OCI MLI standard config and is the form actually verified by QA. For Li's cap delegation Phase 1 testing, 1 sat PF (§10.4 path) is sufficient and simpler; the 2-sat-PF topology is for cases that need both ports' satellite PFs.
+
+**`mst status` only shows function-0 — known display bug, not a real problem.** On ARM (mft 4.37) `mst status` lists only `/dev/mst/mt41692_pciconf0` (function 0) even when functions 1 and 2 are fully enumerated by the kernel. Verified 2026-06-03: `ls /dev/mst/` shows all of `mt41692_pciconf0`, `.1`, and `.2` (post-sat-PF-enable); `dmesg` confirms the mst kernel module creates 3 device nodes; `lspci -nn | grep ConnectX-7` on ARM shows 3 PFs at `00:00.0/.1/.2`. `mlxconfig -d /dev/mst/mt41692_pciconf0.2` works perfectly even though `mst status` doesn't list it. So **trust `ls /dev/mst/` + `lspci`, ignore what `mst status` says about sub-functions**.
+
+Errors you might see and fix:
+- `-E- Unknown Parameter: PF_NUM_SAT_PF`: ARM mft is still old (Step 10.3 didn't run, or didn't take effect — `mlxconfig --version` must show 4.37+).
+- `-E- Failed to find Param / TLV with name 'PF_NUM_SAT_PF'` **on the ARM side**: FW image doesn't have the TLV — re-check Phase 3 INI patch (the 2 `mac_params` lines) and re-burn.
+- `-E- Failed to find Param / TLV with name 'PF_NUM_SAT_PF'` **on the host side**: **expected — not an error**. `PF_NUM_SAT_PF` is an ECPF-only nvconfig (adabe description: "only supported for ECPF which is also the eswitch owner"); host-side mst devs don't expose it. **Always verify the TLV from the ARM side, never from host.** I once wasted 4 hours on 2026-06-04 re-burning + power-cycling repeatedly because I kept querying from host and reading the error as "INI didn't take effect". Don't.
 
 ### 10.5 Apply NVconfig — power cycle is the cleanest path
 
@@ -784,11 +929,13 @@ SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentica
     #   00:00.1  ECPF1
     #   00:00.2  ← the new satellite PF
 
-    mst status
-    # Expected: THREE mst devs:
-    #   /dev/mst/mt41692_pciconf0       (00:00.0)
-    #   /dev/mst/mt41692_pciconf0.1     (00:00.1)
-    #   /dev/mst/mt41692_pciconf0.2     ← satellite PF mst dev
+    # Authoritative truth for mst devs: ls /dev/mst/, NOT mst status
+    # (mst status on ARM mft 4.37 has a display bug — only lists function 0)
+    ls /dev/mst/
+    # Expected (3 device files, ignoring the .mst_pciconf_ctrl control node):
+    #   mt41692_pciconf0       (00:00.0)
+    #   mt41692_pciconf0.1     (00:00.1)
+    #   mt41692_pciconf0.2     ← satellite PF mst dev
 
     mlxconfig -d /dev/mst/mt41692_pciconf0 -e q PF_NUM_SAT_PF
     # Expected:
@@ -942,10 +1089,12 @@ sudo cat /dev/rshim0/console
 # You should see U-Boot → kernel → systemd → login prompt within ~2 min.
 # Ctrl-C to exit (won't disturb ARM).
 
-# 5. /dev/rshim0/misc should show BF_MODE becoming non-Unknown:
-sudo cat /dev/rshim0/misc | grep -E "BF_MODE|UP_TIME"
-# BF_MODE  Live              ← ARM Ubuntu reported ready
-# UP_TIME  120(s)            ← rshim's view of how long ARM has been up
+# 5. /dev/rshim0/misc should report the ARM OS as ready:
+sudo cat /dev/rshim0/misc | grep -E "DPU is ready|Linux up|UP_TIME"
+# INFO[MISC]: Linux up        ← ARM kernel booted
+# INFO[MISC]: DPU is ready    ← ARM Ubuntu reported ready
+# UP_TIME  120(s)             ← rshim's view of how long ARM has been up
+# (BF_MODE is unrelated — it's DPU-vs-NIC mode, not a boot indicator)
 
 # 6. SSH in. Default for a fresh DOCA BFB is ubuntu/ubuntu with forced password change:
 ssh ubuntu@192.168.100.1
@@ -974,11 +1123,205 @@ mlxconfig -d /dev/mst/mt41692_pciconf0 q PF_NUM_SAT_PF
 | ssh ARM Permission denied with every default password | BFB reinstall — someone changed creds and didn't document; reinstall resets to ubuntu/ubuntu |
 | ssh ARM connection refused (port 22 closed) | BFB reinstall if rshim console also dead; otherwise debug via console first |
 | ARM rootfs full / out of disk / package corruption | BFB reinstall to get fresh rootfs |
-| `BF_MODE Unknown` forever, ARM hung in early boot | Try rshim console first; BFB reinstall as last resort |
+| No `DPU is ready` in `/dev/rshim0/misc` long past boot, ARM hung in early boot | Try rshim console first; BFB reinstall as last resort |
 | Just need to update MFT on ARM | **DO NOT BFB-reinstall** — just run `/mswg/release/mft/last_stable/install.sh` directly |
 | Just need to set a new NVconfig | **DO NOT BFB-reinstall** — ssh in, mlxconfig set, done |
 
 **171 today**: BFB reinstall **NOT needed**. The existing ARM Ubuntu (`l-fwreg-171-bf0`, kernel `5.15.0-1019.21.5.g2a61d1d-bluefield`) is functional, and the team's `root/3tango` works. Section 10.10 is documented as recovery procedure only.
+
+## Phase 11 — utopx-native satellite PF test path (the right path for FWV)
+
+> **This is the path FWV should use** for cap-delegation / sat-PF verification, **not** the FW-level INI-burn route of Phase 10. Discovered 2026-06-05.
+
+### 11.0 What utopx already supports
+
+`grep -rnE 'IsDpuPf|GetDpuPfs|num_sat_pf|HandleDpuPfCreateEswVport' /auto/fwgwork1/pexiang/utopx/src/` returns 50+ hits. utopx already has:
+
+| API / mechanism | Location | What it does |
+|---|---|---|
+| `VHCA::IsDpuPf()` | `src/hca/VHCA.cpp` + many call sites | Predicate "is this vhca a sat PF / DPU PF" |
+| `VHCA::GetDpuPfs(includeInvalid)` | `src/hca/VHCA.cpp` | List the DPU PFs of an ECPF |
+| `VHCA::GetParentVhca()` | `src/hca/VHCA.cpp` | Get the ECPF that owns this sat PF |
+| `VHCA::RemoveAllVportsForDpuPf()` | `src/hca/VHCA.cpp` | Cleanup |
+| `CmdCreateEswVport::HandleDpuPfCreateEswVport()` | `src/cmdif/CmdCreateEswVport.cpp:93` | DPU PF-specific create-esw-vport path |
+| `CmdAllocSf` / `CmdDeallocSf` DPU PF checks | `src/cmdif/CmdAllocSf.cpp:122` etc. | SF allocation on sat PF |
+| `HandleNvData::GetPfNumSatPf()` + `GetPfNumSatPfValid()` | `src/nv_config/HandleNvData.cpp:3271` | utopx reads `PF_NUM_SAT_PF` NVconfig from FW |
+| **NVconfig generation** | `HandleNvData.cpp:3860-3862` | `pfPciConf->num_sat_pf = GetManualKeeps().nvconfig_registers.pf_pci_conf.num_sat_pf.Gen(...)` — **utopx itself generates a `num_sat_pf` value into its NV_CFG_SET op** |
+| **Coverage** | multiple | `has_sat_pf`, `CreateEswVport on dpu_pf`, `DestroyEswVport on dpu_pf` |
+| **Emu-manager selection** | `src/hca/VHCA.cpp:10080` | The critical knob — picks DPU PF as emu manager when forced |
+
+The critical code is `VHCA.cpp:10080-10091`:
+
+```cpp
+bool useDpuPf = (DEVICE_INFO.IsEqualToDev(MUSTANG) && IS_FORCED_SUPPORTED_2(this, force_dpu_pf_emu_manager))
+              || DEVICE_INFO.IsGreaterEqualThanDev(ARGAMAN);
+if (useDpuPf && defaultEmuMgr->IsECPF()) {
+    // pick the ECPF's DPU PF as the emulation manager
+    auto it = std::find_if(pfList.begin(), pfList.end(), [defaultEmuMgr](VHCA* v) {
+        return v->IsDpuPf() && v->GetParentVhca() == defaultEmuMgr;
+    });
+    if (it != pfList.end()) return *it;
+}
+return defaultEmuMgr;
+```
+
+Summary:
+- **BF-3 (MUSTANG)** — default uses ECPF as emu manager; to test the sat-PF path, **force `force_dpu_pf_emu_manager=1`**.
+- **BF-4 (ARGAMAN)+** — uses sat PF automatically (no force needed).
+
+### 11.1 The conf knobs
+
+`config/common_constraints.conf` (already in the codebase, no edit needed) declares:
+
+```
+force_fw_cap.enable_mask_2.fw_feature_support_bits.force_dpu_pf_emu_manager = 50:0 50:1
+# Satellite PF
+nvconfig_registers.pf_pci_conf.num_sat_pf       = [0-1]
+nvconfig_registers.pf_pci_conf.num_sat_pf_valid = [0-1]
+```
+
+Three knobs (default = random; we want to force):
+
+| Knob | What | Force-on value for sat-PF test |
+|---|---|---|
+| `force_fw_cap.enable_mask_2.fw_feature_support_bits.force_dpu_pf_emu_manager` | tells utopx to assume FW reports DPU PF as emu manager (BF-3 only) | `1` (always on) |
+| `nvconfig_registers.pf_pci_conf.num_sat_pf_valid` | utopx generates `num_sat_pf_valid=1` in `NV_CFG_SET` ops | `1` |
+| `nvconfig_registers.pf_pci_conf.num_sat_pf` | utopx generates `num_sat_pf=1` value | `1` |
+
+### 11.2 How to run
+
+**Important**: utopx **doesn't need FW to have sat PF physically instantiated** to test sat-PF logic. The `force_fw_cap` mechanism lets utopx behave as if the FW supports the cap regardless of FW's actual report. utopx tracks expected FW state in its own DB; cap-prediction code (`HcaCaps.cpp`) is what exercises the sat-PF path.
+
+**Two critical syntax notes**:
+1. `--extra_constraints` (or `-e`) accepts **ONE constraint per flag**. utopx help says "does not support list or range" — multi-knob space-separated value will fail with `failed to parse`. Use **3 separate `-e` flags**.
+2. **Knob name depends on utopx version** (renamed in newer commits):
+   - utopx `07de3b4` (5-31 pinned) and most regression daily builds before 2026-06: `force_dpu_pf_emu_manager`
+   - utopx `9f5f06910` and later (2026-06-04+ regression): `force_dpu_sat_pf_emu_manager` (added `sat_`)
+   - Use the name that matches your `utopx.exe` binary version. Check with `grep -rE 'force_dpu(_sat)?_pf_emu_manager' /auto/fwgwork1/pexiang/utopx/src/hca/VHCA.cpp` — whichever appears is the right name.
+
+So the recipe (5-31 utopx 07de3b4 version, three independent `-e`):
+
+```bash
+# FW + INI: baseline burn (Phase 1-9), NO sat-PF mac_params lines
+# (Phase 10 INI burn NOT needed; if you tried it and FW asserts, revert to baseline)
+
+# Pre-run env setup (one ssh per command per [[feedback-one-ssh-per-command]])
+ssh l-fwreg-171 'sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset'
+ssh l-fwreg-171 'sudo systemctl restart rshim && sleep 2'    # rshim may need restart after fwreset
+ssh l-fwreg-171 'echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc'
+ssh l-fwreg-171 'sudo modprobe udriver && ls /dev/udriver_*'
+
+# Run utopx with the 3 sat-PF knobs forced ON
+LOG="$HOME/utopx_171_satpf_$(date +%Y%m%d_%H%M%S).log"
+ssh l-fwreg-171 'cd /auto/fwgwork1/pexiang/utopx && \
+    sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
+        --xml_conf_file debug_conf.xml --conf_file config/scenario_dpa_emu.conf \
+        --iter=300 --ops_per_it=30 \
+        -e force_fw_cap.enable_mask_2.fw_feature_support_bits.force_dpu_pf_emu_manager=1 \
+        -e nvconfig_registers.pf_pci_conf.num_sat_pf=1 \
+        -e nvconfig_registers.pf_pci_conf.num_sat_pf_valid=1 \
+        2>&1 | tail -200' > "$LOG" 2>&1 &
+wait $!
+
+grep -E "TEST PASSED|TEST FAILED|Test-status|FATAL" "$LOG" | head
+```
+
+Any emulation-class scenario works (`scenario_dpa_emu.conf`, `cmdif_test_dpa.conf`, etc.) — the sat-PF code path is gated by the knobs, not by which scenario.
+
+**Verified PASS** 2026-06-05 14:11~14:20 BJ: seed `226259204`, ~8m57s, on utopx `07de3b4` rebuilt binary + FW `32.50.0222` + baseline INI + the 3 `-e` knobs above. Baseline (no `-e` flags) same env: PASS seed `3996255652` ~7m47s. Path A confirmed working — sat-PF coexists with utopx baseline at this pin.
+
+### 11.3 What this tests
+
+- `VHCA::IsDpuPf()` predicate returns true for the synthesized sat PF
+- `defaultEmuMgr = the ECPF's DPU PF` (per `VHCA.cpp:10080` logic)
+- `CmdCreateEswVport` / `CmdDestroyEswVport` exercise DPU-PF paths
+- `CmdAllocSf` checks `targetVhca->IsDpuPf()` and routes accordingly
+- Emulation cmds (NVMe / virtio) issue from the sat PF rather than the ECPF, exercising the routing utopx wrote
+- Cap predictions on sat-PF vhca exercise `HcaCaps.cpp` sat-PF branches
+
+Today's cap mismatch (`general_obj_type_device_object expected=0 actual=1`, 2026-06-04 21:08) was exactly this path firing without `force_dpu_pf_emu_manager` set explicitly, when our FW-level sat-PF was on. The fix is to **align utopx prediction with FW actual when sat-PF is on** — that's the FWV work item under `plans/utopx_verification_emu_mgr_delegation.md`.
+
+### 11.4 Relationship to Phase 10
+
+| Concern | Phase 10 (FW-level instantiation) | Phase 11 (utopx-native) |
+|---|---|---|
+| Need to burn special INI? | Yes (9 mac_params lines for BF-3) | **No** — keep baseline INI |
+| Need ARM mlxconfig set? | Yes (`PF_NUM_SAT_PF=1` on ECPF) | **No** — utopx generates NV_CFG_SET internally |
+| Need power cycle dance? | Yes (multi-cycle to apply NVconfig) | **No** — single utopx invocation |
+| ARM lspci shows sat PF? | Yes (`00:00.2` appears) | **No** — sat PF only in utopx's internal vhca model |
+| utopx test coverage of sat-PF code? | Same as Phase 11 if FW reports caps right | ✓ Full coverage of utopx's sat-PF code |
+| FW boot fwassert 0x821d? | Triggered if `cpu_management_pf`/`device_type` combo unfixed | **Doesn't apply** — FW infra not activated |
+| Use case | (a) end-to-end FW infra validation, (b) ARM-side SF creation tests, (c) cross-vhca traffic to/from sat PF | utopx-level FWV (predicts caps, exercises cmd paths, verifies via `FailOnDiffInner` against FW responses) |
+
+**For Li's cap-delegation feature FWV (the immediate ask) → Phase 11**. Phase 10 might still be needed later for production-like end-to-end runs, but **not** as a prerequisite for utopx verification work.
+
+## Phase 12 — Recovering env after a regression run
+
+When `mars_reg` runs its daily regression on the box, it leaves the env in a state that is **NOT** runnable as a utopx test bench for our pinned config. After releasing the lock, the box has:
+
+- FW burned to whatever regression's daily was (e.g. `32.50.0260` instead of our pinned `32.50.0222`)
+- `golan_fw` git tree on a regression-set tag (e.g. `host_fwv_mini_reg_version_...`) different from `rel-12_50_0222`
+- **`utopx.exe` binary recompiled** from a newer utopx commit (e.g. `9f5f06910`), saved at `/auto/fwgwork1/pexiang/utopx/artifacts/bin/ninja/.../utopx.exe`
+- `utopx` git tree on the matching newer commit
+- Submodules (especially `steering_ul`) pointing to newer commits
+
+**Symptoms when you ignore this and try utopx baseline immediately:**
+- `IcmdAgent.cpp:98 ... ICMD_ACCESS_REG ... ICMD_BAD_PARAM` ~20-30s into the run. (Regression's utopx+FW pair is not actually utopx-baseline-clean.)
+- If you only `git checkout` the source back to 5-31 pin but skip rebuild: `TestKeeps.cpp:116 failed to parse: force_fw_cap.enable_mask_2.fw_feature_support_bits.force_dpu_pf_emu_manager = 50:0 50:1` — the `utopx.exe` binary is still the newer build whose internal keep registry doesn't match the older conf file.
+
+### 12.1 Recovery procedure
+
+```bash
+# 1. Reset utopx repo to 5-31 pin, including submodules
+cd /auto/fwgwork1/pexiang/utopx
+git checkout host_fwv_20260527_FW_version_50_0222_branch_master   # tag for utopx 07de3b4
+git submodule update --recursive
+git status --short    # expect: empty or just untracked files (genid_dump etc.)
+
+# 2. Reset golan_fw repo to 5-31 pin
+cd /auto/fwgwork1/pexiang/golan_fw
+git checkout rel-12_50_0222    # SHA 1bd364033669
+
+# 3. Rebuild utopx (docker-based, ~30+ min)
+cd /auto/fwgwork1/pexiang/utopx
+./build.sh                          # produces utopx.exe matching 07de3b4 source
+ls -la artifacts/bin/ninja/ubuntu/20.04/x86_64/gcc10.5.0/ABI_0/Legacy/utopx.exe
+# verify mtime is recent (your build) not the regression's mtime
+
+# 4. Re-burn FW back to 32.50.0222 + baseline INI (Phase 5):
+ssh l-fwreg-171 'sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_pciconf0 --fw-reset'   # clear any pending image
+ssh l-fwreg-171 'cd /auto/fwgwork1/pexiang/golan_fw && \
+    /labhome/pexiang/.usr/bin/jmake --burn \
+        --device /dev/mst/mt41692_pciconf0 \
+        --firmware /auto/sw/release/host_fw2/fw-41692/fw-41692-rel-32_50_0222-build-001/dist/fw-BlueField-3.mlx \
+        --ini ../utopx/regression_ini/burned_session_11047756_v32_50_0222_psid_MT_0000000998.ini'
+
+# 5. Power cycle to pivot FW (regression-burned image was the running one; need cycle to load new)
+ssh -O exit l-fwreg-171 2>/dev/null
+/labhome/pexiang/.usr/bin/jmake --power-cycle l-fwreg-171
+
+# 6. Post-cycle env setup
+ssh l-fwreg-171 'sudo systemctl restart rshim'       # rshim daemon may not auto-restart
+ssh l-fwreg-171 'sleep 2 && ls /dev/rshim0/'         # expect: boot console misc rshim
+ssh l-fwreg-171 'echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc'
+ssh l-fwreg-171 'sudo modprobe udriver'
+ssh l-fwreg-171 'sudo flint -d /dev/mst/mt41692_pciconf0 q | grep "FW Version"'
+# expect: FW Version: 32.50.0222
+```
+
+After step 6, env is recovered to 5-31 pinned state. Run utopx baseline to confirm, then Path A.
+
+### 12.2 Why a rebuild is mandatory
+
+`utopx.exe` is a 60MB compiled binary at `artifacts/bin/ninja/ubuntu/20.04/x86_64/gcc10.5.0/ABI_0/Legacy/utopx.exe` (symlinked to `./utopx.exe` in the repo root). `git checkout` only updates source files — the binary on disk persists.
+
+When regression runs on the box, it rebuilds this binary for whatever commit it's testing. After regression releases the box, you inherit that binary. Your `git checkout` to an older commit just makes the source disagree with the running binary, which causes parse errors at startup because the binary's internal config-keep registry doesn't match conf files from a different commit.
+
+**No way around this**: must `./build.sh` from the desired source state. ~30 min, docker-based (`harbor.mellanox.com/hca-fw-core/hca-fw-core-ubuntu20.04:0.0.21`). Verify the rebuild succeeded by checking `utopx.exe` mtime is your build time.
+
+### 12.3 Optional shortcut: use regression's newer pair instead
+
+If you don't want to spend 30 min rebuilding, you can pin everything to regression's newer state (utopx + FW + INI). But on 2026-06-04~05 testing this pair (`utopx 9f5f06910` + `FW 32.50.0260` + baseline INI) **also failed baseline utopx with ICMD_BAD_PARAM**. So regression's daily build state isn't necessarily utopx-runnable for our scenarios. Stick with rebuild of 5-31 pin.
 
 ## What NOT to do (failure modes we hit and learned from)
 
@@ -1017,7 +1360,7 @@ echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc
 
 Done **after every `jk --fw-reset`**, before running utopx. The Phase 9 / Re-run quick reference flow has this step inline now.
 
-Side-effect to notice: clearing `DROP_MODE` may bump `UP_TIME` from `0` to a non-zero value as the rshim re-establishes a connection to ARM — this is harmless and confirms the daemon is back to normal. `BF_MODE Unknown` is also normal pre-BFB-push.
+Side-effect to notice: clearing `DROP_MODE` may bump `UP_TIME` from `0` to a non-zero value as the rshim re-establishes a connection to ARM — this is harmless and confirms the daemon is back to normal. (`BF_MODE` showing `Unknown` is unrelated to boot state — it only reports DPU-vs-NIC mode and is commonly `Unknown` on older BF3 BIOS regardless of whether ARM is up.)
 
 ### Don't try to set PF_NUM_SAT_PF from the host side
 
@@ -1031,13 +1374,13 @@ Always set this from ARM-side `mst dev` for ECPF — see Phase 10.4.
 
 ### Don't ssh to 192.168.100.2 expecting ARM
 
-That's the **host's own tmfifo NIC IP** (point-to-point tmfifo link: host = .2, ARM = .1). SSH'ing to .2 connects you to the host itself (port 22 is the host's sshd). Misleading because:
+On `l-fwreg-171`, `.2` is the **host's own tmfifo NIC IP** (this box wires host = `.2`, ARM = `.1` — the reverse of the public DOCA default, where ARM = `.2`; see §10.2.1). SSH'ing to the host's own tmfifo address connects you back to the host itself (port 22 is the host's sshd). Misleading because:
 
 - The SSH connection succeeds.
 - `root@192.168.100.2 / 3tango` (host's root password) works.
 - `mst status` and `mlxconfig` all run successfully but operate on host PFs, not ECPF.
 
-Symptom: `uname -m` returns `x86_64`. For ARM, expected is `aarch64`. Always check. Use `192.168.100.1` for ARM.
+Symptom: `uname -m` returns `x86_64`. For ARM, expected is `aarch64`. **Always check `uname -m`** rather than trusting the address — on 171 ARM is `192.168.100.1`, but on a box with the DOCA default it would be `.2`.
 
 ### Don't run utopx back-to-back without a clean reset
 
@@ -1226,16 +1569,23 @@ When the remote host reboots, the kernel/socket on the *client* side doesn't kno
 - ✅ **utopx `scenario_dpa_emu` PASSED** on l-fwreg-171 (300 iter × 30 ops/it, ~10 min, multiple seeds)
 - 📌 Power cycle (`jk --power-cycle l-fwreg-171`) reserved for cases where `jk --fw-reset` itself fails (D-state zombies, `rev ff` lspci)
 
-### Satellite PF layer (Phase 10, added 2026-06-03)
-- ✅ INI patched with `mac_params.satellite_pf_en = 1` + `mac_params.device_type = 3` (gates `PF_NUM_SAT_PF` TLV emission in `iron_prep`)
+### Satellite PF layer (Phase 10 attempted 2026-06-03 → revisited 2026-06-04~05)
 - ✅ MFT upgraded on host: 4.35.0 → 4.37.0-75
 - ✅ MFT upgraded on ARM:  4.25.0  → 4.37.0-75
-- ✅ ARM SSH access established: `root@192.168.100.1` / `3tango` (the host's tmfifo NIC is `.2`, ARM is `.1`)
-- ✅ `PF_NUM_SAT_PF = 1` set on ECPF NVRAM from ARM side
-- ✅ `jk --power-cycle l-fwreg-171` applied the NVconfig
-- ✅ **Satellite PF appears** at ARM BDF `00:00.2` with mst dev `/dev/mst/mt41692_pciconf0.2`; mlxconfig + mlxprivhost both queryable on it
-- ✅ Host-side state unchanged after sat PF setup — `scenario_dpa_emu` baseline still runnable
-- 📌 Ready for downstream Li-cap-delegation tests (see [[plans/utopx_verification_emu_mgr_delegation.md]])
+- ✅ ARM SSH access established: `root@192.168.100.1` / `3tango` (on 171 the host's tmfifo NIC is `.2`, ARM is `.1` — reverse of the DOCA default; confirmed via `uname -m` = `aarch64`)
+- ⚠️ **2026-06-03 "Phase 10 done" claim** (sat PF visible on ARM 00:00.2 with 2-line INI overlay) was correct at the snapshot, **but never end-to-end tested with utopx**. 2026-06-04 retest confirmed the 2-line INI overlay causes FW assert 0x821d in utopx — sat PF + utopx are blocked together on this FW build via the INI route.
+- ❌ **Phase 10 (FW-level sat PF instantiation) blocked at FW 32.49.9906 + 32.50.0222 on 171 hardware** — no INI permutation (0/2/4/5/7/9-line incl. Marie's MAS-official PSID MT_0000000998 recipe) yields both (a) sat PF `Current=1` AND (b) no FW assert 0x821d. Marie's `l-fwreg-146` setup or FW fix from Li likely needed to unstick.
+- 💡 **2026-06-05 key insight: Phase 10 NOT required for utopx sat-PF FWV.** utopx has native sat-PF test code; **Phase 11 (utopx conf knobs) is the right path**, not Phase 10.
+
+### Satellite PF FWV path (Phase 11, established 2026-06-05, **PASS confirmed**)
+- ✅ utopx has 50+ sat-PF code hits (`IsDpuPf`, `GetDpuPfs`, `HandleDpuPfCreateEswVport`, `num_sat_pf` NVconfig gen, `force_dpu_pf_emu_manager`, ...)
+- ✅ Knobs identified: `force_fw_cap.enable_mask_2.fw_feature_support_bits.force_dpu_pf_emu_manager=1` + `nvconfig_registers.pf_pci_conf.num_sat_pf=1 + num_sat_pf_valid=1`
+- ✅ **2026-06-05 PASS verified end-to-end**: utopx `07de3b4` (rebuilt binary) + FW `32.50.0222` + baseline INI + 3 `-e` knobs → `[TEST PASSED]` seed `226259204` ~8m57s. **First confirmed sat-PF + utopx baseline coexistence on BF-3.**
+- ✅ Baseline (no `-e`) same env: PASS seed `3996255652` ~7m47s. Sat-PF knobs don't break baseline.
+- ⚠️ Each `-e` carries **one knob only**; the help text "does not support list or range" means don't put space-separated multi-knob into one `-e`. Use three independent `-e` flags.
+- ⚠️ Knob name changed in newer utopx (2026-06+): `force_dpu_pf_emu_manager` → `force_dpu_sat_pf_emu_manager`. Verify match with your `utopx.exe` build by `grep -rE 'force_dpu(_sat)?_pf_emu_manager' src/hca/VHCA.cpp`.
+- 📌 This path **does not need** ARM-side sat PF to physically exist. utopx tests sat-PF logic via its own internal vhca model and `force_fw_cap` mechanism.
+- 📌 If regression has just run on the box, you'll likely hit `ICMD_BAD_PARAM` or `failed to parse` — env needs recovery per §Phase 12 (rebuild utopx + repin FW).
 
 ## Run history
 
@@ -1247,6 +1597,18 @@ When the remote host reboots, the kernel/socket on the *client* side doesn't kno
 | 2026-06-01 ~14:12 IDT    | 3384525166             | ❌ FAIL early | ~16 s       | First attempt after re-burning 0222 + 2× `jk --fw-reset`. FATAL at `ArmAgentApiBareMetal.cpp:20`: `sh: /dev/rshim0/boot: Invalid argument` ×10. Root cause: rshim daemon left in `DROP_MODE 1` by the fwreset. Logged the failure mode in *What NOT to do*. |
 | 2026-06-01 (post-fix)    | (passed run, seed TBD) | ✅ PASS       | TBD         | After `echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc`. Confirmed the DROP_MODE step is the missing piece in Phase 9.                                                                                                                                       |
 | **2026-06-03** | n/a (env work) | ✅ **Phase 10 done** | ~30 min | Satellite PF enabled on ARM (BDF `00:00.2`). INI patched with 2 `mac_params` lines + reburn + ARM mft 4.25→4.37 + `mlxconfig set PF_NUM_SAT_PF=1` on ECPF + `jk --power-cycle` to apply. Discovered `root@192.168.100.1/3tango` is the right ARM login (NOT `.2` — that's host's tmfifo NIC). |
+| 2026-06-04 21:07 BJ | 2566744892 | ❌ FAIL ~25s | `ArmAgentApiBareMetal.cpp:20  bar addr=0x0  Bare metal arm agent timeout` | After mars_reg regression released 171, my `mlxconfig reset` had wiped `PCI_SWITCH_EMULATION_ENABLE=True` (an implicit prereq from 5-31 baseline NVRAM). Fix: `mlxconfig set PCI_SWITCH_EMULATION_ENABLE=1` + power cycle. |
+| 2026-06-04 21:24 BJ | 3074166806 | ❌ FAIL ~82s | `VHCA.cpp:9214 VerifyHealthBuffer ext_synd=0x821d` (FW assert) | The 3 `mac_params` lines I'd added (`satellite_pf_en=1`, `device_type=3`, `cpu_management_pf=0`) caused `cpu_management_pf` mismatch with `device_type=3`. Tried fix: add `cpu_management_pf=0` line → made it worse. |
+| 2026-06-04 21:52 BJ | (FAIL on cap diff before this) | ❌ FAIL | `general_layout.cpp:365 FailOnDiffInner: cmd_hca_cap.general_obj_type_device_object expected=0 actual=1` | The sat-PF-enabling INI overlay shifted FW caps in ways utopx couldn't predict. Root cause: **adding `mac_params` rows to the burned INI broke utopx baseline**. |
+| **2026-06-04 21:52 BJ** | **1146877203** | ✅ **PASS** | **~7m47s** | After **reverting INI to 5-31 baseline** (removed all self-added `mac_params` rows; kept only Jerry's 36 emulation flags). Baseline INI must match regression's tested set — don't add nvconfig rows to chase ad-hoc features. See [[feedback-no-self-ini-edits]]. |
+| 2026-06-04 22:44 BJ | 312069017 | ❌ FAIL ~100s | `VHCA.cpp:9214 VerifyHealthBuffer ext_synd=0x821d` (same as 21:24) | **Coexistence test with 6-03 INI overlay (`satellite_pf_en=1 + device_type=3`, 2 lines only) verified FAIL.** Sat PF Current=1, ARM lspci 3 ConnectX-7, mst devs `mt41692_pciconf0/.1/.2` — sat PF really enabled, but utopx still hits same FW fwassert (`device_type=3` triggers implicit `cpu_management_pf=1` which conflicts). **6-03's untested "Phase 10 done + utopx baseline" claim was wrong** — they're incompatible at FW 32.50.0222 + utopx 07de3b4. Resolves only after Li's full patches + utopx update. |
+| 2026-06-04 23:24~00:23 BJ | n/a (env experiment) | ❌ tried 6 INI permutations | sat PF Current stays 0 with 4/5/7/9-line INI (cpu_management_pf=0 explicit kills sat PF instantiation); only 2-line INI lets Current=1 but that triggers Assert 1 | Tried: 4-line (+`cpu_management_pf=0`), 5-line (+`cpu_management_port=0`), 7-line (BF-4 PRS bundle), 9-line (Marie's MAS-official PSID MT_0000000998 recipe). All sat PF Current=0. Iron_prep `reduce_num_of_dpu_pfs` reduces sat PF when cpu_management_pf=0 is explicit on BF-3 — exact reduction path not found in our grep. |
+| **2026-06-05 00:23 BJ** | n/a | ❌ Marie's MAS recipe doesn't work on 171 even with target FW version | Switched to FW build `rel-32_49_9906` (matches MAS target `xx_49_xxxx`) + 9-line MAS INI: sat PF Current still 0 | Concluded the FW-level INI-burn route to sat PF (Phase 10) **is blocked** at FW 32.49.9906 + 32.50.0222 on 171 hardware. Likely needs Marie's dedicated `l-fwreg-146` setup, or extra mlxconfig NVRAM setup not documented in MAS, or there's a regression. **IM Marie / Li needed to unstick Phase 10.** |
+| **2026-06-05 00:50 BJ** | n/a (discovery) | 💡 **Key insight: Phase 10 not required for utopx sat-PF FWV** | utopx has native sat-PF support (`VHCA::IsDpuPf`, `HandleDpuPfCreateEswVport`, `force_dpu_pf_emu_manager`, `num_sat_pf` NVconfig gen, etc.) — 50+ code hits | utopx tests sat-PF logic through conf knobs, not FW-level instantiation. **The Right Path: Phase 11.** Today's INI debugging marathon was based on a wrong assumption that FW must instantiate sat PF before utopx can test it. utopx's `force_fw_cap.enable_mask_2.fw_feature_support_bits.force_dpu_pf_emu_manager=1` knob makes utopx itself drive the sat-PF code paths without needing FW to physically expose a sat PF. See §Phase 11. |
+| 2026-06-05 ~13:14~13:33 BJ | n/a (env recovery diagnostic) | ❌ Multiple ICMD_BAD_PARAM / parse fails | After regression released 171, neither regression's daily pair (utopx `9f5f06910` + FW `32.50.0260`) nor partial pin-backs worked for utopx baseline | Root cause: regression had **rebuilt utopx.exe** at 11:50 BJ; my `git checkout 07de3b4` only reverted source, not binary. Result: source/binary mismatch → `TestKeeps.cpp:116 failed to parse: force_fw_cap...force_dpu_pf_emu_manager = 50:0 50:1`. Path forward: full rebuild + repinning, see §Phase 12. |
+| 2026-06-05 13:33~14:01 BJ | n/a (rebuild) | 🔨 Rebuilt utopx 07de3b4 binary (`./build.sh`, ~28 min docker build) | New `utopx.exe` matches `07de3b4` source. Submodules also reset (`git submodule update --recursive` set `steering_ul` to `43342063a`). | — |
+| **2026-06-05 14:03 BJ** | **3996255652** | ✅ **PASS** ~7m47s | utopx baseline | Fully recovered 5-31 pin: utopx `07de3b4` (rebuilt binary) + FW `32.50.0222` + baseline INI. Baseline PASS confirms env is clean. |
+| **2026-06-05 14:11 BJ** | **226259204** | ✅ **PASS** ~8m57s | utopx + **sat-PF Path A knobs** | First end-to-end PASS of sat-PF + utopx coexistence! 3 `-e` flags: `force_dpu_pf_emu_manager=1`, `num_sat_pf=1`, `num_sat_pf_valid=1`. Confirms Path A works on 5-31 pin. Sat-PF code paths exercised in utopx without any FW-level sat-PF instantiation (Phase 10 unnecessary). |
 
 
 ### 2026-05-31 run notes (latest)
@@ -1286,21 +1648,38 @@ ssh l-fwreg-171 'sudo /labhome/pexiang/.usr/bin/jmake --device /dev/mst/mt41692_
 # Without this, utopx's BFB push gets `sh: /dev/rshim0/boot: Invalid argument` ×10 and FATALs.
 ssh l-fwreg-171 'echo "DROP_MODE 0" | sudo tee /dev/rshim0/misc; sudo cat /dev/rshim0/misc | grep DROP_MODE'
 
-# 2. Kick off the test in the background
+# 2. Pre-run env checks — send ONE ssh per command, NOT bash ~/run_utopx_171.sh as a wrapper.
+#    Bundling everything into the script means one ssh failure aborts opaquely; one-command-per-ssh
+#    makes each step's stdout/stderr inspectable independently.
+
+# 2a. Verify host PFs lineup (expect 5: 83:00.0/.1/.2/.3 + rshim at .4 or .7)
+ssh l-fwreg-171 'lspci -nn | grep "^8[0-9]:00\." | head -8'
+
+# 2b. Verify rshim DROP_MODE is 0 and ARM ECPF still has PF_NUM_SAT_PF=1
+ssh l-fwreg-171 'sudo cat /dev/rshim0/misc | grep -E "DROP_MODE|UP_TIME"'
+ssh l-fwreg-171 'SSHPASS=3tango sshpass -e ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password root@192.168.100.1 "mst start >/dev/null 2>&1; mlxconfig -d /dev/mst/mt41692_pciconf0 -e q PF_NUM_SAT_PF | grep PF_NUM_SAT_PF"'
+
+# 2c. Confirm udriver is loaded with 4 devices (one per emu PF)
+ssh l-fwreg-171 'lsmod | grep "^udriver"; ls /dev/udriver_* | head -5'
+
+# 3. Launch utopx — single ssh, the utopx command directly. Run in background and capture log.
 LOG="$HOME/utopx_171_$(date +%Y%m%d_%H%M%S).log"
-ssh l-fwreg-171 "bash ~/run_utopx_171.sh > '$LOG' 2>&1" &
+ssh l-fwreg-171 'cd /auto/fwgwork1/pexiang/utopx && \
+    sudo ./utopx --device=/dev/mst/mt41692_pciconf0 --daemon --num_of_clients=0 \
+        --xml_conf_file debug_conf.xml --conf_file config/scenario_dpa_emu.conf \
+        --iter=300 --ops_per_it=30 2>&1 | tail -150' > "$LOG" 2>&1 &
 wait $!
 
-# 3. Verdict (short)
-tail -50 "$LOG" ; grep -E 'TEST PASSED|TEST FAILED|Test-status' "$LOG"
-
-# 4. Find the FULL run log (the one to actually analyze)
-ls -lt /auto/fwgwork1/pexiang/utopx/verix_test_*.log | head -1
+# 4. Verdict — both grep the host-side stdout-tail AND check the verix full log on 171
+grep -E 'TEST PASSED|TEST FAILED|Test-status|To rerun use seed|FATAL' "$LOG" | head
+ssh l-fwreg-171 'ls -lt /auto/fwgwork1/pexiang/utopx/verix_test_*.log | head -1'
 ```
 
-In Claude Code sessions, run step 2 with `run_in_background: true` on the Bash tool; the script's internal `tail -150` only flushes when utopx exits, so the log appears idle during the ~8 min run — don't `tail -f` it, wait for the harness's completion notification.
+**Why one-command-per-ssh, not `bash ~/run_utopx_171.sh`**: bundling the env checks + driver swap + utopx launch into a single script means failures in any step bleed into the same stdout stream, and the wrapper's `tail -150` doesn't flush until utopx exits — so if utopx FATALs in PreTest, you see the failure only after the full 8-min run. Sending each command on its own ssh lets you abort early when an env check fails, and stdout from each step is naturally separated. The `~/run_utopx_171.sh` file is still there for casual interactive use; for automated / scripted runs prefer the one-command-per-ssh form above. Peter requested this pattern explicitly on 2026-06-04.
 
-To reproduce a specific seed, modify `~/run_utopx_171.sh:23-26` to append `--seed=<N>` (or invoke utopx directly with the seed flag — see Phase 9 above).
+In Claude Code sessions, run step 3 with `run_in_background: true` on the Bash tool; utopx's internal `tail -150` only flushes when it exits, so the log appears idle during the ~8 min run — don't `tail -f` it, wait for the harness's completion notification.
+
+To reproduce a specific seed, append `--seed=<N>` to the utopx command in step 3.
 
 ### Escalation ladder when step 1 doesn't behave
 
