@@ -1,5 +1,6 @@
 {
     "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
     "[html]": {
         "editor.defaultFormatter": "vscode.html-language-features"
     },
@@ -551,5 +552,5 @@
     "terminal.integrated.stickyScroll.enabled": false,
     "window.zoomLevel": 0.6,
     "claudeCode.preferredLocation": "panel",
-    "bookmarks.keepBookmarksOnLineDelete": true
+    "bookmarks.keepBookmarksOnLineDelete": true,
 }
