@@ -162,3 +162,6 @@ trust_level = "trusted"
 
 [projects."/auto/fwgwork1/pexiang/golan_fw"]
 trust_level = "trusted"
+
+[projects."/labhome/pexiang/myGit/crosslv"]
+trust_level = "trusted"
