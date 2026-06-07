@@ -5,12 +5,16 @@ four cameras upload to two NAS boxes (`wrt32x`, `wrt1200ac`). It runs **on your
 Mac/Windows machine** and reads the footage over CIFS mounts of the SMB shares —
 the NAS only ever serves plain file reads.
 
-Companion script: **`../template/xiaomi_playback.py`** — the server the steps below
+Companion script: **`./xiaomi_playback.py`** — the server the steps below
 run.
 
 > **Production setup runs on the NAS, not the Mac.** The always-on deployment runs the
 > player on `wrt32x` itself — see **`deploy-xiaomi-playback-on-wrt32x.md`**. This
 > Mac/CIFS guide is the optional fallback for running it from your laptop.
+>
+> The player also has a **live view** (single + `⊞ 四分屏` 2×2 grid) via go2rtc — see
+> `deploy-xiaomi-playback-on-wrt32x.md` §13 and `./`. All the deployment
+> artifacts (server, wrapper, cifs/procd scripts, go2rtc.yaml) live in `./`.
 
 ---
 
@@ -42,7 +46,7 @@ Four cameras across **two** NAS boxes (same `pi` SMB credentials on both):
 - `wrt32x` = Linksys WRT32X / Armada-385 (ImmortalWrt); `wrt1200ac` = Linksys
   WRT1200AC (kernel 6.6, armv7l). Both resolve via mDNS as `<name>.local`. SMB
   user `pi` (same password on both). Root SSH: `wrt32x` per
-  `deploy-camera-rotate.md`; `wrt1200ac` on **port 8822**
+  `../../plans/deploy-camera-rotate.md`; `wrt1200ac` on **port 8822**
   (`ssh -p 8822 -l root wrt1200ac.local`).
 - `wrt32x` also exports a spare disk `c700_05` (empty for now — reserved for a
   future 5th camera). It **is** passed as a root, but contributes no entry in the
@@ -51,7 +55,7 @@ Four cameras across **two** NAS boxes (same `pi` SMB credentials on both):
   share — that one is not a camera, don't pass it as a root.
 - Chunk names: `00_YYYYMMDDHHMMSS_YYYYMMDDHHMMSS.mp4`, ~128 MB, lexical order =
   chronological. (Same layout `camera-rotate.sh` prunes — see
-  `deploy-camera-rotate.md`.) The in-progress chunk has `start == end`; the
+  `../../plans/deploy-camera-rotate.md`.) The in-progress chunk has `start == end`; the
   player flags it amber / LIVE.
 
 The player takes **multiple root dirs**; each mount point contains one
@@ -92,7 +96,7 @@ ls -d /Volumes/c700_0[1-4]/XiaomiCamera_*   # four dirs, one per mount
 ### 3.2 Run
 
 ```sh
-python3 template/xiaomi_playback.py /Volumes/c700_0{1,2,3,4,5} 8800
+python3 assets/xiaomi/xiaomi_playback.py /Volumes/c700_0{1,2,3,4,5} 8800
 ```
 
 The banner lists the cameras it found. Open **http://localhost:8800/**. It
@@ -114,7 +118,7 @@ added camera, e.g. on `c700_05`, shows up without restarting the server).
 To keep it up after you close the terminal, start it detached:
 
 ```sh
-nohup python3 template/xiaomi_playback.py >/tmp/xiaomi-playback.log 2>&1 &
+nohup python3 assets/xiaomi/xiaomi_playback.py >/tmp/xiaomi-playback.log 2>&1 &
 ```
 
 It survives the shell but **not** a reboot/logout — after a reboot you must remount
@@ -172,14 +176,14 @@ with the cameras' uploads or with `camera-rotate.sh`.
 
 ```sh
 # 6.1 syntax
-python3 -m py_compile template/xiaomi_playback.py && echo "syntax OK"
+python3 -m py_compile assets/xiaomi/xiaomi_playback.py && echo "syntax OK"
 
 # 6.2 smoke test WITHOUT the NAS — dummy tree of correctly-named empty files
 TMP=$(mktemp -d)
 mkdir -p "$TMP/XiaomiCamera_00_TEST"
 : > "$TMP/XiaomiCamera_00_TEST/00_20260603160000_20260603161000.mp4"
 : > "$TMP/XiaomiCamera_00_TEST/00_20260603161000_20260603162000.mp4"
-python3 template/xiaomi_playback.py "$TMP" 8801 &   # serve the dummy tree
+python3 assets/xiaomi/xiaomi_playback.py "$TMP" 8801 &   # serve the dummy tree
 sleep 1
 curl -s localhost:8801/api/cameras                                   # -> [{"id":"0:XiaomiCamera_00_TEST",...}]
 curl -s 'localhost:8801/api/timeline?cam=0:XiaomiCamera_00_TEST'     # -> {"days":[{"date":"2026-06-03","count":2}]}

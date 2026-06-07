@@ -1,0 +1,6 @@
+#!/bin/sh
+# Wrapper so Python (installed on the data disk /mnt/sda3, not flash) is found.
+# Deployed on wrt32x as /usr/local/bin/python3-sda3 (see deploy-xiaomi-playback-on-wrt32x.md §4).
+PFX=/mnt/sda3/opt/usr
+export LD_LIBRARY_PATH="$PFX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$PFX/bin/python3" "$@"
