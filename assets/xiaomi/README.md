@@ -23,7 +23,7 @@ SMB user `pi` (same password on both NAS). 4 cams: `B88880974A38`(c700_01), `B88
   wrt1200ac's two shares via read-only **cifs** mounts (`/mnt/c700_03`, `/mnt/c700_04`).
 - **Live:** browser ⇄ **go2rtc (.240)** directly over WebRTC (the player only embeds it; nothing
   streams through wrt32x). Browsers that support **WebRTC-H265** (Chrome 136+/Safari) play the
-  camera's **native H265 sub-stream `c700_0X_sub` directly — no transcode** (original quality,
+  camera's **native H265 sub-stream `c700_0X_sub1080` directly — no transcode** (original quality,
   ~zero `.240` load); others fall back to the **H264** transcode `c700_0X_1080p`. The player
   feature-detects and picks per browser. (H265 in a plain `<video>` MP4 also plays natively on
   macOS, which is why recordings always played.)
@@ -49,23 +49,29 @@ Plans / runbooks:
 
 - Multi-root timeline playback; per-camera day strip; drag-to-seek with a live timestamp bubble;
   prev/next-segment; cross-camera time alignment; "录制中" badge on the in-progress chunk.
-- **Live (go2rtc):** `看直播/看回放` toggle (single cam) + **`⊞ 四分屏`** 2×2 live grid; default
-  opens to live. Both use the go2rtc `<video-stream>` component (its `video-rtc.js`/`video-stream.js`
-  proxied same-origin by the player) — no iframe. Native H265 over WebRTC when supported, else H264
-  transcode. A `● 实时 · RTC`/`· MSE` badge shows the actual protocol. **Stall watchdog:** a live
-  cell frozen >6 s (connected but no frames) auto-reconnects.
-- **Playback grid (`⊞ 回放分屏`, key `P`):** 2×2 of all 4 cameras' **recordings** synced to one
-  timeline — drag/±10s/seg/speed/play act on all 4. The top dropdown picks the **master camera**
-  (amber-highlighted, `· 基准`): timeline coverage, playhead, and sync baseline follow it.
-  Synchronized start (waits for all to buffer) + periodic re-sync (drift >1.5 s nudged every 2 s).
-- Keys: `空格` play · `←/→` ±10s · `,`/`.` prev/next seg · `R` refresh · `L` live/playback ·
-  `G` live grid · `P` playback grid.
-- `GO2RTC` / `LIVE_SUFFIX` (=`webrtcCanH265()?'_sub':'_1080p'`) / `LIVE_MODE` / `START_LIVE` consts
-  at the top of the JS; `GO2RTC` (Python) for the JS proxy. Change the go2rtc IP in **both** spots.
+- **View modes — a 4-way segmented switch in the header** (current mode amber-highlighted, unified
+  `setMode()`): **`回放` · `直播` · `⊞ 直播分屏` · `⊞ 回放分屏`**. Default opens to single **直播**.
+  Camera names show as **uppercase `C700_0X`** (mount/share names stay lowercase).
+- **Live (go2rtc):** single 直播 + 直播分屏 use the go2rtc `<video-stream>` component (its
+  `video-rtc.js`/`video-stream.js` proxied same-origin) — no iframe. Native H265 over WebRTC when
+  supported, else H264 transcode. A `● 实时 · RTC`/`· MSE` badge (top-right, offset left of the native
+  volume button) shows the protocol. **Stall watchdog:** a cell frozen ~3 s auto-reconnects.
+- **Playback grid (`⊞ 回放分屏`):** 2×2 of the cameras' **recordings** synced to one timeline —
+  drag/±10s/seg/speed act on all. Per cell: native controls, a `⤢` page-fill zoom (not OS fullscreen).
+  Bottom transport: `▶︎ 全部播放 / ⏸ 全部暂停 / ⇄ 同步`. The top dropdown picks the **master (基准)**;
+  timeline/playhead/sync follow it. **⇄ 同步** pauses all (freezing the instant), aligns every cell to
+  the master, then leaves them paused for you to hit 全部播放. **Periodic re-sync:** every 2 s a playing
+  cell drifting >1.5 s from master is nudged back (a cell you manually dragged stays independent until
+  同步 / 全部播放 / timeline-drag).
+- Keys: `空格` play · `←/→` ±10s · `,`/`.` prev/next seg · `R` refresh · `L` 直播 · `G` 直播分屏 ·
+  `P` 回放分屏 (each toggles back to 回放).
+- Consts at the top of the JS: `GO2RTC`, `RTC_H265 = webrtcCanH265()`, and the **`QUALS`** quality
+  menu (原画1080P → `_sub1080`/webrtc · 转码1080P → `_1080p`/webrtc), `START_LIVE`. Plus a `GO2RTC`
+  const on the Python side for the JS proxy. Change the go2rtc IP in **both** spots if it moves.
 
 ## go2rtc requirement for live
 
 `go2rtc.yaml` must have `api: origin: "*"` — otherwise go2rtc returns **403** on the cross-origin
 WebSocket from the player page and the live/grid goes black. Live (H265-capable browsers) pulls
-`c700_0X_sub` directly; only Firefox/Edge trigger the `c700_0X_1080p` H264 transcode. See the
+`c700_0X_sub1080` directly; only Firefox/Edge trigger the `c700_0X_1080p` H264 transcode. See the
 runbook §13 for the codec/stutter/MSE tradeoffs.

@@ -326,11 +326,14 @@ The Mac's SMB mounts are no longer needed for playback (unmount or leave them).
 
 ## 13. Live view + playback grid (go2rtc)
 
-The player has three live/multi modes besides single-camera timeline playback:
-- **`看直播/看回放`** — single-camera live toggle.
-- **`⊞ 四分屏`** (key `G`) — 2×2 **live** grid (all cameras).
-- **`⊞ 回放分屏`** (key `P`) — 2×2 **recording** grid: all 4 cameras' recordings synced
-  to one timeline (see "Playback grid" below). Pure-local, does not use go2rtc.
+The header is a **4-mode segmented switch** (current mode amber-highlighted, unified `setMode()`):
+- **`回放`** — single-camera timeline playback.
+- **`直播`** (key `L`) — single-camera live (the default mode on page load).
+- **`⊞ 直播分屏`** (key `G`) — 2×2 **live** grid (all live-capable cameras).
+- **`⊞ 回放分屏`** (key `P`) — 2×2 **recording** grid synced to one timeline (see below). Pure-local,
+  no go2rtc.
+
+Camera names display as uppercase **`C700_0X`** (mount/share dir names stay lowercase `c700_0X`).
 
 Live does **not** go through wrt32x — the browser connects **directly to go2rtc** at
 `192.168.10.240:1984` over WebRTC. wrt32x only serves the page (and proxies go2rtc's
@@ -344,12 +347,12 @@ watchdog, and fills the cell in Safari instead of letterboxing).
 Modern browsers can now **receive H265/HEVC over WebRTC** (Chrome 136+, Safari). go2rtc
 will send H265 if the browser offers it (verified: answer SDP carries `H265/90000`). So:
 
-- The player feature-detects it (`webrtcCanH265()` via `RTCRtpReceiver.getCapabilities`).
-- **Supported (Chrome136+/Safari):** `LIVE_SUFFIX='_sub'` → plays the camera's native
-  **1080p H265 sub-stream directly, no transcode** → original quality, ~zero `.240` load.
-- **Not supported (Firefox, Edge-default):** falls back to `LIVE_SUFFIX='_1080p'` → go2rtc's
-  **H264 transcode**.
-- `LIVE_MODE='webrtc'` either way. The top-right `● 实时 · RTC`/`· MSE` badge shows the
+- The player feature-detects it (`webrtcCanH265()` via `RTCRtpReceiver.getCapabilities` → `RTC_H265`).
+- **Supported (Chrome136+/Safari):** plays the camera's native **1080p H265 `c700_0X_sub1080`
+  directly, no transcode** → original quality, ~zero `.240` load.
+- **Not supported (Firefox, Edge-default):** falls back to the **H264 transcode `c700_0X_1080p`**.
+- Always WebRTC (the quality menu `QUALS` maps 原画1080P→`_sub1080`, 转码1080P→`_1080p`).
+  The top-right `● 实时 · RTC`/`· MSE` badge shows the
   actual negotiated protocol (read from the component: WebRTC→`srcObject`, MSE→`blob:`).
 
 **Tradeoff to know (H265-direct can stutter):** WebRTC is lossy UDP and never retransmits;
@@ -357,11 +360,12 @@ H265 + a long camera GOP means one lost packet freezes the picture until the nex
 which go2rtc cannot force the Xiaomi camera to emit on demand. On a not-perfect path this
 shows as occasional freezes (and `cs2: pop buffer is full` in the go2rtc log — a slow
 consumer made go2rtc drop a chunk). Xiaomi's own app avoids this because it uses a
-**buffered + reliable + adaptive** path, not raw WebRTC. The smoother alternative is
-**MSE** (go2rtc streams fMP4 over the WebSocket = **TCP, reliable + buffered**): it trades
-~1–2 s latency for no packet-loss freezes, and still plays native H265 with no transcode.
-Not enabled by default; switch `LIVE_MODE` to `'mse'` (and add a resume-reconnect to avoid
-MSE's pause-falls-behind) if freezes bother you more than latency.
+**buffered + reliable + adaptive** path, not raw WebRTC. A smoother alternative is **MSE**
+(go2rtc streams fMP4 over the WebSocket = **TCP, reliable + buffered**): trades ~1–2 s latency
+for no packet-loss freezes, still native H265 no transcode. It was tried and **removed** (the
+user preferred WebRTC's low latency + pause-jumps-to-live); the quality menu is WebRTC-only now.
+To revisit, re-add a `QUALS` entry with `mode:'mse'` plus a resume-reconnect for MSE's
+pause-falls-behind. The everyday smoothness backstop is the stall watchdog below.
 
 **Stall watchdog (self-heal):** a WebRTC stream can stay "connected" while frames stop
 (source hiccup / lost GOP) — neither browser nor go2rtc reconnects, so it freezes
@@ -370,10 +374,10 @@ for ~6 s (and isn't user-paused), it reconnects that cell.
 
 ### go2rtc box (Frigate, Windows, `.240`)
 
-Config saved at `./go2rtc.yaml` (token/uid/did redacted). Per camera: `c700_0X_raw`
-(4K H265 main, recording/Frigate), `c700_0X_sub` (1080p H265 sub — what live uses on
-H265-capable browsers), `c700_0X_1080p` = `ffmpeg:..._sub#video=h264#audio=copy#hardware=cuda`
-(the H264 fallback for non-H265 browsers).
+Config saved at `./go2rtc.yaml` (uid/did/token redacted as placeholders). Per camera, **3 streams**:
+`c700_0X_raw` (4K H265 main, recording/Frigate, subtype=3), `c700_0X_sub1080` (1080p H265 sub,
+subtype=2&stream=0 — what live uses on H265-capable browsers), `c700_0X_1080p` =
+`ffmpeg:..._sub1080#video=h264#audio=copy#hardware=cuda` (the H264 fallback for non-H265 browsers).
 
 - **Required:** `api: origin: "*"` — without it go2rtc returns **403** on the cross-origin
   WebSocket from the player page and live/grid stays black.
@@ -383,19 +387,26 @@ H265-capable browsers), `c700_0X_1080p` = `ffmpeg:..._sub#video=h264#audio=copy#
 
 ### Playback grid (`⊞ 回放分屏` / key `P`)
 
-2×2 of all 4 cameras' **recordings**, sharing the one timeline:
-- **Drag the timeline / ±10s / prev-next-seg / speed / play-pause** act on all 4 together.
-- **Master camera** = whatever is selected in the top `camSel` dropdown (defaults to
-  `c700_01`); its cell gets an amber highlight + `· 基准` badge. The timeline coverage,
-  the playhead, and the sync baseline all follow the master. Change the dropdown to move it.
-- **Synchronized start:** on open/seek the 4 cells load paused and start together once all
-  are buffered (≤2 s fallback) — so a fast-loading cell doesn't run ahead.
-- **Periodic re-sync:** every 2 s, any cell drifting >1.5 s from the master is nudged back
-  (same segment → set `currentTime`; crossed a segment → reload that cell). Tunables are
-  the 2 s interval and 1.5 s threshold in `pbStartSync()`.
+2×2 of the cameras' **recordings**, sharing the one timeline:
+- **Drag the timeline / ±10s / prev-next-seg / speed** act on all together (`seekTo`→`gridSeekAll`).
+- **Per-cell controls:** native `<video>` controls (progress/volume/native-fullscreen) + a `⤢` **page-fill
+  zoom** (fills the grid area, not OS fullscreen — Safari's fullscreen-exit shifts the frame). The
+  `● 实时`/camera-name badge sits at top-right offset left of the native volume button.
+- **Bottom transport:** `▶︎ 全部播放` (resume all, no reload) · `⏸ 全部暂停` · **`⇄ 同步`**.
+- **Master (基准) camera** = the one selected in the top dropdown (defaults to `C700_01`); amber
+  highlight + `· 基准`. Timeline coverage, playhead, and sync baseline follow it. Change the dropdown to move it.
+- **`⇄ 同步`:** pauses **all** cells (freezing the master's instant), aligns every cell to the master's
+  frozen time, and **leaves them paused** — you then hit `▶︎ 全部播放` to resume together (zero drift).
+- **Synchronized start:** on open/seek the cells load paused and start together once buffered (≤2 s fallback).
+- **Periodic re-sync:** every 2 s a *playing* cell drifting >1.5 s from the master is nudged back (same
+  segment → `currentTime`; crossed a segment → reload). A cell you **manually dragged** is left independent
+  until `⇄ 同步` / `全部播放` / timeline-drag. Tunables: 2 s interval + 1.5 s threshold in `pbStartSync()`.
+- A background single-`<video>` ending does **not** auto-advance while a grid mode is active (guard in the
+  `ended` handler), and the single recording does not autoplay in the background while in a grid.
 
 ### Player consts (top of the inline JS)
 
-`GO2RTC`, `webrtcCanH265()`→`LIVE_SUFFIX` (`_sub`|`_1080p`), `LIVE_MODE='webrtc'`,
-`START_LIVE`. Plus a `GO2RTC` const on the Python side for the JS-proxy route. Change the
+`GO2RTC`, `RTC_H265 = webrtcCanH265()`, the `QUALS` quality menu (原画1080P→`_sub1080` ·
+转码1080P→`_1080p`, both WebRTC), `START_LIVE`. Plus a `GO2RTC` const on the Python side for the
+JS-proxy route. Change the
 go2rtc IP in **both** spots if it moves.
