@@ -84,7 +84,7 @@ def _cam_label(folder, share):
         name = CAM_NAMES.get(m.group(1).upper())
         if name:
             return name
-    return re.sub(r"^[cC]700", "C700", share)   # 显示名用大写 C(C700_01);真实挂载路径不受影响
+    return share   # 内部一律用小写分享名(c700_01);网页显示大写 C700 由 CSS text-transform 处理
 
 CACHE_TTL = 15.0  # 秒：扫描结果缓存时长，过后自动重扫以发现新文件
 
@@ -434,7 +434,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .modebar button:hover:not(.on):not(:disabled){color:var(--text);background:#1d242b}
   .modebar button.on{background:var(--accent);color:#0a0c0f;font-weight:600}
   .modebar button:disabled{opacity:.4;cursor:not-allowed}
+  #splitBtn.on{background:var(--accent);border-color:var(--accent);color:#0a0c0f;font-weight:600}
   #qualSel{max-width:190px}
+  #camSel, #camSel option{text-transform:uppercase}   /* 仅显示大写 C700;内部值仍小写 */
   header .dot{width:9px;height:9px;border-radius:50%;background:var(--accent2);
               box-shadow:0 0 10px var(--accent2)}
   header h1{font-size:14px;letter-spacing:.18em;text-transform:uppercase;
@@ -472,15 +474,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
   body.grid-mode #vid,
   body.grid-mode #live,
   body.grid-mode .liveTag,
-  body.grid-mode .transport,
-  body.grid-mode .dates,
-  body.grid-mode .tlwrap{display:none !important}
+  body.grid-mode .transport{display:none !important}   /* 直播分屏也保留底部时间轴(.dates/.tlwrap),四种模式共用同一显示 */
   #qualSel{display:none}                                   /* 画质下拉只在直播/直播分屏时显示 */
   body.live-mode #qualSel, body.grid-mode #qualSel{display:inline-block}
   /* 回放分屏:复用 .grid 布局,但保留时间轴/控件;格子是 <video> 包在 .pbcell 里 */
   .grid .pbcell{position:relative;background:#000;overflow:hidden}
   .grid .pbcell video{width:100%;height:100%;object-fit:contain;display:block}
-  .pbcell .pbname{background:rgba(10,12,15,.72);color:#fff;box-shadow:none}   /* 相机名角标:中性色,区别于红色实时标 */
+  .pbcell .pbname{background:rgba(10,12,15,.72);color:#fff;box-shadow:none;text-transform:uppercase}   /* 相机名角标(显示大写 C700,值仍小写) */
   .grid .pbcell.master{outline:2px solid var(--accent);outline-offset:-2px}   /* 基准相机:高亮边框 */
   .pbcell.master .pbname{background:var(--accent);color:#0a0c0f}
   .grid .gzoom{position:absolute;top:50%;right:8px;transform:translateY(-50%);z-index:8;cursor:pointer;user-select:none;color:#fff;
@@ -509,9 +509,34 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .day:hover{border-color:#34424e;color:var(--text)}
   .day.on{color:#0a0c0f;background:var(--accent);border-color:var(--accent)}
   .day.on small{color:#7a5410}
+  /* 选择日期:自定义滚轮(日期/时/分/秒,立体齿轮),Mac/iPad 一致、可选到秒 */
+  .dpickrow{display:flex;align-items:center;margin-bottom:8px}
+  #datePickBtn{font-family:var(--mono)}
+  #dpMask{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.55);
+    display:none;align-items:flex-end;justify-content:center}
+  #dpMask.on{display:flex}
+  .dpsheet{width:100%;max-width:1180px;box-sizing:border-box;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px 14px 0 0;padding:10px 14px 18px}
+  .dptop{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+  .dptitle{font-size:14px;color:var(--text)}
+  #dpOk{background:var(--accent);color:#0a0c0f;border-color:var(--accent);font-weight:600}
+  .dplbls{display:flex;margin-bottom:2px}
+  .dplbls span{flex:1;text-align:center;font-size:11px;color:var(--dim)}
+  .dpwheels{position:relative;display:flex;height:216px;overflow:hidden}
+  .dpband{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:36px;
+    border-top:1px solid var(--accent);border-bottom:1px solid var(--accent);
+    background:rgba(244,180,38,.06);pointer-events:none;z-index:3}
+  .dpfade{position:absolute;left:0;right:0;height:90px;pointer-events:none;z-index:2}
+  .dpfade.t{top:0;background:linear-gradient(var(--panel),transparent)}
+  .dpfade.b{bottom:0;background:linear-gradient(transparent,var(--panel))}
+  .whcol{flex:1;height:100%;overflow-y:scroll;scroll-snap-type:y mandatory;perspective:760px;
+    scrollbar-width:none;padding:90px 0;box-sizing:border-box}
+  .whcol::-webkit-scrollbar{display:none}
+  .whitem{height:36px;line-height:36px;text-align:center;font-family:var(--mono);font-size:17px;
+    color:var(--text);scroll-snap-align:center;transform-style:preserve-3d;backface-visibility:hidden}
   /* 时间轴 */
-  .tlwrap{background:var(--panel);border:1px solid var(--line);border-radius:10px;
-          padding:14px 16px 10px}
+  /* 去掉外层卡片(边框/背景/圆角)和左右内边距,让时间轴轨道与上方日期条、播放框同宽对齐 */
+  .tlwrap{padding:14px 0 10px}
   .tlhead{display:flex;justify-content:space-between;font-family:var(--mono);
           font-size:11px;color:var(--dim);margin-bottom:8px}
   .track{position:relative;height:46px;border-radius:6px;cursor:crosshair;
@@ -546,11 +571,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <span class="dot"></span>
   <h1 id="title">小米录像</h1>
   <div class="modebar" id="modebar">
-    <button data-mode="play"     title="单路录像回放">回放</button>
-    <button data-mode="live"     title="单路实时直播">直播</button>
-    <button data-mode="livegrid" title="全部摄像头实时(分屏)">⊞ 直播分屏</button>
-    <button data-mode="pbgrid"   title="全部录像同步回放(分屏,共用时间轴)">⊞ 回放分屏</button>
+    <button data-time="live" title="实时直播">直播</button>
+    <button data-time="play" title="录像回放">回放</button>
   </div>
+  <button id="splitBtn" title="分屏:把当前(直播/回放)切成 2×2 全摄像头">⊞ 分屏</button>
   <span class="spacer"></span>
   <select id="camSel" title="摄像头"></select>
   <select id="qualSel" title="直播画质(原画=直发,转码=兼容)"></select>
@@ -585,6 +609,26 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <button id="latestBtn">跳到最新</button>
   </div>
 
+  <div class="dpickrow">
+    <button id="datePickBtn" class="ghost" title="滚轮选择日期与时刻,跳转到该时刻">📅 选择日期</button>
+  </div>
+  <div id="dpMask">
+    <div class="dpsheet">
+      <div class="dptop">
+        <button id="dpCancel" class="ghost">取消</button>
+        <span class="dptitle">选择日期</span>
+        <button id="dpOk">确定</button>
+      </div>
+      <div class="dplbls"><span>日期</span><span>时</span><span>分</span><span>秒</span></div>
+      <div class="dpwheels">
+        <div class="dpfade t"></div><div class="dpfade b"></div><div class="dpband"></div>
+        <div class="whcol" data-k="date"></div>
+        <div class="whcol" data-k="h"></div>
+        <div class="whcol" data-k="m"></div>
+        <div class="whcol" data-k="s"></div>
+      </div>
+    </div>
+  </div>
   <div class="dates" id="dates"></div>
 
   <div class="tlwrap">
@@ -625,8 +669,8 @@ function webrtcCanH265(){
 const RTC_H265 = webrtcCanH265();
 // 画质档:支持 WebRTC-H265 就给原画 1080P 直发;转码1080P 始终兜底。原画=直发免转码,转码=go2rtc 转 H264。
 const QUALS = [];
-if(RTC_H265) QUALS.push({label:'原画1080P · WebRTC', suffix:'_sub1080', mode:'webrtc'});
-QUALS.push({label:'转码1080P · WebRTC', suffix:'_1080p', mode:'webrtc'});
+QUALS.push({label:'转码1080P · WebRTC', suffix:'_1080p', mode:'webrtc'});                  // 默认:H264 转码,最兼容(部分浏览器如 Chrome/Intel Mac 声称支持 WebRTC-H265 却实际解不了→黑屏)
+if(RTC_H265) QUALS.push({label:'原画1080P · WebRTC', suffix:'_sub1080', mode:'webrtc'});   // H265 直发(原画;Safari 等真正支持的设备可选)
 let qualIdx = 0;
 function liveSuffix(){ return QUALS[qualIdx].suffix; }
 function liveModeNow(){ return QUALS[qualIdx].mode; }
@@ -741,6 +785,7 @@ async function selectDay(d, targetSec, play){
   curIdx = -1;
   renderTrack();
   $('empty').style.display = segs.length ? 'none' : '';
+  if(!segs.length) $('empty').textContent = '这一天没有录像';   // 选了无录像的日期
   if(segs.length){
     if(targetSec === 'latest'){              // 首次加载：定位到最新片段末尾
       const i = segs.length - 1;
@@ -917,27 +962,36 @@ $('refreshBtn').onclick = async () => {
 
 // ---- 实时画面（go2rtc）：标题栏「● 实时」切换；浏览器直连 go2rtc，不经过 wrt32x ----
 function liveLabel(){ const o = $('camSel').selectedOptions[0]; return o ? o.textContent : ''; }
-function liveAvailable(){ return /^c700_0[1-4]$/i.test(liveLabel()); }   // 备用盘 c700_05 无直播源
+function liveAvailable(){ return /^c700_0[1-4]$/.test(liveLabel()); }   // 备用盘 c700_05 无直播源
 // ===== 视图模式:回放 / 直播 / 直播分屏 / 回放分屏(分段开关统一切换)=====
 function currentMode(){ return pbGrid ? 'pbgrid' : gridMode ? 'livegrid' : liveMode ? 'live' : 'play'; }
+function curTime(){ const m = currentMode(); return (m==='live' || m==='livegrid') ? 'live' : 'play'; }
+function curSplit(){ const m = currentMode(); return m==='livegrid' || m==='pbgrid'; }
+function applyMode(time, split){ setMode(time==='live' ? (split?'livegrid':'live') : (split?'pbgrid':'play')); }
 function updateModeBar(){
-  const cur = currentMode();
-  document.querySelectorAll('#modebar button').forEach(b => b.classList.toggle('on', b.dataset.mode === cur));
-  const liveSeg = document.querySelector('#modebar button[data-mode="live"]');
-  if(liveSeg) liveSeg.disabled = !liveAvailable();   // 当前相机无 go2rtc 流 → 禁用"直播"
+  document.querySelectorAll('#modebar button').forEach(b => b.classList.toggle('on', b.dataset.time === curTime()));
+  $('splitBtn').classList.toggle('on', curSplit());   // 分屏开关高亮
 }
 function setMode(m){
   const cur = currentMode();
   if(m === cur) return;
-  if(cur === 'pbgrid') setPbGrid(false);        // 先退回"单路回放"基线
+  // 退出当前模式回到基线
+  if(cur === 'pbgrid'){
+    if(m === 'play') setPbGrid(false);   // 去单路回放:需要 selectDay 还原单画面
+    else pbTeardown();                    // 去直播/直播分屏:只拆掉,别触发异步 selectDay(否则其 loadSegment 会把新进的分屏踢回单回放)
+  }
   else if(cur === 'livegrid') setGrid(false);
   else if(cur === 'live') setLive(false);
-  if(m === 'live') setLive(true);                // 再进入目标模式
+  // 进入目标模式
+  if(m === 'live') setLive(true);
   else if(m === 'livegrid') setGrid(true);
   else if(m === 'pbgrid') setPbGrid(true);
   updateModeBar();
 }
 function updateLiveBtn(){ updateModeBar(); }   // 兼容旧调用点(camSel.onchange / reloadCameras)
+function killStreams(root){   // 断开旧直播组件的 WebRTC(用组件自带的 disconnectedCallback,best-effort)
+  root.querySelectorAll('video-stream').forEach(el => { try{ el.background = false; el.disconnectedCallback && el.disconnectedCallback(); }catch(_){} });
+}
 function setLive(on){
   if(gridMode) setGrid(false);   // 切单路时退出四分屏
   if(pbGrid) pbTeardown();        // 退出回放四分屏
@@ -948,7 +1002,8 @@ function setLive(on){
   updateModeBar();
   $('title').textContent = on ? '小米录像 · 实时直播' : '小米录像 · 时间轴回放';
   const box = $('live');
-  box.innerHTML = '';               // 清空(也用于停止旧的拉流)
+  killStreams(box);                 // 先断开旧组件的 WebRTC(避免僵尸消费者)
+  box.innerHTML = '';               // 再清空
   if(on){
     vid.pause();
     const v = document.createElement('video-stream');
@@ -967,9 +1022,56 @@ function setLive(on){
     box.style.display = 'none';     // 移除组件=停止拉流
   }
 }
-document.querySelectorAll('#modebar button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+document.querySelectorAll('#modebar button').forEach(b => b.onclick = () => applyMode(b.dataset.time, curSplit()));
+$('splitBtn').onclick = () => applyMode(curTime(), !curSplit());
+// 选择日期:自定义滚轮(日期/时/分/秒,立体齿轮)。日期列只放有录像的天,没录像的不出现=不给选。
+const WH_ITEM = 36;   // 每项高度,与 CSS 一致
+function wh3d(col){    // 立体齿轮:按每项距中心的偏移设 rotateX + 透明度
+  const c = col.scrollTop + col.clientHeight / 2;
+  col.querySelectorAll('.whitem').forEach(it => {
+    const d = (it.offsetTop + WH_ITEM / 2) - c;
+    const ang = Math.max(-90, Math.min(90, d / (col.clientHeight / 2) * 72));
+    it.style.transform = 'rotateX(' + (-ang) + 'deg) translateZ(42px)';
+    it.style.opacity = String(Math.max(0, 1 - Math.abs(ang) / 90));
+  });
+}
+function whFill(k, items, idx){
+  const col = document.querySelector('.whcol[data-k="' + k + '"]');
+  col.innerHTML = items.map(it => '<div class="whitem" data-val="' + it.val + '">' + it.txt + '</div>').join('');
+  col.scrollTop = idx * WH_ITEM;
+  wh3d(col);
+  if(!col._wired){ col._wired = true; col.addEventListener('scroll', () => {
+    if(col._raf) return; col._raf = requestAnimationFrame(() => { col._raf = 0; wh3d(col); });
+  }); }
+}
+function whIdx(k){ const col = document.querySelector('.whcol[data-k="' + k + '"]');
+  return Math.max(0, Math.round(col.scrollTop / WH_ITEM)); }
+function whVal(k){ const col = document.querySelector('.whcol[data-k="' + k + '"]');
+  const it = col.querySelectorAll('.whitem')[whIdx(k)]; return it ? it.dataset.val : null; }
+function openDatePicker(){
+  const keys = [...document.querySelectorAll('.day')].map(e => e.dataset.date);   // 只有有录像的天
+  if(!keys.length) return;
+  const w = currentWall(); const cs = (w && isFinite(w.sec)) ? Math.floor(w.sec) : 0;
+  const r = n => Array.from({length:n}, (_, i) => ({val:i, txt:String(i).padStart(2,'0')}));
+  $('dpMask').classList.add('on');   // 先显示,列才有布局,scrollTop 才能生效
+  whFill('date', keys.map(k => ({val:k, txt:k.slice(5)})), Math.max(0, keys.indexOf(dateStr)));
+  whFill('h', r(24), Math.floor(cs/3600) % 24);
+  whFill('m', r(60), Math.floor(cs/60) % 60);
+  whFill('s', r(60), cs % 60);
+  requestAnimationFrame(() => document.querySelectorAll('.whcol').forEach(wh3d));   // 布局就绪后再算一次齿轮
+}
+$('datePickBtn').onclick = openDatePicker;
+$('dpCancel').onclick = () => $('dpMask').classList.remove('on');
+$('dpMask').onclick = e => { if(e.target === $('dpMask')) $('dpMask').classList.remove('on'); };
+$('dpOk').onclick = () => {
+  const d = whVal('date'); const sec = whIdx('h')*3600 + whIdx('m')*60 + whIdx('s');
+  $('dpMask').classList.remove('on');
+  if(!d) return;
+  if(liveMode) setLive(false); if(gridMode) setGrid(false);
+  selectDay(d, sec, false);   // 跳到所选日期+时刻(就近片段对齐)
+};
 // ---- 四分屏:同时看全部摄像头的实时画面 ----
-function liveGridLabels(){ return [...$('camSel').options].map(o => o.textContent).filter(l => /^c700_0[1-4]$/i.test(l)); }
+function liveGridLabels(){ return [...$('camSel').options].map(o => o.textContent).filter(l => /^c700_0[1-4]$/.test(l)); }
 // 在直播组件右上角贴 "● 实时 · 协议",协议从组件实际状态读出:
 // WebRTC 时 <video> 用 srcObject(MediaStream);MSE 时 src 是 blob:。
 // 自建"放大/还原"(直播分屏 + 回放分屏通用):点一下该格铺满网格区域,再点还原。页面内放大,不进系统全屏(绕开 Safari 退出全屏画面上移的 bug)。
@@ -1007,7 +1109,8 @@ function setGrid(on){
   updateModeBar();
   $('title').textContent = on ? '小米录像 · 四分屏直播' : (liveMode ? '小米录像 · 实时直播' : '小米录像 · 时间轴回放');
   const g = $('grid');
-  g.innerHTML = '';                 // 先清空(也用于停止旧的拉流)
+  killStreams(g);                   // 先断开旧组件的 WebRTC(避免僵尸消费者)
+  g.innerHTML = '';                 // 再清空
   if(on){
     vid.pause();
     // 错峰连接:4 路 WebRTC 握手隔 400ms 逐个发起,避免同时建连互相抢占导致有格不刷新
@@ -1061,7 +1164,7 @@ let pbVids = {};      // { camId: <video> }
 let pbMaster = null;  // 主时钟相机(驱动播放头/时间轴显示)
 let pbSyncTimer = null;  // 定期对时定时器
 
-function pbCams(){ return [...$('camSel').options].filter(o => /^c700_0[1-4]$/i.test(o.textContent)).map(o => ({id:o.value, label:o.textContent})); }
+function pbCams(){ return [...$('camSel').options].filter(o => /^c700_0[1-4]$/.test(o.textContent)).map(o => ({id:o.value, label:o.textContent})); }
 
 async function pbFetchDay(date){      // 并发拉 4 路当天片段
   pbSegs = {};
@@ -1198,7 +1301,7 @@ async function setPbGrid(on){
     updateModeBar();
     $('title').textContent = '小米录像 · 回放四分屏';
     vid.pause();
-    const g = $('grid'); g.innerHTML = ''; pbVids = {};
+    const g = $('grid'); killStreams(g); g.innerHTML = ''; pbVids = {};
     const cams = pbCams();
     pbMaster = (cams.find(c => c.id === cam) ? cam : (cams[0] && cams[0].id)) || null;
     cams.forEach(c => {
