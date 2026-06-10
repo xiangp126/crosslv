@@ -2,7 +2,7 @@
 
 Self-hosted review/monitoring for 4 Xiaomi C700 cameras: a single-file, zero-dependency
 Python web app gives a **timeline playback** of the SMB recordings **and** a **live view**
-(single + 2×2 grid) sourced from go2rtc. Runs always-on **on the WRT32X NAS itself**.
+(single, or a 2/4/6-cell split grid) sourced from go2rtc. Runs always-on **on the WRT32X NAS itself**.
 
 ## Where everything runs
 
@@ -47,27 +47,40 @@ Plans / runbooks:
 
 ## Player features (xiaomi_playback.py)
 
-- Multi-root timeline playback; per-camera day strip; drag-to-seek with a live timestamp bubble;
-  prev/next-segment; cross-camera time alignment; "录制中" badge on the in-progress chunk.
-- **View modes — a 4-way segmented switch in the header** (current mode amber-highlighted, unified
-  `setMode()`): **`回放` · `直播` · `⊞ 直播分屏` · `⊞ 回放分屏`**. Default opens to single **直播**.
-  Camera names show as **uppercase `C700_0X`** (mount/share names stay lowercase).
-- **Live (go2rtc):** single 直播 + 直播分屏 use the go2rtc `<video-stream>` component (its
+UI is all English; the page opens to a **4-cell live split** by default (`START_LIVE=true`,
+`START_SPLIT=4`, both near the top of the JS).
+
+- **Mode = time × split.** Two sliding segmented toggles in the **fixed bottom nav bar** drive
+  everything: **Live / Playback**, and the cell count **1 / 2 / 4 / 6**. Their product is the
+  current mode (`currentMode()` → `live` | `livegrid` | `play` | `pbgrid`), applied by
+  `applyMode(time, n)`. 1 = single view; 2/4/6 = split grid (cameras 05/06 are reserved cells).
+- **Camera names are decoupled from go2rtc.** Internal stream/disk names stay lowercase
+  `c700_0X`; the UI shows display names from `CAM_NAMES` (`CAM 1`…`CAM 6`, via `dispCam()`).
+  Edit `CAM_NAMES` to rename without touching stream wiring.
+- **Timeline playback:** multi-root per-day strip; drag-to-seek with a timestamp bubble (snaps to
+  the nearest recording if you land in a gap); prev/next-segment; ±10s; speed; cross-camera time
+  alignment. The in-progress chunk shows a **`● REC`** badge (single playback) and an amber bar on
+  the timeline. A collapsible **date + hour/min/sec wheel picker** ("Go to time") jumps to an exact
+  moment (hour/min/sec loop).
+- **Live (go2rtc):** single live + live split use the go2rtc `<video-stream>` component (its
   `video-rtc.js`/`video-stream.js` proxied same-origin) — no iframe. Native H265 over WebRTC when
-  supported, else H264 transcode. A `● 实时 · RTC`/`· MSE` badge (top-right, offset left of the native
-  volume button) shows the protocol. **Stall watchdog:** a cell frozen ~3 s auto-reconnects.
-- **Playback grid (`⊞ 回放分屏`):** 2×2 of the cameras' **recordings** synced to one timeline —
-  drag/±10s/seg/speed act on all. Per cell: native controls, a `⤢` page-fill zoom (not OS fullscreen).
-  Bottom transport: `▶︎ 全部播放 / ⏸ 全部暂停 / ⇄ 同步`. The top dropdown picks the **master (基准)**;
-  timeline/playhead/sync follow it. **⇄ 同步** pauses all (freezing the instant), aligns every cell to
-  the master, then leaves them paused for you to hit 全部播放. **Periodic re-sync:** every 2 s a playing
-  cell drifting >1.5 s from master is nudged back (a cell you manually dragged stays independent until
-  同步 / 全部播放 / timeline-drag).
-- Keys: `空格` play · `←/→` ±10s · `,`/`.` prev/next seg · `R` refresh · `L` 直播 · `G` 直播分屏 ·
-  `P` 回放分屏 (each toggles back to 回放).
-- Consts at the top of the JS: `GO2RTC`, `RTC_H265 = webrtcCanH265()`, and the **`QUALS`** quality
-  menu (原画1080P → `_sub1080`/webrtc · 转码1080P → `_1080p`/webrtc), `START_LIVE`. Plus a `GO2RTC`
-  const on the Python side for the JS proxy. Change the go2rtc IP in **both** spots if it moves.
+  supported, else H264 transcode. A top-right **`● RTC`** / **`● MSE`** badge shows the negotiated
+  protocol. **Stall watchdog:** a cell with no advancing frames ~6 s auto-reconnects.
+- **Playback split:** the cameras' **recordings** synced to one timeline — drag / ±10s / seg / speed
+  act on all. Bottom transport **Play all / Pause all / Sync**. One cell is the **master**, marked
+  **`REF`** (amber); timeline/playhead/sync follow it. In playback split the top camera selector picks
+  the master; **Sync** pauses all (freezing the instant), aligns every cell to the master, then leaves
+  them paused for you to hit Play all. **Periodic re-sync:** every 2 s a playing cell drifting >1.5 s
+  from the master is nudged back (a cell you manually dragged stays independent until Sync / Play all /
+  timeline-drag).
+- **Per-cell controls in a grid** (camera picker top-left, refresh `↻` left, zoom `⤢` right) plus a
+  `⛶` **fill-screen** button (CSS viewport fill, not OS fullscreen) reveal on **hover** (desktop) or on
+  **tap then auto-fade ~3 s** (touch). In **live split** the global camera selector is hidden — each
+  cell's own top-left picker assigns its camera.
+- Consts at the top of the JS: `GO2RTC`, `RTC_H265 = webrtcCanH265()`, `START_LIVE`, `START_SPLIT`,
+  and the **`QUALS`** quality menu (**Direct** → `_sub1080`/webrtc · **Transcode** → `_1080p`/webrtc).
+  Plus a `GO2RTC` const on the Python side for the JS proxy — change the go2rtc IP in **both** spots if
+  it moves.
 
 ## go2rtc requirement for live
 

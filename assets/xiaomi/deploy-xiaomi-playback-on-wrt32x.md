@@ -14,7 +14,7 @@ procd service).
 > §6/§7 below match those files; you can also just `scp`/pipe them straight from
 > `assets/xiaomi/`. See `assets/xiaomi/README.md` for the full system map.
 >
-> **Live view** (single + 2×2 grid) is part of the player too and depends on **go2rtc**
+> **Live view** (single, or a 2/4/6-cell split grid) is part of the player too and depends on **go2rtc**
 > at 192.168.10.240 — see §13 below and `assets/xiaomi/go2rtc.yaml`.
 
 > **As-built (2026-06-06).** Where the first draft was wrong, the verified value is
@@ -326,14 +326,19 @@ The Mac's SMB mounts are no longer needed for playback (unmount or leave them).
 
 ## 13. Live view + playback grid (go2rtc)
 
-The header is a **4-mode segmented switch** (current mode amber-highlighted, unified `setMode()`):
-- **`回放`** — single-camera timeline playback.
-- **`直播`** (key `L`) — single-camera live (the default mode on page load).
-- **`⊞ 直播分屏`** (key `G`) — 2×2 **live** grid (all live-capable cameras).
-- **`⊞ 回放分屏`** (key `P`) — 2×2 **recording** grid synced to one timeline (see below). Pure-local,
-  no go2rtc.
+The **fixed bottom nav bar** has two sliding segmented toggles; their product is the current
+mode (`currentMode()`, applied by `applyMode(time, n)`):
+- **Live / Playback** — the time axis.
+- **1 / 2 / 4 / 6** — the cell count. `1` = single view; `2/4/6` = split grid.
 
-Camera names display as uppercase **`C700_0X`** (mount/share dir names stay lowercase `c700_0X`).
+So the four modes are **`live`** (single live), **`livegrid`** (live split), **`play`** (single
+timeline playback), **`pbgrid`** (recording split synced to one timeline — pure-local, no go2rtc).
+The page opens to **`livegrid` at 4 cells** by default (`START_LIVE=true`, `START_SPLIT=4`). There
+are **no keyboard shortcuts**.
+
+Camera names are decoupled from go2rtc: internal stream/disk names stay lowercase `c700_0X`, while
+the UI shows display names from **`CAM_NAMES`** (`CAM 1`…`CAM 6`, via `dispCam()`). Cells `05/06`
+are reserved (no live source / no disk yet).
 
 Live does **not** go through wrt32x — the browser connects **directly to go2rtc** at
 `192.168.10.240:1984` over WebRTC. wrt32x only serves the page (and proxies go2rtc's
@@ -351,8 +356,8 @@ will send H265 if the browser offers it (verified: answer SDP carries `H265/9000
 - **Supported (Chrome136+/Safari):** plays the camera's native **1080p H265 `c700_0X_sub1080`
   directly, no transcode** → original quality, ~zero `.240` load.
 - **Not supported (Firefox, Edge-default):** falls back to the **H264 transcode `c700_0X_1080p`**.
-- Always WebRTC (the quality menu `QUALS` maps 原画1080P→`_sub1080`, 转码1080P→`_1080p`).
-  The top-right `● 实时 · RTC`/`· MSE` badge shows the
+- Always WebRTC (the quality menu `QUALS` maps **Direct**→`_sub1080`, **Transcode**→`_1080p`).
+  The top-right `● RTC`/`● MSE` badge shows the
   actual negotiated protocol (read from the component: WebRTC→`srcObject`, MSE→`blob:`).
 
 **Tradeoff to know (H265-direct can stutter):** WebRTC is lossy UDP and never retransmits;
@@ -385,28 +390,32 @@ subtype=2&stream=0 — what live uses on H265-capable browsers), `c700_0X_1080p`
   (4K overflowed the buffer + the transcode died with `EOF`). `#audio=copy` (sub audio is
   already OPUS; `#audio=opus` re-encode reintroduced EOF). `#hardware=cuda` for NVDEC/NVENC.
 
-### Playback grid (`⊞ 回放分屏` / key `P`)
+### Playback split (`pbgrid`)
 
-2×2 of the cameras' **recordings**, sharing the one timeline:
+A 2/4/6-cell grid of the cameras' **recordings**, sharing the one timeline:
 - **Drag the timeline / ±10s / prev-next-seg / speed** act on all together (`seekTo`→`gridSeekAll`).
-- **Per-cell controls:** native `<video>` controls (progress/volume/native-fullscreen) + a `⤢` **page-fill
-  zoom** (fills the grid area, not OS fullscreen — Safari's fullscreen-exit shifts the frame). The
-  `● 实时`/camera-name badge sits at top-right offset left of the native volume button.
-- **Bottom transport:** `▶︎ 全部播放` (resume all, no reload) · `⏸ 全部暂停` · **`⇄ 同步`**.
-- **Master (基准) camera** = the one selected in the top dropdown (defaults to `C700_01`); amber
-  highlight + `· 基准`. Timeline coverage, playhead, and sync baseline follow it. Change the dropdown to move it.
-- **`⇄ 同步`:** pauses **all** cells (freezing the master's instant), aligns every cell to the master's
-  frozen time, and **leaves them paused** — you then hit `▶︎ 全部播放` to resume together (zero drift).
+- **Per-cell controls** (reveal on hover, or tap-then-auto-fade on touch): a **camera picker**
+  top-left (assigns that cell's camera), native `<video>` controls, and a `⤢` **page-fill zoom**
+  (fills the grid area, not OS fullscreen — Safari's fullscreen-exit shifts the frame). A `⛶`
+  **fill-screen** button makes the whole grid fill the viewport (CSS, not OS fullscreen).
+- **Bottom transport:** `Play all` (resume all, no reload) · `Pause all` · **`Sync`**.
+- **Master cell** = the cell showing the camera selected in the top camera dropdown (defaults to the
+  current single-view camera); marked **`REF`** + amber border. Timeline coverage, playhead, and sync
+  baseline follow it. Change the dropdown (or a cell's picker) to move it. *(In **live split** the top
+  camera dropdown is hidden — there the per-cell pickers own the cameras and there is no master.)*
+- **`Sync`:** pauses **all** cells (freezing the master's instant), aligns every cell to the master's
+  frozen time, and **leaves them paused** — you then hit `Play all` to resume together (zero drift).
 - **Synchronized start:** on open/seek the cells load paused and start together once buffered (≤2 s fallback).
 - **Periodic re-sync:** every 2 s a *playing* cell drifting >1.5 s from the master is nudged back (same
   segment → `currentTime`; crossed a segment → reload). A cell you **manually dragged** is left independent
-  until `⇄ 同步` / `全部播放` / timeline-drag. Tunables: 2 s interval + 1.5 s threshold in `pbStartSync()`.
+  until `Sync` / `Play all` / timeline-drag. Tunables: 2 s interval + 1.5 s threshold in `pbStartSync()`.
 - A background single-`<video>` ending does **not** auto-advance while a grid mode is active (guard in the
-  `ended` handler), and the single recording does not autoplay in the background while in a grid.
+  `ended` handler), and the single recording does not autoplay in the background while in a grid. The
+  startup background timeline preload is protected by the `livePreload` flag so it can't tear the grid down.
 
 ### Player consts (top of the inline JS)
 
-`GO2RTC`, `RTC_H265 = webrtcCanH265()`, the `QUALS` quality menu (原画1080P→`_sub1080` ·
-转码1080P→`_1080p`, both WebRTC), `START_LIVE`. Plus a `GO2RTC` const on the Python side for the
-JS-proxy route. Change the
+`GO2RTC`, `RTC_H265 = webrtcCanH265()`, the `QUALS` quality menu (**Direct**→`_sub1080` ·
+**Transcode**→`_1080p`, both WebRTC), `START_LIVE`, and `START_SPLIT` (default cell count on load:
+1/2/4/6). Plus a `GO2RTC` const on the Python side for the JS-proxy route. Change the
 go2rtc IP in **both** spots if it moves.

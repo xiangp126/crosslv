@@ -512,10 +512,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .gridfullbtn{position:absolute;top:8px;right:8px;z-index:9;cursor:pointer;user-select:none;color:#fff;
     background:rgba(10,12,15,.66);border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:15px;line-height:1}
   .gridfullbtn:hover{background:rgba(10,12,15,.92);border-color:#34424e}
-  /* Maximize / exit button: only appear when the player frame is hovered (both ⛶ and ✕); always-on on touch */
+  /* Maximize / exit button: appear when the frame is hovered (desktop) or the frame is tapped (touch — .tapped set by JS); both ⛶ and ✕ */
   .gridfullbtn{opacity:0;transition:opacity .15s}
-  .stage:hover .gridfullbtn{opacity:1}
-  @media (hover:none){ .gridfullbtn{opacity:1} }
+  @media (hover:hover){ .stage:hover .gridfullbtn{opacity:1} }   /* hover only on real pointers — avoids iOS sticky-hover keeping it on after a tap */
+  .stage.tapped .gridfullbtn{opacity:1}
   .grid video-stream{position:relative;display:block;width:100%;height:100%;background:#000;overflow:hidden;touch-action:manipulation}
   .grid video-stream video{width:100%;height:100%;object-fit:contain;display:block}
   .grid video-stream .info{display:none}   /* hide the component's built-in RTC badge */
@@ -526,6 +526,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   body.grid-mode #vid,
   body.grid-mode #live,
   body.grid-mode .liveTag,
+  body.grid-mode #camSel,   /* live split: per-cell dropdowns own the cameras → the global camera selector is meaningless here (and selecting a no-recording cam used to strand the timeline), so hide it */
   body.grid-mode .transport{display:none !important}   /* live split also keeps the bottom timeline (.dates/.tlwrap); all four modes share the same display */
   /* Quality dropdown: always visible (nav bar identical in both modes, never hidden or empty). Changing it during playback only presets the next live quality, no side effect */
   /* Playback split: reuse the .grid layout, but keep the timeline/controls; cells are <video> wrapped in .pbcell */
@@ -540,11 +541,14 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .grid .gref{position:absolute;top:50%;left:8px;transform:translateY(-50%);z-index:8;cursor:pointer;user-select:none;color:#fff;
     background:rgba(10,12,15,.66);border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:16px;line-height:1}
   .grid .gref:hover{background:rgba(10,12,15,.92);border-color:#34424e}
-  /* Per-cell controls (refresh / zoom / camera picker): only appear when the cell is hovered (focused); always-on for touch (no hover) */
+  /* Per-cell controls (refresh / zoom / camera picker): appear when the cell is hovered (desktop) or tapped (touch — .tapped set by JS) */
   .grid .gref, .grid .gzoom, .grid .cellcam{opacity:0;transition:opacity .15s}
-  .grid video-stream:hover .gref, .grid video-stream:hover .gzoom, .grid video-stream:hover .cellcam,
-  .grid .pbcell:hover .gref, .grid .pbcell:hover .gzoom, .grid .pbcell:hover .cellcam{opacity:1}
-  @media (hover:none){ .grid .gref, .grid .gzoom, .grid .cellcam{opacity:1} }
+  @media (hover:hover){   /* hover only on real pointers — avoids iOS sticky-hover keeping controls on after a tap */
+    .grid video-stream:hover .gref, .grid video-stream:hover .gzoom, .grid video-stream:hover .cellcam,
+    .grid .pbcell:hover .gref, .grid .pbcell:hover .gzoom, .grid .pbcell:hover .cellcam{opacity:1}
+  }
+  .grid video-stream.tapped .gref, .grid video-stream.tapped .gzoom, .grid video-stream.tapped .cellcam,
+  .grid .pbcell.tapped .gref, .grid .pbcell.tapped .gzoom, .grid .pbcell.tapped .cellcam{opacity:1}
   .grid .cellcam{position:absolute;top:8px;left:8px;z-index:9;font-family:var(--mono);font-size:11px;color:#fff;
     background:rgba(10,12,15,.7);border:1px solid var(--line);border-radius:6px;padding:3px 4px;text-transform:uppercase;cursor:pointer}
   .grid .cellcam:hover{border-color:#34424e}
@@ -574,11 +578,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
   /* Select date: always-on dial (date/hour/min/sec, 3D wheel) + a live clock on top + Go to / Back to live buttons.
      No card frame around it; flush to the edge, same width as the time bar / player frame (matching the time bar) */
   .dppanel{padding:4px 0 0;margin-bottom:8px}
-  .dpbar{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;
-    padding:6px 2px;cursor:pointer;color:var(--text)}
+  .dpbar{display:inline-flex;align-items:center;gap:10px;width:auto;background:none;border:0;
+    padding:6px 2px;cursor:pointer;color:var(--text)}   /* shrink to content (📅 time ▾) and left-align; no longer a full-width row */
   .dpbarL{font-size:13px;color:var(--dim)}
   .dpclock{font-family:var(--mono);font-size:17px;color:var(--text);font-weight:600}
-  .dpchev{margin-left:auto;color:var(--dim);font-size:12px;transition:transform .15s}
+  .dpchev{color:var(--dim);font-size:12px;transition:transform .15s}   /* sits right after the clock now (bar is content-width, not full row) */
   .dpbody{display:none;margin-top:4px}
   .dppanel.open .dpbody{display:block}
   .dppanel.open .dpchev{transform:rotate(180deg)}
@@ -752,7 +756,8 @@ QUALS.push({label:'Transcode', suffix:'_1080p', mode:'webrtc'});               /
 let qualIdx = 0;   // default track 0: original direct out when supported, otherwise transcode
 function liveSuffix(){ return QUALS[qualIdx].suffix; }
 function liveModeNow(){ return QUALS[qualIdx].mode; }
-const START_LIVE = true;      // opening the page defaults to single-stream live (set false = default to the latest recording)
+const START_LIVE = true;      // opening the page defaults to live (set false = default to the latest recording)
+const START_SPLIT = 4;        // default split count on load: 1 = single stream, 2/4/6 = grid
 let liveMode = false;
 let gridMode = false;   // live split (splitN>1 and live)
 let pbGrid = false;     // playback split (splitN>1 and playback, sharing the timeline)
@@ -770,6 +775,7 @@ let segs = [];          // segments of the current day [{file,start(Date),end(Da
 let curIdx = -1;
 let dayStart = null;    // the Date for 00:00 of the current day
 let firstLoad = true;   // only the first load auto-jumps to the latest; afterwards switching date/camera keeps the current position
+let livePreload = false;   // true while the startup timeline load runs in the background under a live/grid view — loadSegment must NOT tear that view down or autoplay (it only preloads the latest clip into the hidden #vid)
 
 const pad = n => String(n).padStart(2, '0');
 function hms(sec){
@@ -806,7 +812,8 @@ async function init(){
     return;
   }
   if(START_LIVE && liveAvailable()){
-    setLive(true);     // go live first: live from the first frame, no brief flash of playback
+    applyMode('live', START_SPLIT);   // open straight into the default live view (single or split)
+    livePreload = true;   // protect the live/grid view from the background preload's loadSegment (teardown + autoplay)
     loadTimeline();    // load the timeline in the background (no await); its loadSegment goes to the hidden #vid, does not autoplay, does not affect live
   } else {
     await loadTimeline();   // playback default: locate to the latest and play
@@ -886,6 +893,7 @@ async function selectDay(d, targetSec, play){
       loadSegment(0, 0, false);
     }
   }
+  livePreload = false;   // chokepoint: the protected startup/grid preload is at most one loadSegment per selectDay — clear here so the flag can never get stuck (e.g. a day with no recordings never calls loadSegment)
 }
 
 // ---- Draw the timeline ----
@@ -935,7 +943,7 @@ function bestSegForSec(sec){
 // ---- Load and locate a segment ----
 function loadSegment(idx, offsetSec, autoplay){
   if(idx < 0 || idx >= segs.length) return;
-  if(gridMode) setGrid(false);   // any playback action exits the live split
+  if(gridMode && !livePreload) setGrid(false);   // any playback action exits the live split (but the startup background preload must leave the grid intact)
   curIdx = idx; const s = segs[idx];
   $('liveTag').style.display = s.live ? 'block' : 'none';
   vid.src = '/video?cam=' + encodeURIComponent(cam) + '&file=' + encodeURIComponent(s.file);
@@ -947,6 +955,7 @@ function loadSegment(idx, offsetSec, autoplay){
   };
   vid.addEventListener('loadedmetadata', onMeta);
   vid.load();
+  livePreload = false;   // one-shot: only the very first startup preload is protected; later timeline clicks tear down the grid as usual
 }
 
 // ---- Track: drag/click; the playhead follows the cursor and shows the precise time bubble at that position ----
@@ -981,8 +990,9 @@ function seekTo(sec){
   if(pbGrid){ gridSeekAll(sec, true); return; }   // playback split: whole screen jumps to the same moment
   if(gridMode){ setPbGrid(true).then(() => gridSeekAll(sec, true)); return; }   // dragging the timeline in live split → enter [split playback] and jump to that moment (not single-stream playback)
   if(liveMode) setLive(false);   // clicking/dragging the timeline → switch to recordings
-  const i = segIndexAt(sec);     // whatever the user sets is it: locate to the segment covering that moment, precise to that second
-  if(i >= 0) loadSegment(i, sec - segs[i].s0, true);
+  if(!segs.length) return;
+  const b = bestSegForSec(sec);  // locate to the segment covering that moment; if it lands in a gap, snap to the nearest recording (otherwise the click/Go-to would be silently dropped)
+  loadSegment(b.idx, b.offset, true);
 }
 
 track.addEventListener('pointerdown', e => {
@@ -1061,6 +1071,7 @@ $('camSel').onchange = e => {
     if(c){ pbMaster = c.key; segs = pbSegs[c.key] || []; curIdx = -1; pbMarkMaster(); renderTrack(); updateHead(); }
     return;
   }
+  if(gridMode){ livePreload = true; loadTimeline(w); return; }   // live split: per-cell dropdowns own the cameras — only refresh the background timeline, do NOT let loadSegment tear the grid down
   loadTimeline(w);                                            // the timeline always updates to the new camera
   if(liveMode){ liveAvailable() ? setLive(true) : setLive(false); }   // live follows the switch; if the new camera has no live, exit
 };
@@ -1170,6 +1181,23 @@ function setGridFull(on){
 }
 $('gridFull').onclick = () => setGridFull(!stageEl.classList.contains('full'));
 document.addEventListener('keydown', e => { if(e.key === 'Escape' && stageEl.classList.contains('full')) setGridFull(false); });
+// Touch (no hover): tap to reveal the controls + maximize button, then auto-fade after a few seconds — like a native video player. Tapping a control resets the timer.
+if(matchMedia('(hover:none)').matches){
+  let tapTimer = null;
+  const hideTapped = () => {
+    stageEl.querySelectorAll('.tapped').forEach(c => c.classList.remove('tapped'));
+    stageEl.classList.remove('tapped');
+  };
+  const armHide = () => { clearTimeout(tapTimer); tapTimer = setTimeout(hideTapped, 3000); };
+  stageEl.addEventListener('click', e => {
+    if(e.target.closest('.gref,.gzoom,.cellcam,.gridfullbtn')){ armHide(); return; }   // using a control: keep visible, restart the timer
+    const cell = e.target.closest('.grid video-stream, .grid .pbcell');
+    stageEl.querySelectorAll('.grid .tapped').forEach(c => c.classList.remove('tapped'));
+    stageEl.classList.add('tapped');
+    if(cell) cell.classList.add('tapped');
+    armHide();
+  });
+}
 // Select date: always-on dial (date/hour/min/sec, 3D wheel). Only clicking «Go to time» reloads, scrolling itself does not jump
 // → live is not interrupted. The date column only lists days that have recordings → days without recordings are not in the wheel = cannot be selected.
 const WH_ITEM = 32;   // height of each item, matches the CSS
@@ -1546,7 +1574,7 @@ function pbMarkMaster(){      // highlight the reference cell, append " · Ref" 
     const isM = (c.key === pbMaster);
     v.parentElement.classList.toggle('master', isM);
     const badge = v.parentElement.querySelector('.pbname');
-    if(badge) badge.textContent = dispCam(c.label) + (isM ? ' · Ref' : '');
+    if(badge){ badge.textContent = isM ? 'REF' : ''; badge.style.display = isM ? '' : 'none'; }   // camera name lives in the top-left picker now; top-right badge only marks the reference cell
   });
 }
 function pbReassign(idx, newLabel){   // change a cell's camera (playback): re-pull that cell's segments for the day and position to the current master moment, other cells untouched
@@ -1554,7 +1582,7 @@ function pbReassign(idx, newLabel){   // change a cell's camera (playback): re-p
   const key = String(idx), v = pbVids[key]; if(!v) return;
   v._id = pbCamId(newLabel); v._lbl = newLabel; v._manual = false;
   const badge = v.parentElement && v.parentElement.querySelector('.pbname');
-  if(badge) badge.textContent = dispCam(newLabel) + (key === pbMaster ? ' · Ref' : '');
+  if(badge){ const isM = (key === pbMaster); badge.textContent = isM ? 'REF' : ''; badge.style.display = isM ? '' : 'none'; }   // camera name is in the top-left picker; top-right badge only marks the reference cell
   (async () => {
     if(v._id){ const r = await api('/api/segments?cam=' + encodeURIComponent(v._id) + '&date=' + dateStr);
       pbSegs[key] = (r.segments || []).map(s => { const st = new Date(s.start), en = new Date(s.end);
@@ -1584,7 +1612,7 @@ async function setPbGrid(on){
       const cell = document.createElement('div'); cell.className = 'pbcell';
       const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'metadata'; v.controls = true;  // native controls: play/progress/volume/fullscreen
       v._id = c.id; v._lbl = c.label;
-      const b = document.createElement('span'); b.className = 'cellbadge pbname'; b.textContent = dispCam(c.label);
+      const b = document.createElement('span'); b.className = 'cellbadge pbname'; b.textContent = ''; b.style.display = 'none';   // top-right badge: only the reference cell shows REF (set by pbMarkMaster); camera name is in the top-left picker
       cell.appendChild(v); cell.appendChild(b); g.appendChild(cell);
       addZoom(cell);   // zoom key (in-page zoom, not system fullscreen)
       addCellCam(cell, +c.key, pbReassign);   // camera dropdown per cell (playback)

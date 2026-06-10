@@ -12,7 +12,7 @@ run.
 > player on `wrt32x` itself — see **`deploy-xiaomi-playback-on-wrt32x.md`**. This
 > Mac/CIFS guide is the optional fallback for running it from your laptop.
 >
-> The player also has a **live view** (single + `⊞ 四分屏` 2×2 grid) via go2rtc — see
+> The player also has a **live view** (single, or a 2/4/6-cell split grid) via go2rtc — see
 > `deploy-xiaomi-playback-on-wrt32x.md` §13 and `./`. All the deployment
 > artifacts (server, wrapper, cifs/procd scripts, go2rtc.yaml) live in `./`.
 
