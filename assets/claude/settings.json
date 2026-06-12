@@ -1,5 +1,4 @@
 {
-  "language": "chinese",
   "env": {
     "USE_BUILTIN_RIPGREP": "0",
     "DISABLE_AUTOUPDATER": "1"
@@ -24,6 +23,7 @@
       "/auto/fwgwork1/$USER/golan_fw3"
     ]
   },
+  "model": "claude-fable-5[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -37,6 +37,7 @@
       }
     ]
   },
+  "language": "chinese",
   "sandbox": {
     "enabled": false
   },

@@ -10,6 +10,7 @@
     requireForce = false
 [alias]
     st = status
+    wl = worktree list
     ls-files = lf
     lf = ls-files
     ad = add

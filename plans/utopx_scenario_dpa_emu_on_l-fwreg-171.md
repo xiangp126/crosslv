@@ -1610,6 +1610,90 @@ When the remote host reboots, the kernel/socket on the *client* side doesn't kno
 | **2026-06-05 14:03 BJ** | **3996255652** | ✅ **PASS** ~7m47s | utopx baseline | Fully recovered 5-31 pin: utopx `07de3b4` (rebuilt binary) + FW `32.50.0222` + baseline INI. Baseline PASS confirms env is clean. |
 | **2026-06-05 14:11 BJ** | **226259204** | ✅ **PASS** ~8m57s | utopx + **sat-PF Path A knobs** | First end-to-end PASS of sat-PF + utopx coexistence! 3 `-e` flags: `force_dpu_pf_emu_manager=1`, `num_sat_pf=1`, `num_sat_pf_valid=1`. Confirms Path A works on 5-31 pin. Sat-PF code paths exercised in utopx without any FW-level sat-PF instantiation (Phase 10 unnecessary). |
 
+### 2026-06-06：真实 Li FW patch + 渐进 WA，把 BF-3 端到端推进到 cap 层
+
+**目标转变**：不再用 `force_fw_cap`（utopx 内部模拟），而是把 **Li 的真实 FW patch（`nbu:golan_fw~1426433` PS8）** cherry-pick 进本地 golan，build + burn，跑 utopx **去掉 `force_fw_cap`**，验真实 delegation。
+
+**branch**：golan `li-cap-delegation-rel-12_50_0223`（基于 `rel-12_50_0223` + cherry-pick Li `1faa888`）；utopx `li-cap-delegation-host_fwv_20260527_FW_version_50_0222_branch_master`（基于 `07de3b4`）。FW build：`jmake -c -o`（首次撞 stale depfile `cable_info_legacy.c`，必须 `--clean`）→ `fw-BlueField-3.mlx`。
+
+**这轮做的代码改动（全在上述两个 branch，未 push）：**
+1. **golan `mac_guid_handler.c:427` FW WA** —— `0x821D` assert（`cpu_management_pf=1 && !DEVICE_IS(SMART_NIC)`）放宽为 `!DEVICE_IS(SMART_NIC, DPU_WITH_NON_INTEGRATED_CPU)`。根因：BF-3 结构性 `cpu_management_pf=1`（embedded ARM），与 sat-PF 要求的 `device_type=3` 互斥。**`cpu_management_pf=0` 不是出路**：会改撞 `0x80CC`（`mac_guid_handler.c:368` MAC_MNG_PF 需 cpu_management_pf=1）—— 821D↔80CC 两难，只能改码放宽 821D。
+2. **utopx `VPORT.cpp:InitNicVportContextGuids` WA** —— mng PF 在 `satellite_pf_en` 配置下也分配 GUID（原本预测 0）。
+3. **utopx `VPORT.cpp:GetMacGidOffset` 修复** —— 调用 `GetMacGidOffset(...)` 时补传 `isMngPf=GetVhca()->IsMngPf()`（原代码从不传，潜在 bug）。否则 mng PF GUID 偏移错 `0x68`。
+4. **utopx work item A（`HcaCaps.cpp`）** —— 新增 `GetDeviceEmuManagerMaxCap(vhca,type)` 镜像 Li 的 `is_device_emulation_manager_max_cap_sup`；nvme max-cap 换用它，新增 virtio_net 行（IGNORE_CAP）。详见 [[plans/utopx_verification_emu_mgr_delegation.md]] §0.5。
+
+| 时间 BJ | seed | 结果 | 配置 | 备注 |
+|---|---|---|---|---|
+| 2026-06-06 ~16:14 | 3702964000 | ❌ FAIL ~1.5min | 0223+Li, 2-line INI, **no force_fw_cap** | `VHCA.cpp:9214 ext_synd=0x821d`。utopx 真实读到 Li 的 cap（`is_sat_pf=1`/`input_gvmi_is_dpu_pf`），但 FW health assert 先挂。Li patch 不碰这个 assert。 |
+| 2026-06-06 ~17:03 | 2335245446 | ❌ FAIL ~1.5min | + INI `cpu_management_pf=0` | 验证 `cpu_management_pf=0` bypass 821D 但改撞 `0x80CC`（mng PF MAC 需 cpu_management_pf=1）。回退该 INI 行。 |
+| 2026-06-06 ~17:33 | 4169183052/3702964000 | ❌ FAIL ~ | 0223+Li **+ line427 WA**, 2-line INI | 821D/80CC 全清！ArmAgent push BFB ✅、跑 2430 ops，卡 `QueryNicVport` mng PF(GVMI 0x12) `node_guid` expected=0 vs FW 真实 GUID。根因 `VPORT.cpp:662` 对 mng PF 预测 0。 |
+| 2026-06-06 ~19:33 | 2762021911 | ❌ FAIL @2431 | + VPORT GUID WA(#2) | GUID 不再是 0，但偏移错 `0x68`（mng PF 专属 slot）。根因 `GetMacGidOffset` 没传 isMngPf。 |
+| 2026-06-06 ~19:41 | 3228976854 | ❌ FAIL **@3501** | + GetMacGidOffset isMngPf(#3) + work item A(#4) | **GUID mismatch 清除**，推进到 3501。新卡点 cap 层：DPU PF 上 `QUERY_HCA_CAP VirtioNetEmuCap` 返回 `0xac5816 "virtio net device emulation is not supported"`。因 work item A 让 DPU PF 被当 virtio_net manager，但本 INI `virtio_net_emu_num_pf=0`（virtio_net 仿真未启用）。nvme 启用（`nvme_emu_num_pf=2`）。下一步：work item A 暂只留 nvme 委派。 |
+
+**追加 fix（#5~#7，2026-06-06 晚，决定只在 BF-3 上靠 utopx WA 推进，因无 Argaman）：**
+5. **utopx work item A 只留 nvme**（去掉 virtio_net 行）—— 但没用：FW 报 DPU PF `virtio_net_device_emulation_manager` max=1 是 FW 自己（Li stub `is_device_emulation_type_supported_for_manager_cap` 恒 `return 1`），utopx 读到后 `IsVirtioNetEmuManager()`=true → 仍查 VirtioNetEmuCap。
+6. **utopx `HcaCaps.cpp:GetIsHotPlugSupportedCapBit`** —— `general_obj_type_device_object` 门控从 `IsDefaultDeviceEmulationManager()` 放宽到 `IsDeviceEmulationManager()`（sat-PF 环境有多个 emu mgr：default ECPF + DPU PF + 被 set 的 host PF，FW 给每个都报 device_object=1）。
+7. **utopx `VHCA.cpp:9373 BuildRequiredHcaCapList`** —— VirtioNetEmuCap 的 require 条件加 `&& GetVirtioEmuNetPfNum(GetHostIndex())>0`（INI `virtio_net_emu_enable=1` 但 `num_pf=0`，所以 gate 在 num_pf 不是 enable）。清除 0xac5816。
+
+| 时间 BJ | seed | 结果 | 备注 |
+|---|---|---|---|
+| 2026-06-06 ~21:41 | 3228976854 | ❌ FAIL @5005 | work item A(nvme-only) 后过了 3501 virtio_net 站，推进到 5005。新卡 `general_obj_type_device_object` expected=0 vs FW=1（DPU PF）。 |
+| 2026-06-06 ~22:?? | — | ❌ FAIL @5442 | fix #6 后过 5005，推进到 **5442**。又撞 virtio_net 0xac5816（fix #5 没真正拦住，根在 FW stub）。 |
+| 2026-06-06 ~22:?? | 2797817397/3563285779 | ❌ FAIL @3058/2758 | fix #7（IsVirtioNetEmuEnabled gate）没用→改 num_pf gate 后过 virtio_net，但 `general_obj_type_device_object` 又在 **另一 vhca**（host PF GVMI 0xf，被 set 为 emu mgr）冒出。 |
+| 2026-06-06 ~22:16 | — | ⚠️ **HOST HANG** | fix #6 改 `IsDeviceEmulationManager()` 后跑，**171 host OS 直接 hang**（ping 不通，IPMI power cycle 恢复）。未拿到 verdict。BF-3 + utopx bare-metal 的稳定性风险。 |
+
+**关键认知（更新）**：
+- 前 3 个（821D/80CC/GUID）= BF-3 artifact；从第 4 个起进入 **utopx cap 预测**领域 —— 这是**开放式**的：sat-PF 环境有多个 emu manager，FW 给每个报一组 emulation cap，utopx 现有预测都按"单一默认 mgr"算，每个 seed 暴露不同 vhca/cap 组合（`general_obj_type_device_object` 就在至少 2 个 vhca 上炸过）。这是 work item A 的**完整范畴**（系统性 cap 预测更新），不是几个 WA。
+- **virtio_net 0xac5816 的根 = Li 的 FW stub**（`is_device_emulation_type_supported_for_manager_cap` 恒 1），等 Li 填实后这类自然消失。已在 utopx 侧用 num_pf gate 绕过。
+- **host hang**：2026-06-06 22:16 一次 utopx run 把 171 host OS 挂死，IPMI 恢复。BF-3 端到端跑这套 WA 有稳定性风险。
+- 累积 utopx WA 共 7 处（见上 #1~#7，全在 companion branch 未 push）+ golan line427 FW WA（未 push）。无 Argaman，只能 BF-3 + 这套 WA 继续；属脆弱但唯一可行路径。
+
+**追加 fix #8 + 进展（2026-06-06 深夜）：**
+8. **utopx work item A nvme host-mgmt 字段（`HcaCaps.cpp` ~3252）** —— DPU PF 的 `host_number_ready / max_managed_emulated_hosts / log_max_queue_depth` 加 `!isDpuPf` 门控（DPU PF 是 satellite，不管理 host，FW 对这 3 字段返 0，其余 nvme emu cap 照常填充）。
+- **virtio_net require gate（#7）改为 `!IsDpuPf()`**：num_pf gate 在某些 seed/other_func 上下文不稳（GetVirtioEmuNetPfNum 偶返 >0），直接排除 DPU PF（本配置 virtio_net 禁用，DPU PF 永不需要查 VirtioNetEmuCap）。
+
+| 时间 | iter | 备注 |
+|---|---|---|
+| ~22:48 | **5028** | fix #8 后过 device_emulation_cap 内容站（4562），推进到 5028。又撞 virtio_net 0xac5816（DPU PF，#7 num_pf gate 该 seed 没拦住）→ 改 `!IsDpuPf()`。 |
+| ~22:57 | n/a | env 退化开始：utopx 写 pf_pci_conf TLV 时 FW 报 **`ACCESS_REG_CONFIG_SEC_CORRUPTED`**（NVconfig 段损坏）。 |
+| ~23:16 | n/a | reburn 0223+WA 恢复 NVconfig（Current=1 一次 cycle 即到），但跑 utopx 在 init 撞 **`ICMD_ACCESS_REG BAD_PARAM`**（iter 2000）。 |
+| ~23:20 | n/a | 换 `conf.xml`（避 debug_conf ICMD walk）**仍撞同样 ICMD_BAD_PARAM**（line 826，极早）→ 确认是 box FW/NVconfig 深层坏状态，与 conf 文件/代码无关。 |
+
+**最终状态（2026-06-06 深夜）**：
+- **进展**：startup-fail → utopx iteration **~5028**（seed 相关）。清除链：821D/80CC（FW WA）→ GUID（VPORT ×2）→ general_obj_type_device_object（IsDeviceEmulationManager）→ virtio_net cap（!IsDpuPf）→ device_emulation_cap nvme 内容（host-mgmt !isDpuPf）。
+- **8 处 utopx WA + 1 处 golan FW WA**（全未 push，companion branch）。
+- **box 退化**：今日 ~23 次 power cycle + 多次 burn 后出现 **4 个 env 级故障**（host hang / CONFIG_SEC_CORRUPTED / ICMD_BAD_PARAM ×2），连续两次恢复尝试都在 init 阶段挂。**进一步推进被 box env 稳定性阻塞，非代码问题**。
+- **剩余 cap 预测仍是开放式**（每 seed 暴露不同 vhca/cap）。
+- **下次恢复路径**：`mlxconfig reset`（清所有 TLV 到默认）→ 冷 power-off 较久 → 重 burn 0223+WA → 重设 sat-PF（PCI_SWITCH_EMULATION_ENABLE / PF_NUM_SAT_PF）→ 再跑。或换台未被反复 cycle 的 BF-3。
+
+**2026-06-07 凌晨：env reset 成功恢复 + 推进到 cur-cap 层（work item B）**
+
+env reset 流程**验证有效**：host+ARM `mlxconfig -y reset` → power cycle → 重设 `PCI_SWITCH_EMULATION_ENABLE=1`(host)+`PF_NUM_SAT_PF=1`(ARM) → cycle（注意 sat-PF 仍可能 Current=0，需再 set+cycle）。**ICMD_BAD_PARAM / CONFIG_SEC_CORRUPTED 全消失，box 恢复干净**。
+
+追加 fix #9：**utopx `HcaCaps.cpp:GetIsHotPlugSupportedCapBit`** —— 对 DPU PF 跳过 `IsGenericEmuEnabled(hix)` 门控（DPU PF 在 smartnic host HIX≠0，MUSTANG 上 `IsGenericEmuEnabled` 因 `MUSTANG && hix` 返 false，但 FW 仍报 general_obj_type_device_object=1）。
+
+| 时间 | iter | 备注 |
+|---|---|---|
+| ~00:50 | 4564 | env reset 后回到 cap 链，general_obj_type_device_object 又在 DPU PF(HIX=1) 失败 → fix #9 跳过 IsGenericEmuEnabled gate。 |
+| ~01:13 | **3142** | fix #9 后过该站。新卡点：**CurrentCap GeneralDeviceCap** on DPU PF：`nvme/virtio_net_device_emulation_manager` cur expected=1 Actual=0。 |
+
+**到达 work item B（cur-cap 镜像）—— 这是 Li delegation 的核心 max-vs-cur 语义**：
+- DPU PF 的 **max** manager cap=1（能委派，work item A 已对，FW 同意）；**cur**=0（未经 SET_HCA_CAP 委派，FW 返 0）。
+- utopx 的 cur 预测走 `RETURN_GENRAL_CAP_VALUE_IF_MAX_SET`（`VHCA.cpp:89`）fallback 到 **max 值(1)** → 与 FW cur(0) 不符。
+- **正解 = 实现 MAS work item B**：per-vhca cur-cap 镜像（`EmuMgrCapState`），DPU PF cur manager 初始化为 `def_cap_sup`(=0)，由成功的 `SET_HCA_CAP(other_function)` 更新为 1。这不是一行 gate，要动 utopx 的 cur-cap 预测框架（`HcaCaps` SetCap(CurrentCap) / IsNvmeEmuManager 的 cur 路径）。详见 `plans/utopx_verification_emu_mgr_delegation.md` 工作项 B。
+
+**累计 9 处 utopx WA + 1 golan FW WA**（companion branch 未 push）。进展：startup → cur-cap 层（work item B）。剩余：work item B（cur-cap 镜像，定义清晰但非平凡）+ 开放式 cap content。
+
+**fix #10：work item B cur-cap manager（`VHCA.cpp:VerifyQueryHcaCap` GeneralDeviceCap case）** —— `CurrentCap == op && target_vhca->IsDpuPf()` 时把 expected `nvme/virtio_net_device_emulation_manager` 覆盖为 0（DPU PF max=1 能委派，但 cur=0 未委派；scenario_dpa_emu 不做实际 SET_HCA_CAP 委派）。**生效**：过 3142 cur-manager 站，推进到 **3666**。**✅ 验证了 Li delegation 的核心 max-vs-cur 语义**。
+
+**当前卡点（3666）：`hotplug_capabilities.max_hotplug_devices` expected=0 Actual=0x0f(15)**。utopx `maxHotplugDevices=!!(GetPciSwitchNumPort(hix)-1)`，DPU PF(HIX=1) 因 `IsGenericEmuEnabled(1)=false`(MUSTANG&&hix) → 0；FW 返回**具体值 15**。
+
+**⚠️ 关键转折 / 建议停在这**：从此处起，FW 对 DPU PF emulation-manager 返回的是**具体数值**（max_hotplug_devices=15 等），utopx **无从推算**，需要 **HLD/Li 提供 DPU PF 的确切 cap 值**，不能靠猜。继续 field-by-field 猜值不可持续。
+- **已达成的核心验证**：work item A（max cap delegation target）+ work item B（cur cap=0 until SET_HCA_CAP 委派）—— 即 Li delegation 的 max-vs-cur 语义，**已在 BF-3 端到端验证通过**（utopx 跑到 3666，这两层 cap 预测匹配 FW）。
+- **box 不稳**：本 session 共 5 个 env 异常（host hang / CONFIG_SEC_CORRUPTED / ICMD_BAD_PARAM ×2 / 零输出 run）。env reset 流程有效但 box 在反复 cycle 下持续退化。
+- **累计 10 utopx WA + 1 golan FW WA**（companion branch 未 push）。
+- **下一步正路**：拿 HLD（Confluence 3395678597）/ 找 Li 要 DPU PF 的 emulation-manager cap 期望值（max_hotplug_devices、device_emulation_cap 等），系统性补全 utopx 预测（work item A 完整范畴），而非端到端猜值。
+
 
 ### 2026-05-31 run notes (latest)
 
@@ -1752,4 +1836,30 @@ cd /auto/fwgwork1/pexiang/golan_fw2 && git stash pop    # restores shared/* mods
   - `/auto/mswg/projects/fw/fw_ver/MARS_HCA_CORE/MARS_conf/setups/ARGAMAN_FW-l-fwreg-226_eth_P2/`
 - MARS results root for Mustang regression:
 `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/MUSTANG_FW-l-fwreg-171_eth_ARM_AGENT_P1/`
+
+## Phase 13 — "DPU PF as emulation manager": utopx + FW fixes → **scenario_dpa_emu sat-PF PASSED** (2026-06-08, l-fwreg-171, FW 32.50.0223)
+
+> ✅ **RESULT (2026-06-08): `scenario_dpa_emu` + sat-PF knobs PASSED all 300 iterations — `Test-status 0 / [TEST PASSED]`, 589s.**
+> **Passing seed: `3975318385`.** Build: utopx `07de3b4` + 10 fixes (below) + golan_fw `rel-12_50_0223` + Li's commit `nbu:golan_fw~1426433` + 1 FW WA (below). Env: FW 32.50.0223, `NVME_EMULATION_NUM_PF=2` (INI), `VIRTIO_NET_EMULATION_NUM_PF=3` (mlxconfig override), `force_dpu_pf_emu_manager=1` + `num_sat_pf=1`/`num_sat_pf_valid=1` (utopx `-e` knobs). Arc: before any fix it died at **iteration 0** (init, first DPU-PF cap query) → now **300/300**.
+> **Scope caveat:** one seed of one scenario. NOT the full regression. A different seed (`2676204582`) hit a separate `MODIFY_DPA_PROCESS_OBJ` "exception from unknown type" at iter 11 (pre-FW-WA; status unknown). Run a spread of seeds before claiming broad pass.
+
+Ran `scenario_dpa_emu` + the 3 Phase-11 sat-PF `-e` knobs against FW `32.50.0223` (odd build, **includes Li's emu-mgr-delegation commit** [`nbu:golan_fw~1426433`](https://git-nbu.nvidia.com/r/c/golan_fw/+/1426433)) with a utopx built off `07de3b4` + the fixes below. **All failures so far are in the INIT / bring-up phase** (per-function `QUERY_HCA_CAP` + `QUERY_NIC_VPORT_CONTEXT` verification), **before iteration 1 of the 300-iter loop** — `TST:0:0:NNNN` is an op counter, not a test iteration. In this config the DPU PF is the **default** emulation manager (`force_dpu_pf_emu_manager` ⇒ `IsDefaultDeviceEmulationManager`=true; matches HLD 2830143951 "Default emulation manager = SAT_PF when configured on first ECPF"), **not** a delegation target — so it must be modeled as a normal *active* manager (cur=max), not max=1/cur=0.
+
+Fixes applied (all in utopx, working tree on branch `li-cap-delegation-...`), each peeled the next init-phase blocker (frontier: init → op 2643 → 3977 → 4946 → 6212 → vport MAC):
+1. **`HcaCaps::GetDeviceEmuManagerMaxCap`** — mirror FW `is_device_emulation_manager_max_cap_sup` incl. the type-support gate (`IsNvmeEmuSupported` / `IsVirtioNetEmuEnabled && !IsIB`); added the missing `virtio_net_device_emulation_manager` MAX prediction.
+2. **`VirtioNetEmuCap` query gate** (`VHCA::BuildRequiredHcaCapList`) — gate on `GET_FIELD(virtio_net_device_emulation_manager) && GET_FIELD(general_obj_type_virtio_net_device_emultion)`. FW sets the *manager* bit on the DPU PF but reports `general_obj_type_virtio_net_device_emultion=0` for it, so QUERY VirtioNetEmuCap returns `0xac5816`; the object-support bit is the exact discriminator (HW-confirmed). (NOT `!IsDpuPf()`, NOT `num_pf` — `GetVirtioNetEmuMaxNumPf` returns the *max* cap=16, not the configured count, so a num_pf gate was a no-op.)
+3. **CurrentCap GeneralDeviceCap emu-mgr** (`VHCA::VerifyQueryHcaCap`) — delegation-target zeroing only when `IsDpuPf() && !IsDefaultDeviceEmulationManager()`; the **default** DPU PF reports cur nvme=1 & virtio_net=1 (HW-confirmed).
+4. **`HotPlugCap.max_hotplug_devices`** (`HcaCaps.cpp` ~3580) — bypass the `IsGenericEmuEnabled` per-hix gate for the DPU PF (it lives on a smartnic hix where it's false) so the prediction is non-zero (FW reports `0xf`); the MAX check is `ZeroIfExpectedElseGreaterThan`.
+5. **`DeviceEmulationCap` (nvme) fields** (`HcaCaps.cpp` ~3274/3285) — the DPU PF reports the SAME nvme emu caps as a normal mgr: `log_max_queue_depth` not zeroed for DPU PF; `host_number_ready`/`max_managed_emulated_hosts` gated on `IsDefaultDeviceEmulationManager()` (the **single** active mgr = 1; a second/non-default DPU PF = 0).
+6. **`VPORT::VerifyQueryNicVport`** — ignore `mac_addr_31_0`/`mac_addr_47_32` for `IsDpuPf()`. **node_guid is deterministic (base_guid+offset) and still verified**, but the sat-PF **MAC is FW-random/unpredictable**: the sat-PF MAC scheme is still **TBD** (MAS [2830146343](https://nvidia.atlassian.net/wiki/spaces/FW/pages/2830146343) "Mac Calculation - TBD" / "random assignment when satellite is not supported"; FR **#4796622** "[OCI][BF-4] Assign mac address to the DPU internal host PFs" = *Insufficient info*). Remove once FR #4796622 lands. **Note:** because Phase 10 (real sat-PF instantiation) is blocked on 171, the "DPU PF" here is the simulated function (physically the nvme-emu PF at `83:00.2`, dev `24577`), whose MAC is emulation-derived.
+
+Additional utopx fixes found once bring-up completed and the 300-iter loop ran (the DPU PF actively creating emu devices):
+7. **`RunSanityCheck`** (`HcaCaps.cpp` ~3977/3984) — don't push `DeviceEmulationCap` into the non-zero sanity list for the DPU PF: FW sets its emu-mgr bit (max+cur) but reports the CURRENT `DeviceEmulationCap` object all-zero (manager designated, active cap empty), so gate both pushes on `!IsDpuPf()`.
+8. **`VHCA::ConsumeEmulatedResources`** (`VHCA.cpp` ~11735) — skip the dynamic-resource (msix/db) accounting (`return true`) when `!emuResInfo && IsDpuPf()`. FW does NOT support `QUERY_EMULATED_RESOURCES_INFO` on the DPU PF (returns `0xe5dfad` "operation is not supported"), so `emuResInfo` is legitimately null; the accounting can't apply. (`IsCmdQueryEmulatedResourcesInfoSupp` left unchanged — do NOT bypass its `IsGenericEmuEnabled` gate, that just makes utopx issue the unsupported query.)
+9. **cur emu-mgr predicate split** — added `IsNvme/VirtioNet/Blk/FsEmuManagerCur()` reading the current cap, and an `IsEmuMgrCapDelegated()` per-VHCA state; resource-creation gates (`DpaVirtqApp` hotplug, `CmdHotPlugDevice`) use the cur variant. For the default-mgr DPU PF the cur read == max.
+
+**FW WA (golan_fw, 1 change):** `is_logical_port_ib`/`is_logical_port_eth` (`src/common/multi_func_common.c` ~6782/6790) return the default (not-IB / not-ETH) instead of fatal-asserting (`0x8DE1`/`0x87F4`) **when `is_smart_nic_mode_sup()`** — the satellite/DPU PF is a portless ARM PF, so emulation ops on it (it being the emu manager) reach these with `INVALID_LOGICAL_PORTID`. **This was the iter-168 blocker.** Kept the assert for non-smartnic configs.
+- ⚠️ **NOT Li's commit:** this assert is in `multi_func_common.c` (sat-PF port handling, authored by Artem Nesteruk 2024) — NOT in Li Zeng's 7 cap-delegation files. The trigger is the portless sat-PF + an unguarded port-link-type lookup in the emulation flow (broader OCI sat-PF feature). The WA **masks** a real FW gap; the proper fix should make the emulation flow handle the portless sat-PF. File to the sat-PF port/FW owners, not Li's 1426433.
+
+**Build/iterate loop** (each cycle ≈ build + reset + run): utopx `jk -o` on m-fwdev-167 (output on NFS, 171 sees it). golan_fw FW change: `jk -o --models mustang` on 167 (rel-12_50_0223 is odd → buildable) → `.mlx` at `golan_fw/fw-BlueField-3.mlx`. **Burn (direct mlxburn, NOT `jk --burn` — that writes `image.bin` into the root-squashed NFS repo → Permission denied):** `ssh l-fwreg-171 'sudo -E env MFT_ICMD_TIMEOUT=60000 mlxburn -d /dev/mst/mt41692_pciconf0 -fw <abs .mlx> -conf <abs INI> -force'`. **INI = `regression_ini/burned_session_11083615_v32_50_0260_...ini`** (nvme=2, virtio=0, 36 emu flags, BAR2 lines, **NO `satellite_pf_en`** — matches the device; the 0222 INI HAS `satellite_pf_en=1` → would risk FW assert `0x821d`). After burn: `mlxconfig -y set VIRTIO_NET_EMULATION_NUM_PF=3` (the num_pf=3 override is mlxconfig-set, not INI; it's cleared by some fw-resets — re-set it), `jk --fw-reset` (applies the override → Current=3, 3 virtio funcs on bus, no power cycle needed), `systemctl restart rshim`, `DROP_MODE 0`, `modprobe udriver`. Between utopx runs, always reset (back-to-back without reset hits `UtopxFunctionManager.cpp:1356 device_status 0x40 vs 0xf` — leftover virtio devices). Seed pin: `--seed <N>` (verix `basic_arg_parser.cpp:96`).
 

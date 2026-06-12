@@ -2152,7 +2152,21 @@ runFWReset() {
     local resetStartTime=$(date +%s)
     echo "$SEPARATOR"
     echo -e "$NOTATION ${CYAN}Resetting FW via fwreset${chipKey}...${RESET}"
-    local cmd="fwreset${chipKey}"
+    # When the user explicitly passes --device, honor it: bypass the
+    # interactive MST device chooser baked into the fwreset<key> alias
+    # (func_alias_reset -> func_get_device_by_type prompts on multi-device
+    # hosts). We replicate what func_alias_reset does -- clear the flint
+    # semaphore then call fwresetfunc directly with -d <device> -- so the
+    # chosen device is passed straight through to the wrapper. Without
+    # --device we keep the alias path so auto-detection still works.
+    local cmd
+    if [[ -n "$fDevice" ]]; then
+        local flintDev="${fDevice%%,*}"
+        sudo flint -d "$flintDev" --clear_semaphore
+        cmd="fwresetfunc ${project_full_names[$chipKey]} -d $fDevice"
+    else
+        cmd="fwreset${chipKey}"
+    fi
     # Newer chips (BF-3 'm', CX-8 'gl', CX-9 'ar') require --run_new_fwreset:
     # the old wrapper (fw_reset_wrapper_shared.sh) dispatches to per-chip
     # <chip>_fw_reset.sh scripts that don't exist / work for these. The new

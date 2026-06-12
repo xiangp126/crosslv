@@ -352,6 +352,81 @@ checkNodeEnv() {
     fi
 }
 
+# Clear orphaned npm global staging dirs so `npm install -g` can't abort on NFS.
+#
+# npm extracts each global package into a hidden staging dir under its scope
+# (e.g. @anthropic-ai/.claude-code-XXXX) and renames it into place. If an install
+# is interrupted while a file inside is still open, the dir is orphaned. On NFS
+# the still-open file is silly-renamed to .nfsXXXX and cannot be unlinked until
+# its holder exits, so every later install dies with:
+#   npm error EBUSY: resource busy or locked, unlink '.../.claude-code-XXXX/bin/.nfsYYYY'
+#
+# We must NOT kill the holder (it may be a live claude/codex session). We don't
+# need to: NFS only blocks unlink/rename of the open file itself, not of its
+# parent dir. So we move the whole orphan out of node_modules (a same-filesystem
+# rename, always allowed). npm then has nothing to trip over, and the stray .nfs
+# file disappears on its own once its holder eventually exits.
+#
+# Usage: cleanupNpmStaging <scope>   e.g. cleanupNpmStaging @anthropic-ai
+cleanupNpmStaging() {
+    local scope="$1" root scopeDir trash sudo d base
+
+    # Guard 1: scope must be a non-empty literal we control (@anthropic-ai, ...).
+    [ -n "$scope" ] || return 0
+
+    root=$(npm root -g 2>/dev/null) || return 0
+    # Guard 2: root must be an absolute path that actually ends in /node_modules.
+    # If a broken npm ever returned '' or '/', this refuses to proceed so the
+    # rm below can never be aimed at '/', '$HOME', or any non-node_modules tree.
+    case "$root" in
+        /*/node_modules) ;;
+        *) return 0 ;;
+    esac
+    [ -d "$root" ] || return 0
+
+    scopeDir="$root/$scope"
+    [ -d "$scopeDir" ] || return 0
+
+    # Staging/orphan dirs are hidden and contain a '-': .claude-code-XXXX,
+    # .sandbox-runtime-XXXX, .codex-XXXX. '.' and '..' have no '-' so are skipped,
+    # and real installed dirs (claude-code, codex) lack the leading dot.
+    shopt -s nullglob
+    local orphans=("$scopeDir"/.*-[A-Za-z0-9]*)
+    shopt -u nullglob
+    [ ${#orphans[@]} -gt 0 ] || return 0
+
+    sudo=""
+    [ -w "$scopeDir" ] || sudo="sudo"
+    trash="$root/.jc-nfs-trash"
+
+    for d in "${orphans[@]}"; do
+        base=${d##*/}
+        # Guard 3 (defense in depth): only ever touch a real directory (not a
+        # symlink) that sits *directly* under scopeDir and whose name is a
+        # hidden, dashed staging name. Anything else is skipped untouched.
+        [ -d "$d" ] && [ ! -L "$d" ] || continue
+        [ "$d" = "$scopeDir/$base" ] || continue
+        case "$base" in
+            .?*-*) ;;
+            *) continue ;;
+        esac
+
+        echo -e "  ${LIGHTYELLOW}Clearing orphaned npm staging ${BLUE}${base}${RESET}${GREY}...${RESET}"
+        if $sudo rm -rf -- "$d" 2>/dev/null && [ ! -e "$d" ]; then
+            continue
+        fi
+        # A live process still holds a .nfs* file inside: move the parent aside.
+        $sudo mkdir -p "$trash" 2>/dev/null
+        if $sudo mv -- "$d" "$trash/${base}.$$" 2>/dev/null; then
+            echo -e "  ${GREY}Still in use; moved aside to ${trash} (clears itself later).${RESET}"
+        else
+            echo -e "  ${RED}Could not clear ${base}; rerun with sudo.${RESET}" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
 installClaude() {
     local bin ver
 
@@ -362,6 +437,7 @@ installClaude() {
     # macOS users get fresher binaries from the npm package (which ships
     # native binaries per platform via optionalDependencies).
     checkNodeEnv || return 1
+    cleanupNpmStaging @anthropic-ai
     echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@anthropic-ai/claude-code${RESET}${GREY}...${RESET}"
     npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime || {
         echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
@@ -386,6 +462,7 @@ installCodex() {
     # See installClaude — npm is the canonical, most up-to-date channel
     # on every OS.
     checkNodeEnv || return 1
+    cleanupNpmStaging @openai
     echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@openai/codex${RESET}${GREY}...${RESET}"
     npm install -g @openai/codex || {
         echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
@@ -475,6 +552,7 @@ installGemini() {
     # Same npm channel as claude/codex — Google ships gemini-cli only via
     # @google/gemini-cli on npm; no Homebrew or system package today.
     checkNodeEnv || return 1
+    cleanupNpmStaging @google
     echo -e "  ${LIGHTYELLOW}Installing ${BLUE}@google/gemini-cli${RESET}${GREY}...${RESET}"
     npm install -g @google/gemini-cli || {
         echo -e "  ${RED}Error: npm install failed.${RESET}" >&2
