@@ -437,8 +437,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .nav-left{flex:1 1 auto;display:flex;align-items:center;gap:9px;min-width:0}
   .nav-mid{flex:0 0 auto;display:flex;align-items:center;gap:8px}
   .nav-right{flex:1 1 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px}
-  header .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px rgba(255,176,46,.55);flex:0 0 auto}
-  header h1{font-size:13px;letter-spacing:.16em;text-transform:uppercase;font-weight:600;margin:0;color:#cdd5dc;white-space:nowrap}
+  header .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px rgba(255,176,46,.55);flex:0 0 auto}
+  header h1{font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;margin:0;color:var(--dim);white-space:nowrap}   /* small, dimmed wordmark — a quiet logo, not a heading that competes with the controls */
   /* Mobile: hide brand + empty right spacer so the controls aren't pushed to the very bottom edge */
   @media (max-width:760px){ .nav-left, .nav-right{display:none} }
   /* Unified control look: same height 34, same radius 9, same base */
@@ -614,8 +614,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     background:
       repeating-linear-gradient(90deg,var(--grid) 0,var(--grid) 1px,transparent 1px,transparent calc(100%/24));
     background-color:var(--panel2);border:1px solid var(--line);overflow:hidden}
-  .cover{position:absolute;top:0;bottom:0;background:linear-gradient(var(--cover2),var(--cover));
-         opacity:.85}
+  .cover{position:absolute;top:0;bottom:0;background:linear-gradient(var(--cover2),var(--cover))}
+         /* solid (not translucent): recorded = solid green, so the faint hour-grid only shows through in genuine gaps → a dark band = a real recording gap, not a segment seam */
   .cover.live{background:linear-gradient(var(--accent),#d98f1d)}
   .playhead{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--accent2);
     box-shadow:0 0 8px var(--accent2);pointer-events:none;display:none}
@@ -642,7 +642,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <div class="navin">
     <div class="nav-left">
       <span class="dot"></span>
-      <h1>Xiaomi Recordings</h1>
+      <h1>Xiaomi</h1>
     </div>
     <div class="nav-mid">
       <div class="modebar" id="modebar">
@@ -718,9 +718,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <div class="tlwrap">
     <div class="tlhead">
       <span class="tlnav">
-        <button id="prevSeg" title="Previous recording segment">⏮ Prev</button>
+        <button id="prevSeg" title="Jump to the previous recording clip">⏮ Prev clip</button>
         <span id="tlDate">—</span>
-        <button id="nextSeg" title="Next recording segment">Next ⏭</button>
+        <button id="nextSeg" title="Jump to the next recording clip">Next clip ⏭</button>
       </span>
     </div>
     <div class="track" id="track">
@@ -961,12 +961,19 @@ function loadSegment(idx, offsetSec, autoplay){
 // ---- Track: drag/click; the playhead follows the cursor and shows the precise time bubble at that position ----
 let dragging = false;
 let cancelDrag = false;   // moving cursor/finger above or below the track while dragging = cancel this drag (no jump on release)
+let dragHist = [];        // recent {t, sec} samples while dragging — fallback commit (skips lift jitter) when the user lifts without dwelling
+const SETTLE_MS = 70;     // how far before release to look back for the intended position (touch, non-dwell case)
+// Dwell-to-lock: holding the finger ~still for DWELL_MS "locks" the selection — the playhead/time freeze there and later small moves (the finger-lift jitter) are ignored, so the shown time doesn't twitch. A move > STILL_PX unlocks and follows again.
+let dwellTimer = null, dragLocked = false, dragLockedSec = null, dragShownSec = null, dragLastX = null;
+const DWELL_MS = 130, STILL_PX = 8;
 const track = $('track');
 
 function moveHead(sec){            // sec = seconds relative to 00:00 of the day
+  const cs = Math.min(DAY, Math.max(0, sec));
   const ph = $('playhead');
   ph.style.display = 'block';
-  ph.style.left = (Math.min(DAY, Math.max(0, sec))/DAY*100) + '%';
+  ph.style.left = (cs/DAY*100) + '%';
+  $('tlDate').textContent = (dateStr ? dateStr + ' ' : '') + hms(cs);   // always reflect the time the playhead line sits at (advances during playback, follows the drag)
 }
 function trackSec(e){
   // Use the content box (clientLeft/clientWidth, excluding the 1px border) to compute pixels→seconds, same reference frame as the left% of .cover/.playhead;
@@ -986,6 +993,8 @@ function showTip(e){              // a time bubble that follows the cursor; fixe
   tip.style.display = 'block';
 }
 function hideTip(){ $('tip').style.display = 'none'; }
+function dragShow(sec, e){ moveHead(sec); showTip(e); dragShownSec = sec; }   // move the playhead/time and remember where it is (so a dwell-lock can freeze on it)
+function armDwell(){ clearTimeout(dwellTimer); dragLocked = false; dwellTimer = setTimeout(() => { dragLocked = true; dragLockedSec = dragShownSec; }, DWELL_MS); }   // (re)start the hold timer; firing it = the finger held still → lock the selection
 function seekTo(sec){
   if(pbGrid){ gridSeekAll(sec, true); return; }   // playback split: whole screen jumps to the same moment
   if(gridMode){ setPbGrid(true).then(() => gridSeekAll(sec, true)); return; }   // dragging the timeline in live split → enter [split playback] and jump to that moment (not single-stream playback)
@@ -997,9 +1006,11 @@ function seekTo(sec){
 
 track.addEventListener('pointerdown', e => {
   if(!segs.length || !dayStart) return;
-  dragging = true; cancelDrag = false;
+  dragging = true; cancelDrag = false; dragLocked = false; dragLockedSec = null; dragLastX = e.clientX;
   try{ track.setPointerCapture(e.pointerId); }catch(_){}
-  const sec = trackSec(e); moveHead(sec); showTip(e);     // move the line immediately + show the time
+  const sec = trackSec(e); dragShow(sec, e);     // move the line immediately + show the time
+  dragHist = [{t: Date.now(), sec}];
+  armDwell();
 });
 track.addEventListener('pointermove', e => {
   if(!segs.length) return;
@@ -1014,22 +1025,44 @@ track.addEventListener('pointermove', e => {
   }
   cancelDrag = false;
   const sec = trackSec(e);
-  if(dragging) moveHead(sec);      // while dragging the line follows the cursor
-  showTip(e);                      // hovering also shows the time at that point
+  if(dragging){
+    const dx = Math.abs(e.clientX - (dragLastX == null ? e.clientX : dragLastX));
+    if(dx > STILL_PX){               // deliberate movement → follow the finger, record history, restart the hold timer
+      dragLastX = e.clientX;
+      dragShow(sec, e);
+      dragHist.push({t: Date.now(), sec}); if(dragHist.length > 40) dragHist.shift();
+      armDwell();
+    } else if(!dragLocked){          // small drift, not yet locked → keep following (responsive); don't reset the timer so it still locks on hold
+      dragShow(sec, e);
+    }
+    // dragLocked && small move → frozen: the finger-lift jitter is ignored, playhead/time stay put
+  } else {
+    showTip(e);                      // hover (mouse): just the time bubble
+  }
 });
 track.addEventListener('pointerleave', () => { if(!dragging) hideTip(); });
 function endDrag(e){
   if(!dragging) return;
-  dragging = false;
+  dragging = false; clearTimeout(dwellTimer);
   try{ track.releasePointerCapture(e.pointerId); }catch(_){}
   hideTip();
   if(cancelDrag){ cancelDrag = false; updateHead(); return; }   // cancel: no jump, the playhead returns to the actual position
-  seekTo(trackSec(e));             // only jump/load on release
+  let sec;
+  if(dragLocked && dragLockedSec != null){
+    sec = dragLockedSec;             // dwelled → use the locked position; the finger-lift jitter was already ignored
+  } else if(e.pointerType === 'touch' && dragHist.length){
+    const upT = Date.now();          // lifted without dwelling → still skip the trailing jitter via the short history
+    sec = dragHist[dragHist.length - 1].sec;
+    for(let i = dragHist.length - 1; i >= 0; i--){ if(upT - dragHist[i].t >= SETTLE_MS){ sec = dragHist[i].sec; break; } }
+  } else {
+    sec = trackSec(e);               // mouse/pen lifts cleanly → exact position
+  }
+  seekTo(sec);                       // only jump/load on release
 }
 track.addEventListener('pointerup', endDrag);
-track.addEventListener('pointercancel', () => { dragging = false; cancelDrag = false; hideTip(); updateHead(); });
+track.addEventListener('pointercancel', () => { dragging = false; cancelDrag = false; dragLocked = false; clearTimeout(dwellTimer); hideTip(); updateHead(); });
 // Press Esc while dragging to cancel (desktop)
-document.addEventListener('keydown', e => { if(e.key === 'Escape' && dragging){ dragging = false; cancelDrag = false; hideTip(); updateHead(); } });
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && dragging){ dragging = false; cancelDrag = false; dragLocked = false; clearTimeout(dwellTimer); hideTip(); updateHead(); } });
 
 // ---- During playback let the playhead follow progress (do not steal it while dragging) ----
 function updateHead(){

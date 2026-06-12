@@ -58,10 +58,12 @@ UI is all English; the page opens to a **4-cell live split** by default (`START_
   `c700_0X`; the UI shows display names from `CAM_NAMES` (`CAM 1`…`CAM 6`, via `dispCam()`).
   Edit `CAM_NAMES` to rename without touching stream wiring.
 - **Timeline playback:** multi-root per-day strip; drag-to-seek with a timestamp bubble (snaps to
-  the nearest recording if you land in a gap); prev/next-segment; ±10s; speed; cross-camera time
-  alignment. The in-progress chunk shows a **`● REC`** badge (single playback) and an amber bar on
-  the timeline. A collapsible **date + hour/min/sec wheel picker** ("Go to time") jumps to an exact
-  moment (hour/min/sec loop).
+  the nearest recording if you land in a gap); prev/next **clip**; ±10s; speed; cross-camera time
+  alignment. Recorded spans render as **solid green**; real recording gaps stay **dark** (a dark band
+  = a genuine gap, not a segment seam). The in-progress chunk shows a **`● REC`** badge (single
+  playback) and an amber edge on the timeline. A collapsible **date + hour/min/sec wheel picker** ("Go
+  to time") jumps to an exact moment (hour/min/sec loop). On touch, a timeline drag commits to where
+  the finger was just before release (skips finger-lift jitter).
 - **Live (go2rtc):** single live + live split use the go2rtc `<video-stream>` component (its
   `video-rtc.js`/`video-stream.js` proxied same-origin) — no iframe. Native H265 over WebRTC when
   supported, else H264 transcode. A top-right **`● RTC`** / **`● MSE`** badge shows the negotiated
