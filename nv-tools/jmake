@@ -22,10 +22,12 @@ fLinkWorkspace=
 fNeedBuild=
 fPrintBuildFlags=
 fClean=
+fCleanExplicit=   # set by explicit -c/--clean or --clean-db (vs --db's implied clean)
+fRMExplicit=      # set by explicit --clean-db (vs --db's implied compile-db removal)
 fNoVerbose=
 fNicx=
 fTrackIncludes=
-fPatchSudo=
+fPatch=
 fDockerGroup=
 fEthlt=
 fCodecov=
@@ -153,6 +155,7 @@ DEFAULT_MODEL="mustang"
 # Get model display name with hardware info: "model (HW)"
 getModelDisplayName() {
     local model="$1"
+    [[ -z "$model" ]] && { echo "$fRepoType"; return; }
     local hw="${MODEL_HARDWARE[$model]}"
     if [[ -z "$hw" ]]; then
         local base suffix
@@ -298,10 +301,11 @@ Build Options:
         --no-verbose                Suppress full compilation output (default: verbose)
     -a, --all                       Build all base models one by one (loop mode, auto-resumes from last failure)
     -A, --all-extended              Build all extended models (includes _ethlt, _codecov variants)
-    -b, --bear                      Generate $fCompileCommandsJson (implies -c --clean-db -o)
+        --db                        Generate $fCompileCommandsJson (implies -c --clean-db -o)
     -m, --models <models>           Build specified models (comma-separated, loop if multiple)
         --skip <models>             Skip these models when building (comma-separated)
-    -p, --patch                     Patch 'sudo docker' → 'docker' in build scripts (for Sandbox autorun)
+    -p, --patch                     (utopx) Make proj_build.sh relink compile_commands.json only when
+                                    none exists, so a plain ./build.sh won't clobber the 'jk --db' database
         --ethlt                     Build the _ethlt variant of the model(s)
         --codecov                   Build the _codecov variant of the model(s)
         --cov                       Build the cov variant of the model(s)
@@ -360,18 +364,6 @@ Supported Models:
 
 Examples:
     $SCRIPT_NAME -o                        # Build ${DEFAULT_MODEL:-} (default, verbose)
-    $SCRIPT_NAME --models argaman,alpine   # Build argaman and alpine (separated by comma)
-    $SCRIPT_NAME -a                        # Build all models one by one
-    $SCRIPT_NAME -a --skip arava,viper     # Build all except arava and viper
-    $SCRIPT_NAME -a --scratch              # Ignore saved state and start fresh
-    $SCRIPT_NAME -c -o                     # Clean and build the default ${DEFAULT_MODEL:-}
-    $SCRIPT_NAME --no-verbose -o           # Build with quiet mode
-    $SCRIPT_NAME --bear --models gilboa    # Build gilboa with $fCompileCommandsJson
-    $SCRIPT_NAME --fetch --rebase          # Fetch then rebase (cascade)
-    $SCRIPT_NAME --burn --device /dev/mst/mt4133_pciconf0 -m argaman # Burn argaman FW to device
-    $SCRIPT_NAME --burn --fw-reset --device /dev/mst/mt4133_pciconf0 # Burn and reset FW
-    $SCRIPT_NAME --burn-official 82.49.0052 --fw-reset --device /dev/mst/mt4133_pciconf0
-    $SCRIPT_NAME --fw-reset -m mustang     # Reset via fwresetm (no device path needed)
 
 _EOF
     exit 0
@@ -388,9 +380,9 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hcoaAj:w:Dlbm:NpT:"
+SHORTOPTS="hcoaAj:w:Dlm:NpT:"
 # NOTE: No leading spaces on continuation lines — they become part of the string and break getopt
-LONGOPTS="help,clean,debug,bear,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,\
+LONGOPTS="help,clean,debug,db,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,\
 list,list-extended,link,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,scratch,track,fetch,push,\
 rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,mft-start,\
 mft-stop,mft-restart,ofed-restart,ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:,ini:,\
@@ -432,22 +424,25 @@ while true; do
             ;;
         -c|--clean)
             fClean=true
+            fCleanExplicit=true
             shift
             ;;
         --clean-db)
             fClean=true
             fRMCompileCommandsJson=true
+            fCleanExplicit=true
+            fRMExplicit=true
             shift
             ;;
         --git-clean)
             fGitClean=true
             shift
             ;;
-        -b|--bear)
+        --db)
             fGenerateCompileCmds=true
             fNeedBuild=true
             fClean=true
-            fRMCompileCommandsJson=true  # -b/--bear implies -c --clean-db -o
+            fRMCompileCommandsJson=true  # --db implies -c --clean-db -o
             shift
             ;;
         --no-verbose)
@@ -459,7 +454,7 @@ while true; do
             shift
             ;;
         -p|--patch)
-            fPatchSudo=true
+            fPatch=true
             shift
             ;;
         --ethlt)
@@ -700,7 +695,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 # Auto-set flags:
-# --bear implies -o and -C (already set above)
+# --db implies -o and -C (already set above)
 
 getCurrentTime() {
     echo -e "${RED}$(date +"%m/%d/%Y %H:%M:%S")${RESET}"
@@ -819,6 +814,14 @@ preConfigure() {
         fEthlt=
         fCodecov=
         fCov=
+        # --db on utopx only needs to (re)build + expand the database; the forced
+        # clean that --db implies elsewhere would mean a full ~7min rebuild for
+        # nothing. Drop only --db's *implied* clean — honor an explicit
+        # --clean/--clean-db the user also passed (jk --clean --db still cleans).
+        if [[ -n "$fGenerateCompileCmds" ]]; then
+            [ -z "$fCleanExplicit" ] && fClean=
+            [ -z "$fRMExplicit" ] && fRMCompileCommandsJson=
+        fi
         return
     fi
 
@@ -894,7 +897,7 @@ printBuildFlags() {
         [ -n "$fRMCompileCommandsJson" ] && echo -e "[/] ${COLOR}Remove${RESET} existing $fCompileCommandsJson"
         [ -n "$fGenerateCompileCmds" ]   && echo -e "[g] ${COLOR}Generate${RESET} $fCompileCommandsJson"
         [ -n "$fTrackIncludes" ]         && echo -e "[T] ${COLOR}Track Includes${RESET} (-D TRACK_INCLUDES=1)"
-        [ -n "$fPatchSudo" ]             && echo -e "[P] ${COLOR}Patch${RESET} sudo docker → docker"
+        [ -n "$fPatch" ]                 && echo -e "[P] ${COLOR}Patch${RESET} proj_build.sh (guard compile_commands.json relink)"
         [ -n "$fEthlt" ]                 && echo -e "[E] ${COLOR}Ethlt${RESET} variant (_ethlt)"
         [ -n "$fCodecov" ]               && echo -e "[K] ${COLOR}Codecov${RESET} variant (_codecov)"
         [ -n "$fCov" ]                   && echo -e "[O] ${COLOR}Cov${RESET} variant (cov)"
@@ -1026,33 +1029,52 @@ updateSubmodules() {
     fi
 }
 
-patchSudoDocker() {
-    [ -z "$fPatchSudo" ] && return
+# --patch: make proj_build.sh's compile_commands.json relink non-destructive.
+# By default proj_build.sh unconditionally re-points the repo-root
+# compile_commands.json at the raw Unity database on every build, which clobbers
+# the per-file db that `jk --db` produced. After patching, it only links when the
+# root has no compile_commands.json yet — so the very first build still gets a
+# basic (Unity) db, while an existing one (e.g. the expanded db from `jk --db`)
+# is left untouched and survives later plain builds. Idempotent, local edit.
+patchUtopxProjBuild() {
+    [ -z "$fPatch" ] && return
+    if [[ "$fRepoType" != "utopx" ]]; then
+        echo -e "$NOTATION ${GREY}--patch only applies to utopx; nothing to do for ${fRepoType:-this repo}${RESET}"
+        return
+    fi
     cd "$fWorkingDir" || exit
-    local patched=0
-    local patchedFiles=()
-    local buildScript="$BUILD_SCRIPT"
-    local patchFiles=(
-        "hca_fw_core_platform/virtualization/container/project/golan_fw/build/src/build.py"
-        "hca_fw_core_platform/virtualization/container/common/src/base.py"
-    )
-
-    for f in "$buildScript" "${patchFiles[@]}"; do
-        if [[ ! -f "$f" ]]; then
-            echo -e "$NOTATION ${RED}Error: patch target not found: $f${RESET}"
-            exit 1
-        fi
-        if grep -q 'sudo docker' "$f"; then
-            sed -i 's/sudo docker/docker/g' "$f"
-            patchedFiles+=("$f")
-            ((patched++))
-        fi
-    done
-    if [[ $patched -gt 0 ]]; then
-        echo -e "$NOTATION ${CYAN}Patched 'sudo docker' → 'docker' in $patched file(s):${RESET}"
-        for f in "${patchedFiles[@]}"; do
-            echo -e "         ${GREEN}✓${RESET} $f"
-        done
+    local pf="proj_build.sh"
+    if [[ ! -f "$pf" ]]; then
+        echo -e "$NOTATION ${RED}Error: patch target not found: $pf${RESET}"
+        exit 1
+    fi
+    local marker="# [jmake] only relink compile_commands.json when none exists yet (jk --db owns the expanded db)"
+    if grep -qF "$marker" "$pf"; then
+        echo -e "$NOTATION ${GREY}$pf relink is already guarded${RESET}"
+        return
+    fi
+    if ! grep -q '^if \[ -f compile_commands.json \]; then' "$pf"; then
+        echo -e "$NOTATION ${YELLOW}Skipping $pf patch (relink 'if' anchor not found)${RESET}"
+        return
+    fi
+    # Add a guard to the relink's `if` so it only runs when the repo root has no
+    # compile_commands.json (regular file or symlink) yet.
+    if awk -v marker="$marker" '
+        /^if \[ -f compile_commands\.json \]; then/ && !done1 {
+            print marker
+            print "if [ -f compile_commands.json ] && [ ! -e \"${UTOPX_PROJECT_ROOT}/compile_commands.json\" ] && [ ! -L \"${UTOPX_PROJECT_ROOT}/compile_commands.json\" ]; then"
+            done1 = 1
+            next
+        }
+        { print }
+    ' "$pf" > "$pf.jmake.tmp"; then
+        # cat-in-place to preserve proj_build.sh permissions/inode (mv would not).
+        cat "$pf.jmake.tmp" > "$pf"
+        rm -f "$pf.jmake.tmp"
+        echo -e "$NOTATION ${CYAN}Patched $pf: relink now only runs when no compile_commands.json exists${RESET}"
+    else
+        rm -f "$pf.jmake.tmp"
+        echo -e "$NOTATION ${RED}Failed to patch $pf${RESET}"
     fi
 }
 
@@ -1149,7 +1171,11 @@ printLoopBuildSummary() {
 
 makeBuildCommand() {
     fBuildCommand="$BUILD_SCRIPT"
-    # utopx's ./build.sh accepts no flags (no model, no jobs, no verbose).
+    # utopx's ./build.sh accepts no model/jobs/verbose flags. --db keeps the
+    # normal (fast, working) Unity build; linkWorkspaceFiles() then expands the
+    # Unity compile_commands.json into per-file entries for clangd. Disabling
+    # Unity (-dub) instead would surface latent missing-include bugs that the
+    # merged translation units mask, breaking the build.
     if [[ "$fRepoType" == "utopx" ]]; then
         return
     fi
@@ -1352,18 +1378,35 @@ linkFile() {
 }
 
 linkWorkspaceFiles() {
+    # Only act on --db / --link. For utopx, --db regenerates the per-file clangd
+    # database; a plain build leaves it alone (proj_build.sh's relink is disabled
+    # via `jk --patch`, so the database survives across builds).
     [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkWorkspace" ] && return
     # utopx has no per-model compile_db; CMake emits a single compile_commands.json
     # under cmakeBuild. Link the most recently generated one at the repo root for clangd.
     if [[ "$fRepoType" == "utopx" ]]; then
         cd "$fWorkingDir" || exit
-        local utopxDb
-        utopxDb=$(ls -t "$fWorkingDir"/cmakeBuild/ninja/*/*/*/*/ABI_0/*/compile_commands.json 2>/dev/null | head -1)
-        if [[ -n "$utopxDb" && -f "$utopxDb" ]]; then
-            echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
-            linkFile "$utopxDb" "$fWorkingDir" "$fCompileCommandsJson"
+        # utopx builds with CMAKE_UNITY_BUILD=ON, so the CMake compile database
+        # describes generated unity_*.cxx units instead of the real .cpp files,
+        # and clangd can only resolve definitions in files it has a TU for.
+        # gen_clangd_compile_commands.py expands those Unity entries into
+        # per-file entries (reusing each unit's flags) and repoints
+        # compile_commands.json at the expanded database — no rebuild, the
+        # binary is untouched.
+        local utopxExpander="$SCRIPT_DIR/template/gen_clangd_compile_commands.py"
+        if [[ -f "$utopxExpander" ]]; then
+            echo -e "$NOTATION ${CYAN}Generating per-file clangd compile database (expanding Unity units)...${RESET}"
+            python3 "$utopxExpander" --root "$fWorkingDir"
         else
-            echo -e "$NOTATION ${GREY}Skipping compile database link (no compile_commands.json under cmakeBuild yet — build utopx first)${RESET}"
+            # Fallback: link the raw CMake database (Unity-merged → limited nav).
+            local utopxDb
+            utopxDb=$(ls -t "$fWorkingDir"/cmakeBuild/ninja/*/*/*/*/ABI_0/*/compile_commands.json 2>/dev/null | head -1)
+            if [[ -n "$utopxDb" && -f "$utopxDb" ]]; then
+                echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
+                linkFile "$utopxDb" "$fWorkingDir" "$fCompileCommandsJson"
+            else
+                echo -e "$NOTATION ${GREY}Skipping compile database link (no compile_commands.json under cmakeBuild yet — build utopx first)${RESET}"
+            fi
         fi
         return
     fi
@@ -2384,7 +2427,7 @@ main() {
     printBuildFlags
     cleanTheRepo
     updateSubmodules
-    patchSudoDocker
+    patchUtopxProjBuild
     # Handle models mode (--models) or regular build.
     # utopx has no model concept, so it always takes the single-build path
     # regardless of any -m/-a flags the user may have passed.

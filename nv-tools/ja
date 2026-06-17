@@ -1798,9 +1798,23 @@ _renderInstanceBlock() {
     local logf="$_dir/${_base}.log"
     local lockf="$_dir/${_base}.lock"
 
+    # Marker column (width 5): brackets/index in CYAN, but the "*" that flags
+    # the caller's current pane gets its own colour so it stands out. Pad with
+    # spaces computed from the *plain* (uncoloured) length so the ANSI escapes
+    # don't throw off the fixed-width grid below.
+    local _markW=5 marker
+    if [[ "$index_label" == *'*'* ]]; then
+        marker="${CYAN}${index_label%%'*'*}${LIGHTMAGENTA}*${CYAN}${index_label#*'*'}${RESET}"
+    else
+        marker="${CYAN}${index_label}${RESET}"
+    fi
+    local _markPad=$(( _markW - ${#index_label} ))
+    [ "$_markPad" -lt 0 ] && _markPad=0
+    marker="${marker}$(printf '%*s' "$_markPad" '')"
+
     # [N] + Target / AI. Target shows "index (%pane_id)".
-    printf "${CYAN}%-5s${RESET}${GREY}%-${_labW}s${RESET} ${BLUE}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} ${CYAN}%s${RESET}\n" \
-        "$index_label" "Target:" "$target_label" "AI:" "$ai"
+    printf "%b${GREY}%-${_labW}s${RESET} ${BLUE}%-${_valW}s${RESET} ${GREY}%-${_lab2W}s${RESET} ${CYAN}%s${RESET}\n" \
+        "$marker" "Target:" "$target_label" "AI:" "$ai"
     # State / Approved
     printf "     ${GREY}%-${_labW}s${RESET} %b ${GREY}%-${_lab2W}s${RESET} ${GREEN}%s${RESET}\n" \
         "State:" "$state_pad" "Approved:" "$approved"
@@ -1928,11 +1942,16 @@ handleStatusRequest() {
             _noun="instances"; [ "$cnt" -eq 1 ] && _noun="instance"
             if [ "$pfx" = "1" ]; then _title="(no session)"; else _title="session: ${sdisp}"; fi
             _plain="${_title} (${cnt} ${_noun})"
+            # Banner header rendered in upper case (tr, not ${..^^}, for bash
+            # 3.2/macOS). Length is unchanged so the rule widths still align.
+            local _titleU _nounU
+            _titleU=$(printf '%s' "$_title" | tr '[:lower:]' '[:upper:]')
+            _nounU=$(printf '%s' "$_noun"  | tr '[:lower:]' '[:upper:]')
             _lead=3
             _tail=$(( _sepW - _lead - 1 - ${#_plain} - 1 ))
             [ "$_tail" -lt 3 ] && _tail=3
-            printf "${GREY}%s ${LIGHTYELLOW}%s${GREY} (%s %s) %s${RESET}\n" \
-                "$(_hr "$_lead")" "$_title" "$cnt" "$_noun" "$(_hr "$_tail")"
+            printf "${GREY}%s ${BOLD}${CYAN}%s${RESET}${GREY} (%s %s) %s${RESET}\n" \
+                "$(_hr "$_lead")" "$_titleU" "$cnt" "$_nounU" "$(_hr "$_tail")"
         fi
         tpid2=$(_readStateField "$f" target_pane_id)
         if [ -n "$current_pane_id" ] && [ "$tpid2" = "$current_pane_id" ]; then

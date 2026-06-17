@@ -163,11 +163,11 @@ _jmake_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # List of all short options
-    opts="-h -a -A -j -w -c -o -D -l -b -m -N -p -T"
+    opts="-h -a -A -j -w -c -o -D -l -m -N -p -T"
 
     # List of all long options
     long_opts="--help --all --all-extended --jobs --working-dir --clean --clean-db --git-clean --clean-submodule \
-               --build --bear --debug --attempt --no-verbose --nicx --list --list-extended --link --models \
+               --build --db --debug --attempt --no-verbose --nicx --list --list-extended --link --models \
                --skip --scratch --track --patch --ethlt --codecov --cov --fetch --push --rebase --add --commit \
                --amend --stat --df --diff --show --burn --burn-official --firmware --ini --device --fw-query --fw-reset \
                --mft-install --mft-start --mft-stop --mft-restart --ofed-restart --ofed-start --ofed-stop \
