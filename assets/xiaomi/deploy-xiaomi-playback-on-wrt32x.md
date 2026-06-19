@@ -326,10 +326,16 @@ The Mac's SMB mounts are no longer needed for playback (unmount or leave them).
 
 ## 13. Live view + playback grid (go2rtc)
 
-The **fixed bottom nav bar** has two sliding segmented toggles; their product is the current
-mode (`currentMode()`, applied by `applyMode(time, n)`):
+The **fixed bottom nav bar** holds two sliding segmented toggles (their product is the current
+mode, `currentMode()`, applied by `applyMode(time, n)`), plus the **date dropdown** (`#dates` — the
+day picker, shows `MM-DD weekday · clip-count`), the **camera** select, the **quality** select
+(Direct/Transcode), and **refresh**:
 - **Live / Playback** — the time axis.
 - **1 / 2 / 4 / 6** — the cell count. `1` = single view; `2/4/6` = split grid.
+
+On phones the nav bar **wraps** (`@media max-width:760px` → `.nav-mid{flex:1 1 100%;flex-wrap:wrap}`)
+so every control stays on-screen and tappable (it's ~720px wide — without wrapping the right-hand
+controls overflowed off-screen with no scroll).
 
 So the four modes are **`live`** (single live), **`livegrid`** (live split), **`play`** (single
 timeline playback), **`pbgrid`** (recording split synced to one timeline — pure-local, no go2rtc).
@@ -374,8 +380,11 @@ pause-falls-behind. The everyday smoothness backstop is the stall watchdog below
 
 **Stall watchdog (self-heal):** a WebRTC stream can stay "connected" while frames stop
 (source hiccup / lost GOP) — neither browser nor go2rtc reconnects, so it freezes
-permanently. The player watches each live `<video>`'s `currentTime`; if it doesn't advance
-for ~6 s (and isn't user-paused), it reconnects that cell.
+permanently. The player watches each live `<video>`'s `currentTime`; a cell with no advancing
+frames (and not user-paused) is reconnected — a few **fast retries**, then a **slow ~12 s backoff
+that never permanently gives up** (it still shows `No signal` after the fast tries, but keeps
+trying), so a flaky source like a camera whose go2rtc transcode hiccups recovers on its own
+once the stream settles.
 
 ### go2rtc box (Frigate, Windows, `.240`)
 
@@ -398,17 +407,76 @@ A 2/4/6-cell grid of the cameras' **recordings**, sharing the one timeline:
   top-left (assigns that cell's camera), native `<video>` controls, and a `⤢` **page-fill zoom**
   (fills the grid area, not OS fullscreen — Safari's fullscreen-exit shifts the frame). A `⛶`
   **fill-screen** button makes the whole grid fill the viewport (CSS, not OS fullscreen).
-- **Bottom transport:** `Play all` (resume all, no reload) · `Pause all` · **`Sync`**.
+- **Bottom transport row** (shown in playback only — `body.live-mode`/`body.grid-mode` hide `.transport`):
+  `Play all` (realign all to the reference's moment, then play together) · `Pause all` · a
+  **`⇄ Coarse | ◎ Precise`** sync-mode toggle · **±10s** · **Prev clip / Next clip** (`jumpSeg`) ·
+  speed · `Jump to latest`. *(The duplicate timeline timestamp `#tlDate` was removed — the current
+  moment shows once in the `📅` clock; the timeline's hover/drag bubble `.tip` gives the scrub time.
+  The `📅` "Go to time" wheel is **time-only** now — hour/min/sec; the day is the nav-bar dropdown.)*
 - **Master cell** = the cell showing the camera selected in the top camera dropdown (defaults to the
   current single-view camera); marked **`REF`** + amber border. Timeline coverage, playhead, and sync
   baseline follow it. Change the dropdown (or a cell's picker) to move it. *(In **live split** the top
   camera dropdown is hidden — there the per-cell pickers own the cameras and there is no master.)*
-- **`Sync`:** pauses **all** cells (freezing the master's instant), aligns every cell to the master's
-  frozen time, and **leaves them paused** — you then hit `Play all` to resume together (zero drift).
-- **Synchronized start:** on open/seek the cells load paused and start together once buffered (≤2 s fallback).
-- **Periodic re-sync:** every 2 s a *playing* cell drifting >1.5 s from the master is nudged back (same
-  segment → `currentTime`; crossed a segment → reload). A cell you **manually dragged** is left independent
-  until `Sync` / `Play all` / timeline-drag. Tunables: 2 s interval + 1.5 s threshold in `pbStartSync()`.
+- **Sync modes:** **`⇄ Coarse`** aligns every cell by *assumed* (filename) time (`pbAlignCoarse`).
+  **`◎ Precise`** OCR-reads each cell's burned-in clock and aligns to the master's *real* time,
+  all-or-nothing — see `ocr-precise-sync.md`. Each cell's offset is the **average of ~8 frame reads**
+  (the burned clock is whole-seconds; averaging spreads the sub-second error into a common bias that
+  cancels relatively → cells sync in **one** click instead of needing two). Once it can't verify a cell it
+  **stays** in Precise and retries on each segment change (no silent fall-back to Coarse); a cell that
+  crosses into a new clip is re-calibrated **once** (the per-crossing `recal`, shown in the debug window).
+- **Offset-aware maintenance (`pbStartSync`, every 500 ms):** the **master is forced to the selected Speed
+  each tick** (else a cell nudged >1× to catch up, then promoted to REF, stays sped up forever since the loop
+  skips the master — the "reference cell is playing fast" bug). Then it keeps each non-master cell locked to
+  the master's real time `mw = master.s0 + master.currentTime + (_ocrOff||0)` — rate-nudge if drift ≤2.5 s,
+  one hard-seek (with a ~1.5 s cooldown) if larger, cross to the right clip when `mw` leaves the current
+  one. A locked non-master plays at the **master's rate** (`mRate`); the rate-nudge is clamped to **±5 %
+  (0.95–1.05×, `PB_CAP=0.05`)** — imperceptible, and enough to absorb the ~1 % per-camera media-clock
+  difference, but it can never slam a cell to half-speed (the old `PB_CAP=1.0` pinned a drifting non-master at
+  ~0.5× = a visible slow-motion stutter). **Non-master cells are ALWAYS pulled back** — there is no "independent after drag"; dragging a
+  non-master cell is undone (intended workflow: `Pause all` the others, scrub the master, then `Play all`).
+  > **Per-clip "slope" — tried and REVERTED.** Each camera's media clock ticks ~0.8–1.7 % off real wall-time
+  > and differs per camera, so `real = s0 + currentTime` drifts the cells apart slowly over a clip (they snap
+  > back at each crossing/recal). A `real = s0 + currentTime*slope` correction (`slope = span/video.duration`,
+  > plus a per-cell tracking playbackRate) removed the drift in headless tests but made the **non-master cells
+  > stutter** in the real browser (and the matching rate logic was fragile). It was fully removed — a smooth
+  > view with a small slow drift beats a stuttering one. The model is back to the simple 1:1.
+- **Background-tab recovery (`visibilitychange`):** a hidden tab has its 500 ms loop throttled (≈1/min or
+  paused) while the `<video>`s keep playing, so a cell left at a >1× catch-up rate **runs away** (the "left
+  for a while, came back, CAM3 is ~70 s ahead" bug). On hide, all rates are frozen to base; on show,
+  `pbResyncVisible()` resets rates + hard-seeks every playing non-master cell back to the master. Paused
+  cells are left paused (pause workflow preserved).
+- **Synchronized start / seeking:** on open/seek each cell is flagged `_settling` (the watchdog/maintenance
+  leave it alone) and **poll-retries its seek until it actually lands** — these fMP4 (`moov duration=0`)
+  clamp a cold seek to the clip start, so a single seek would "jump to the segment edge"; retrying as the
+  file warms makes it land on the requested time. Cells play together once positioned. **`gridSeekAll`
+  uses this same poll-retry landing whether or not it then plays** — `play` only gates the final
+  `.play()`. So a **paused** jump (e.g. `±10s` while paused) lands just as reliably and stays paused;
+  the old `play=false` shortcut used `pbLoadCell` with no poll-retry, which clamped and made a paused
+  split jump to the wrong clip ("±10s did nothing / jumped backwards"). **`pbOcrSync` does the
+  same:** after a Precise click it holds every cell PAUSED at the target time until *all* have positioned,
+  then starts them together — playing each the instant it was ready let the master (no reload) run ahead for
+  the seconds a crossing cell (the slow cifs CAM3/4) spent reloading, so the master ended up several seconds
+  ahead and a 2nd Precise click was needed.
+- **Watchdog (`pbWatchCell`):** rolls a cell that reaches/stalls at a clip *end* over to the next clip
+  (covers a clean `ended`, an fMP4 tail error, and the silent buffer-stall); reloads a genuinely black/
+  frozen cell — but treats a cell whose **buffered range is still growing**, OR that is in its **initial cold
+  load** (`buffered.end = 0` from `loadstart`→`canplay`, a `~15 s` `PB_COLD_MS` grace), as still-loading and
+  leaves it alone. Reloading inside that window restarts the download from scratch so it **never finishes** —
+  this (not the sync loop) was the real cause of "playback loads so slowly / one cam never loads"; verified
+  by killing the watchdog, after which stuck cells loaded immediately. A clip roll-over and a
+  maintenance relocate both go through **`pbEnterSeg`**, which marks the cell `_settling` + shows
+  **`Loading…`** and clears both only once frames flow (12 s safety) — so a slow **new-segment load** no
+  longer churns through the reload cap into a false **`No video`**. **Decoder-queue wait:** a cell that has
+  **never produced a frame** (`buffered.end = 0`, no error, `!_hadData`) is QUEUED for a decoder — Safari
+  caps concurrent 4K-H265 decodes, so the 4th cell in a 4-split waits. The watchdog keeps its load **open**
+  and just shows `Loading…`; it does **NOT** reload it (only a ~40 s silent-hang hedge). Reloading was
+  counter-productive — `removeAttribute('src')` discards the buffered download and drops the src, so the cell
+  misses the decoder another cell frees on a clip crossing → it churned `Loading…` forever (the "two cells
+  stuck loading" report). Verified headless: with no churn a 4-split loaded **4/4 with 0 reloads in 70 s**.
+  An actual reload (backoff, never a dead `No video`) fires only on a real `v.error` or a **post-data
+  mid-play stall**. If a given Mac still can't fit all four 4K decodes, 2-split always works. A genuine
+  recording *gap* is separate: the maintenance loop sets
+  `_seg=null` + `No recording`, after which `pbWatchCell` isn't called for that cell, so there's no churn.
 - A background single-`<video>` ending does **not** auto-advance while a grid mode is active (guard in the
   `ended` handler), and the single recording does not autoplay in the background while in a grid. The
   startup background timeline preload is protected by the `livePreload` flag so it can't tear the grid down.
@@ -419,3 +487,20 @@ A 2/4/6-cell grid of the cameras' **recordings**, sharing the one timeline:
 **Transcode**→`_1080p`, both WebRTC), `START_LIVE`, and `START_SPLIT` (default cell count on load:
 1/2/4/6). Plus a `GO2RTC` const on the Python side for the JS-proxy route. Change the
 go2rtc IP in **both** spots if it moves.
+
+---
+
+## 14. Precise-sync OCR engine (separate hosting step on sda3)
+
+Playback split's **`◎ Precise`** mode OCR-reads each cell's burned-in clock **in the browser** to align
+to the reference's real time (±1 s). The OCR engine is **not** inside `xiaomi_playback.py` — it's static
+files hosted on **`/mnt/sda3/opt/ocr/`**, served same-origin at `/ocr/`: the **onnxruntime-web** runtime
+(`ort.min.js` + the `ort-wasm-simd-threaded.wasm/.mjs` loaders), the **PP-OCRv4-server** recognition model
+(`rec_v4_server.onnx`, ~90 MB), the dict (`ppocr_keys.txt`), and a **tesseract.js** fallback. Frames never
+leave the LAN.
+
+These files survive a router OS reflash (sda3 is a data disk) but are **lost if sda3 is reformatted**, and
+are **not in the repo** → re-host them after a fresh install.
+
+→ See **`ocr-precise-sync.md`** for the pipeline, the model choice (why PP-OCRv4-server vs v3/mobile),
+the content-type requirements (`.mjs`→`text/javascript` etc.), and the copy-paste re-host runbook.

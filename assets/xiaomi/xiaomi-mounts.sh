@@ -17,7 +17,7 @@ mount_one() {
   mkdir -p "$mp"
   if is_mounted "$mp" && ls "$mp" >/dev/null 2>&1; then return 0; fi
   is_mounted "$mp" && umount -l "$mp" 2>/dev/null
-  if mount -t cifs "//$PEER/$share" "$mp" -o "ro,user=$SMBUSER,pass=$SMBPASS,vers=$VERS"; then
+  if mount -t cifs "//$PEER/$share" "$mp" -o "ro,user=$SMBUSER,pass=$SMBPASS,vers=$VERS,retrans=3"; then   # retrans=3 (was default 1): tolerate brief network/SMB blips by retrying instead of failing the read instantly → fewer "video playback aborted (network error)" on the remote (cifs) cameras, without spinning too long if .100 is genuinely down
     logger -t xiaomi-mounts "mounted $share -> $mp"
   else
     logger -t xiaomi-mounts "FAILED $share -> $mp (try VERS=2.1 or 1.0)"
