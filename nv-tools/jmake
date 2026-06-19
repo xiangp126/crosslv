@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2155 disable=SC2120 disable=SC2024
+# shellcheck disable=SC2155 disable=SC2120 disable=SC2024 disable=SC2016
 # set -x
 
 # Global constants
@@ -22,8 +22,8 @@ fLinkWorkspace=
 fNeedBuild=
 fPrintBuildFlags=
 fClean=
-fCleanExplicit=   # set by explicit -c/--clean or --clean-db (vs --db's implied clean)
-fRMExplicit=      # set by explicit --clean-db (vs --db's implied compile-db removal)
+fCleanExplicit=
+fRMExplicit=
 fNoVerbose=
 fNicx=
 fTrackIncludes=
@@ -770,6 +770,7 @@ preConfigure() {
        [[ -n "$fGenerateCompileCmds"   ]] ||
        [[ -n "$fRMCompileCommandsJson" ]] ||
        [[ -n "$fLinkWorkspace"         ]] ||
+       [[ -n "$fPatch"                 ]] ||
        [[ -n "$fBurn"                  ]] ||
        [[ -n "$fFwReset"               ]]; then
         fPrintBuildFlags=true
@@ -814,11 +815,8 @@ preConfigure() {
         fEthlt=
         fCodecov=
         fCov=
-        # --db on utopx only needs to (re)build + expand the database; the forced
-        # clean that --db implies elsewhere would mean a full ~7min rebuild for
-        # nothing. Drop only --db's *implied* clean — honor an explicit
-        # --clean/--clean-db the user also passed (jk --clean --db still cleans).
         if [[ -n "$fGenerateCompileCmds" ]]; then
+            fPatch=true
             [ -z "$fCleanExplicit" ] && fClean=
             [ -z "$fRMExplicit" ] && fRMCompileCommandsJson=
         fi
@@ -1029,13 +1027,6 @@ updateSubmodules() {
     fi
 }
 
-# --patch: make proj_build.sh's compile_commands.json relink non-destructive.
-# By default proj_build.sh unconditionally re-points the repo-root
-# compile_commands.json at the raw Unity database on every build, which clobbers
-# the per-file db that `jk --db` produced. After patching, it only links when the
-# root has no compile_commands.json yet — so the very first build still gets a
-# basic (Unity) db, while an existing one (e.g. the expanded db from `jk --db`)
-# is left untouched and survives later plain builds. Idempotent, local edit.
 patchUtopxProjBuild() {
     [ -z "$fPatch" ] && return
     if [[ "$fRepoType" != "utopx" ]]; then
@@ -1044,38 +1035,45 @@ patchUtopxProjBuild() {
     fi
     cd "$fWorkingDir" || exit
     local pf="proj_build.sh"
+
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${BOLD}Patch: clangd database persistence${RESET}"
+    echo -e "$NOTATION ${CYAN}→${RESET} Target: ${YELLOW}$fWorkingDir/$pf${RESET}"
+
     if [[ ! -f "$pf" ]]; then
-        echo -e "$NOTATION ${RED}Error: patch target not found: $pf${RESET}"
+        echo -e "$NOTATION ${RED}✗ Patch target not found: $pf${RESET}"
+        echo "$SEPARATOR"
         exit 1
     fi
-    local marker="# [jmake] only relink compile_commands.json when none exists yet (jk --db owns the expanded db)"
-    if grep -qF "$marker" "$pf"; then
-        echo -e "$NOTATION ${GREY}$pf relink is already guarded${RESET}"
+    local guard='[ ! -e "${UTOPX_PROJECT_ROOT}/compile_commands.json" ]'
+    if grep -qF "$guard" "$pf"; then
+        echo -e "$NOTATION ${GREEN}✓ Already patched${RESET} — plain builds won't overwrite the clangd database"
+        echo "$SEPARATOR"
         return
     fi
     if ! grep -q '^if \[ -f compile_commands.json \]; then' "$pf"; then
-        echo -e "$NOTATION ${YELLOW}Skipping $pf patch (relink 'if' anchor not found)${RESET}"
+        echo -e "$NOTATION ${YELLOW}✗ Skipped${RESET} — relink anchor not found in $pf"
+        echo "$SEPARATOR"
         return
     fi
-    # Add a guard to the relink's `if` so it only runs when the repo root has no
-    # compile_commands.json (regular file or symlink) yet.
-    if awk -v marker="$marker" '
+    echo -e "$NOTATION ${CYAN}→${RESET} Guarding the compile_commands.json relink..."
+    if awk '
         /^if \[ -f compile_commands\.json \]; then/ && !done1 {
-            print marker
-            print "if [ -f compile_commands.json ] && [ ! -e \"${UTOPX_PROJECT_ROOT}/compile_commands.json\" ] && [ ! -L \"${UTOPX_PROJECT_ROOT}/compile_commands.json\" ]; then"
+            print "if [ -f compile_commands.json ] && [ ! -e \"${UTOPX_PROJECT_ROOT}/compile_commands.json\" ]; then"
             done1 = 1
             next
         }
         { print }
     ' "$pf" > "$pf.jmake.tmp"; then
-        # cat-in-place to preserve proj_build.sh permissions/inode (mv would not).
         cat "$pf.jmake.tmp" > "$pf"
         rm -f "$pf.jmake.tmp"
-        echo -e "$NOTATION ${CYAN}Patched $pf: relink now only runs when no compile_commands.json exists${RESET}"
+        echo -e "$NOTATION ${GREEN}✓ Done${RESET} — plain builds will no longer overwrite the clangd database"
+        echo -e "$NOTATION   ${GREY}run ${YELLOW}jk --db${GREY} to (re)generate it${RESET}"
     else
         rm -f "$pf.jmake.tmp"
-        echo -e "$NOTATION ${RED}Failed to patch $pf${RESET}"
+        echo -e "$NOTATION ${RED}✗ Failed to patch $pf${RESET}"
     fi
+    echo "$SEPARATOR"
 }
 
 # Print one summary row: "▸   <coloredLabel>   (N) item, item, ..." with wrapping.
@@ -1171,11 +1169,6 @@ printLoopBuildSummary() {
 
 makeBuildCommand() {
     fBuildCommand="$BUILD_SCRIPT"
-    # utopx's ./build.sh accepts no model/jobs/verbose flags. --db keeps the
-    # normal (fast, working) Unity build; linkWorkspaceFiles() then expands the
-    # Unity compile_commands.json into per-file entries for clangd. Disabling
-    # Unity (-dub) instead would surface latent missing-include bugs that the
-    # merged translation units mask, breaking the build.
     if [[ "$fRepoType" == "utopx" ]]; then
         return
     fi
@@ -1378,27 +1371,16 @@ linkFile() {
 }
 
 linkWorkspaceFiles() {
-    # Only act on --db / --link. For utopx, --db regenerates the per-file clangd
-    # database; a plain build leaves it alone (proj_build.sh's relink is disabled
-    # via `jk --patch`, so the database survives across builds).
     [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkWorkspace" ] && return
     # utopx has no per-model compile_db; CMake emits a single compile_commands.json
     # under cmakeBuild. Link the most recently generated one at the repo root for clangd.
     if [[ "$fRepoType" == "utopx" ]]; then
         cd "$fWorkingDir" || exit
-        # utopx builds with CMAKE_UNITY_BUILD=ON, so the CMake compile database
-        # describes generated unity_*.cxx units instead of the real .cpp files,
-        # and clangd can only resolve definitions in files it has a TU for.
-        # gen_clangd_compile_commands.py expands those Unity entries into
-        # per-file entries (reusing each unit's flags) and repoints
-        # compile_commands.json at the expanded database — no rebuild, the
-        # binary is untouched.
         local utopxExpander="$SCRIPT_DIR/template/gen_clangd_compile_commands.py"
         if [[ -f "$utopxExpander" ]]; then
             echo -e "$NOTATION ${CYAN}Generating per-file clangd compile database (expanding Unity units)...${RESET}"
             python3 "$utopxExpander" --root "$fWorkingDir"
         else
-            # Fallback: link the raw CMake database (Unity-merged → limited nav).
             local utopxDb
             utopxDb=$(ls -t "$fWorkingDir"/cmakeBuild/ninja/*/*/*/*/ABI_0/*/compile_commands.json 2>/dev/null | head -1)
             if [[ -n "$utopxDb" && -f "$utopxDb" ]]; then
@@ -2377,6 +2359,7 @@ runRegCancel() {
 doEarlyExitJobs() {
     [ -n "$fDockerGroup" ]   && { runDockerGroup; exit 0; }
     [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ] && { linkWorkspaceFiles; exit 0; }
+    [ -n "$fPatch" ] && [ -z "$fNeedBuild" ] && { patchUtopxProjBuild; exit 0; }
     [ -n "$fMftInstall" ]    && { runMftInstall; fMftRestart=true; runMftRestart; exit 0; }
     [ -n "$fMftRestart" ]    && { runMftRestart; exit 0; }
     [ -n "$fMftStop" ]       && { runMftStop; [ -n "$fMftStart" ] && runMftStart; exit 0; }
