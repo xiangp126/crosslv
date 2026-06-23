@@ -53,7 +53,7 @@ DEFAULT_ROOTS = [
     "/Volumes/c700_02",   # wrt32x    /mnt/sda2  XiaomiCamera_00_B88880A0FD7C
     "/Volumes/c700_03",   # wrt1200ac /mnt/sdb1  XiaomiCamera_00_B88880976D02
     "/Volumes/c700_04",   # wrt1200ac /mnt/sdb2  XiaomiCamera_00_B88880976D36
-    "/Volumes/c700_05",   # wrt32x  spare disk, empty for now — future 5th camera
+    "/Volumes/c700_05",   # wrt32x    /mnt/sda3  XiaomiCamera_00_B88880948BA0
 ]
 DEFAULT_PORT = 8800
 
@@ -82,6 +82,7 @@ CAM_NAMES = {
     "B88880A0FD7C": "",   # c700_02 · wrt32x    · sda2
     "B88880976D02": "",   # c700_03 · wrt1200ac · sdb1
     "B88880976D36": "",   # c700_04 · wrt1200ac · sdb2
+    "B88880948BA0": "",   # c700_05 · wrt32x    · sda3
 }
 
 
@@ -1152,7 +1153,7 @@ $('refreshBtn').onclick = async () => {
 
 // ---- Live picture (go2rtc): toggle with «● Live» in the title bar; the browser connects directly to go2rtc, not through wrt32x ----
 function liveLabel(){ const o = $('camSel').selectedOptions[0]; return o ? (o.dataset.lbl || o.textContent) : ''; }   // returns the internal name c700_0X
-function liveAvailable(){ return /^c700_0[1-4]$/.test(liveLabel()); }   // the spare disk c700_05 has no live source
+function liveAvailable(){ return /^c700_0[1-5]$/.test(liveLabel()); }   // c700_01–05 have a go2rtc live source; c700_06 is the spare slot with no live source yet
 // ===== View modes: Playback / Live / Live split / Playback split (toggled uniformly by the segmented switches) =====
 function currentMode(){ return pbGrid ? 'pbgrid' : gridMode ? 'livegrid' : liveMode ? 'live' : 'play'; }
 function curTime(){ const m = currentMode(); return (m==='live' || m==='livegrid') ? 'live' : 'play'; }
@@ -2117,12 +2118,7 @@ vid.addEventListener('play',  () => $('playBtn').textContent = '⏸ Pause');
 vid.addEventListener('pause', () => $('playBtn').textContent = '▶︎ Play');
 $('back10').onclick = () => { if(pbGrid){ const w = currentWall(); gridSeekAll(Math.max(0,(w.sec||0)-10), pbPlaying()); return; } vid.currentTime = Math.max(0, vid.currentTime - 10); };
 $('fwd10').onclick  = () => { if(pbGrid){ const w = currentWall(); gridSeekAll((w.sec||0)+10, pbPlaying()); return; } vid.currentTime = vid.currentTime + 10; };
-$('rateSel').onchange = e => { const r = parseFloat(e.target.value); vid.playbackRate = r; pbCams().forEach(c => { const v = pbVids[c.key]; if(v) v.playbackRate = r; }); };
-$('latestBtn').onclick = async () => {
-  await reloadCameras();                          // rescan: surface a possibly new latest day (e.g. crossing midnight to 6/9)
-  await loadTimeline({ sec: 'latest', play: true });   // locate to the latest moment of the latest day (applies to both single-stream playback and split playback)
-};
-// ---- Prev / Next (jump to the start of the adjacent recording segment) ----
+// Prev/Next recording clip: step the whole screen to the start of the previous/next segment (split → gridSeekAll, single → loadSegment).
 function jumpSeg(delta){
   if(pbGrid){
     if(!segs.length) return;
@@ -2140,6 +2136,12 @@ function jumpSeg(delta){
 }
 $('prevSeg').onclick = () => jumpSeg(-1);
 $('nextSeg').onclick = () => jumpSeg(1);
+$('rateSel').onchange = e => { const r = parseFloat(e.target.value); vid.playbackRate = r; pbCams().forEach(c => { const v = pbVids[c.key]; if(v) v.playbackRate = r; }); };
+$('latestBtn').onclick = async () => {
+  await reloadCameras();                          // rescan: surface a possibly new latest day (e.g. crossing midnight to 6/9)
+  await loadTimeline({ sec: 'latest', play: true });   // locate to the latest moment of the latest day (applies to both single-stream playback and split playback)
+};
+// ---- Prev / Next (jump to the start of the adjacent recording segment) ----
 
 
 init();

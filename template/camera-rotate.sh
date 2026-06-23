@@ -22,7 +22,9 @@
 #   - Filename-sort is chronological (chunks are named 00_YYYYMMDDhhmmss_*.mp4).
 #   - head -n -2 keeps the newest 2 files so the in-progress and just-finalized
 #     chunk are never deleted under the camera.
-#   - Add more "<mount> <dir>" lines to PAIRS as cameras 3 & 4 come online.
+#   - Add more "<mount> <dir>" lines to PAIRS as cameras come online.
+#   - sda3 also holds Python + OCR under /mnt/sda3/opt; only the camera dir is
+#     pruned (the 00_*_*.mp4 glob), so /opt is never touched.
 
 HIGH=90
 LOW=85
@@ -32,6 +34,7 @@ TAG=camera-rotate
 PAIRS="
 /mnt/sda1 /mnt/sda1/XiaomiCamera_00_B88880974A38
 /mnt/sda2 /mnt/sda2/XiaomiCamera_00_B88880A0FD7C
+/mnt/sda3 /mnt/sda3/XiaomiCamera_00_B88880948BA0
 "
 
 log()      { logger -t "$TAG" "$1"; }

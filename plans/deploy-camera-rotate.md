@@ -68,10 +68,10 @@ ssh ... '
   seq 1 5 | head -n -2
 
   echo "--- disk state ---"
-  df -h /mnt/sda1 /mnt/sda2 | awk "NR==1 || /sda/"
+  df -h /mnt/sda1 /mnt/sda2 /mnt/sda3 | awk "NR==1 || /sda/"
 
   echo "--- camera dirs and oldest chunk ---"
-  for d in /mnt/sda1/XiaomiCamera_* /mnt/sda2/XiaomiCamera_*; do
+  for d in /mnt/sda1/XiaomiCamera_* /mnt/sda2/XiaomiCamera_* /mnt/sda3/XiaomiCamera_*; do
     echo "  $d"
     ls "$d" 2>/dev/null | sort | head -1
   done
@@ -91,6 +91,7 @@ Edit `camera-rotate.sh` (companion file) only at the **`PAIRS=`** block:
 PAIRS="
 /mnt/sda1 /mnt/sda1/XiaomiCamera_00_B88880974A38
 /mnt/sda2 /mnt/sda2/XiaomiCamera_00_B88880A0FD7C
+/mnt/sda3 /mnt/sda3/XiaomiCamera_00_B88880948BA0
 "
 ```
 
@@ -143,13 +144,13 @@ md5sum "$SCRIPT"   # checksums should match
 ```sh
 ssh ... '
   echo "=== BEFORE ==="
-  df -h /mnt/sda1 /mnt/sda2 | awk "NR==1 || /sda/"
+  df -h /mnt/sda1 /mnt/sda2 /mnt/sda3 | awk "NR==1 || /sda/"
 
   echo "=== RUN ==="
   time /usr/local/bin/camera-rotate.sh
 
   echo "=== AFTER ==="
-  df -h /mnt/sda1 /mnt/sda2 | awk "NR==1 || /sda/"
+  df -h /mnt/sda1 /mnt/sda2 /mnt/sda3 | awk "NR==1 || /sda/"
 
   echo "=== SYSLOG ==="
   logread | grep camera-rotate | tail
@@ -258,7 +259,7 @@ ssh ... '
 
 ```sh
 ssh ... '
-  echo --- DISKS ---;   df -h /mnt/sda1 /mnt/sda2
+  echo --- DISKS ---;   df -h /mnt/sda1 /mnt/sda2 /mnt/sda3
   echo --- CRON ---;    cat /etc/crontabs/root; ps w | grep crond | grep -v grep
   echo --- LATEST ---;  logread | grep camera-rotate | tail -5
   echo --- SCRIPT ---;  ls -la /usr/local/bin/camera-rotate.sh

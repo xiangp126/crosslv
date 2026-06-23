@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run this the INSTANT clients lose internet, BEFORE rebooting:  /root/netmon/capture-now
+exec /bin/sh /root/netmon/snapshot.sh manual

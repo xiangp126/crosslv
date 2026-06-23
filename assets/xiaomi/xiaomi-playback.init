@@ -16,7 +16,7 @@ ROOTS="/mnt/c700_01 /mnt/c700_02 /mnt/c700_03 /mnt/c700_04 /mnt/c700_05"
 start_service() {
     ln -sfn /mnt/sda1 /mnt/c700_01             # c700_01  (local)
     ln -sfn /mnt/sda2 /mnt/c700_02             # c700_02  (local)
-    ln -sfn /mnt/sda3 /mnt/c700_05             # c700_05  (local spare)
+    ln -sfn /mnt/sda3 /mnt/c700_05             # c700_05  (local, cam5 + Python/OCR in /opt)
     /usr/local/bin/xiaomi-mounts.sh            # c700_03/04 (read-only cifs) up first
     procd_open_instance
     procd_set_param command "$PYBIN" "$SCRIPT" $ROOTS "$PORT"

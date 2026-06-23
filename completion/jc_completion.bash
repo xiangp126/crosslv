@@ -2,13 +2,16 @@
 
 # Single source of truth for camera names. Add a camera by appending here; the
 # ACL target list and RTSP stream list update automatically.
-JC_CAMERAS="c700_01 c700_02 c700_03 c700_04"
+JC_CAMERAS="c700_01 c700_02 c700_03 c700_04 c700_05"
 
 # Each camera exposes two go2rtc streams: <camera>_raw and <camera>_1080p.
 JC_STREAM_VARIANTS="raw 1080p"
 
-# Derived: tokens accepted by --acl-block / --acl-unblock / --acl-status / --acl-restart.
-JC_ACL_TARGETS="$JC_CAMERAS all"
+# Derived: ACL targets are the short camera numbers (c700_01 -> 01) plus 'all'.
+# Router rule names stay Block_C700_0N and go2rtc stream names stay c700_0N.
+JC_ACL_NUMS=
+for _c in $JC_CAMERAS; do JC_ACL_NUMS+="${_c#c700_} "; done
+JC_ACL_TARGETS="${JC_ACL_NUMS}all"
 
 # Derived: tokens accepted by --rtsp-stream (cartesian product cameras x variants).
 JC_RTSP_STREAMS=
@@ -21,7 +24,7 @@ JC_RTSP_STREAMS="${JC_RTSP_STREAMS% }"
 unset _c _v
 
 # Comma-separated multi-target completion for the --acl-* flags.
-# Supports: jc --acl-block c700_01,c700_03,<TAB> -> suggests remaining tokens.
+# Supports: jc --acl-block 01,03,<TAB> -> suggests remaining tokens.
 _jc_complete_acl_targets() {
     local typed="$cur" prefix="" last_word="" remaining="" m
 
@@ -88,7 +91,7 @@ _jc_complete() {
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
-               --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status --acl-restart \
+               --gdm --text --claude --claude-remove --acl-block --acl-cut --acl-unblock --acl-status --acl-restart \
                --claude-backup --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
                --codex --codex-remove --codex-backup --codex-restore \
                --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-xray-sslh --singbox-wg \
@@ -160,7 +163,7 @@ _jc_complete() {
             COMPREPLY=( $(compgen -W "${resolutions}" -- ${cur}) )
             return 0
             ;;
-        --acl-block|--acl-unblock|--acl-status|--acl-restart)
+        --acl-block|--acl-cut|--acl-unblock|--acl-status|--acl-restart)
             compopt -o nospace 2>/dev/null
             _jc_complete_acl_targets
             return 0

@@ -1,6 +1,6 @@
 # Xiaomi camera playback + live — file index & architecture
 
-Self-hosted review/monitoring for 4 Xiaomi C700 cameras: a single-file, zero-dependency
+Self-hosted review/monitoring for 5 Xiaomi C700 cameras: a single-file, zero-dependency
 Python web app gives a **timeline playback** of the SMB recordings **and** a **live view**
 (single, or a 2/4/6-cell split grid) sourced from go2rtc. Runs always-on **on the WRT32X NAS itself**.
 
@@ -8,13 +8,14 @@ Python web app gives a **timeline playback** of the SMB recordings **and** a **l
 
 | Host | IP | Role |
 |------|----|------|
-| `wrt32x` (Linksys WRT32X, ImmortalWrt) | 192.168.10.200 | NAS for cams 1–2 (sda1/sda2) + spare (sda3); **runs the player** on :8800. SSH **:8822**. |
+| `wrt32x` (Linksys WRT32X, ImmortalWrt) | 192.168.10.200 | NAS for cams 1–2 + 5 (sda1/sda2/sda3); **runs the player** on :8800. SSH **:8822**. |
 | `wrt1200ac` (Linksys WRT1200AC, OpenWrt) | 192.168.10.100 | NAS for cams 3–4 (sdb1/sdb2). SSH **:8822**. |
-| Frigate box (Windows + go2rtc) | 192.168.10.240 | **go2rtc :1984** — live H264 transcode/WebRTC for all 4 cams. |
-| Cameras (chuangmi.camera.81ac1) | .221/.222/.223/.224 | record to SMB; go2rtc pulls live. |
+| Frigate box (Windows + go2rtc) | 192.168.10.240 | **go2rtc :1984** — live H264 transcode/WebRTC for all 5 cams. |
+| Cameras (chuangmi.camera.81ac1) | .221/.222/.223/.224/.225 | record to SMB; go2rtc pulls live. |
 
-SMB user `pi` (same password on both NAS). 4 cams: `B88880974A38`(c700_01), `B88880A0FD7C`(c700_02),
-`B88880976D02`(c700_03), `B88880976D36`(c700_04). c700_05 = empty spare disk.
+SMB user `pi` (same password on both NAS). 5 cams: `B88880974A38`(c700_01), `B88880A0FD7C`(c700_02),
+`B88880976D02`(c700_03), `B88880976D36`(c700_04), `B88880948BA0`(c700_05). c700_05 (.225) records to
+wrt32x `sda3` (which also holds Python + the OCR engine under `/mnt/sda3/opt`).
 
 ## Data paths
 
@@ -56,15 +57,15 @@ UI is all English; the page opens to a **4-cell live split** by default (`START_
 - **Mode = time × split.** Two sliding segmented toggles in the **fixed bottom nav bar** drive
   everything: **Live / Playback**, and the cell count **1 / 2 / 4 / 6**. Their product is the
   current mode (`currentMode()` → `live` | `livegrid` | `play` | `pbgrid`), applied by
-  `applyMode(time, n)`. 1 = single view; 2/4/6 = split grid (cameras 05/06 are reserved cells).
+  `applyMode(time, n)`. 1 = single view; 2/4/6 = split grid (camera 06 is a reserved cell).
 - **Camera names are decoupled from go2rtc.** Internal stream/disk names stay lowercase
   `c700_0X`; the UI shows display names from `CAM_NAMES` (`CAM 1`…`CAM 6`, via `dispCam()`).
   Edit `CAM_NAMES` to rename without touching stream wiring.
 - **Timeline playback:** pick the **day** from the **date dropdown in the bottom nav bar** (shows
   `MM-DD weekday · clip-count`, e.g. `06-18 Thu · 141`); pick the **time** by dragging the timeline
   (timestamp bubble; snaps to the nearest recording if you land in a gap) or via the collapsible
-  **hour/min/sec wheel** (`📅` "Go to time" — time-only, same day; hour/min/sec loop). **Prev/Next clip**
-  and **±10s** live on the **transport row** (playback only); plus speed + cross-camera time alignment.
+  **hour/min/sec wheel** (`📅` "Go to time" — time-only, same day; hour/min/sec loop). **±10s** and
+  **Prev/Next clip** live on the **transport row** (playback only); plus speed + cross-camera time alignment.
   Recorded spans render as **solid green**; real recording gaps stay **dark** (a dark band = a genuine
   gap, not a segment seam). The in-progress chunk shows a **`● REC`** badge (single playback) and an
   amber edge on the timeline. The current moment is shown once in the **`📅` clock** (no duplicate
@@ -76,7 +77,7 @@ UI is all English; the page opens to a **4-cell live split** by default (`START_
   protocol. **Stall watchdog:** a cell with no advancing frames auto-reconnects — a few fast retries,
   then a slow ~12 s backoff that **never permanently gives up**, so a flaky WebRTC source (e.g. a camera
   whose go2rtc transcode hiccups) recovers on its own once the stream settles.
-- **Playback split:** the cameras' **recordings** synced to one timeline — drag / ±10s / seg / speed
+- **Playback split:** the cameras' **recordings** synced to one timeline — drag / ±10s / clip / speed
   act on all. Bottom transport **Play all / Pause all**, plus a **`⇄ Coarse | ◎ Precise`** sync-mode
   toggle. One cell is the **master**, marked **`REF`** (amber); timeline/playhead follow it; the top
   camera selector picks the master. **Coarse** aligns every cell by assumed (filename) time. **Precise**

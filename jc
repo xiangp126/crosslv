@@ -106,10 +106,10 @@ fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset passwo
 # Camera ACL (OpenWrt firewall rules Block_C700_NN)
 fGwHost="root@192.168.10.1"
 fGwPort=8822
-fGwAclAction=""    # block | unblock | status | restart
-fGwAclTarget=()    # array of camera tokens (any of fGwCameras) or 'all'
+fGwAclAction=""    # block | cut | unblock | status | restart
+fGwAclTarget=()    # short camera numbers 01..05 (or legacy c700_0N) or 'all'; NN maps to rule Block_C700_NN
                    # Comma- or space-separated values; flags accumulate when repeated.
-fGwCameras=(c700_01 c700_02 c700_03 c700_04)   # source of truth — add a camera by appending here.
+fGwCameras=(c700_01 c700_02 c700_03 c700_04 c700_05)   # source of truth — add a camera by appending here.
 # SSH Tunnel (autossh port forward over VPN)
 # Remote host: the real server autossh connects to. Not derivable from the
 # sing-box config because sing-box only sees 127.0.0.1 in xray-tunnel mode.
@@ -214,15 +214,18 @@ RTSP Options:
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
 
 Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
-    --acl-block   <targets>  Enable block rule(s) — camera(s) offline
+    --acl-block   <targets>  Enable block rule(s) — camera(s) offline (new connections only)
+    --acl-cut     <targets>  Hard block: enable rule(s) AND flush existing/offloaded
+                             conntrack so in-progress connections (incl. UDP P2P) are
+                             cut too. Camera(s) stay offline until --acl-unblock.
     --acl-unblock <targets>  Disable block rule(s) — camera(s) online
     --acl-status  <targets>  Show current rule state
     --acl-restart <targets>  Toggle the rule(s) to nudge the camera(s):
                              unblock → wait 10s → block → wait 2s → status
                              <targets>: comma- or space-separated tokens; flags accumulate.
-                             Tokens: c700_01 | c700_02 | c700_03 | c700_04 | all
-                             E.g.  c700_01,c700_03   or   "c700_01 c700_03"
-                                   --acl-block c700_01 --acl-block c700_03
+                             Tokens: 01 | 02 | 03 | 04 | 05 | all   (each NN -> rule Block_C700_NN)
+                             E.g.  01,03   or   "01 03"
+                                   --acl-block 01 --acl-block 03
 
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
@@ -313,7 +316,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
           bbr,bbr-status,\
-          acl-block:,acl-unblock:,acl-status:,acl-restart:"
+          acl-block:,acl-cut:,acl-unblock:,acl-status:,acl-restart:"
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -592,12 +595,11 @@ removeGemini() {
     echo -e "${GREEN}✔${GREY} Gemini CLI removed.${RESET}"
 }
 
-gwAclControl() {
-    local action="$1"; shift
+gwAclResolveRules() {
     local targets=("$@")
-    local rules="" desired="" t cam matched
-    # Camera token c700_NN maps to firewall rule Block_C700_NN via uppercase.
-    local valid_targets="${fGwCameras[*]} all"
+    local rules="" t cam num matched valid_targets=""
+    for cam in "${fGwCameras[@]}"; do valid_targets+="${cam#c700_} "; done
+    valid_targets+="all"
 
     if [ "${#targets[@]}" -eq 0 ]; then
         echo -e "${RED}Error: No targets specified. Valid: ${valid_targets}${RESET}" >&2
@@ -613,7 +615,8 @@ gwAclControl() {
         fi
         matched=0
         for cam in "${fGwCameras[@]}"; do
-            if [ "$t" = "$cam" ]; then
+            num="${cam#c700_}"
+            if [ "$t" = "$num" ] || [ "$t" = "$cam" ]; then
                 rules+=" Block_${cam^^}"
                 matched=1
                 break
@@ -625,9 +628,16 @@ gwAclControl() {
         fi
     done
 
-    # Dedupe while preserving order, drop leading whitespace.
     rules=$(printf '%s\n' $rules | awk 'NF && !seen[$0]++' | tr '\n' ' ')
-    rules="${rules% }"
+    echo "${rules% }"
+}
+
+gwAclControl() {
+    local action="$1"; shift
+    local targets=("$@")
+    local rules desired=""
+
+    rules=$(gwAclResolveRules "${targets[@]}") || return $?
 
     case "$action" in
         block)   desired="1" ;;
@@ -684,6 +694,86 @@ REMOTE
         echo -e "  ssh -p $fGwPort $fGwHost \"uci show firewall | grep -i '\\.name='\"" >&2
     fi
     return "$rc"
+}
+
+gwAclCut() {
+    local targets=("$@")
+    echo -e "${LIGHTYELLOW}Note: --acl-cut also flushes existing/offloaded flows; affected camera(s) go fully offline and will NOT reconnect (incl. go2rtc live) until 'jc --acl-unblock'.${RESET}"
+    gwAclControl block "${targets[@]}" || return $?
+    local rules
+    rules=$(gwAclResolveRules "${targets[@]}") || return $?
+    echo -e "${COLOR}Flushing conntrack so in-progress connections are cut...${RESET}"
+    local color_on=
+    [ -t 1 ] && color_on=1
+    ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
+        "$fGwHost" "RULES='$rules' COLOR_ON='$color_on' sh -s" <<'REMOTE'
+PRIVRE='^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|22[4-9]\.|23[0-9]\.)'
+if [ "$COLOR_ON" = 1 ]; then
+    B=$(printf '\033[1m'); D=$(printf '\033[2m'); C=$(printf '\033[36m')
+    Y=$(printf '\033[33m'); G=$(printf '\033[32m'); R=$(printf '\033[31m'); Z=$(printf '\033[0m')
+else
+    B=; D=; C=; Y=; G=; R=; Z=
+fi
+pubstats() {
+    awk -v re="$PRIVRE" '
+        NF {
+            dst=""
+            for(i=1;i<=NF;i++) if($i ~ /^dst=/ && dst==""){ sub(/^dst=/,"",$i); dst=$i }
+            if(dst ~ re) next
+            pub++
+            if($0 ~ /OFFLOAD/) off++
+        }
+        END { print pub+0, off+0 }'
+}
+for n in $RULES; do
+    sec=$(uci show firewall 2>/dev/null | awk -F'[.=]' -v n="$n" '
+        tolower($0) ~ "\\.name=\x27" tolower(n) "\x27" { print $2; exit }
+    ')
+    [ -z "$sec" ] && { printf '%s%s: rule not found%s\n' "$R" "$n" "$Z" >&2; continue; }
+    mac=$(uci -q get firewall.$sec.src_mac 2>/dev/null | tr 'A-Z' 'a-z')
+    [ -z "$mac" ] && { printf '%s%s: no src_mac on rule%s\n' "$R" "$n" "$Z" >&2; continue; }
+    ip=$(ip neigh 2>/dev/null | awk -v m="$mac" 'tolower($0) ~ m { print $1; exit }')
+    [ -z "$ip" ] && { printf '%s%s: camera offline (no neigh entry) - nothing to flush%s\n' "$D" "$n" "$Z"; continue; }
+    entries=$(grep "src=$ip " /proc/net/nf_conntrack 2>/dev/null)
+    total=$(printf '%s\n' "$entries" | grep -c .)
+    set -- $(printf '%s\n' "$entries" | pubstats)
+    pub_before=$1; off_before=$2
+    printf '%s%s● %s%s %s· %s   %d conntrack · %d public-bound · %d offloaded%s\n' \
+        "$B" "$C" "$n" "$Z" "$D" "$ip" "$total" "$pub_before" "$off_before" "$Z"
+    if [ "$pub_before" -gt 0 ]; then
+        printf '%s\n' "$entries" | awk -v re="$PRIVRE" -v D="$D" -v C="$C" -v Y="$Y" -v Z="$Z" '
+            function human(b){ if(b=="") return "-"; if(b+0>=1048576) return sprintf("%.1fM",b/1048576); if(b+0>=1024) return sprintf("%.1fK",b/1024); return b "B" }
+            function comma(x,  s,r){ if(x=="") return "-"; s=x""; while(length(s)>3){ r=","substr(s,length(s)-2)r; s=substr(s,1,length(s)-3) } return s r }
+            BEGIN { printf "%s    %-4s %-26s %-12s %9s %9s   %s%s\n", D,"PROT","DESTINATION","STATE","PKTS","BYTES","PATH",Z }
+            NF {
+                proto=$3; st=($6 ~ /^[A-Z_]+$/)?$6:"-"
+                dst=""; dport=""; pk=""; by=""
+                for(i=1;i<=NF;i++){
+                    if($i ~ /^dst=/ && dst==""){ s=$i; sub(/^dst=/,"",s); dst=s }
+                    if($i ~ /^dport=/ && dport==""){ s=$i; sub(/^dport=/,"",s); dport=s }
+                    if($i ~ /^packets=/ && pk==""){ s=$i; sub(/^packets=/,"",s); pk=s }
+                    if($i ~ /^bytes=/ && by==""){ s=$i; sub(/^bytes=/,"",s); by=s }
+                }
+                if(dst ~ re) next
+                if(dport=="") dport="-"
+                if($0 ~ /HW_OFFLOAD/) path=Y "hardware" Z
+                else if($0 ~ /OFFLOAD/) path="sw-fastpath"
+                else path=D "slow-path" Z
+                printf "    %-4s %s%-26s%s %-12s %9s %9s   %s\n", proto, C, dst":"dport, Z, st, comma(pk), human(by), path
+            }'
+    fi
+    conntrack -D -s "$ip" >/dev/null 2>&1
+    set -- $(grep "src=$ip " /proc/net/nf_conntrack 2>/dev/null | pubstats)
+    pub_after=$1
+    if [ "$pub_before" = 0 ]; then
+        printf '  %s└─ already clean · no public flows to cut%s\n' "$G" "$Z"
+    elif [ "$pub_after" = 0 ]; then
+        printf '  %s└─ cut ✓  public flows %d → 0%s\n' "$G" "$pub_before" "$Z"
+    else
+        printf '  %s└─ ⚠ public flows %d → %d (residual)%s\n' "$Y" "$pub_before" "$pub_after" "$Z"
+    fi
+done
+REMOTE
 }
 
 # --acl-restart: toggle the camera ACL to give the camera(s) a brief
@@ -1092,7 +1182,7 @@ while true; do
             shift
             ;;
 
-        --acl-block|--acl-unblock|--acl-status|--acl-restart)
+        --acl-block|--acl-cut|--acl-unblock|--acl-status|--acl-restart)
             fGwAclAction="${1#--acl-}"
             IFS=', ' read -ra _aclTargets <<< "$2"
             fGwAclTarget+=("${_aclTargets[@]}")
@@ -1121,6 +1211,8 @@ done
 if [ -n "$fGwAclAction" ]; then
     if [ "$fGwAclAction" = "restart" ]; then
         gwAclRestart "${fGwAclTarget[@]}" || exit $?
+    elif [ "$fGwAclAction" = "cut" ]; then
+        gwAclCut "${fGwAclTarget[@]}" || exit $?
     else
         gwAclControl "$fGwAclAction" "${fGwAclTarget[@]}" || exit $?
     fi

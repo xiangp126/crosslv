@@ -111,7 +111,8 @@ WAN 链路长期 marginal：一个 2.5G 口反复在 **100M↔1G↔2.5G** 之间
 | netmon 看门狗脚本 | `/root/netmon/`（monitor.sh / snapshot.sh / capture-now / snapshots/ / heartbeat.log） |
 | netmon 服务（开机自启） | `/etc/init.d/netmon` |
 | netmon 运行态（RAM） | `/tmp/netmon/` |
-| WAN 锁 1000M（持久化） | `/etc/hotplug.d/net/20-wan-lock-1000` |
+| WAN 锁 1000M（安全脚本） | `/root/wan-lock.sh` |
+| WAN 锁 1000M（持久化触发器） | `/etc/hotplug.d/iface/99-wan-lock-1000` + 运行态 flag `/tmp/wan_lock_done` |
 | WAN 锁 1000M（当前生效的 advertise） | ethtool 运行态，重启自动清除 |
 
 **一键清除**（脚本已部署在路由器上，会自删）：
@@ -126,7 +127,7 @@ ssh -l root -p 8822 192.168.10.1 /root/teardown-netmon.sh
 
 ```sh
 # 1) 去掉 WAN 1000M 锁
-rm -f /etc/hotplug.d/net/20-wan-lock-1000
+rm -f /etc/hotplug.d/iface/99-wan-lock-1000 /root/wan-lock.sh /tmp/wan_lock_done
 ethtool -s eth1 autoneg on advertise 0x02f   # 立刻恢复 10/100/1000 自协商；或重启恢复默认(含2.5G)
 # 2) 去掉 netmon 看门狗
 /etc/init.d/netmon disable; /etc/init.d/netmon stop
@@ -142,12 +143,14 @@ rm -rf /root/netmon /tmp/netmon
 
 1. **换 WAN 网线**：用屏蔽 Cat6（STP/FTP），两端用力插紧。同时治"接触不良"和"EMI"（屏蔽线抗 USB3 干扰）。最便宜、命中率最高。
 2. **让 WAN 网线远离 USB3 设备/hub**（wrt32x、wrt1200ac 的 USB 外设）——用户已验证过的 EMI 因素。
-3. **WAN 锁定到 1000M —— 已于 2026-06-17 应用。**
+3. **WAN 锁定到 1000M —— 已应用（2026-06-17 首次，2026-06-21 修复持久化）。**
    重要：ethtool 显示上游 192.168.1.1 **只广播到 1000baseT/Full（不支持 2.5G）**，故链路本就上不了 2.5G；锁 1000M 的真正作用是**去掉 10/100M 低速回退**，让链路要么稳在 1G、要么直接 down（被 netmon 抓到），不再"偷偷降 100M 苟着"。
    做法（不能用 netifd 的 `option speed`，那会 `autoneg off` 强制、千兆下协商不上；必须 autoneg 开 + 限制 advertise）：
-   - 立即生效：`ethtool -s eth1 autoneg on advertise 0x020`（`0x020`=仅 1000baseT/Full）。会触发重新协商，**约 10 秒 WAN 闪断**后回到 1G。
-   - 持久化（已装）：`/etc/hotplug.d/net/20-wan-lock-1000`，在 eth1 每次 up 时套用上面的 ethtool。
-   - 撤销：`rm -f /etc/hotplug.d/net/20-wan-lock-1000 && ethtool -s eth1 autoneg on advertise 0x02f`（恢复 10/100/1000；连 2.5G 用 `0x1802f` 或重启）。
+   - 原理：`ethtool -s eth1 autoneg on advertise 0x020`（`0x020`=仅 1000baseT/Full）。触发重新协商，**约 10 秒 WAN 闪断**后回到 1G。
+   - 安全脚本 `/root/wan-lock.sh`：套用上面的 ethtool 后**验证 25 秒内能否到 1G，不行则自动回退**到 `0x02f`（10/100/1000），确保**绝不把 WAN 卡死**——应对"链路太烂连 1G 都协商不出来"的情况。
+   - 持久化 `/etc/hotplug.d/iface/99-wan-lock-1000`：**iface 类** hotplug，在 `wan` 每次 `ifup`（含开机）时调用安全脚本；用 `/tmp/wan_lock_done` 标志位防止重协商引发的循环。已实测 `ifup wan` 触发成功。
+   - ⚠️ 踩坑记录：最初放在 `/etc/hotplug.d/net/` 并用 `$DEVICE` 判断——**错了**，net 类 hotplug 的设备变量是 `$INTERFACE`，`$DEVICE` 为空，导致重启后锁不生效、又掉回 100M。改用 iface 类（变量 `$ACTION`/`$INTERFACE` 都有效、时机在接口拉起后）才正确。
+   - 撤销：见第五节（`rm` iface 脚本 + `/root/wan-lock.sh` + flag，并 `ethtool ... advertise 0x02f`）。
 4. 可选：netmon 加 WAN 自愈（检测 RX 死锁自动 `ip link set eth1 down/up`），把手动重启变成自动恢复（用户暂未采用）。
 5. 长期：配远程 syslog（`log_ip` 指向常开 NAS/PC）或加大 `log_size`，根治"重启即丢日志"。
 

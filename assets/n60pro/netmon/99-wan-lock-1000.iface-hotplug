@@ -1,0 +1,6 @@
+#!/bin/sh
+# Lock WAN to 1000M on every wan ifup (once per boot; flag in tmpfs clears on reboot).
+[ "$ACTION" = ifup ] && [ "$INTERFACE" = wan ] || exit 0
+[ -f /tmp/wan_lock_done ] && exit 0
+touch /tmp/wan_lock_done
+/root/wan-lock.sh >/dev/null 2>&1 &

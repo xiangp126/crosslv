@@ -2,9 +2,9 @@
 # GO2RTC config — lives on the Frigate/Windows box 192.168.10.240
 #   path on that box: E:\Docker\frigate\go2rtc\go2rtc.yaml
 # Saved copy of the AS-RUNNING config. REDACTED for the repo: <UID> (Mi account uid),
-# <DID_01..04> (per-camera device ids), <XIAOMI_AUTH_TOKEN> (the V1:... token).
+# <DID_01..05> (per-camera device ids), <XIAOMI_AUTH_TOKEN> (the V1:... token).
 # Put the real values back (from the .240 box) when deploying.
-# Provides the live streams the player's "看直播 / 直播分屏" embeds via WebRTC.
+# Provides the live streams the player's "Live / Playback" embeds via WebRTC.
 # ================================================================
 # Param notes: subtype=3 => 4K, subtype=2 => 1080P ; stream=0 = main channel.
 
@@ -29,7 +29,7 @@ webrtc:
     - 192.168.10.240:8555     # advertise the reachable LAN host candidate
 
 # ================================================================
-# STREAM PIPELINE  (4 Xiaomi C700 cams, model chuangmi.camera.81ac1, uid <UID>)
+# STREAM PIPELINE  (5 Xiaomi C700 cams, model chuangmi.camera.81ac1, uid <UID>)
 #   *_raw     : 4K H265 main  -> recording / RTSP / Frigate (subtype=3, ~3840x2160)
 #   *_sub1080 : 1080p H265     -> the light feed the browser plays directly over
 #               WebRTC on H265-capable browsers (subtype=2&stream=0, verified 1920x1080)
@@ -39,42 +39,52 @@ webrtc:
 # go2rtc's buffer ("cs2: pop buffer is full") and the 4K->1080p transcode kept dying
 # ("ffmpeg ... EOF"), freezing live. The 1080p sub is light enough to be stable.
 # audio=copy (not =opus): the sub audio is already OPUS; re-encoding reintroduced the EOF.
+# backlog=16MB on every xiaomi source: a larger async buffer absorbs bursts so a slow
+# consumer (transcode / a client) can't back-pressure the source into "pop buffer is full".
 # Player mapping: 原画1080P=*_sub1080 (H265 direct) · 转码1080P=*_1080p (H264).
 # ================================================================
 
 streams:
 
-  # ---- Camera 01: 192.168.10.221 / did=<DID_01> ----
+  # ---- Camera 01: 192.168.10.221 ----
   c700_01_raw:
     - "xiaomi://<UID>:cn@192.168.10.221?did=<DID_01>&model=chuangmi.camera.81ac1&subtype=3&stream=0#backlog=16MB#async"
   c700_01_sub1080:
-    - "xiaomi://<UID>:cn@192.168.10.221?did=<DID_01>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=4MB#async"
+    - "xiaomi://<UID>:cn@192.168.10.221?did=<DID_01>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=16MB#async"
   c700_01_1080p:
     - "ffmpeg:c700_01_sub1080#video=h264#audio=copy#hardware=cuda#async"
 
-  # ---- Camera 02: 192.168.10.222 / did=<DID_02> ----
+  # ---- Camera 02: 192.168.10.222 ----
   c700_02_raw:
     - "xiaomi://<UID>:cn@192.168.10.222?did=<DID_02>&model=chuangmi.camera.81ac1&subtype=3&stream=0#backlog=16MB#async"
   c700_02_sub1080:
-    - "xiaomi://<UID>:cn@192.168.10.222?did=<DID_02>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=4MB#async"
+    - "xiaomi://<UID>:cn@192.168.10.222?did=<DID_02>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=16MB#async"
   c700_02_1080p:
     - "ffmpeg:c700_02_sub1080#video=h264#audio=copy#hardware=cuda#async"
 
-  # ---- Camera 03: 192.168.10.223 / did=<DID_03> ----
+  # ---- Camera 03: 192.168.10.223 ----
   c700_03_raw:
     - "xiaomi://<UID>:cn@192.168.10.223?did=<DID_03>&model=chuangmi.camera.81ac1&subtype=3&stream=0#backlog=16MB#async"
   c700_03_sub1080:
-    - "xiaomi://<UID>:cn@192.168.10.223?did=<DID_03>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=4MB#async"
+    - "xiaomi://<UID>:cn@192.168.10.223?did=<DID_03>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=16MB#async"
   c700_03_1080p:
     - "ffmpeg:c700_03_sub1080#video=h264#audio=copy#hardware=cuda#async"
 
-  # ---- Camera 04: 192.168.10.224 / did=<DID_04> ----
+  # ---- Camera 04: 192.168.10.224 ----
   c700_04_raw:
     - "xiaomi://<UID>:cn@192.168.10.224?did=<DID_04>&model=chuangmi.camera.81ac1&subtype=3&stream=0#backlog=16MB#async"
   c700_04_sub1080:
-    - "xiaomi://<UID>:cn@192.168.10.224?did=<DID_04>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=4MB#async"
+    - "xiaomi://<UID>:cn@192.168.10.224?did=<DID_04>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=16MB#async"
   c700_04_1080p:
     - "ffmpeg:c700_04_sub1080#video=h264#audio=copy#hardware=cuda#async"
+
+  # ---- Camera 05: 192.168.10.225 ----
+  c700_05_raw:
+    - "xiaomi://<UID>:cn@192.168.10.225?did=<DID_05>&model=chuangmi.camera.81ac1&subtype=3&stream=0#backlog=16MB#async"
+  c700_05_sub1080:
+    - "xiaomi://<UID>:cn@192.168.10.225?did=<DID_05>&model=chuangmi.camera.81ac1&subtype=2&stream=0#backlog=16MB#async"
+  c700_05_1080p:
+    - "ffmpeg:c700_05_sub1080#video=h264#audio=copy#hardware=cuda#async"
 
 xiaomi:
   "<UID>": <XIAOMI_AUTH_TOKEN>   # REDACTED — real V1:... token is on the .240 box

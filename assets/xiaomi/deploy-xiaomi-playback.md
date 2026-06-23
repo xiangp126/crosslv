@@ -1,7 +1,7 @@
 # Deploy `xiaomi_playback.py` — timeline playback for Xiaomi SMB recordings
 
 A lightweight, zero-dependency timeline player for the Xiaomi C700 recordings the
-four cameras upload to two NAS boxes (`wrt32x`, `wrt1200ac`). It runs **on your
+five cameras upload to two NAS boxes (`wrt32x`, `wrt1200ac`). It runs **on your
 Mac/Windows machine** and reads the footage over CIFS mounts of the SMB shares —
 the NAS only ever serves plain file reads.
 
@@ -23,7 +23,7 @@ run.
 Jellyfin/Plex/Emby are media *libraries*: they treat each 128 MB chunk as a movie,
 scrape metadata, and burn themselves out generating thousands of thumbnails — with
 no time axis, no scrubbing, no cross-chunk continuous play. For ~1 TB / ~8000 chunks
-across four cameras that is exactly the wrong tool.
+across five cameras that is exactly the wrong tool.
 
 `xiaomi_playback.py` instead reads only **filenames** to build a per-day timeline
 (`00_<start>_<end>.mp4` already encodes the times), and streams just the current
@@ -34,12 +34,13 @@ bandwidth; parsing a few thousand filenames takes under a second.
 
 ## 2. Recording layout (the source of truth)
 
-Four cameras across **two** NAS boxes (same `pi` SMB credentials on both):
+Five cameras across **two** NAS boxes (same `pi` SMB credentials on both):
 
 | Camera (MAC)   | NAS         | LAN IP         | SMB share | NAS disk    |
 |----------------|-------------|----------------|-----------|-------------|
 | `B88880974A38` | `wrt32x`    | 192.168.10.200 | `c700_01` | `/mnt/sda1` |
 | `B88880A0FD7C` | `wrt32x`    | 192.168.10.200 | `c700_02` | `/mnt/sda2` |
+| `B88880948BA0` | `wrt32x`    | 192.168.10.200 | `c700_05` | `/mnt/sda3` |
 | `B88880976D02` | `wrt1200ac` | 192.168.10.100 | `c700_03` | `/mnt/sdb1` |
 | `B88880976D36` | `wrt1200ac` | 192.168.10.100 | `c700_04` | `/mnt/sdb2` |
 
@@ -48,10 +49,11 @@ Four cameras across **two** NAS boxes (same `pi` SMB credentials on both):
   user `pi` (same password on both). Root SSH: `wrt32x` per
   `../../plans/deploy-camera-rotate.md`; `wrt1200ac` on **port 8822**
   (`ssh -p 8822 -l root wrt1200ac.local`).
-- `wrt32x` also exports a spare disk `c700_05` (empty for now — reserved for a
-  future 5th camera). It **is** passed as a root, but contributes no entry in the
-  dropdown until a camera actually records there, at which point it appears
-  automatically (hit ↻ or reload). `wrt1200ac` also exports an unrelated `sword`
+- `c700_05` (sda3, cam5 `.225`) is in the table above but **currently empty** — the
+  camera's recordings haven't landed on sda3 yet, so it contributes no entry in the
+  dropdown until a clip is written, at which point it appears automatically (hit ↻ or
+  reload). Note sda3 also holds Python + the OCR engine under `/mnt/sda3/opt`, which the
+  player ignores. `wrt1200ac` also exports an unrelated `sword`
   share — that one is not a camera, don't pass it as a root.
 - Chunk names: `00_YYYYMMDDHHMMSS_YYYYMMDDHHMMSS.mp4`, ~128 MB, lexical order =
   chronological. (Same layout `camera-rotate.sh` prunes — see
@@ -59,13 +61,14 @@ Four cameras across **two** NAS boxes (same `pi` SMB credentials on both):
   player flags it amber / LIVE.
 
 The player takes **multiple root dirs**; each mount point contains one
-`XiaomiCamera_*` folder, so all four cameras land in one dropdown.
+`XiaomiCamera_*` folder, so every camera with footage lands in one dropdown
+(c700_05 joins once cam5 records to sda3).
 
 ---
 
 ## 3. macOS deploy (primary)
 
-### 3.1 Mount all four shares
+### 3.1 Mount all five shares
 
 Finder → ⌘K → connect to each (same `pi` password on both boxes; tick
 "Remember in my keychain" so it won't re-prompt next time):
@@ -73,7 +76,7 @@ Finder → ⌘K → connect to each (same `pi` password on both boxes; tick
 ```
 smb://pi@wrt32x.local/c700_01
 smb://pi@wrt32x.local/c700_02
-smb://pi@wrt32x.local/c700_05      # spare/empty, optional — armed for a future camera
+smb://pi@wrt32x.local/c700_05      # cam5 (.225); empty until it records to sda3
 smb://pi@wrt1200ac.local/c700_03
 smb://pi@wrt1200ac.local/c700_04
 ```
@@ -87,10 +90,11 @@ for s in c700_01 c700_02 c700_05; do osascript -e "mount volume \"smb://pi@wrt32
 for s in c700_03 c700_04;        do osascript -e "mount volume \"smb://pi@wrt1200ac.local/$s\""; done
 ```
 
-Sanity-check the camera mounts hold one camera folder each (c700_05 is empty):
+Sanity-check the camera mounts hold one camera folder each (c700_05 is still empty
+until cam5 records):
 
 ```sh
-ls -d /Volumes/c700_0[1-4]/XiaomiCamera_*   # four dirs, one per mount
+ls -d /Volumes/c700_0[1-4]/XiaomiCamera_*   # four dirs (c700_05 empty for now)
 ```
 
 ### 3.2 Run
@@ -105,8 +109,8 @@ auto-selects the latest day with recordings.
 > Last positional arg that is all digits is treated as the port (default `8800`);
 > everything else is a root dir. With no args it defaults to all five mounts
 > (`/Volumes/c700_01 … c700_05`, port 8800), so plain
-> `python3 …/xiaomi_playback.py` works once the shares are mounted. `c700_05` is
-> the empty spare — it's harmless to list and yields no camera until populated.
+> `python3 …/xiaomi_playback.py` works once the shares are mounted. `c700_05`
+> (cam5, .225) is harmless to list and yields no camera until it records to sda3.
 
 **Cross-camera time alignment:** pick a time on one camera (say 10:10), then switch
 cameras — the new camera jumps to the **same day & time**, or to the nearest footage
@@ -194,7 +198,8 @@ curl -s -D- -o /dev/null -r 0-1023 \
 kill %1; rm -rf "$TMP"
 ```
 
-Live test (mounts up): dropdown lists **all four** cameras; latest day pre-selected;
+Live test (mounts up): dropdown lists the **four** cameras with footage (c700_05 joins
+once cam5 records); latest day pre-selected;
 green blocks line up with recorded spans (amber = in-progress LIVE chunk); dragging
 the timeline moves the playhead live and seeks on release; a chunk ending
 auto-advances to the next; a real chunk returns `206` with `Content-Length: 1024`
@@ -207,6 +212,6 @@ for `-r 0-1023`.
 | Symptom | Cause / fix |
 |---|---|
 | Banner says "未发现任何 XiaomiCamera_* 目录" | Shares not mounted, or wrong root path. Check `ls /Volumes/c700_0*`. |
-| Dropdown shows fewer than 4 cameras | A share isn't mounted, or fewer roots passed. Check `ls -d /Volumes/c700_0[1-4]/XiaomiCamera_*` (4 expected). |
+| Dropdown shows fewer than 4 cameras | A share isn't mounted, or fewer roots passed. Check `ls -d /Volumes/c700_0[1-4]/XiaomiCamera_*` (4 expected; c700_05/sda3 adds a 5th once cam5 records). |
 | Video won't seek / scrub jumps to 0 | Browser couldn't get Range — confirm `curl -r` returns `206` (not `200`). |
 | Day strip empty but files exist | Filenames don't match `00_<14>_<14>.mp4`. Check the camera firmware's naming. |

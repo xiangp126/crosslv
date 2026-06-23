@@ -31,11 +31,11 @@ procd service).
   the server on the wired `wrt32x` keeps disk reads and the cross-box cifs fetch on
   wire — only the stream you watch crosses WiFi once (zero on a wired device). On the
   Mac, viewing from a phone crosses WiFi *twice*.
-- **2 of the 4 cameras are local to `wrt32x`** (sda1, sda2), plus the empty spare
-  (sda3); only the two on `wrt1200ac` come over a read-only cifs mount. Hosting on
+- **3 of the 5 cameras are local to `wrt32x`** (cam1/2/5 on sda1/sda2/sda3); only the
+  two on `wrt1200ac` come over a read-only cifs mount. Hosting on
   `wrt1200ac` would invert that and it's the slower box.
 - **Capacity is a non-issue (measured).** Streams are **1.4–3.3 Mbps** each (134 MB
-  chunks, **no transcoding** — the player serves bytes, the browser decodes). 4
+  chunks, **no transcoding** — the player serves bytes, the browser decodes). 5
   concurrent ≈ <20 Mbps through wrt32x (dual-core ARMv7 @ 1866 MHz, GbE, SMB
   encryption off, ~250 MB RAM free). Idle Python ≈ 15 MB / ~0 CPU. `ThreadingHTTPServer`
   handles concurrent Range requests.
@@ -50,7 +50,7 @@ procd service).
 |------------------|---------------|---------------------------------|-----------------------|
 | `B88880974A38`   | `wrt32x`      | local `/mnt/sda1`               | `/mnt/c700_01` → sda1 |
 | `B88880A0FD7C`   | `wrt32x`      | local `/mnt/sda2`               | `/mnt/c700_02` → sda2 |
-| *(spare, empty)* | `wrt32x`      | local `/mnt/sda3`               | `/mnt/c700_05` → sda3 |
+| `B88880948BA0`   | `wrt32x`      | local `/mnt/sda3`               | `/mnt/c700_05` → sda3 |
 | `B88880976D02`   | `wrt1200ac`   | cifs `//192.168.10.100/c700_03` | `/mnt/c700_03`        |
 | `B88880976D36`   | `wrt1200ac`   | cifs `//192.168.10.100/c700_04` | `/mnt/c700_04`        |
 
@@ -60,9 +60,9 @@ procd service).
 - Local disks mount at `/mnt/sdaN`; the service **symlinks** them to `/mnt/c700_0X` so
   the dropdown shows `c700_01/02/05` (matching the share names; the cifs ones are
   already `c700_03/04`).
-- `c700_05` (sda3) is the empty spare — shows as an empty entry until a 5th camera
-  records there, then appears automatically. (Python lives in `/mnt/sda3/opt`, which the
-  player ignores.)
+- `c700_05` (sda3) is camera 5 (`.225`, MAC `B88880948BA0`) — records to sda3 via the
+  `c700_05` SMB share; the `XiaomiCamera_00_*` dir appears once it starts writing. (Python
+  and the OCR engine live in `/mnt/sda3/opt`, which the player ignores.)
 - Chunk names `00_<start>_<end>.mp4`, ~128 MB; in-progress chunk has `start==end`
   (flagged amber/LIVE).
 
@@ -89,9 +89,9 @@ $SSH 'echo connected; . /etc/openwrt_release; echo $DISTRIB_DESCRIPTION'
 
 ---
 
-## 4. Install Python 3 onto the spare disk `/mnt/sda3` (keep flash free)
+## 4. Install Python 3 onto the data disk `/mnt/sda3` (keep flash free)
 
-Flash overlay has only ~70 MB free, so install Python to the roomy spare disk via an
+Flash overlay has only ~70 MB free, so install Python to the roomy data disk via an
 opkg `dest`, with a tiny wrapper on flash (the disk-installed `libpython3` isn't on the
 default linker path). Stdlib only: `os re sys time datetime threading json`,
 `http.server`, `urllib.parse`, `socketserver`.
@@ -207,7 +207,7 @@ ROOTS="/mnt/c700_01 /mnt/c700_02 /mnt/c700_03 /mnt/c700_04 /mnt/c700_05"
 start_service() {
     ln -sfn /mnt/sda1 /mnt/c700_01             # local c700_01
     ln -sfn /mnt/sda2 /mnt/c700_02             # local c700_02
-    ln -sfn /mnt/sda3 /mnt/c700_05             # local spare c700_05
+    ln -sfn /mnt/sda3 /mnt/c700_05             # local c700_05 (cam5 + Python/OCR in /opt)
     /usr/local/bin/xiaomi-mounts.sh            # c700_03/04 read-only cifs up first
     procd_open_instance
     procd_set_param command "$PYBIN" "$SCRIPT" $ROOTS "$PORT"
@@ -343,8 +343,8 @@ The page opens to **`livegrid` at 4 cells** by default (`START_LIVE=true`, `STAR
 are **no keyboard shortcuts**.
 
 Camera names are decoupled from go2rtc: internal stream/disk names stay lowercase `c700_0X`, while
-the UI shows display names from **`CAM_NAMES`** (`CAM 1`…`CAM 6`, via `dispCam()`). Cells `05/06`
-are reserved (no live source / no disk yet).
+the UI shows display names from **`CAM_NAMES`** (`CAM 1`…`CAM 6`, via `dispCam()`). Cell `06`
+is reserved (no live source / no disk yet).
 
 Live does **not** go through wrt32x — the browser connects **directly to go2rtc** at
 `192.168.10.240:1984` over WebRTC. wrt32x only serves the page (and proxies go2rtc's
@@ -402,7 +402,7 @@ subtype=2&stream=0 — what live uses on H265-capable browsers), `c700_0X_1080p`
 ### Playback split (`pbgrid`)
 
 A 2/4/6-cell grid of the cameras' **recordings**, sharing the one timeline:
-- **Drag the timeline / ±10s / prev-next-seg / speed** act on all together (`seekTo`→`gridSeekAll`).
+- **Drag the timeline / ±10s / prev-next clip (`jumpSeg`) / speed** act on all together (`seekTo`→`gridSeekAll`).
 - **Per-cell controls** (reveal on hover, or tap-then-auto-fade on touch): a **camera picker**
   top-left (assigns that cell's camera), native `<video>` controls, and a `⤢` **page-fill zoom**
   (fills the grid area, not OS fullscreen — Safari's fullscreen-exit shifts the frame). A `⛶`
