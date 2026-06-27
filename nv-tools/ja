@@ -856,14 +856,21 @@ waitForScreenChange() {
 # options with a cursor indicator (❯ or ›) pointing at one of them.
 #
 # Stage A — "is this a permission prompt at all?"
-#   Require BOTH:
-#     • at least one numbered line carrying a cursor glyph
-#       (e.g. "❯ 1. Yes", "› 1. Allow")
-#     • at least two numbered option lines in total (a real menu, not
-#       a stray list item)
+#   Require ALL of:
+#     • a cursor glyph on a REAL option line — "❯ N. <text>" with a space
+#       and option text after the dot (e.g. "❯ 1. Yes", "› 1. Allow"). The
+#       "space + text" matters: it distinguishes a menu option from the
+#       input box echoing a number the user typed ("❯ 1.4444"), which must
+#       NOT be treated as a menu.
+#     • at least two numbered option lines in total (a real menu, not a
+#       stray list item)
+#     • the cursor option line is part of a CONTIGUOUS menu block (another
+#       option line within 2 lines of it). A real menu lists options on
+#       consecutive lines; a lone "❯ 1. ..." in the input box sits far from
+#       any numbered list in the conversation and is rejected.
 #   Free-form Claude/Codex response text almost never contains a cursor
-#   glyph directly before a numbered line, so this yields ~zero false
-#   positives while being wording-agnostic.
+#   glyph on a numbered line, so this yields ~zero false positives while
+#   being wording-agnostic. Stage B then picks only from within that block.
 #
 # Stage B — "which option should we press?"
 #   Still filtered by an affirmative word list (Yes|Allow|Accept|
@@ -920,16 +927,67 @@ detectPromptOption() {
     # ja silently does nothing. This was a real miss: WebFetch's
     # "› 1. Yes / ↓ 2. Yes, and don't ask again" went unapproved.
 
-    # Stage A: structural gate — a real cursor on a numbered line.
-    if ! echo "$tail" | grep -qE '^[[:space:]]*[❯›][[:space:]]*[0-9]+\.'; then
-        return 1
-    fi
-    # …plus 2+ numbered options total (cursor OR scroll-arrow prefixes ok).
+    # Stage A: structural gate.
+    #   (1) a selection cursor (❯/›) must sit on a REAL option line —
+    #       number, dot, then a SPACE and actual option text. That trailing
+    #       "space + non-space" is what tells a genuine menu option
+    #       ("❯ 1. Yes") apart from the input box echoing a number the user
+    #       typed ("❯ 1.4444" — digits straight after the dot, no space).
+    #       The old gate matched on just "[0-9]+\." and so was fooled by a
+    #       user typing "1." into the prompt box: ja then read the editor as
+    #       a menu, picked an affirmative line from the conversation above
+    #       (e.g. "4. Allow ...") and spammed that digit into the box.
+    #   (2) there must be ≥2 option lines, AND the cursor option line has to
+    #       be part of a CONTIGUOUS menu block (another option line within
+    #       2 lines of it). A real menu lists its options on consecutive
+    #       lines; a lone "❯ 1. ..." in the input box is separated from any
+    #       numbered list by the box border / blank lines, so it never has a
+    #       neighbour and is correctly rejected.
+    local optLineFull='^[[:space:]]*[❯›↑↓]?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
+    local cursorOptRe='^[[:space:]]*[❯›][[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
+    local optLines cursorLines
+    optLines=$(echo "$tail" | grep -nE "$optLineFull" | cut -d: -f1)
+    cursorLines=$(echo "$tail" | grep -nE "$cursorOptRe" | cut -d: -f1)
+    [ -z "$optLines" ] && return 1
+    [ -z "$cursorLines" ] && return 1
     local numOpts
-    numOpts=$(echo "$tail" | grep -cE '^[[:space:]]*[❯›↑↓]?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]')
-    if [ "$numOpts" -lt 2 ]; then
-        return 1
-    fi
+    numOpts=$(echo "$optLines" | grep -c .)
+    [ "$numOpts" -lt 2 ] && return 1
+
+    # Anchor: the first cursor option line that has another option line
+    # within 2 lines (i.e. is genuinely inside a menu block).
+    local _c _o _anchor=
+    for _c in $cursorLines; do
+        for _o in $optLines; do
+            [ "$_o" = "$_c" ] && continue
+            if [ $(( _o > _c ? _o - _c : _c - _o )) -le 2 ]; then
+                _anchor=$_c
+                break
+            fi
+        done
+        [ -n "$_anchor" ] && break
+    done
+    [ -z "$_anchor" ] && return 1
+
+    # Grow the block across option lines separated by ≤2-line gaps (tolerates
+    # a wrapped option's continuation line) so the picker only ever sees this
+    # menu's options, never a numbered list elsewhere in the conversation.
+    local _lo=$_anchor _hi=$_anchor _prev=$_anchor
+    for _o in $(echo "$optLines" | sort -rn); do
+        if [ "$_o" -lt "$_anchor" ] && [ $((_prev - _o)) -le 2 ]; then
+            _lo=$_o
+            _prev=$_o
+        fi
+    done
+    _prev=$_anchor
+    for _o in $(echo "$optLines" | sort -n); do
+        if [ "$_o" -gt "$_anchor" ] && [ $((_o - _prev)) -le 2 ]; then
+            _hi=$_o
+            _prev=$_o
+        fi
+    done
+    local block
+    block=$(echo "$tail" | sed -n "${_lo},${_hi}p")
 
     # Stage B: pick the best affirmative option, preferring the most
     # persistent form of approval available. Three priority tiers:
@@ -961,7 +1019,7 @@ detectPromptOption() {
 
     local line
     # Tier 1 — permanent remember
-    line=$(echo "$tail" \
+    line=$(echo "$block" \
         | grep -E "$optLineRe" \
         | grep -iE "$permanentRe" \
         | grep -iE "$affirmRe" \
@@ -972,7 +1030,7 @@ detectPromptOption() {
     fi
 
     # Tier 2 — session scope
-    line=$(echo "$tail" \
+    line=$(echo "$block" \
         | grep -E "$optLineRe" \
         | grep -iE "$sessionRe" \
         | grep -iE "$affirmRe" \
@@ -983,7 +1041,7 @@ detectPromptOption() {
     fi
 
     # Tier 3 — plain affirmative
-    line=$(echo "$tail" \
+    line=$(echo "$block" \
         | grep -oE "${optLineRe}${affirmRe}" \
         | head -1)
     if [ -n "$line" ] && [[ "$line" =~ [0-9]+ ]]; then

@@ -107,9 +107,13 @@ fSambaServerFlag= # 1: Start samba server 2: Start samba server and reset passwo
 # Camera ACL (OpenWrt firewall rules Block_C700_NN)
 fGwHost="root@192.168.10.1"
 fGwPort=8822
+fGwGo2rtcIP="192.168.10.240"                  # --acl-status NOTE: exact IP of the go2rtc host
+fGwNasIPs="192.168.10.200 192.168.10.100"     # --acl-status NOTE: SMB/NAS hosts cameras record to (space-separated)
+fGwKeep443IPs="111.206.191.131"               # --keep-443: restrict allowed TCP/443 to these dest IP(s) (space-separated); empty = any 443
 fGwAclAction=""    # block | cut | unblock | status | restart
 fGwAclTarget=()    # short camera numbers 01..05 (or legacy c700_0N) or 'all'; NN maps to rule Block_C700_NN
                    # Comma- or space-separated values; flags accumulate when repeated.
+fGwAclKeep443=0    # --keep-443: with block/cut, keep cloud-control TCP/443 reachable (block P2P + the rest)
 fGwCameras=(c700_01 c700_02 c700_03 c700_04 c700_05)   # source of truth — add a camera by appending here.
 # SSH Tunnel (autossh port forward over VPN)
 # Remote host: the real server autossh connects to. Not derivable from the
@@ -215,18 +219,24 @@ RTSP Options:
     --rtsp-resolution <WxH>         Set screen resolution for tiling (e.g. 3360x1890)
 
 Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
-    --acl-block   <targets>  Enable block rule(s) — camera(s) offline (new connections only)
-    --acl-cut     <targets>  Hard block: enable rule(s) AND flush existing/offloaded
-                             conntrack so in-progress connections (incl. UDP P2P) are
-                             cut too. Camera(s) stay offline until --acl-unblock.
+    --acl-block   <targets>  Block camera(s) NOW: enable rule(s) AND flush existing/offloaded
+                             conntrack so in-progress connections (incl. UDP P2P) are cut
+                             too. Camera(s) stay offline until --acl-unblock.
     --acl-unblock <targets>  Disable block rule(s) — camera(s) online
-    --acl-status  <targets>  Show current rule state
-    --acl-restart <targets>  Toggle the rule(s) to nudge the camera(s):
+    --acl-status  <targets>  Show rule state + per-camera live connections (no flush)
+    --acl-restart <targets>  Toggle to nudge the camera(s):
                              unblock → wait 10s → block → wait 2s → status
                              <targets>: comma- or space-separated tokens; flags accumulate.
                              Tokens: 01 | 02 | 03 | 04 | 05 | all   (each NN -> rule Block_C700_NN)
                              E.g.  01,03   or   "01 03"
                                    --acl-block 01 --acl-block 03
+    --keep-443               Modifier for --acl-block: keep the camera's cloud-control
+                             TCP/443 reachable while blocking P2P + everything else.
+                             Auto-creates an Allow_C700_NN_443 ACCEPT rule — tcp/443 to
+                             the dest IP(s) in fGwKeep443IPs ONLY (empty = any 443) — ordered
+                             before the Block rule, created/refreshed each run. Prevents the
+                             camera from hanging (vs a full cut) while killing remote/P2P.
+                             E.g.  jc --acl-block --keep-443 02
 
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
@@ -317,7 +327,16 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
           bbr,bbr-status,\
-          acl-block:,acl-cut:,acl-unblock:,acl-status:,acl-restart:"
+          acl-block:,acl-unblock:,acl-status:,acl-restart:"
+
+# Pre-strip the --keep-443 modifier so it can appear anywhere on the command line
+# (incl. between an --acl-* action and its target, where getopt would otherwise
+# swallow it as that action's required argument).
+_jcArgs=()
+for _a in "$@"; do
+    if [ "$_a" = "--keep-443" ]; then fGwAclKeep443=1; else _jcArgs+=("$_a"); fi
+done
+if [ ${#_jcArgs[@]} -gt 0 ]; then set -- "${_jcArgs[@]}"; else set --; fi
 
 # Use getopt to parse command-line options
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -646,8 +665,17 @@ gwAclControl() {
         status)  desired="" ;;
     esac
 
+    # companion Allow_<cam>_443 rule (only block/unblock touch rules):
+    #   block + --keep-443 -> 1 (allow 443) ; block w/o keep-443 -> 0 ; unblock -> 0 ; status -> skip
+    local allow_desired=""
+    case "$action" in
+        block)   [ "$fGwAclKeep443" = 1 ] && allow_desired=1 || allow_desired=0 ;;
+        unblock) allow_desired=0 ;;
+        status)  allow_desired="" ;;
+    esac
+
     local rc=0 remote_env
-    printf -v remote_env "DESIRED='%s' RULES='%s' sh -s" "$desired" "$rules"
+    printf -v remote_env "DESIRED='%s' ALLOW_DESIRED='%s' KEEP443_IPS='%s' RULES='%s' sh -s" "$desired" "$allow_desired" "$fGwKeep443IPs" "$rules"
     ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
         "$fGwHost" "$remote_env" <<'REMOTE' || rc=$?
 missing=0
@@ -678,6 +706,48 @@ for n in $RULES; do
     else
         echo "$n: already $DESIRED"
     fi
+    # --- companion Allow_<cam>_443 rule (--keep-443) ---
+    if [ -n "$ALLOW_DESIRED" ]; then
+        an="$(echo "$n" | sed 's/^[Bb]lock_/Allow_/')_443"
+        asec=$(uci show firewall 2>/dev/null | awk -F'[.=]' -v n="$an" '
+            tolower($0) ~ "\\.name=\x27" tolower(n) "\x27" { print $2; exit }')
+        if [ -z "$asec" ]; then
+            if [ "$ALLOW_DESIRED" = 1 ]; then
+                amac=$(uci -q get firewall.$sec.src_mac 2>/dev/null)
+                azone=$(uci -q get firewall.$sec.src 2>/dev/null); [ -z "$azone" ] && azone=lan
+                asec=$(uci add firewall rule)
+                uci set firewall.$asec.name="$an"
+                uci set firewall.$asec.src="$azone"
+                uci set firewall.$asec.src_mac="$amac"
+                uci set firewall.$asec.dest='wan'
+                uci set firewall.$asec.proto='tcp'
+                uci set firewall.$asec.dest_port='443'
+                uci set firewall.$asec.target='ACCEPT'
+                uci set firewall.$asec.enabled='1'
+                for kip in $KEEP443_IPS; do uci add_list firewall.$asec.dest_ip="$kip"; done
+                # order it immediately before the Block rule (ACCEPT must precede REJECT)
+                bidx=$(uci show firewall 2>/dev/null | sed -nE 's/^firewall\.([^.]+)=[a-zA-Z]+$/\1/p' | awk -v s="$sec" '$0==s{print NR-1; exit}')
+                [ -n "$bidx" ] && uci reorder firewall.$asec="$bidx" 2>/dev/null
+                changed=1
+                echo "$an: created (ACCEPT tcp/443 -> ${KEEP443_IPS:-any}, before $n)"
+            fi
+        else
+            acur=$(uci -q get firewall.$asec.enabled 2>/dev/null || true); [ -z "$acur" ] && acur=1
+            if [ "$acur" != "$ALLOW_DESIRED" ]; then
+                if uci set firewall.$asec.enabled="$ALLOW_DESIRED"; then
+                    changed=1; echo "$an: $acur -> $ALLOW_DESIRED"
+                fi
+            else
+                echo "$an: already $ALLOW_DESIRED"
+            fi
+            if [ "$ALLOW_DESIRED" = 1 ]; then
+                cip=$(uci -q get firewall.$asec.dest_ip 2>/dev/null)
+                uci -q delete firewall.$asec.dest_ip 2>/dev/null
+                for kip in $KEEP443_IPS; do uci add_list firewall.$asec.dest_ip="$kip"; done
+                [ "$cip" != "$(uci -q get firewall.$asec.dest_ip 2>/dev/null)" ] && { changed=1; echo "$an: dest_ip -> ${KEEP443_IPS:-any}"; }
+            fi
+        fi
+    fi
 done
 if [ "$missing" = 1 ]; then
     echo "ERROR: one or more rules not found or failed to update; aborting without commit" >&2
@@ -697,23 +767,14 @@ REMOTE
     return "$rc"
 }
 
-gwAclCut() {
-    local targets=("$@")
-    echo -e "${LIGHTYELLOW}Note: --acl-cut also flushes existing/offloaded flows; affected camera(s) go fully offline and will NOT reconnect (incl. go2rtc live) until 'jc --acl-unblock'.${RESET}"
-    gwAclControl block "${targets[@]}" || return $?
-    local rules
-    rules=$(gwAclResolveRules "${targets[@]}") || return $?
-    echo -e "${COLOR}Flushing conntrack so in-progress connections are cut...${RESET}"
-    local color_on=
-    [ -t 1 ] && color_on=1
-    ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
-        "$fGwHost" "RULES='$rules' COLOR_ON='$color_on' sh -s" <<'REMOTE'
+gwAclStatsScript() {
+cat <<'EOS'
 PRIVRE='^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|22[4-9]\.|23[0-9]\.)'
 if [ "$COLOR_ON" = 1 ]; then
-    B=$(printf '\033[1m'); D=$(printf '\033[2m'); C=$(printf '\033[36m')
+    B=$(printf '\033[1m'); D=$(printf '\033[2m'); C=$(printf '\033[36m'); W=$(printf '\033[38;5;66m')
     Y=$(printf '\033[33m'); G=$(printf '\033[32m'); R=$(printf '\033[31m'); Z=$(printf '\033[0m')
 else
-    B=; D=; C=; Y=; G=; R=; Z=
+    B=; D=; C=; Y=; G=; R=; Z=; W=
 fi
 pubstats() {
     awk -v re="$PRIVRE" '
@@ -731,50 +792,136 @@ for n in $RULES; do
         tolower($0) ~ "\\.name=\x27" tolower(n) "\x27" { print $2; exit }
     ')
     [ -z "$sec" ] && { printf '%s%s: rule not found%s\n' "$R" "$n" "$Z" >&2; continue; }
+    enabled=$(uci -q get firewall.$sec.enabled 2>/dev/null); [ -z "$enabled" ] && enabled=1
+    [ "$enabled" = 1 ] && state=Blocked || state=Unblocked
     mac=$(uci -q get firewall.$sec.src_mac 2>/dev/null | tr 'A-Z' 'a-z')
     [ -z "$mac" ] && { printf '%s%s: no src_mac on rule%s\n' "$R" "$n" "$Z" >&2; continue; }
     ip=$(ip neigh 2>/dev/null | awk -v m="$mac" 'tolower($0) ~ m { print $1; exit }')
-    [ -z "$ip" ] && { printf '%s%s: camera offline (no neigh entry) - nothing to flush%s\n' "$D" "$n" "$Z"; continue; }
+    [ -z "$ip" ] && { [ -n "$shown" ] && echo; shown=1; printf '%s●%s %s%s%s %s· offline (no LAN presence)%s\n' "$D" "$Z" "$B" "${n#Block_}" "$Z" "$D" "$Z"; continue; }
     entries=$(grep "src=$ip " /proc/net/nf_conntrack 2>/dev/null)
-    total=$(printf '%s\n' "$entries" | grep -c .)
     set -- $(printf '%s\n' "$entries" | pubstats)
-    pub_before=$1; off_before=$2
-    printf '%s%s● %s%s %s· %s   %d conntrack · %d public-bound · %d offloaded%s\n' \
-        "$B" "$C" "$n" "$Z" "$D" "$ip" "$total" "$pub_before" "$off_before" "$Z"
-    if [ "$pub_before" -gt 0 ]; then
-        printf '%s\n' "$entries" | awk -v re="$PRIVRE" -v D="$D" -v C="$C" -v Y="$Y" -v Z="$Z" '
-            function human(b){ if(b=="") return "-"; if(b+0>=1048576) return sprintf("%.1fM",b/1048576); if(b+0>=1024) return sprintf("%.1fK",b/1024); return b "B" }
-            function comma(x,  s,r){ if(x=="") return "-"; s=x""; while(length(s)>3){ r=","substr(s,length(s)-2)r; s=substr(s,1,length(s)-3) } return s r }
-            BEGIN { printf "%s    %-4s %-26s %-12s %9s %9s   %s%s\n", D,"PROT","DESTINATION","STATE","PKTS","BYTES","PATH",Z }
-            NF {
-                proto=$3; st=($6 ~ /^[A-Z_]+$/)?$6:"-"
-                dst=""; dport=""; pk=""; by=""
-                for(i=1;i<=NF;i++){
-                    if($i ~ /^dst=/ && dst==""){ s=$i; sub(/^dst=/,"",s); dst=s }
-                    if($i ~ /^dport=/ && dport==""){ s=$i; sub(/^dport=/,"",s); dport=s }
-                    if($i ~ /^packets=/ && pk==""){ s=$i; sub(/^packets=/,"",s); pk=s }
-                    if($i ~ /^bytes=/ && by==""){ s=$i; sub(/^bytes=/,"",s); by=s }
-                }
-                if(dst ~ re) next
-                if(dport=="") dport="-"
-                if($0 ~ /HW_OFFLOAD/) path=Y "hardware" Z
-                else if($0 ~ /OFFLOAD/) path="sw-fastpath"
-                else path=D "slow-path" Z
-                printf "    %-4s %s%-26s%s %-12s %9s %9s   %s\n", proto, C, dst":"dport, Z, st, comma(pk), human(by), path
-            }'
-    fi
-    conntrack -D -s "$ip" >/dev/null 2>&1
-    set -- $(grep "src=$ip " /proc/net/nf_conntrack 2>/dev/null | pubstats)
-    pub_after=$1
-    if [ "$pub_before" = 0 ]; then
-        printf '  %s└─ already clean · no public flows to cut%s\n' "$G" "$Z"
-    elif [ "$pub_after" = 0 ]; then
-        printf '  %s└─ cut ✓  public flows %d → 0%s\n' "$G" "$pub_before" "$Z"
-    else
-        printf '  %s└─ ⚠ public flows %d → %d (residual)%s\n' "$Y" "$pub_before" "$pub_after" "$Z"
+    pub_before=$1; off_before=$2          # conntrack-only counts (used by the flush logic below)
+    # Merge conntrack with the PPE hardware table. HW-offloaded LAN flows (SMB to NAS,
+    # local video / go2rtc) live ONLY in PPE, not in /proc/net/nf_conntrack, so a
+    # conntrack-only view misses them (and falsely reports "0 private"). Dedupe by 5-tuple.
+    rendered=$( { printf '%s\n' "$entries" | sed 's/^/CT /'
+                  cat /sys/kernel/debug/ppe*/bind 2>/dev/null | grep "orig=$ip:" | sed 's/^/PPE /'
+                } | awk -v re="$PRIVRE" -v B="$B" -v D="$D" -v C="$C" -v W="$W" -v G="$G" -v Y="$Y" -v Z="$Z" -v SA="$SHOW_ALL" -v cam="$ip" -v go2rtc="$GO2RTC_IP" -v nasips="$NAS_IPS" '
+        function human(b){ if(b=="") return "-"; if(b+0>=1073741824) return sprintf("%.1fG",b/1073741824); if(b+0>=1048576) return sprintf("%.1fM",b/1048576); if(b+0>=1024) return sprintf("%.1fK",b/1024); return b "B" }
+        function comma(x,  s,r){ if(x=="") return "-"; s=x""; while(length(s)>3){ r=","substr(s,length(s)-2)r; s=substr(s,1,length(s)-3) } return s r }
+        function hdr(){ printf "%s    %-4s %-22s %-11s %12s %9s  %-7s%s%s\n", D,"PROT","DESTINATION","STATE","PKTS","BYTES","PATH","NOTE",Z }
+        function isnas(ip,  i,n,a){ n=split(nasips,a," "); for(i=1;i<=n;i++) if(ip==a[i]) return 1; return 0 }
+        function note(proto,dst,dport){
+            if(dport=="445") return isnas(dst) ? "SMB recording -> NAS" : "SMB"
+            if(dport=="53")  return "DNS lookup"
+            if(dport=="443") return "vendor cloud (TLS)"
+            if(dport=="32100") return "P2P keepalive (cloud)"
+            if(dport=="32101"||dport=="32102") return "P2P"
+            if(dport=="25000") return "P2P relay"
+            if(dport=="8053") return "vendor cloud (signal)"
+            if(go2rtc!="" && dst==go2rtc) return "go2rtc (local)"
+            if(dst ~ /^(10\.|192\.168\.)/) return "local stream"
+            return ""
+        }
+        function emit(proto,dst,dport,st,pk,by,pc,pl,  row,nt,pcell){
+            if(pl=="hardware") pcell=G "●" Z " Hw   "
+            else if(pl=="sw-fastpath") pcell=C "●" Z " Sw   "
+            else pcell="● Slow "
+            row=sprintf("    %-4s %s%-22s%s %-11s %12s %9s  %s", proto, C,dst":"dport,Z, st, comma(pk), human(by), pcell)
+            nt=note(proto,dst,dport)
+            if(nt!="") row=row nt
+            if(dst ~ re){ priv[++np]=row; privp[np]=proto } else { pub[++pb]=row; pubp[pb]=proto }
+        }
+        $1=="CT" {
+            proto=$4; st=($7 ~ /^[A-Z_]+$/)?$7:"-"
+            if(st=="-"){ if($0 ~ /\[ASSURED\]/) st="ASSURED"; else if($0 ~ /\[UNREPLIED\]/) st="UNREPLIED" }
+            dst="";dport="";sport="";pk="";by=""
+            for(i=2;i<=NF;i++){
+                if($i ~ /^dst=/ && dst==""){ s=$i; sub(/^dst=/,"",s); dst=s }
+                if($i ~ /^sport=/ && sport==""){ s=$i; sub(/^sport=/,"",s); sport=s }
+                if($i ~ /^dport=/ && dport==""){ s=$i; sub(/^dport=/,"",s); dport=s }
+                if($i ~ /^packets=/ && pk==""){ s=$i; sub(/^packets=/,"",s); pk=s }
+                if($i ~ /^bytes=/ && by==""){ s=$i; sub(/^bytes=/,"",s); by=s }
+            }
+            if(dst=="") next
+            if(dport=="") dport="-"
+            seen[cam":"sport"->"dst":"dport]=1
+            if($0 ~ /HW_OFFLOAD/){ pc=Y; pl="hardware"; noff++; if(st=="-")st="ASSURED" }
+            else if($0 ~ /OFFLOAD/){ pc=""; pl="sw-fastpath"; noff++; if(st=="-")st="ASSURED" }
+            else { pc=D; pl="slow-path" }
+            emit(proto,dst,dport,st,pk,by,pc,pl)
+        }
+        $1=="PPE" {
+            orig=""; by=""; pk=""; ib1=""
+            for(i=2;i<=NF;i++){
+                if($i ~ /^orig=/){ s=$i; sub(/^orig=/,"",s); orig=s }
+                if($i ~ /^bytes=/){ s=$i; sub(/^bytes=/,"",s); by=s }
+                if($i ~ /^packets=/){ s=$i; sub(/^packets=/,"",s); pk=s }
+                if($i ~ /^ib1=/){ s=$i; sub(/^ib1=/,"",s); ib1=s }
+            }
+            if(orig=="") next
+            split(orig,P,"->"); split(P[1],S1,":"); split(P[2],S2,":")
+            osport=S1[2]; odst=S2[1]; odport=S2[2]
+            if(odst=="" || (cam":"osport"->"odst":"odport) in seen) next
+            fc=substr(ib1,1,1); pproto=(fc ~ /[4567cdefCDEF]/)?"udp":"tcp"   # ib1 bit30 = UDP flag
+            noff++
+            emit(pproto, odst, odport, "ASSURED", pk, by, Y, "hardware")
+        }
+        END {
+            print "COUNTS", (pb+np)+0, pb+0, np+0, noff+0
+            if(pb>0){ printf "%s  ▸ WAN (Public)%s\n", W, Z; hdr()
+                for(i=1;i<=pb;i++) if(pubp[i]=="tcp") print pub[i]
+                for(i=1;i<=pb;i++) if(pubp[i]=="udp") print pub[i]
+                for(i=1;i<=pb;i++) if(pubp[i]!="tcp" && pubp[i]!="udp") print pub[i] }
+            if(SA=="1" && np>0){ printf "%s  ▸ LAN (Private)%s\n", W, Z; hdr()
+                for(i=1;i<=np;i++) if(privp[i]=="tcp") print priv[i]
+                for(i=1;i<=np;i++) if(privp[i]=="udp") print priv[i]
+                for(i=1;i<=np;i++) if(privp[i]!="tcp" && privp[i]!="udp") print priv[i] }
+        }')
+    set -- $(printf '%s\n' "$rendered" | sed -n 's/^COUNTS //p')
+    mtotal=${1:-0}; mpub=${2:-0}; mpriv=${3:-0}; moff=${4:-0}
+    dn=${n#Block_}; [ "$state" = Blocked ] && scolor="$Y" || scolor="$G"
+    [ -n "$shown" ] && echo; shown=1
+    printf '%s●%s %s%s%s · %s · %s%s%s · %d flows · %d WAN · %d LAN\n' \
+        "$scolor" "$Z" "$B" "$dn" "$Z" "$ip" "$scolor" "$state" "$Z" "$mtotal" "$mpub" "$mpriv"
+    printf '%s\n' "$rendered" | grep -v '^COUNTS'
+    if [ "$DO_FLUSH" = 1 ]; then
+        conntrack -D -s "$ip" >/dev/null 2>&1
+        set -- $(grep "src=$ip " /proc/net/nf_conntrack 2>/dev/null | pubstats)
+        pub_after=$1
+        if [ "$pub_before" = 0 ]; then
+            printf '  %s└─ already clean · no public flows to cut%s\n' "$G" "$Z"
+        elif [ "$pub_after" = 0 ]; then
+            printf '  %s└─ cut ✓  public flows %d → 0%s\n' "$G" "$pub_before" "$Z"
+        else
+            printf '  %s└─ ⚠ public flows %d → %d (residual)%s\n' "$Y" "$pub_before" "$pub_after" "$Z"
+        fi
     fi
 done
-REMOTE
+EOS
+}
+
+gwAclStatus() {
+    local targets=("$@")
+    local rules; rules=$(gwAclResolveRules "${targets[@]}") || return $?
+    local color_on=; [ -t 1 ] && color_on=1
+    gwAclStatsScript | ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
+        "$fGwHost" "RULES='$rules' COLOR_ON='$color_on' DO_FLUSH=0 SHOW_ALL=1 GO2RTC_IP='$fGwGo2rtcIP' NAS_IPS='$fGwNasIPs' sh -s"
+}
+
+gwAclBlock() {
+    local targets=("$@")
+    if [ "$fGwAclKeep443" = 1 ]; then
+        echo -e "${LIGHTYELLOW}Note: --keep-443 — flushing all flows but keeping cloud TCP/443 allowed; P2P + everything else is cut, camera re-establishes 443 on its own (stays alive, no remote/P2P).${RESET}"
+    else
+        echo -e "${LIGHTYELLOW}Note: --acl-block flushes existing/offloaded flows; affected camera(s) go fully offline and will NOT reconnect (incl. go2rtc live) until 'jc --acl-unblock'.${RESET}"
+    fi
+    gwAclControl block "${targets[@]}" || return $?
+    local rules; rules=$(gwAclResolveRules "${targets[@]}") || return $?
+    echo -e "${COLOR}Flushing conntrack so in-progress connections are cut...${RESET}"
+    local color_on=; [ -t 1 ] && color_on=1
+    gwAclStatsScript | ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
+        "$fGwHost" "RULES='$rules' COLOR_ON='$color_on' DO_FLUSH=1 SHOW_ALL=0 GO2RTC_IP='$fGwGo2rtcIP' NAS_IPS='$fGwNasIPs' sh -s"
 }
 
 # --acl-restart: toggle the camera ACL to give the camera(s) a brief
@@ -803,7 +950,7 @@ gwAclRestart() {
     sleep 10
 
     echo -e "${COLOR}[2/3] Blocking camera(s) — putting offline${RESET}"
-    gwAclControl block "${targets[@]}" || return $?
+    gwAclBlock "${targets[@]}" || return $?
 
     echo -e "${GREY}Waiting 2s for firewall to settle...${RESET}"
     sleep 2
@@ -1183,7 +1330,7 @@ while true; do
             shift
             ;;
 
-        --acl-block|--acl-cut|--acl-unblock|--acl-status|--acl-restart)
+        --acl-block|--acl-unblock|--acl-status|--acl-restart)
             fGwAclAction="${1#--acl-}"
             IFS=', ' read -ra _aclTargets <<< "$2"
             fGwAclTarget+=("${_aclTargets[@]}")
@@ -1212,8 +1359,10 @@ done
 if [ -n "$fGwAclAction" ]; then
     if [ "$fGwAclAction" = "restart" ]; then
         gwAclRestart "${fGwAclTarget[@]}" || exit $?
-    elif [ "$fGwAclAction" = "cut" ]; then
-        gwAclCut "${fGwAclTarget[@]}" || exit $?
+    elif [ "$fGwAclAction" = "block" ]; then
+        gwAclBlock "${fGwAclTarget[@]}" || exit $?
+    elif [ "$fGwAclAction" = "status" ]; then
+        gwAclStatus "${fGwAclTarget[@]}" || exit $?
     else
         gwAclControl "$fGwAclAction" "${fGwAclTarget[@]}" || exit $?
     fi

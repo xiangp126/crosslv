@@ -98,6 +98,7 @@ def _cam_label(folder, share):
     return share   # internally always use the lowercase share name (c700_01); the page shows uppercase C700 via CSS text-transform
 
 CACHE_TTL = 15.0  # seconds: how long scan results are cached; after that it auto-rescans to discover new files
+LIVE_STALE_SEC = 300.0  # a start==end chunk not written for this long = abandoned (camera froze), not truly in-progress
 
 ROOTS = list(DEFAULT_ROOTS)
 PORT = DEFAULT_PORT
@@ -218,9 +219,17 @@ def scan(cam_id):
                     s, e = pr
                     live = e <= s  # equal/inverted start-end = the segment currently being recorded
                     if live:
-                        e = datetime.datetime.now()
-                        if e <= s:
+                        try:
+                            fresh = (now - ent.stat().st_mtime) < LIVE_STALE_SEC
+                        except OSError:
+                            fresh = True
+                        if fresh:
+                            e = datetime.datetime.now()
+                            if e <= s:
+                                e = s + datetime.timedelta(seconds=1)
+                        else:
                             e = s + datetime.timedelta(seconds=1)
+                            live = False
                     segs.append({"file": ent.name, "start": s, "end": e, "live": live})
         except OSError:
             pass
@@ -694,7 +703,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
       </div>
       <select id="dates" title="Pick a day — then choose the time with the timeline or the 📅 wheel"></select>
       <select id="camSel" title="Camera"></select>
-      <select id="qualSel" title="Live quality (Direct = direct feed, Transcode = compatible)"></select>
+      <select id="qualSel" title="Live codec (Direct = H265 direct feed, Transcode = H264 compatible)"></select>
+      <select id="resSel" title="Live resolution (1080P / 480P — 480P is light for multi-cam split)"></select>
       <button id="refreshBtn" title="Rescan recordings / reconnect live">↻</button>
     </div>
     <div class="nav-right"></div>
@@ -785,13 +795,16 @@ function webrtcCanH265(){
   catch(_){ return false; }
 }
 const RTC_H265 = webrtcCanH265();
-// Quality tracks: if WebRTC-H265 is supported, offer original 1080P direct feed; transcoded 1080P is always the fallback. Direct = direct feed without transcoding, Transcode = go2rtc transcodes to H264.
-const QUALS = [];
-if(RTC_H265) QUALS.push({label:'Direct', suffix:'_sub1080', mode:'webrtc'});   // original direct out (no transcode, original quality); default when WebRTC-H265 is supported
-QUALS.push({label:'Transcode', suffix:'_1080p', mode:'webrtc'});               // H264 transcode fallback (the only option for browsers without H265)
-let qualIdx = 0;   // default track 0: original direct out when supported, otherwise transcode
-function liveSuffix(){ return QUALS[qualIdx].suffix; }
-function liveModeNow(){ return QUALS[qualIdx].mode; }
+// Live quality = two independent axes: CODEC (Direct = H265 direct out, no transcode / Transcode = H264 via go2rtc) × RESOLUTION (1080 / 480).
+// Maps to go2rtc stream names: Direct = _sub<RES>, Transcode = _<RES>p → _sub1080 / _sub480 / _1080p / _480p. 480P is the light track for multi-cam split.
+const QUAL_CODECS = [];
+if(RTC_H265) QUAL_CODECS.push({label:'Direct', kind:'sub'});   // H265 direct out (no transcode, original codec); default when WebRTC-H265 is supported
+QUAL_CODECS.push({label:'Transcode', kind:'p'});               // H264 transcode (the only option for browsers without WebRTC-H265)
+const QUAL_RES = ['1080', '480'];
+let qualIdx = 0;   // index into QUAL_CODECS: Direct when supported, otherwise Transcode
+let resIdx = 0;    // index into QUAL_RES: default 1080 (full quality)
+function liveSuffix(){ const c = QUAL_CODECS[qualIdx] || QUAL_CODECS[0], r = QUAL_RES[resIdx] || '1080'; return c.kind === 'sub' ? ('_sub' + r) : ('_' + r + c.kind); }
+function liveModeNow(){ return 'webrtc'; }
 const START_LIVE = true;      // opening the page defaults to live (set false = default to the latest recording)
 const START_SPLIT = 4;        // default split count on load: 1 = single stream, 2/4/6 = grid
 let liveMode = false;
@@ -854,14 +867,11 @@ async function init(){
   } else {
     await loadTimeline();   // playback default: locate to the latest and play
   }
+  setInterval(refreshDates, 3600000);
 }
 
-// ---- Load the available dates of a camera ----
-async function loadTimeline(want){
-  const t = await api('/api/timeline?cam=' + encodeURIComponent(cam));
-  const days = t.days || [];
-  const keys = days.map(d => d.date);
-  const box = $('dates'); box.innerHTML = '';
+function fillDateOptions(box, days){
+  box.innerHTML = '';
   days.forEach(d => {
     const o = document.createElement('option');
     o.value = d.date;
@@ -869,6 +879,23 @@ async function loadTimeline(want){
     o.textContent = d.date.slice(5) + ' ' + wd + '  ·  ' + d.count;   // e.g. "06-18 Wed  ·  109" (segment count, no unit word)
     box.appendChild(o);
   });
+}
+async function refreshDates(){
+  if(!cam) return;
+  let t;
+  try{ t = await api('/api/timeline?cam=' + encodeURIComponent(cam)); }catch(_){ return; }
+  const box = $('dates'); if(!box) return;
+  const days = t.days || [];
+  const cur = box.value;
+  fillDateOptions(box, days);
+  if(days.some(d => d.date === cur)) box.value = cur;
+}
+// ---- Load the available dates of a camera ----
+async function loadTimeline(want){
+  const t = await api('/api/timeline?cam=' + encodeURIComponent(cam));
+  const days = t.days || [];
+  const keys = days.map(d => d.date);
+  const box = $('dates'); fillDateOptions(box, days);
   // selecting a day keeps the current timeline position (same moment, jump to the nearest)
   box.onchange = () => { const w = currentWall(), d = box.value;
     if(gridMode){ setPbGrid(true).then(() => selectDay(d, w.sec, w.play)); return; }   // live split → playback split at the chosen day (keep the split, don't drop to single)
@@ -1180,6 +1207,7 @@ function updateModeBar(){
   sb.classList.toggle('s-4', splitN === 4);
   sb.classList.toggle('s-6', splitN === 6);
   $('qualSel').disabled = (curTime() !== 'live');   // quality only applies to live → greyed out/disabled during playback (single/split)
+  $('resSel').disabled = (curTime() !== 'live');
 }
 function setMode(m){
   const cur = currentMode();
@@ -1188,6 +1216,7 @@ function setMode(m){
   if(m === 'live' || m === 'play') splitN = 1;          // single view
   else if(splitN < 2) splitN = 4;                        // entering grid: at least 2, default 4
   ensureCellCams();
+  resIdx = (splitN > 1) ? 1 : 0; if($('resSel')) $('resSel').value = resIdx;   // resolution default follows the layout: split → 480P (light for multi-cam decode), single → 1080P. The user can still override via the dropdown; a grid→grid split-count change (applyMode sameGrid path) keeps the override.
   // Exit the current mode back to baseline
   if(cur === 'pbgrid'){
     if(m === 'play') setPbGrid(false);   // to single-stream playback: needs selectDay to restore the single view
@@ -1421,8 +1450,14 @@ function wireCell(v){          // v is already in DOM: set src to trigger connec
 function gridReconnect(v){     // rebuild the whole cell in place (only reconnect this stream, other cells untouched)
   if(!gridMode || !document.contains(v)) return;
   const wasZoom = v.classList.contains('zoom');
-  try{ v.background = false; v.disconnectedCallback && v.disconnectedCallback(); }catch(_){}
-  const nv = makeGridCell(v._lbl); nv._idx = v._idx; nv._tries = v._tries || 0;   // carry over the index/retry count
+  try{
+    v.background = false;
+    if(v.disconnectTID){ clearTimeout(v.disconnectTID); v.disconnectTID = 0; }
+    if(v.reconnectTID){ clearTimeout(v.reconnectTID); v.reconnectTID = 0; }
+    if(typeof v.ondisconnect === 'function') v.ondisconnect();
+    else if(v.disconnectedCallback) v.disconnectedCallback();
+  }catch(_){}
+  const nv = makeGridCell(v._lbl); nv._idx = v._idx; nv._tries = v._tries || 0; nv._lastStall = v._lastStall || 0;   // carry over the index/retry count
   if(wasZoom) nv.classList.add('zoom');
   $('grid').replaceChild(nv, v);   // replace in place, keeping the grid position
   wireCell(nv);
@@ -1439,11 +1474,15 @@ function addCellRefresh(v){    // single-cell refresh key: refresh only this str
   v.appendChild(r);
 }
 // Single-cell self-heal: black screen (no frames for a while) or freeze reconnects only this cell; repeated reconnects still with no frames (e.g. unconnected 05/06) → mark "No signal" and stop; the timer auto-stops once this cell is replaced/the split is exited
+const FRAME_STALL_MS = 10000;
+const STALL_RECONNECT_MIN_MS = 20000;
 function cellWatch(v){
-  let last = -1, frozen = 0, grace = 6, started = false;
+  let last = -1, frozen = 0, grace = 6, started = false, armed = false;
+  const arm = (el) => { armed = true; v._frameTs = Date.now(); const cb = () => { v._frameTs = Date.now(); if(v.video === el) el.requestVideoFrameCallback(cb); }; el.requestVideoFrameCallback(cb); };
   const id = setInterval(() => {
     if(!gridMode || !document.contains(v)){ clearInterval(id); return; }   // already replaced/exited the split: stop the timer
     const el = v.video; if(!el) return;
+    if(el.requestVideoFrameCallback && !armed) arm(el);
     if(el.currentTime > 0.1){ started = true; v._tries = 0; showCellMsg(v, ''); }   // frames flowing → healthy, reset the retry counter
     if(grace > 0){ grace--; return; }                    // connection grace period (~6s)
     if(!started){                                         // never produced a frame
@@ -1453,7 +1492,15 @@ function cellWatch(v){
       if(fast || slowDue){ v._tries = t + 1; v._lastTry = Date.now(); gridReconnect(v); }   // keep retrying: fast at first, then a slow ~12s backoff. Never give up permanently → a flaky WebRTC source (e.g. CAM2) auto-recovers once go2rtc/the camera settles.
       return;
     }
-    if(el.paused){ last = -1; frozen = 0; return; }       // already played, user paused: not a stall
+    if(el.paused){ last = -1; frozen = 0; v._frameTs = Date.now(); return; }       // already played, user paused: not a stall
+    if(document.hidden){ last = el.currentTime; frozen = 0; v._frameTs = Date.now(); return; }
+    if(el.requestVideoFrameCallback){
+      if(Date.now() - (v._frameTs || 0) > FRAME_STALL_MS){
+        if(Date.now() - (v._lastStall || 0) > STALL_RECONNECT_MIN_MS){ v._lastStall = Date.now(); gridReconnect(v); }
+        else showCellMsg(v, 'No signal');
+      }
+      return;
+    }
     if(el.currentTime === last){ if(++frozen >= 3){ frozen = 0; gridReconnect(v); } }   // frozen 3s → reconnect this cell (reset so we don't reconnect every tick)
     else { last = el.currentTime; frozen = 0; }
   }, 1000);
@@ -1516,6 +1563,8 @@ let pbSegs = {};      // { camId: [seg...] } each camera's segments for the day
 let pbVids = {};      // { camId: <video> }
 let pbMaster = null;  // master-clock camera (drives the playhead/timeline display)
 let pbSyncTimer = null;  // periodic resync timer
+let pbRefetchTimer = null;  // periodic segment rescan (picks up freshly-finalized clips so cells parked on an in-progress recording auto-resume)
+let pbGridGen = 0;       // rebuild generation: bumped on every enter/teardown so a slow async setPbGrid(true) continuation (after its await) bails if the mode changed under it (rapid split-count clicks)
 let pbSyncMode = 'coarse';   // 'coarse' (align by assumed time) | 'precise' (OCR-verified offsets, held by offset-aware maintenance; re-click Precise to re-OCR after a segment change)
 let pbSelfHeal = true;       // watchdog black/stall AUTO-RELOAD: ON. (Verified NOT the cause of "cells stuck Loading" — headless does 4/4 with 0 reloads; the real cause is the Mac's concurrent-4K-HEVC decode cap.) Clip-end roll-over (advancing to the next segment) is independent and ALWAYS on regardless of this flag. Set pbSelfHeal=false (console) to disable mid-play black/stall recovery for debugging.
 
@@ -1523,38 +1572,60 @@ function pbCamId(lbl){ const o = [...$('camSel').options].find(o => o.dataset.lb
 // One {key=cell index, label, id} per cell. Keyed by index → supports any per-cell camera, duplicates, reserved (no id)
 function pbCams(){ return cellCams.slice(0, splitN).map((lbl, i) => ({ key: String(i), label: lbl, id: pbCamId(lbl) })); }
 
-async function pbFetchDay(date){      // concurrently pull each cell's segments for the day (cells without an id = empty)
-  pbSegs = {};
-  await Promise.all(pbCams().map(async c => {
-    if(!c.id){ pbSegs[c.key] = []; return; }
-    const r = await api('/api/segments?cam=' + encodeURIComponent(c.id) + '&date=' + date);
-    pbSegs[c.key] = (r.segments || []).map(s => { const st = new Date(s.start), en = new Date(s.end);
-      return { file:s.file, live:s.live, start:st, end:en, s0:(st-dayStart)/1000, s1:(en-dayStart)/1000 }; });
+async function pbFetchDay(date){      // concurrently pull each cell's segments for the day (cells without an id = empty). Build into a temp then swap atomically so the 500ms maintenance loop never reads a half-empty pbSegs (matters for the periodic refetch below).
+  const cams = pbCams(), next = {};
+  await Promise.all(cams.map(async c => {
+    if(!c.id){ next[c.key] = []; return; }
+    try{ const r = await api('/api/segments?cam=' + encodeURIComponent(c.id) + '&date=' + date);
+      next[c.key] = (r.segments || []).map(s => { const st = new Date(s.start), en = new Date(s.end);
+        return { file:s.file, live:s.live, start:st, end:en, s0:(st-dayStart)/1000, s1:(en-dayStart)/1000 }; });
+    }catch(_){ next[c.key] = pbSegs[c.key] || []; }
   }));
+  pbSegs = next;
+}
+async function pbRefetchSegs(){       // periodic rescan while in playback split: picks up a freshly-FINALIZED clip (live → completed) so cells parked on an in-progress recording auto-resume; also surfaces new completed clips at the live edge
+  if(!pbGrid) return;
+  const gen = pbGridGen;
+  await pbFetchDay(dateStr);
+  if(gen !== pbGridGen || !pbGrid) return;
+  const w = currentWall();
+  if(w && w.sec != null && isFinite(w.sec)) pbCams().forEach(c => { const v = pbVids[c.key]; if(v && !v._seg && pbCovers(c.key, w.sec)) pbLoadCell(c.key, w.sec, pbPlaying()); });   // a cell parked with no usable clip (all-live edge) can now play a freshly-finalized completed clip
+  segs = pbSegs[pbMaster] || []; renderTrack();
 }
 
 function pbSeek(v, t){ v._progT = Date.now(); try{ v.currentTime = Math.max(0, t); }catch(_){} }   // programmatic positioning: record the timestamp; distinguish user drags from seeking via a time window (one seek may fire seeking multiple times)
 
-function pbBest(key, sec){            // the segment of this cell closest to sec (seconds of the day)
+function pbBest(key, sec){            // the COMPLETED segment of this cell closest to sec (seconds of the day). Live (in-progress) clips are skipped: their fMP4 has no finalized moov/index → can't seek to a target moment → endless "Loading…". They become seekable once the camera finalizes the clip (the periodic refetch picks it up).
   const arr = pbSegs[key] || [];
-  for(let i=0;i<arr.length;i++) if(sec>=arr[i].s0 && sec<arr[i].s1) return {idx:i, offset:sec-arr[i].s0};
+  for(let i=0;i<arr.length;i++) if(!arr[i].live && sec>=arr[i].s0 && sec<arr[i].s1) return {idx:i, offset:sec-arr[i].s0};
   let best=-1, bd=Infinity, bo=0;
-  for(let i=0;i<arr.length;i++){ const s=arr[i]; let d,o;
+  for(let i=0;i<arr.length;i++){ const s=arr[i]; if(s.live) continue; let d,o;
     if(sec<s.s0){d=s.s0-sec;o=0;} else {d=sec-s.s1;o=Math.max(0,s.s1-s.s0-1);}
     if(d<bd){bd=d;best=i;bo=o;} }
   return best<0 ? null : {idx:best, offset:bo};
 }
-function pbCovers(key, sec){          // does this cell actually have a recording covering `sec` (vs pbBest snapping to the nearest segment across a gap)?
+function pbCovers(key, sec){          // does this cell have a COMPLETED (seekable) recording covering `sec`? (live/in-progress clips don't count — see pbBest)
   const arr = pbSegs[key] || [];
-  for(const s of arr) if(sec >= s.s0 && sec < s.s1) return true;
+  for(const s of arr) if(!s.live && sec >= s.s0 && sec < s.s1) return true;
   return false;
 }
+function pbLiveCovers(key, sec){      // is `sec` inside this cell's currently-RECORDING clip? (used only to label the hold as "录制中" vs a plain gap)
+  const arr = pbSegs[key] || [];
+  for(const s of arr) if(s.live && sec >= s.s0 && sec < s.s1) return true;
+  return false;
+}
+function pbNextDone(key, i){          // index of the next COMPLETED clip after i (skips live/in-progress clips), or -1
+  const arr = pbSegs[key] || [];
+  for(let j=(i|0)+1;j<arr.length;j++) if(!arr[j].live) return j;
+  return -1;
+}
+function pbHoldMsg(key, sec){ return pbLiveCovers(key, sec) ? '录制中…' : 'No recording'; }
 
 function pbLoadCell(key, sec, autoplay){
   const v = pbVids[key]; if(!v) return;
   const arr = pbSegs[key] || [];
   const b = pbBest(key, sec);
-  if(!b){ v.removeAttribute('src'); v.load(); v._seg=null; v._idx=-1; showCellMsg(v.parentElement, 'No recording'); return; }   // this cell has no recordings for the day
+  if(!b){ v.removeAttribute('src'); v.load(); v._seg=null; v._idx=-1; v._gapHold=true; showCellMsg(v.parentElement, pbHoldMsg(key, sec)); return; }   // no COMPLETED clip at this moment (real gap, or only an in-progress recording) → park + hold (the refetch resumes it once a clip finalizes)
   showCellMsg(v.parentElement, '');
   v._idx = b.idx; v._seg = arr[b.idx];
   v.src = '/video?cam=' + encodeURIComponent(v._id) + '&file=' + encodeURIComponent(arr[b.idx].file);
@@ -1574,7 +1645,7 @@ function pbLoadCell(key, sec, autoplay){
 function gridSeekAll(sec, play){
   const cams = pbCams();
   const _rate = parseFloat($('rateSel').value) || 1;
-  cams.forEach(c => { const v = pbVids[c.key]; if(v){ v._manual = false; v._miss = 0; v._ocrOff = null; v.playbackRate = _rate; } });   // a whole-screen jump = clear per-cell independent flag + give-up counter + stale OCR offset (new positions) + reset nudge rate to the selected speed
+  cams.forEach(c => { const v = pbVids[c.key]; if(v){ v._manual = false; v._miss = 0; v._ocrOff = null; v._gapHold = false; v.playbackRate = _rate; } });   // a whole-screen jump = clear per-cell independent flag + give-up counter + stale OCR offset (new positions) + gap-hold + reset nudge rate to the selected speed
   // Reliable LANDING for BOTH play states: every stream seeks to its target with the poll-retry below; once all land they play together — but ONLY if play=true. A PAUSED jump (e.g. ±10s while paused) must land just as reliably and then STAY paused. (The old !play shortcut used pbLoadCell with no poll-retry → a cold fMP4 seek clamped and the paused split jumped to the wrong clip/spot — the "±10s doesn't work" bug.) While positioning, the cell is flagged _settling so the watchdog/maintenance DON'T touch it.
   let pending = 0, started = false;
   const startAll = () => { if(started) return; started = true; if(play) cams.forEach(c => { const v = pbVids[c.key]; if(v && v._seg) v.play().catch(()=>{}); }); updateHead(); };
@@ -1582,7 +1653,7 @@ function gridSeekAll(sec, play){
     const v = pbVids[c.key]; if(!v) return;
     const arr = pbSegs[c.key] || [];
     const b = pbBest(c.key, sec);
-    if(!b){ v.removeAttribute('src'); v.load(); v._seg = null; v._idx = -1; v._settling = false; showCellMsg(v.parentElement, 'No recording'); return; }   // this cell has no recording at this moment
+    if(!b){ v.removeAttribute('src'); v.load(); v._seg = null; v._idx = -1; v._settling = false; v._gapHold = true; showCellMsg(v.parentElement, pbHoldMsg(c.key, sec)); return; }   // no COMPLETED clip at this moment (real gap, or only an in-progress recording) → park + hold; the maintenance resumes it once a completed clip covers the master moment
     showCellMsg(v.parentElement, '');
     const sameLoaded = (b.idx === v._idx && v.readyState >= 1);   // already on this clip and loaded → cheap in-file seek (no reload), e.g. ±10s within the same clip
     v._idx = b.idx; v._seg = arr[b.idx]; v._settling = true;
@@ -1863,9 +1934,9 @@ function pbAlignCoarse(){      // fallback: align by assumed time (master._seg.s
   $('playBtn').textContent = '▶︎ Play';                // stay paused after syncing
   updateHead();
 }
-function pbTeardown(){ pbStopSync(); pbGrid=false; document.body.classList.remove('pbgrid-mode'); $('grid').innerHTML=''; pbVids={}; updateModeBar(); }
+function pbTeardown(){ pbGridGen++; pbStopSync(); pbGrid=false; document.body.classList.remove('pbgrid-mode'); $('grid').innerHTML=''; pbVids={}; updateModeBar(); }
 
-function pbStopSync(){ if(pbSyncTimer){ clearInterval(pbSyncTimer); pbSyncTimer = null; } }
+function pbStopSync(){ if(pbSyncTimer){ clearInterval(pbSyncTimer); pbSyncTimer = null; } if(pbRefetchTimer){ clearInterval(pbRefetchTimer); pbRefetchTimer = null; } }
 // Keep the non-master cells aligned to the master by QUICK (hard-seek) positioning, not smooth rate-nudging:
 // once a cell is out of the lock band, seek it straight to the aligned position (browsers do accurate seeks, so it snaps right there). A small lock band absorbs the ~0.2s the master advances during the seek; a per-cell give-up stops a slow source from thrashing.
 const PB_LOCK = 0.5;     // |drift| within this (s) = in sync → just match the master's rate
@@ -1877,9 +1948,9 @@ const PB_COLD_MS = 15000;// grace for a COLD load before the watchdog may reload
 function pbReloadCell(key){   // hard-reset + reload one cell at the current sync moment (shared by the manual ↻ button and the auto watchdog)
   const v = pbVids[key]; if(!v) return;
   v._miss = 0; v._manual = false;
+  const w = currentWall();
   try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(_){}
   if(v.parentElement) showCellMsg(v.parentElement, '');
-  const w = currentWall();
   pbLoadCell(key, (w && w.sec != null && isFinite(w.sec)) ? w.sec : 0, pbPlaying());   // load the clip at the sync moment, seek + play (pbLoadCell handles the seek-on-loadedmetadata)
 }
 function pbEnterSeg(v, file, seekTo, play, rate){   // load a freshly-crossed clip (tail roll-over / maintenance relocate). Marks _settling + shows "Loading…" so the watchdog SKIPS the cell and never churns a slow new-segment load into "No video"; seeks once metadata arrives; clears settling+message once frames actually flow (or a safety timeout, so a broken source isn't stranded).
@@ -1895,16 +1966,18 @@ function pbEnterSeg(v, file, seekTo, play, rate){   // load a freshly-crossed cl
 function pbWatchCell(v, key){   // black/stall self-heal: a cell that errored or has no advancing frame for ~3s is auto-reloaded (capped, so a genuinely missing file isn't reloaded forever)
   if(!v._wHook){ v._wHook = 1; v._loadT = Date.now(); v._hadData = false; v.addEventListener('loadstart', () => { v._loadT = Date.now(); v._hadData = false; }); }   // stamp every (re)load start + reset the "ever decoded a frame" flag → feed the cold-load grace + the decoder-queue wait below
   if(v.seeking || v._settling){ v._wMiss = 0; v._tMiss = 0; v._wT = v.currentTime; return; }       // mid-seek, or being positioned by gridSeekAll (_settling) → don't touch it
-  const arr = pbSegs[key] || [], hasNext = v._seg && (v._idx | 0) + 1 < arr.length;
+  const arr = pbSegs[key] || [], nextI = pbNextDone(key, v._idx), hasNext = v._seg && nextI >= 0;   // next COMPLETED clip (skips a live/in-progress clip — can't roll into something not yet seekable)
+  const nextGap = hasNext ? (arr[nextI].s0 - v._seg.s1) : Infinity;    // seconds of recording gap between this clip's end and the next clip's start
+  const mayRoll = hasNext && (key === pbMaster || nextGap <= 5);       // the master skips gaps (it drives the timeline); a NON-master must NOT roll across a gap — it would run ahead of the master. The maintenance parks it ("No recording") and resumes it once the master re-enters its coverage.
   const prog = v.currentTime - (v._wT == null ? v.currentTime : v._wT);   // forward progress since the last 500ms tick
   const stalled = !v.paused && prog < 0.05;                            // playing but barely advancing — catches BUFFER stalls that micro-advance, not just an exact freeze
   const dur = v._seg ? (v._seg.s1 - v._seg.s0) : 0, atTail = v._seg && v.currentTime >= dur - 5;
-  // TAIL ROLL-OVER — a cell at/past its clip end that HAS a next clip MUST advance. Covers a clean end (v.ended), the fMP4 tail ERROR, AND the silent buffer-stall at the unindexed tail (fires no event). Always rolls to the next clip from 0 → forward, never an in-place reload that would just re-stall.
-  if(hasNext && (v.ended || (atTail && !!v.error) || (atTail && stalled))){
+  // TAIL ROLL-OVER — a cell at/past its clip end that HAS a CONTIGUOUS next clip MUST advance. Covers a clean end (v.ended), the fMP4 tail ERROR, AND the silent buffer-stall at the unindexed tail (fires no event). Always rolls to the next clip from 0 → forward, never an in-place reload that would just re-stall.
+  if(mayRoll && (v.ended || (atTail && !!v.error) || (atTail && stalled))){
     v._wT = v.currentTime; v._sMiss = 0;
     if((v._tMiss = (v._tMiss || 0) + 1) >= ((v.ended || v.error) ? 1 : 3)){   // real end/error → roll next tick; silent stall → confirm ~1.5s first
       v._tMiss = 0; v._wMiss = 0; v._wReloads = 0;
-      const ni = (v._idx | 0) + 1; v._idx = ni; v._seg = arr[ni]; v._ocrOff = null; if(pbSyncMode === 'precise') v._recalPending = true;
+      const ni = nextI; v._idx = ni; v._seg = arr[ni]; v._ocrOff = null; if(pbSyncMode === 'precise') v._recalPending = true;
       pbEnterSeg(v, arr[ni].file, 0, true, null);   // load next clip from 0 + play; "Loading…" + watchdog-skip until frames flow (no churn into "No video")
       console.log('[pb watchdog] cell' + key + ' end-of-clip → advance to next clip');
     }
@@ -1962,6 +2035,7 @@ function pbVisChange(){
 }
 function pbStartSync(){
   pbStopSync();
+  pbRefetchTimer = setInterval(pbRefetchSegs, 15000);   // rescan every ~15s (matches the server scan cache) so a clip that just finalized (live → completed) lets its parked cell resume
   if(!window.__pbVisHooked){ window.__pbVisHooked = 1; document.addEventListener('visibilitychange', pbVisChange); }   // recover from background-tab timer throttling (registered once; the handler no-ops outside grid mode)
   pbSyncTimer = setInterval(() => {
     pbCams().forEach(c => { const v = pbVids[c.key]; if(v && v._seg) pbWatchCell(v, c.key); });   // black/stall self-heal for every cell, independent of the sync state below
@@ -1973,9 +2047,20 @@ function pbStartSync(){
     const mw = m._seg.s0 + m.currentTime + (m._ocrOff || 0);   // master's real time (||0 offset → plain assumed time = coarse baseline)
     pbCams().forEach(c => {
       if(c.key === pbMaster) return;
-      const v = pbVids[c.key]; if(!v || v.paused || !v._seg || v._settling) return;   // non-master cells are ALWAYS kept aligned; skip a cell still being positioned by gridSeekAll (_settling)
-      if(v.seeking || v.readyState < 1) return;                      // a seek is still landing, or the cell is mid-(re)load → don't judge drift / count misses yet
+      const v = pbVids[c.key]; if(!v || !v._seg || v._settling) return;   // skip a cell still being positioned by gridSeekAll (_settling)
       const arr = pbSegs[c.key] || [], off = (v._ocrOff || 0);
+      // GAP-HOLD — a non-master parked during a recording gap: either flagged in the relocate branch below, or it played to a clip end whose next clip is across a gap (v.ended, since the contiguity-gated roll-over left it). DISTINCT from a USER pause (honored, never auto-resumed — "Play all" resyncs). Resume only when the master re-enters this cell's coverage in a DIFFERENT clip, so the clip boundary can't reload-loop.
+      if(v._gapHold || (v.paused && v.ended)){
+        v._gapHold = true;
+        const bg = pbCovers(c.key, mw) ? pbBest(c.key, mw) : null;
+        if(!bg || bg.idx === v._idx){ showCellMsg(v.parentElement, bg ? '' : pbHoldMsg(c.key, mw)); return; }
+        v._gapHold = false; showCellMsg(v.parentElement, '');
+        v._reseekT = Date.now(); v._idx = bg.idx; v._seg = arr[bg.idx]; v._ocrOff = null; if(pbSyncMode === 'precise') v._recalPending = true;
+        pbEnterSeg(v, arr[bg.idx].file, Math.max(0, mw - arr[bg.idx].s0), true, mRate);
+        return;
+      }
+      if(v.paused) return;                                           // user-paused (mid-clip) → honor the pause workflow
+      if(v.seeking || v.readyState < 1) return;                      // a seek is still landing, or the cell is mid-(re)load → don't judge drift / count misses yet
       const dur = v._seg.s1 - v._seg.s0, targetCT = mw - v._seg.s0 - off;   // where real-time mw sits in the cell's CURRENT file (real = s0 + currentTime + off). Content-based, so it's correct for any offset sign near a file boundary — a wall-clock pbBest(mw) mis-judges cross-segment when |off| is large (the cause of a large-offset cell never re-aligning).
       if(targetCT >= -1 && targetCT <= dur + 1){                       // mw is within the current file → align INSIDE it
         const drift = targetCT - v.currentTime, ad = Math.abs(drift);  // + = this cell is BEHIND the master
@@ -1989,7 +2074,7 @@ function pbStartSync(){
       }
       // mw's real time is outside the current clip's CONTENT → relocate to the clip that holds it.
       if(Date.now() - (v._reseekT || 0) < 1500) return;               // cooldown so a relocate and its landing seek don't thrash
-      if(!pbCovers(c.key, mw)){ showCellMsg(v.parentElement, 'No recording'); return; }   // genuine recording GAP at mw → no footage now: show "No recording" and WAIT (no cross → no oscillation across the gap). Resumes automatically once mw enters the next clip.
+      if(!pbCovers(c.key, mw)){ v._gapHold = true; try{ v.pause(); }catch(_){} showCellMsg(v.parentElement, pbHoldMsg(c.key, mw)); return; }   // no COMPLETED footage at mw (a real gap, or the moment is inside an in-progress recording) → park (pause + hold) so the cell can't run ahead / spin on an unseekable live clip; the gap-hold block above resumes it once a completed clip covers mw (after the periodic refetch finalizes it).
       const b = pbBest(c.key, mw);
       if(!b || b.idx === v._idx) return;   // pbBest still points at THIS clip → mw is inside its filename window, content only JUST past it (a small precise offset). Do NOT step by index here — that oscillates idx↔idx+1 at the boundary. Let the clip play to its natural end → 'ended' advances cleanly. (Coarse mode never lands here: with offset 0, mw past the content means mw is past the filename range too, so pbBest returns a DIFFERENT clip — e.g. CAM1 stuck at a tail still crosses, now that the give-up is gone.)
       const ni = b.idx;
@@ -2041,6 +2126,7 @@ function pbReassign(idx, newLabel){   // change a cell's camera (playback): re-p
 
 async function setPbGrid(on){
   if(on){
+    const gen = ++pbGridGen;          // claim this rebuild; a newer enter/teardown bumps pbGridGen → this run bails after its await
     const w = currentWall();          // the current moment before entering
     if(liveMode) setLive(false);
     if(gridMode) setGrid(false);
@@ -2071,9 +2157,9 @@ async function setPbGrid(on){
       // No 'seeking' handler is needed. Dragging the REFERENCE within its current clip does NOT invalidate any OCR offset (the currentTime↔real-time mapping is constant within a file), so the maintenance keeps every non-master cell PRECISELY aligned to the reference's new moment using their intact offsets. (Clearing offsets here used to dump Precise back to coarse on every reference drag = the cells "going out of alignment".) A genuine clip change is handled where it actually happens: gridSeekAll (timeline jump) and the maintenance cross both reset/re-OCR the offset.
       pbVids[c.key] = v;
       v.addEventListener('timeupdate', updateHead);          // the reference cell drives the playhead (decided inside updateHead)
-      const advance = () => {                                // continue to this cell's next segment
-        const arr = pbSegs[c.key] || []; const ni = (v._idx|0) + 1;
-        if(ni >= arr.length) return false;
+      const advance = () => {                                // continue to this cell's next COMPLETED segment (skip a live/in-progress clip — not yet seekable)
+        const arr = pbSegs[c.key] || []; const ni = pbNextDone(c.key, v._idx);
+        if(ni < 0) return false;
         v._idx = ni; v._seg = arr[ni]; v._ocrOff = null; if(pbSyncMode === 'precise') v._recalPending = true;   // new file → offset invalid; in precise mode mark for a one-shot OCR re-calibration so ±1s is restored automatically
         v.src = '/video?cam=' + encodeURIComponent(v._id) + '&file=' + encodeURIComponent(arr[ni].file);
         const om = () => { v.removeEventListener('loadedmetadata', om); v.play().catch(()=>{}); };
@@ -2084,6 +2170,7 @@ async function setPbGrid(on){
     });
     pbMarkMaster();                   // mark the reference camera (highlighted border)
     await pbFetchDay(dateStr);
+    if(gen !== pbGridGen) return;     // a newer mode change happened during the fetch → abandon this stale rebuild (don't resurrect torn-down grid state / start a zombie sync loop)
     segs = pbSegs[pbMaster] || [];    // the timeline shows the master camera's coverage
     curIdx = -1; renderTrack();
     $('empty').style.display = segs.length ? 'none' : '';
@@ -2111,8 +2198,12 @@ $('pbModePrecise').onclick = async () => {   // Precise mode: OCR-align now; STA
 };
 
 // Quality dropdown: fill options + rebuild the current live on change (applies to both single view and split)
-QUALS.forEach((q, i) => { const o = document.createElement('option'); o.value = i; o.textContent = q.label; $('qualSel').appendChild(o); });
-$('qualSel').onchange = e => { qualIdx = +e.target.value; if(gridMode) setGrid(true); else if(liveMode) setLive(true); };
+QUAL_CODECS.forEach((q, i) => { const o = document.createElement('option'); o.value = i; o.textContent = q.label; $('qualSel').appendChild(o); });
+QUAL_RES.forEach((r, i) => { const o = document.createElement('option'); o.value = i; o.textContent = r + 'P'; $('resSel').appendChild(o); });
+$('qualSel').value = qualIdx; $('resSel').value = resIdx;
+const onQualChange = () => { qualIdx = +$('qualSel').value; resIdx = +$('resSel').value; if(gridMode) setGrid(true); else if(liveMode) setLive(true); };   // rebuild the live stream(s) at the new codec×resolution
+$('qualSel').onchange = onQualChange;
+$('resSel').onchange = onQualChange;
 $('playBtn').onclick = () => { if(pbGrid){ pbToggle(); return; } if(vid.paused) vid.play().catch(()=>{}); else vid.pause(); };
 vid.addEventListener('play',  () => $('playBtn').textContent = '⏸ Pause');
 vid.addEventListener('pause', () => $('playBtn').textContent = '▶︎ Play');

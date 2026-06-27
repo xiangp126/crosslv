@@ -91,7 +91,7 @@ _jc_complete() {
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
-               --gdm --text --claude --claude-remove --acl-block --acl-cut --acl-unblock --acl-status --acl-restart \
+               --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status --acl-restart \
                --claude-backup --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
                --codex --codex-remove --codex-backup --codex-restore \
                --cursor-backup --cursor-restore --singbox --singbox-xray --singbox-xray-autossh --singbox-xray-sslh --singbox-wg \
@@ -163,7 +163,17 @@ _jc_complete() {
             COMPREPLY=( $(compgen -W "${resolutions}" -- ${cur}) )
             return 0
             ;;
-        --acl-block|--acl-cut|--acl-unblock|--acl-status|--acl-restart)
+        --acl-block)
+            # --keep-443 is a modifier for block: offer it when completing a flag, else targets
+            if [[ ${cur} == -* ]]; then
+                COMPREPLY=( $(compgen -W "--keep-443" -- ${cur}) )
+            else
+                compopt -o nospace 2>/dev/null
+                _jc_complete_acl_targets
+            fi
+            return 0
+            ;;
+        --acl-unblock|--acl-status|--acl-restart)
             compopt -o nospace 2>/dev/null
             _jc_complete_acl_targets
             return 0
@@ -173,7 +183,10 @@ _jc_complete() {
     if [[ ${cur} == -* ]]; then
         # If it starts with --, only suggest long options
         if [[ ${cur} == --* ]]; then
-            COMPREPLY=( $(compgen -W "${long_opts}" -- ${cur}) )
+            local lo="${long_opts}"
+            # --keep-443 is a modifier for --acl-block; only offer it once it is on the line
+            case " ${COMP_WORDS[*]} " in *" --acl-block "*) lo="${lo} --keep-443" ;; esac
+            COMPREPLY=( $(compgen -W "${lo}" -- ${cur}) )
         else
             # Suggest only short options
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
