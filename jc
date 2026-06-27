@@ -33,6 +33,7 @@ fTKClaudeMcpJson=$fTKClaudeDir/.mcp.json
 # Codex
 fTKCodexDir=$fMainDir/assets/codex
 fTKCodexConfig=$fTKCodexDir/config.toml
+fTKCodexAgents=$fTKCodexDir/AGENTS.md
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -279,7 +280,7 @@ Codex Options:
     --codex                         Install or upgrade Codex (CLI)
     --codex-remove                  Remove Codex
     --codex-backup                  Back up Codex CLI settings
-                                    (config.toml)
+                                    (config.toml, AGENTS.md)
     --codex-restore                 Restore Codex CLI settings
 
 Gemini Options:
@@ -2503,6 +2504,8 @@ backupCodexSettings() {
 
     syncFile "$srcDir/config.toml" "$fTKCodexDir"
     _trackSyncResult $? processedCount failedCount
+    syncFile "$srcDir/AGENTS.md" "$fTKCodexDir"
+    _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then
         return 1
@@ -2521,6 +2524,8 @@ restoreCodexSettings() {
     [ ! -d "$dstDir" ] && mkdir -p "$dstDir"
 
     syncFile "$fTKCodexConfig" "$dstDir"
+    _trackSyncResult $? processedCount failedCount
+    syncFile "$fTKCodexAgents" "$dstDir"
     _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then
