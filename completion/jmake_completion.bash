@@ -65,6 +65,10 @@ _JMAKE_RELEASE_BASE="/mswg/release/host_fw"
 _JMAKE_WORKSPACE_BASE="/auto/fwgwork1/$USER"
 _JMAKE_WORKSPACE_MARKER="adabe"
 
+# Directory holding the .clangd presets, used by --link-clangd completion.
+# Resolved relative to this completion script: crosslv/completion/.. -> crosslv/assets/clangd
+_JMAKE_CLANGD_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../assets/clangd" 2>/dev/null && pwd)"
+
 # Static list of regression servers, used by --reg-malloc tab completion.
 # Extracted from noga cache file. To refresh, run:
 #   grep -oE '[a-z]+-fwreg-[0-9]+' \
@@ -167,8 +171,9 @@ _jmake_complete() {
 
     # List of all long options
     long_opts="--help --all --all-extended --jobs --working-dir --clean --clean-db --git-clean --clean-submodule \
-               --build --db --debug --attempt --no-verbose --nicx --list --list-extended --link --models \
-               --skip --scratch --track --patch --ethlt --codecov --cov --fetch --push --rebase --add --commit \
+               --build --db --debug --attempt --no-verbose --nicx --list --list-extended \
+               --link-db --link-clangd --link-claude --models \
+               --skip --continue --track --patch --ethlt --codecov --cov --fetch --push --rebase --add --commit \
                --amend --stat --df --diff --show --burn --burn-official --firmware --ini --device --fw-query --fw-reset \
                --mft-install --mft-start --mft-stop --mft-restart --ofed-restart --ofed-start --ofed-stop \
                --power-cycle --power-on --power-off --docker-group \
@@ -204,6 +209,17 @@ _jmake_complete() {
             # Multi-model completion with comma separation (e.g., mustang,gilboa,argaman)
             compopt -o nospace  # Don't add space after completion, allow user to type comma
             _jmake_complete_models
+            return 0
+            ;;
+        --link-clangd)
+            # Suggest available .clangd presets (bare names, e.g. fw, utopx)
+            local presets="" f base
+            for f in "$_JMAKE_CLANGD_DIR"/*.clangd; do
+                [[ -e "$f" ]] || continue
+                base="${f##*/}"
+                presets+="${base%.clangd} "
+            done
+            COMPREPLY=( $(compgen -W "$presets" -- "$cur") )
             return 0
             ;;
         --burn-official)

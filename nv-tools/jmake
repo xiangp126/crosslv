@@ -18,7 +18,10 @@ fNumOfJobs=$(nproc)
 fWorkingDir=$(pwd)
 fMaxBuildAttempt=1
 fGenerateCompileCmds=
-fLinkWorkspace=
+fLinkWorkspace=    # aggregate: set when any of the three fLink* sub-flags is set
+fLinkDb=
+fLinkClangd=
+fLinkClaude=
 fNeedBuild=
 fPrintBuildFlags=
 fClean=
@@ -32,7 +35,7 @@ fDockerGroup=
 fEthlt=
 fCodecov=
 fCov=
-fScratch=
+fContinue=
 fRepoType=        # golan | nicx | utopx (set by detectRepoType)
 # MFT (Mellanox Firmware Tools) & OFED options
 fBurn=
@@ -208,7 +211,7 @@ SKIPPED=${fModelsSkipped[*]}
 EOF
     if [[ "$status" == "fail" ]]; then
         echo -e "$NOTATION State saved to ${CYAN}$stateFile${RESET}"
-        echo -e "$NOTATION Run ${YELLOW}jmake -a${RESET} to resume after fixing the issue"
+        echo -e "$NOTATION Run ${YELLOW}jmake -a --continue${RESET} to resume after fixing the issue"
     fi
 }
 
@@ -291,7 +294,9 @@ Common Options:
     -l, --list                      List base models
         --docker-group              Add current user to docker group (requires sudo)
         --list-extended             List all extended models (includes _ethlt, _codecov variants)
-        --link                      Link $fCompileCommandsJson (use with -m), .clangd, and ~/.claude/$CLAUDE_MD
+        --link-db                   Link $fCompileCommandsJson for clangd (use with -m)
+        --link-clangd <preset>      Link assets/clangd/<preset>.clangd as .clangd (e.g. fw, utopx)
+        --link-claude               Link ~/.claude/$CLAUDE_MD
 
 Build Options:
     -D, --debug                     Enable debug mode
@@ -312,7 +317,7 @@ Build Options:
     -j, --jobs                      Set the number of parallel jobs (default: $fNumOfJobs)
     -w, --working-dir               Set working directory (default: current dir)
     -T, --attempt                   Set max build attempts (default: $fMaxBuildAttempt)
-        --scratch                   Ignore saved state and start from first model
+        --continue                  Resume loop build from the last failed model (reads $STATE_FILE)
     -N, --nicx                      Build with NICX=1 flag
         --track                     Build with -D TRACK_INCLUDES=1
 
@@ -383,7 +388,7 @@ fi
 SHORTOPTS="hcoaAj:w:Dlm:NpT:"
 # NOTE: No leading spaces on continuation lines — they become part of the string and break getopt
 LONGOPTS="help,clean,debug,db,build,clean-db,git-clean,clean-submodule,jobs:,working-dir:,attempt:,no-verbose,\
-list,list-extended,link,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,scratch,track,fetch,push,\
+list,list-extended,link-db,link-clangd:,link-claude,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,continue,track,fetch,push,\
 rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mft-install,mft-start,\
 mft-stop,mft-restart,ofed-restart,ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:,ini:,\
 reg-info,reg-malloc:,reg-mine,reg-idle,reg-extend,reg-cancel"
@@ -476,8 +481,8 @@ while true; do
             fTrackIncludes=true
             shift
             ;;
-        --scratch)
-            fScratch=true
+        --continue)
+            fContinue=true
             shift
             ;;
         -l|--list)
@@ -514,7 +519,20 @@ while true; do
             done
             exit 0
             ;;
-        --link)
+        --link-db)
+            fLinkDb=true
+            fLinkWorkspace=true
+            shift
+            ;;
+        --link-clangd)
+            # Argument selects which preset under assets/clangd to link
+            # (e.g. "fw" or "utopx"; ".clangd" suffix optional).
+            fLinkClangd="$2"
+            fLinkWorkspace=true
+            shift 2
+            ;;
+        --link-claude)
+            fLinkClaude=true
             fLinkWorkspace=true
             shift
             ;;
@@ -899,7 +917,9 @@ printBuildFlags() {
         [ -n "$fEthlt" ]                 && echo -e "[E] ${COLOR}Ethlt${RESET} variant (_ethlt)"
         [ -n "$fCodecov" ]               && echo -e "[K] ${COLOR}Codecov${RESET} variant (_codecov)"
         [ -n "$fCov" ]                   && echo -e "[O] ${COLOR}Cov${RESET} variant (cov)"
-        [ -n "$fLinkWorkspace" ]         && echo -e "[L] ${COLOR}Link${RESET} workspace files ($fCompileCommandsJson, .clangd, ~/.claude/$CLAUDE_MD)"
+        [ -n "$fLinkDb" ]                && echo -e "[L] ${COLOR}Link${RESET} compile database ($fCompileCommandsJson)"
+        [ -n "$fLinkClangd" ]            && echo -e "[L] ${COLOR}Link${RESET} .clangd config (${fLinkClangd})"
+        [ -n "$fLinkClaude" ]            && echo -e "[L] ${COLOR}Link${RESET} ~/.claude/$CLAUDE_MD"
         [ -n "$fBurn" ]                  && echo -e "[B] ${COLOR}Burn${RESET} FW image to device"
         [ -n "$fBurnOfficial" ]          && echo -e "[B] ${COLOR}Burn Official:${RESET} $fBurnOfficial"
         [ -n "$fFwReset" ]               && echo -e "[R] ${COLOR}Reset${RESET} FW on device (fwreset<key>)"
@@ -1259,9 +1279,9 @@ isModelInList() {
 }
 
 runLoopModels() {
-    # Handle --scratch: delete saved state
-    if [[ -n "$fScratch" ]]; then
-        deleteLoopState
+    # Default is a from-scratch build; clear any stale saved state unless --continue
+    if [[ -z "$fContinue" ]]; then
+        deleteLoopState quiet
     fi
 
     # Only run if --models or --all is specified
@@ -1370,12 +1390,14 @@ linkFile() {
     fi
 }
 
-linkWorkspaceFiles() {
-    [ -z "$fGenerateCompileCmds" ] && [ -z "$fLinkWorkspace" ] && return
+# linkCompileDb: Link compile_commands.json for clangd. Honors repo type
+# (utopx vs golan) and loop-mode/model selection. Split out of
+# linkWorkspaceFiles so the db link can be requested independently
+# (--link-db) from the .clangd and CLAUDE.md links.
+linkCompileDb() {
     # utopx has no per-model compile_db; CMake emits a single compile_commands.json
     # under cmakeBuild. Link the most recently generated one at the repo root for clangd.
     if [[ "$fRepoType" == "utopx" ]]; then
-        cd "$fWorkingDir" || exit
         local utopxExpander="$SCRIPT_DIR/template/gen_clangd_compile_commands.py"
         if [[ -f "$utopxExpander" ]]; then
             echo -e "$NOTATION ${CYAN}Generating per-file clangd compile database (expanding Unity units)...${RESET}"
@@ -1403,15 +1425,46 @@ linkWorkspaceFiles() {
         fBuildModel="${fModels[0]}"
     fi
 
-    cd "$fWorkingDir" || exit
-
     echo -e "$NOTATION ${CYAN}Linking compile database for clangd...${RESET}"
     linkFile "bin/build_tools/compile_db/compile_commands_${fBuildModel}_irisc.json" \
              "$fWorkingDir" "$fCompileCommandsJson"
-    linkFile "$SCRIPT_DIR/assets/clangd/clangd" \
-             "$fWorkingDir" ".clangd"
-    linkFile "$SCRIPT_DIR/assets/claude/CLAUDE.md" \
-             "$HOME/.claude" "$CLAUDE_MD"
+}
+
+linkWorkspaceFiles() {
+    # Decide which of the three link targets to act on. --db
+    # (fGenerateCompileCmds) keeps the original behavior of linking all
+    # three; otherwise each --link-* sub-flag is honored independently.
+    local doDb doClangd doClaude
+    if [ -n "$fGenerateCompileCmds" ]; then
+        doDb=true; doClangd=true; doClaude=true
+    fi
+    [ -n "$fLinkDb" ]     && doDb=true
+    [ -n "$fLinkClangd" ] && doClangd=true
+    [ -n "$fLinkClaude" ] && doClaude=true
+
+    [ -z "$doDb" ] && [ -z "$doClangd" ] && [ -z "$doClaude" ] && return
+
+    cd "$fWorkingDir" || exit
+
+    [ -n "$doDb" ] && linkCompileDb
+
+    if [ -n "$doClangd" ]; then
+        # fLinkClangd holds the explicitly selected preset name (e.g. "fw" /
+        # "utopx"). The "--db" path sets doClangd without a preset, so pick the
+        # default by repo type: "utopx" under a utopx repo, "fw" otherwise.
+        local clangdPreset="$fLinkClangd"
+        if [ -z "$clangdPreset" ]; then
+            [[ "$fRepoType" == "utopx" ]] && clangdPreset="utopx" || clangdPreset="fw"
+        fi
+        local clangdSrc="$SCRIPT_DIR/assets/clangd/$clangdPreset"
+        [[ "$clangdSrc" != *.clangd ]] && clangdSrc="${clangdSrc}.clangd"
+        linkFile "$clangdSrc" "$fWorkingDir" ".clangd"
+    fi
+
+    if [ -n "$doClaude" ]; then
+        linkFile "$SCRIPT_DIR/assets/claude/CLAUDE.md" \
+                 "$HOME/.claude" "$CLAUDE_MD"
+    fi
 }
 
 removeWriteFromJson() {
@@ -2384,8 +2437,8 @@ doEarlyExitJobs() {
 main() {
     runGitOptions
     preConfigure "$@"
-    # Auto-resume from saved state if available (use --scratch to override)
-    [[ ${#fModels[@]} -gt 0 ]] && loadLoopState
+    # Resume from saved state only when --continue is given (default: build from scratch)
+    [[ -n "$fContinue" && ${#fModels[@]} -gt 0 ]] && loadLoopState
     # Source .fwvalias inline here (in main()'s scope) for the commands that
     # actually need it. MUST be inline — not in a helper function — because
     # top-level `declare -A project_full_names=(...)` etc. in .fwvalias

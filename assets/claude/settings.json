@@ -41,7 +41,7 @@
   "sandbox": {
     "enabled": false
   },
-  "effortLevel": "xhigh",
+  "effortLevel": "max",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark-ansi",
   "mcpServers": {

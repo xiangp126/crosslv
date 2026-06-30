@@ -1,0 +1,46 @@
+CompileFlags:
+  # Use clang driver for parsing instead of GCC (the project builds with g++)
+  Compiler: clang
+  Add:
+    - "-Wno-unknown-warning-option"
+    - "-Wno-unknown-attributes"
+    # Don't abort AST building after the default 20 errors; the variadic
+    # logging macros (INFO/UFATAL_IF -> FWV_INFO_x) mis-expand under clang's
+    # preprocessor and would otherwise kill navigation for the rest of the file.
+    - "-ferror-limit=0"
+    # The compile DB is generated inside the build docker container, so its
+    # verix/boost -isystem paths point at /hcaFWCore/... which does NOT exist on
+    # the host where clangd runs. Without the verix SDK headers (VeriX_macros.h,
+    # which defines IDENTITY_EVALUATOR / SWITCH_FOR_1_TO_3_ARGS_MACRO and the
+    # FwvBase/FwvResource/UtopxResource infrastructure) the base classes become
+    # invalid and every derived type (VHCA/VPORT/...) is poisoned, breaking
+    # navigation. Point clangd at the real verix headers on the host instead.
+    - "-isystem"
+    - "/.autodirect/mswg/projects/fw/fw_ver/FW_VERIX_LATEST/release/linux_x86_64/ubuntu20.04/5.2/include"
+  Remove:
+    # GCC-specific flags that clang does not recognize
+    - "-fno-var-tracking-assignments"
+    - "-ggdb"
+    # Linker flags that leak through CMAKE_CXX_FLAGS
+    - "-fuse-ld=*"
+    - "-Wl,*"
+    - "-l*"
+
+Diagnostics:
+  UnusedIncludes: None
+  # Suppress all diagnostics: clang-on-a-g++-project produces false positives
+  # (residual duplicate-header ambiguities, lifetime lints, etc.) that don't
+  # affect navigation. Hiding them keeps the editor clean; the project still
+  # builds correctly with g++ in its docker container.
+  Suppress:
+    - "*"
+  ClangTidy:
+    Remove:
+      - "modernize-*"
+      - "readability-*"
+      - "bugprone-reserved-identifier"
+      - "cert-dcl37-c"
+      - "cert-dcl51-cpp"
+
+Index:
+  Background: Build
