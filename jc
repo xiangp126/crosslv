@@ -922,6 +922,10 @@ gwAclBlock() {
     local color_on=; [ -t 1 ] && color_on=1
     gwAclStatsScript | ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
         "$fGwHost" "RULES='$rules' COLOR_ON='$color_on' DO_FLUSH=1 SHOW_ALL=0 GO2RTC_IP='$fGwGo2rtcIP' NAS_IPS='$fGwNasIPs' sh -s"
+    echo
+    echo -e "${COLOR}── Post-block status — what's still connected (offloaded streams may re-establish) ──${RESET}"
+    sleep 3
+    gwAclStatus "${targets[@]}"
 }
 
 # --acl-restart: toggle the camera ACL to give the camera(s) a brief

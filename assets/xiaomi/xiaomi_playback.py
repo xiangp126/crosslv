@@ -816,7 +816,8 @@ const ALL_CAMS = ['c700_01','c700_02','c700_03','c700_04','c700_05','c700_06']; 
 const CAM_NAMES = { c700_01:'CAM 1', c700_02:'CAM 2', c700_03:'CAM 3', c700_04:'CAM 4', c700_05:'CAM 5', c700_06:'CAM 6' };
 function dispCam(lbl){ return CAM_NAMES[lbl] || lbl; }
 let splitN = 1;                                   // current split count (1 = single stream)
-let cellCams = ALL_CAMS.slice(0, 4);              // cameras per cell, default first N streams; truncated/padded by N when changing split count
+const CELL_ORDER = ['c700_01','c700_02','c700_03','c700_05','c700_04','c700_06'];   // order cells are FILLED by default: 4-split shows 1,2,3,5 (cam4 moves to the 5th slot). Separate from ALL_CAMS so the per-cell picker stays in natural 1..6 order.
+let cellCams = CELL_ORDER.slice(0, 4);            // cameras per cell, default fill from CELL_ORDER; truncated/padded by N when changing split count
 
 let cam = null;
 let dateStr = null;
@@ -1187,7 +1188,7 @@ function curTime(){ const m = currentMode(); return (m==='live' || m==='livegrid
 function curSplit(){ return splitN > 1; }
 function ensureCellCams(){   // keep the existing per-cell cameras, pad/truncate to the current splitN (pad with the default first few streams)
   const n = Math.max(1, splitN);
-  while(cellCams.length < n) cellCams.push(ALL_CAMS[cellCams.length] || ALL_CAMS[0]);
+  while(cellCams.length < n) cellCams.push(CELL_ORDER[cellCams.length] || ALL_CAMS[0]);
   cellCams = cellCams.slice(0, n);
 }
 function applyMode(time, n){   // time: live/play; n: split count 1/2/4/6
@@ -2182,9 +2183,11 @@ async function setPbGrid(on){
     pbStartSync();                    // start periodic resync
   } else {
     const w = currentWall();          // pbGrid is still true → take the master camera's current moment
+    const mv = pbVids[pbMaster];      // collapse to the SINGLE view of the REF (master) cell's camera (read before pbTeardown clears pbVids)
+    if(mv && mv._id){ cam = mv._id; const cs = $('camSel'); if(cs) cs.value = cam; }
     pbTeardown();
     document.title = 'Xiaomi Recordings · Timeline Playback';
-    selectDay(dateStr, (w && w.sec != null) ? w.sec : null, !!(w && w.play));   // back to the single view at the same moment
+    selectDay(dateStr, (w && w.sec != null) ? w.sec : null, !!(w && w.play));   // back to the single view at the same moment (now showing the REF camera)
   }
 }
 // Playback split: Play all (realign to the current moment then play together) / Pause all
