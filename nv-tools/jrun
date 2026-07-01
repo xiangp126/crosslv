@@ -14,7 +14,7 @@ fPaneId=$(tmux list-panes -t "$fSessionId:$fWinId" -F '#{pane_index}' 2>/dev/nul
 fSendNewLine=
 fTmuxPrefix="C-x"
 fCleanedCmd=
-fDebugMode=
+fSingleCmd=
 fBroadcastCmd=
 fCmdFile="commands.txt"
 # Colors
@@ -27,14 +27,6 @@ GREY='\033[90m'
 RESET='\033[0m'
 COLOR=$MAGENTA
 USER_NOTATION="${CYAN}▸${RESET}"
-declare -r -A DEBUG_CONFIG=(
-    ["none"]=""
-    ["wad"]="Enables WAD debugging|(
-        diag debug reset
-        diag wad debug enable all
-        diag debug enable
-    )"
-)
 
 logo() {
 cat << _EOF
@@ -48,29 +40,31 @@ _EOF
 
 usage() {
     cat << _EOF
-Usage: $SCRIPT_NAME session[:window[.pane]] [OPTIONS]
+Usage: $SCRIPT_NAME -t session[:window[.pane]] [OPTIONS]
 
-This script sends commands to a tmux pane running a FortiGate CLI session.
-It allows you to specify a tmux session, window, and pane ID, as well as an optional command file.
-You can also send predefined debug commands automatically with simple flags.
-The script parses command files and handles various FortiGate debugging scenarios efficiently.
+This script sends commands to a specific tmux session, window, and pane.
+The target is specified with -t (or with -s/-w/-p), then it sends either a
+single command, the lines of a command file, or broadcasts a command to every pane.
 
 Options:
     -h, --help               Print this help message
+    -t, --target             Set target as session[:window[.pane]]
     -s, --session            Set session ID (default: ${fSessionId:-})
     -w, --window             Set window ID (default: $fWinId)
     -p, --pane               Set pane ID (default: $fPaneId)
+    -c, --cmd CMD            Send a single CMD to the target session/window/pane
     -f, --file               Specify command file (default: $fCmdFile)
     -d, --debug              Enable debug mode with verbose output
-    -W, --wad-debug          Send WAD debug commands automatically
     -B, --broadcast CMD      Send CMD to all panes across all tmux sessions
 
 Examples:
-    $SCRIPT_NAME --session=log --window=2 --pane=2 --file=\$HOME/commands.txt
-    $SCRIPT_NAME log --wad-debug      # Uses default window $fWinId and pane $fPaneId
-    $SCRIPT_NAME log:2 --wad-debug    # Uses default pane $fPaneId
-    $SCRIPT_NAME log:2.3 --wad-debug  # Specifies all parts
-    $SCRIPT_NAME --broadcast 'source ~/.bashrc'   # Send to all tmux panes
+    $SCRIPT_NAME -t log:2.2 --file=\$HOME/commands.txt
+    $SCRIPT_NAME -t log -c 'export DISPLAY=:0'        # Uses default window $fWinId and pane $fPaneId
+    $SCRIPT_NAME -t log:2 -c 'export DISPLAY=:0'      # Uses default pane $fPaneId
+    $SCRIPT_NAME -t log:2.3 -c 'export DISPLAY=:0'    # Specifies all parts
+    $SCRIPT_NAME --broadcast 'source ~/.bashrc'       # Send to all tmux panes (no -t needed)
+
+Note: always quote multi-word commands, e.g. -c 'export DISPLAY=:0'.
 
 Tips:
   For tmux, you can use:
@@ -93,12 +87,16 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
     
-    SHORTOPTS="hs:w:p:f:dWB:"
-    LONGOPTS="help,session:,window:,pane:,file:,debug,wad-debug,broadcast:"
+    # Show usage when invoked without any arguments
+    if [ "$#" -eq 0 ]; then
+        usage
+    fi
+
+    SHORTOPTS="hs:w:p:t:c:f:dB:"
+    LONGOPTS="help,session:,window:,pane:,target:,cmd:,file:,debug,broadcast:"
     
     if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
         echo -e "${MAGENTA}Failed to parse arguments.${RESET}" >&2
-        echo -e "${MAGENTA}The argument --packet-trace requires an IP address.${RESET}" >&2
         echo -e "${CYAN}Tip: On macOS, install GNU getopt: ${GREY}brew install gnu-getopt${RESET}" >&2
         exit 1
     fi
@@ -123,16 +121,27 @@ parseOptions() {
                 fPaneId="$2"
                 shift 2
                 ;;
+            -t|--target)
+                if [[ "$2" =~ ^([^:]+)(:([0-9]+)(\.([0-9]+))?)?$ ]]; then
+                    fSessionId="${BASH_REMATCH[1]}"
+                    fWinId="${BASH_REMATCH[3]:-$fWinId}"
+                    fPaneId="${BASH_REMATCH[5]:-$fPaneId}"
+                else
+                    echo -e "$USER_NOTATION ${MAGENTA}Invalid tmux target format. Use: -t session[:window[.pane]]${RESET}" >&2
+                    exit 1
+                fi
+                shift 2
+                ;;
+            -c|--cmd)
+                fSingleCmd="$2"
+                shift 2
+                ;;
             -f|--file)
                 fCmdFile="$2"
                 shift 2
                 ;;
             -d|--debug)
                 set -x
-                shift
-                ;;
-            -W|--wad-debug)
-                fDebugMode="wad"
                 shift
                 ;;
             -B|--broadcast)
@@ -152,24 +161,16 @@ parseOptions() {
 
     if [ -n "$fBroadcastCmd" ]; then
         return
-    elif [ "$#" == 0 ]; then
-        usage
-    elif [ "$#" == 1 ]; then
-        local target="$1"
-        if [[ "$target" =~ ^([^:]+)(:([0-9]+)(\.([0-9]+))?)?$ ]]; then
-            fSessionId="${BASH_REMATCH[1]}"
-            fWinId="${BASH_REMATCH[3]:-$fWinId}"
-            fPaneId="${BASH_REMATCH[5]:-$fPaneId}"
-        else
-            echo -e "$USER_NOTATION ${MAGENTA}Invalid tmux target format. Use: session[:window[.pane]]${RESET}" >&2
-            exit 1
-        fi
-    else
-        echo -e "$USER_NOTATION ${MAGENTA}Too many arguments.${RESET}"
+    fi
+
+    # No positional arguments are accepted; the target must be given via -t/-s/-w/-p
+    if [ "$#" -gt 0 ]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Unexpected argument(s): $*${RESET}" >&2
+        echo -e "$USER_NOTATION ${CYAN}Tip: specify the target with -t session[:window[.pane]] and quote commands, e.g. -c 'export DISPLAY=:0'${RESET}" >&2
         exit 1
     fi
 
-    [ -z "$fSessionId" ] && echo -e "$USER_NOTATION ${MAGENTA}Session ID is required.${RESET}" && exit 1
+    [ -z "$fSessionId" ] && echo -e "$USER_NOTATION ${MAGENTA}Session ID is required. Use -t session[:window[.pane]].${RESET}" && exit 1
     fTmuxTarget="$fSessionId:$fWinId.$fPaneId"
 }
 
@@ -182,10 +183,9 @@ displayInfo() {
     echo -e "[p] Set Pane ID to: ${COLOR}$fPaneId${RESET}"
     echo -e "[/] Set Tmux Target to: ${COLOR}$fTmuxTarget${RESET}"
 
-    if [ -n "$fDebugMode" ]; then
+    if [ -n "$fSingleCmd" ]; then
         COLOR=$LIGHTYELLOW
-        IFS='|' read -r desc cmds <<< "${DEBUG_CONFIG[$fDebugMode]}"
-        echo -e "[*] ${COLOR}$desc${RESET}"
+        echo -e "[c] Send command: ${COLOR}$fSingleCmd${RESET}"
     else
         COLOR=$MAGENTA
         if [[ ! -f "$fCmdFile" ]]; then
@@ -221,20 +221,6 @@ displayInfo() {
 #   tmux capture-pane -b mybuffer -p  # Capture content into named buffer
 #   tmux capture-pane -a -p | less    # Capture history and view with pager
 #   tmux capture-pane -p -S -1000 > pane.txt   # Capture last 1000 lines and save to file
-checkEnvReadiness() {
-    # Tmux Target Pane Content
-    local paneContent=$(tmux capture-pane -pt "$fTmuxTarget")
-    local lastLine=$(echo "$paneContent" | tail -n1)
-
-    # Remove potential escape sequences
-    lastLineStripped=$(echo "$lastLine" | sed 's/\x1b\[[0-9;]*m//g')
-
-    # Check if the last line contains (Interim)#
-    if [[ ! $lastLineStripped =~ .*\(Interim\)\# ]]; then
-        echo -e "${RED}Fatal Error: Fortigate CLI not ready, stop sending commands!${RESET}"
-        exit 1
-    fi
-}
 
 # tmux send-keys usage
 #
@@ -259,32 +245,15 @@ checkEnvReadiness() {
 #   - Keys can be special keys like C-m (Enter), C-c (Ctrl+C), Up, Down, etc.
 #   - Multiple keys or strings can be sent in sequence.
 #   - Often combined with capture-pane to automate pane interactions.
-sendBuiltinCmds() {
-    # 1. Access the value for the "$fDebugMode" key
-    local fullCmds="${DEBUG_CONFIG["$fDebugMode"]}"
+sendSingleCmd() {
+    echo -e "$USER_NOTATION Sending: ${LIGHTGREEN}$fSingleCmd${RESET}"
+    tmux send-keys -t "$fTmuxTarget" -l "$fSingleCmd"
+    tmux send-keys -t "$fTmuxTarget" Enter
 
-    # 2. Extract the command block string
-    # Remove the description part up to and including "|("
-    local cmds="${fullCmds#*|(}"
-    # Remove the trailing ")"
-    cmds="${cmds%)}"
-
-    readarray -t cmdsArray < <(printf '%s' "$cmds")
-    for cmd in "${cmdsArray[@]}"; do
-        # Trim whitespace
-        cmd="${cmd#"${cmd%%[![:space:]]*}"}"
-        [ -z "$cmd" ] && continue
-
-        echo -e "$USER_NOTATION Sending: ${LIGHTGREEN}$cmd${RESET}"
-        tmux send-keys -t "$fTmuxTarget" -l "$cmd"
-        tmux send-keys -t "$fTmuxTarget" Enter
-
-        if [[ $? -ne 0 ]]; then
-            echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $cmd${RESET}"
-            exit 1
-        fi
-        # sleep 0.1
-    done
+    if [[ $? -ne 0 ]]; then
+        echo -e "$USER_NOTATION ${MAGENTA}Failed to send command: $fSingleCmd${RESET}"
+        exit 1
+    fi
     exit 0
 }
 
@@ -346,9 +315,8 @@ main() {
         exit 0
     fi
     displayInfo
-    checkEnvReadiness
-    if [ -n "$fDebugMode" ]; then
-        sendBuiltinCmds
+    if [ -n "$fSingleCmd" ]; then
+        sendSingleCmd
     else
         sendCmdsFromFile
     fi

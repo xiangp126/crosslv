@@ -47,3 +47,5 @@
     modified = yellow     # Color for modified but unstaged files
     untracked = red       # Color for untracked files
     branch = magenta      # Color for the branch name
+[safe]
+	directory = /auto/swgwork10/haibof/code/golan_fw

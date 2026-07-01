@@ -18,8 +18,8 @@ _jrun_completion() {
     #---------------------------------------------------------------
 
     # Define short and long options
-    opts="-h -s -w -p -f -d -W -B"
-    longopts="--help --session --window --pane --file --debug --wad-debug \
+    opts="-h -t -s -w -p -c -f -d -B"
+    longopts="--help --target --session --window --pane --cmd --file --debug \
               --broadcast"
 
     #---------------------------------------------------------------
@@ -75,6 +75,12 @@ _jrun_completion() {
 
     # Handle option-specific arguments
     case $prev in
+        # Target option - complete session[:window[.pane]]
+        -t|--target)
+            _complete_tmux_target "$cur"
+            return 0
+            ;;
+
         # Session option
         -s|--session)
             local sessions=$(_get_tmux_sessions)
@@ -139,10 +145,19 @@ _jrun_completion() {
             return 0
             ;;
 
-        # Broadcast option - complete with common commands
+        # Single command option - complete with common full-command strings
+        -c|--cmd)
+            local IFS=$'\n'
+            local common_cmds=$'export DISPLAY=:0\nsource ~/.bashrc\nsource ~/.zshrc'
+            COMPREPLY=( $(compgen -W "${common_cmds}" -- "${cur}") )
+            return 0
+            ;;
+
+        # Broadcast option - complete with common full-command strings
         -B|--broadcast)
-            local common_cmds="'source ~/.bashrc' 'source ~/.zshrc'"
-            COMPREPLY=( $(compgen -W "${common_cmds}" -- ${cur}) )
+            local IFS=$'\n'
+            local common_cmds=$'source ~/.bashrc\nsource ~/.zshrc'
+            COMPREPLY=( $(compgen -W "${common_cmds}" -- "${cur}") )
             return 0
             ;;
 
@@ -164,14 +179,9 @@ _jrun_completion() {
         return 0
     fi
 
-    # For any non-option argument, try tmux target completion first
-    _complete_tmux_target $cur
-    if [[ ${#COMPREPLY[@]} -gt 0 ]]; then
-        return 0
-    fi
-
-    # Fall back to file completion if tmux target completion didn't produce results
-    COMPREPLY=( $(compgen -f -- "${cur}") )
+    # No positional arguments are accepted; the target must be given via -t.
+    # Suggest the available options for any bare argument.
+    COMPREPLY=( $(compgen -W "${opts} ${longopts}" -- ${cur}) )
     return 0
 }
 

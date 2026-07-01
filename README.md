@@ -260,34 +260,31 @@ Example:
 #### [jrun](./ftnt-tools/jrun)
 ```bash
 $ jrun -h
-Usage: jrun session[:window[.pane]] [OPTIONS]
+Usage: jrun -t session[:window[.pane]] [OPTIONS]
 
-This script sends commands to a tmux pane running a FortiGate CLI session.
-It allows you to specify a tmux session, window, and pane ID, as well as an optional command file.
-You can also send predefined debug commands automatically with simple flags.
-The script parses command files and handles various FortiGate debugging scenarios efficiently.
+This script sends commands to a specific tmux session, window, and pane.
+The target is specified with -t (or with -s/-w/-p), then it sends either a
+single command, the lines of a command file, or broadcasts a command to every pane.
 
 Options:
     -h, --help               Print this help message
+    -t, --target             Set target as session[:window[.pane]]
     -s, --session            Set session ID (default: )
     -w, --window             Set window ID (default: 1)
     -p, --pane               Set pane ID (default: 1)
-    -f, --file               Specify command file (default: )
+    -c, --cmd CMD            Send a single CMD to the target session/window/pane
+    -f, --file               Specify command file (default: commands.txt)
     -d, --debug              Enable debug mode with verbose output
-    -W, --wad-debug          Send WAD debug commands automatically
-    -O, --output-directly    Configure console to output directly (no pagination)
-    -K, --kernel-debug       Send kernel debug commands automatically
-    -T, --packet-trace       Send packet trace commands automatically
-    -I, --ips-debug          Send IPS debug commands automatically
-    -S, --scanunit-debug     Send scanunit debug commands automatically
-    -D, --dns-debug          Send DNS debug commands automatically
+    -B, --broadcast CMD      Send CMD to all panes across all tmux sessions
 
 Examples:
-    jrun --session=log --window=2 --pane=2 --file=/home/xiangp/commands.txt
-    jrun log --wad-debug      # Uses default window 1 and pane 1
-    jrun log:2 --wad-debug    # Uses default pane 1
-    jrun log:2.3 --wad-debug  # Specifies all parts
-    jrun log -t --packet-trace-addr=192.168.1.100
+    jrun -t log:2.2 --file=/home/xiangp/commands.txt
+    jrun -t log -c 'export DISPLAY=:0'        # Uses default window 1 and pane 1
+    jrun -t log:2 -c 'export DISPLAY=:0'      # Uses default pane 1
+    jrun -t log:2.3 -c 'export DISPLAY=:0'    # Specifies all parts
+    jrun --broadcast 'source ~/.bashrc'       # Send to all tmux panes (no -t needed)
+
+Note: always quote multi-word commands, e.g. -c 'export DISPLAY=:0'.
 
 Tips:
     1. Type 'C-x, q' to view the pane number within the tmux window.
