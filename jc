@@ -237,6 +237,11 @@ Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
                              before the Block rule, created/refreshed each run. Prevents the
                              camera from hanging (vs a full cut) while killing remote/P2P.
                              E.g.  jc --acl-block --keep-443 02
+    --cam-kick    <targets>  Force camera(s) to re-associate WiFi (deauth from the AP).
+                             Recovers a camera stuck in a wedged WiFi association
+                             (associated but not passing traffic / not recording) —
+                             lighter than a power-cycle. Same <targets> as above.
+                             E.g.  jc --cam-kick 02
 
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
@@ -327,7 +332,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
           bbr,bbr-status,\
-          acl-block:,acl-unblock:,acl-status:,acl-restart:"
+          acl-block:,acl-unblock:,acl-status:,acl-restart:,cam-kick:"
 
 # Pre-strip the --keep-443 modifier so it can appear anywhere on the command line
 # (incl. between an --acl-* action and its target, where getopt would otherwise
@@ -787,16 +792,22 @@ pubstats() {
         }
         END { print pub+0, off+0 }'
 }
+_fw=$(uci show firewall 2>/dev/null)
+_neigh=$(ip neigh 2>/dev/null)
 for n in $RULES; do
-    sec=$(uci show firewall 2>/dev/null | awk -F'[.=]' -v n="$n" '
+    sec=$(printf '%s\n' "$_fw" | awk -F'[.=]' -v n="$n" '
         tolower($0) ~ "\\.name=\x27" tolower(n) "\x27" { print $2; exit }
     ')
     [ -z "$sec" ] && { printf '%s%s: rule not found%s\n' "$R" "$n" "$Z" >&2; continue; }
     enabled=$(uci -q get firewall.$sec.enabled 2>/dev/null); [ -z "$enabled" ] && enabled=1
     [ "$enabled" = 1 ] && state=Blocked || state=Unblocked
+    an="Allow_${n#Block_}_443"
+    asec=$(printf '%s\n' "$_fw" | awk -F'[.=]' -v n="$an" '
+        tolower($0) ~ "\\.name=\x27" tolower(n) "\x27" { print $2; exit }')
+    if [ -n "$asec" ]; then aen=$(uci -q get firewall.$asec.enabled 2>/dev/null); [ -z "$aen" ] && aen=1; else aen=0; fi
     mac=$(uci -q get firewall.$sec.src_mac 2>/dev/null | tr 'A-Z' 'a-z')
     [ -z "$mac" ] && { printf '%s%s: no src_mac on rule%s\n' "$R" "$n" "$Z" >&2; continue; }
-    ip=$(ip neigh 2>/dev/null | awk -v m="$mac" 'tolower($0) ~ m { print $1; exit }')
+    ip=$(printf '%s\n' "$_neigh" | awk -v m="$mac" 'tolower($0) ~ m { print $1; exit }')
     [ -z "$ip" ] && { [ -n "$shown" ] && echo; shown=1; printf '%s●%s %s%s%s %s· offline (no LAN presence)%s\n' "$D" "$Z" "$B" "${n#Block_}" "$Z" "$D" "$Z"; continue; }
     entries=$(grep "src=$ip " /proc/net/nf_conntrack 2>/dev/null)
     set -- $(printf '%s\n' "$entries" | pubstats)
@@ -880,10 +891,11 @@ for n in $RULES; do
         }')
     set -- $(printf '%s\n' "$rendered" | sed -n 's/^COUNTS //p')
     mtotal=${1:-0}; mpub=${2:-0}; mpriv=${3:-0}; moff=${4:-0}
-    dn=${n#Block_}; [ "$state" = Blocked ] && scolor="$Y" || scolor="$G"
+    dn=${n#Block_}; [ "$state" = Blocked ] && scolor="$R" || scolor="$G"
+    if [ "$aen" = 1 ]; then a443="Allow"; a443col="$G"; else a443="Blocked"; a443col="$R"; fi
     [ -n "$shown" ] && echo; shown=1
-    printf '%s●%s %s%s%s · %s · %s%s%s · %d flows · %d WAN · %d LAN\n' \
-        "$scolor" "$Z" "$B" "$dn" "$Z" "$ip" "$scolor" "$state" "$Z" "$mtotal" "$mpub" "$mpriv"
+    printf '%s●%s %s%s%s · %s · Public %s%s%s · 443 %s%s%s · %d Flows · %d WAN · %d LAN\n' \
+        "$scolor" "$Z" "$B" "$dn" "$Z" "$ip" "$scolor" "$state" "$Z" "$a443col" "$a443" "$Z" "$mtotal" "$mpub" "$mpriv"
     printf '%s\n' "$rendered" | grep -v '^COUNTS'
     if [ "$DO_FLUSH" = 1 ]; then
         conntrack -D -s "$ip" >/dev/null 2>&1
@@ -961,6 +973,51 @@ gwAclRestart() {
 
     echo -e "${COLOR}[3/3] Final ACL status${RESET}"
     gwAclControl status "${targets[@]}"
+}
+
+gwCamKick() {
+    local targets=("$@")
+    local rules; rules=$(gwAclResolveRules "${targets[@]}") || return $?
+    echo -e "${COLOR}Forcing WiFi re-association (deauth) for: ${targets[*]}${RESET}"
+    ssh -p "$fGwPort" -o ConnectTimeout=5 -o BatchMode=yes \
+        "$fGwHost" "RULES='$rules' sh -s" <<'REMOTE'
+radios=$(iw dev 2>/dev/null | awk '/Interface/{print $2}')
+find_ap() {
+    for w in $radios; do
+        if iw dev "$w" station get "$1" >/dev/null 2>&1; then echo "$w"; return 0; fi
+    done
+    return 1
+}
+resolve() {
+    uci show firewall 2>/dev/null | awk -F'[.=]' -v n="$1" '
+        tolower($0) ~ "\\.name=\x27" tolower(n) "\x27" { print $2; exit }'
+}
+for n in $RULES; do
+    dn=${n#Block_}
+    sec=$(resolve "$n"); [ -z "$sec" ] && { echo "$dn: firewall rule not found"; continue; }
+    mac=$(uci -q get firewall.$sec.src_mac 2>/dev/null | tr 'A-Z' 'a-z')
+    [ -z "$mac" ] && { echo "$dn: no src_mac on rule"; continue; }
+    ap=$(find_ap "$mac") || { echo "$dn ($mac): not associated to any AP — offline, nothing to kick"; continue; }
+    if ubus call hostapd.$ap del_client "{\"addr\":\"$mac\",\"reason\":5,\"deauth\":true,\"ban_time\":0}" >/dev/null 2>&1; then
+        echo "$dn ($mac): deauthed on $ap — re-associating"
+    elif iw dev "$ap" station del "$mac" >/dev/null 2>&1; then
+        echo "$dn ($mac): deauthed on $ap (iw) — re-associating"
+    else
+        echo "$dn ($mac): FAILED to deauth on $ap"
+    fi
+done
+echo "--- waiting 8s for re-association ---"
+sleep 8
+for n in $RULES; do
+    dn=${n#Block_}
+    sec=$(resolve "$n"); [ -z "$sec" ] && continue
+    mac=$(uci -q get firewall.$sec.src_mac 2>/dev/null | tr 'A-Z' 'a-z'); [ -z "$mac" ] && continue
+    ap=$(find_ap "$mac") || { echo "$dn: still not associated (not back yet)"; continue; }
+    ct=$(iw dev "$ap" station get "$mac" 2>/dev/null | awk '/connected time/{print $3}')
+    inact=$(iw dev "$ap" station get "$mac" 2>/dev/null | awk '/inactive time/{print $3}')
+    echo "$dn: on $ap — reassociated ${ct}s ago, inactive ${inact}ms"
+done
+REMOTE
 }
 
 while true; do
@@ -1340,6 +1397,12 @@ while true; do
             fGwAclTarget+=("${_aclTargets[@]}")
             shift 2
             ;;
+        --cam-kick)
+            fGwAclAction="cam-kick"
+            IFS=', ' read -ra _aclTargets <<< "$2"
+            fGwAclTarget+=("${_aclTargets[@]}")
+            shift 2
+            ;;
 
         -d|--debug)
             set -x
@@ -1367,6 +1430,8 @@ if [ -n "$fGwAclAction" ]; then
         gwAclBlock "${fGwAclTarget[@]}" || exit $?
     elif [ "$fGwAclAction" = "status" ]; then
         gwAclStatus "${fGwAclTarget[@]}" || exit $?
+    elif [ "$fGwAclAction" = "cam-kick" ]; then
+        gwCamKick "${fGwAclTarget[@]}" || exit $?
     else
         gwAclControl "$fGwAclAction" "${fGwAclTarget[@]}" || exit $?
     fi
