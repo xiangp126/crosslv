@@ -174,7 +174,7 @@ _jmake_complete() {
                --build --db --debug --attempt --no-verbose --nicx --list --list-extended \
                --link-db --link-clangd --link-claude --models \
                --skip --continue --track --patch --ethlt --codecov --cov --fetch --push --rebase --add --commit \
-               --amend --stat --df --diff --show --burn --burn-official --firmware --ini --device --fw-query --fw-reset \
+               --amend --stat --df --diff --show --burn --burn-official --firmware --mlx --ini --device --fw-query --fw-reset \
                --mft-install --mft-start --mft-stop --mft-restart --ofed-restart --ofed-start --ofed-stop \
                --power-cycle --power-on --power-off --docker-group \
                --reg-info --reg-malloc --reg-mine --reg-idle --reg-extend --reg-cancel"
@@ -234,7 +234,7 @@ _jmake_complete() {
             fi
             return 0
             ;;
-        --firmware)
+        --burn|--firmware|--mlx)
             compopt -o filenames
             COMPREPLY=( $(compgen -f -X '!*.mlx' -- "$cur") )
             return 0
