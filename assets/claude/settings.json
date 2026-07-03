@@ -53,10 +53,6 @@
       "type": "http",
       "url": "https://maas.prd.astra.nvidia.com/maas/gerrit/mcp"
     },
-    "nvidia-nvbugs": {
-      "type": "http",
-      "url": "https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
-    },
     "nvidia-jenkins": {
       "type": "http",
       "url": "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
