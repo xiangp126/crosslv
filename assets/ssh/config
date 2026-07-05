@@ -7,16 +7,18 @@
 #  ~/.ssh/config
 # Read more about SSH config files: https://linux.die.net/man/5/ssh_config
 Host remotedev
-    HostName 172.16.67.180
-    User corsair
+    HostName m-fwdev-167
     Port 22
-    IdentityFile C:\Users\login_user\.ssh\id_rsa
+    IdentityFile ~/.ssh/id_rsa
     ServerAliveInterval 30
     ServerAliveCountMax 5
     TCPKeepAlive yes
     ConnectionAttempts 3
     ForwardX11 yes
     ForwardX11Trusted yes
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%C
+    ControlPersist 600
 Host client3
     HostName client3
     User corsair
@@ -28,3 +30,6 @@ Host client3
     TCPKeepAlive yes
     ForwardX11 yes
     ForwardX11Trusted yes
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%C
+    ControlPersist 600

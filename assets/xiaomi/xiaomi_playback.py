@@ -1584,8 +1584,9 @@ async function pbFetchDay(date){      // concurrently pull each cell's segments 
   }));
   pbSegs = next;
 }
-async function pbRefetchSegs(){       // periodic rescan while in playback split: picks up a freshly-FINALIZED clip (live → completed) so cells parked on an in-progress recording auto-resume; also surfaces new completed clips at the live edge
+async function pbRefetchSegs(){       // periodic rescan while in playback split: picks up a freshly-FINALIZED clip (live → completed) so cells PARKED on an in-progress recording auto-resume.
   if(!pbGrid) return;
+  if(!pbCams().some(c => { const v = pbVids[c.key]; return v && (v._gapHold || !v._seg); })) return;   // ONLY rescan when a cell is actually waiting on a clip to finalize. Otherwise skip: each rescan = 5 camera-dir scans (2 over remote CIFS) on the weak router, which competes with the 4K /video streaming and stalls cold-loads (playback "stuck loading"). No one waiting → nothing to pick up → don't hammer the server.
   const gen = pbGridGen;
   await pbFetchDay(dateStr);
   if(gen !== pbGridGen || !pbGrid) return;
