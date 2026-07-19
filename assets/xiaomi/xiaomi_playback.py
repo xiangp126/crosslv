@@ -57,6 +57,11 @@ DEFAULT_ROOTS = [
 ]
 DEFAULT_PORT = 8800
 
+# /api/clipinfo: physical SMB host per share (recordings span two NAS boxes; wrt32x CIFS-mounts
+# the wrt1200ac shares, so the player path works for all cams but direct SMB is faster from the true host)
+SMB_HOSTS = {"c700_03": "192.168.10.100", "c700_04": "192.168.10.100"}
+SMB_HOST_DEFAULT = "192.168.10.200"
+
 # go2rtc (Frigate machine): the player same-origin proxies its video-stream component JS,
 # bypassing the CORS restriction on cross-origin ES modules.
 GO2RTC = "http://192.168.10.240:1984"
@@ -363,6 +368,8 @@ class Handler(BaseHTTPRequestHandler):
                 cam = q.get("cam", [""])[0]
                 date = q.get("date", [""])[0]
                 self._json({"segments": segs_for_day(scan(cam), date)})
+            elif u.path == "/api/clipinfo":
+                self._clipinfo(q)
             elif u.path == "/video":
                 self._video(q)
             elif u.path in ("/video-stream.js", "/video-rtc.js"):
@@ -388,6 +395,37 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         else:
             self.send_error(405)
+
+    # -- clip info: where this clip lives on disk / SMB (same guards as _video) --
+    def _clipinfo(self, q):
+        cam = q.get("cam", [""])[0]
+        fn = q.get("file", [""])[0]
+        c = registry().get(cam)
+        d = cam_dir(cam)
+        if not c or not d or not FN_RE.search(fn or ""):
+            self.send_error(404)
+            return
+        fpath = os.path.join(d, os.path.basename(fn))
+        if not os.path.isfile(fpath):
+            self.send_error(404)
+            return
+        st = os.stat(fpath)
+        try:
+            root = ROOTS[int(cam.split(":", 1)[0])]
+        except (ValueError, IndexError):
+            root = os.path.dirname(d)
+        share = os.path.basename(os.path.normpath(root)) or root
+        sub = os.path.relpath(d, root)
+        self._json({
+            "file": os.path.basename(fn),
+            "label": c["label"],
+            "path": fpath,
+            "share": share,
+            "subdir": "" if sub == "." else sub,
+            "smb_host": SMB_HOSTS.get(share, SMB_HOST_DEFAULT),
+            "size": st.st_size,
+            "mtime": int(st.st_mtime),
+        })
 
     # -- video stream (supports Range, for seeking) ----------------------
     def _video(self, q):
@@ -592,14 +630,17 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .grid .gref{position:absolute;top:50%;left:8px;transform:translateY(-50%);z-index:8;cursor:pointer;user-select:none;color:#fff;
     background:rgba(10,12,15,.66);border:1px solid var(--line);border-radius:7px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;padding:0;font-size:15px;line-height:1;box-sizing:border-box}
   .grid .gref:hover{background:rgba(10,12,15,.92);border-color:#34424e}
-  /* Per-cell controls (refresh / zoom / camera picker): appear when the cell is hovered (desktop) or tapped (touch — .tapped set by JS) */
-  .grid .gref, .grid .gzoom, .grid .cellcam{opacity:0;transition:opacity .15s}
+  .grid .ginfo{position:absolute;top:50%;left:8px;transform:translateY(calc(-50% + 40px));z-index:8;cursor:pointer;user-select:none;color:#fff;
+    background:rgba(10,12,15,.66);border:1px solid var(--line);border-radius:7px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;padding:0;font-size:15px;line-height:1;box-sizing:border-box}
+  .grid .ginfo:hover{background:rgba(10,12,15,.92);border-color:#34424e}
+  /* Per-cell controls (refresh / info / zoom / camera picker): appear when the cell is hovered (desktop) or tapped (touch — .tapped set by JS) */
+  .grid .gref, .grid .gzoom, .grid .ginfo, .grid .cellcam{opacity:0;transition:opacity .15s}
   @media (hover:hover){   /* hover only on real pointers — avoids iOS sticky-hover keeping controls on after a tap */
     .grid video-stream:hover .gref, .grid video-stream:hover .gzoom, .grid video-stream:hover .cellcam,
-    .grid .pbcell:hover .gref, .grid .pbcell:hover .gzoom, .grid .pbcell:hover .cellcam{opacity:1}
+    .grid .pbcell:hover .gref, .grid .pbcell:hover .gzoom, .grid .pbcell:hover .ginfo, .grid .pbcell:hover .cellcam{opacity:1}
   }
   .grid video-stream.tapped .gref, .grid video-stream.tapped .gzoom, .grid video-stream.tapped .cellcam,
-  .grid .pbcell.tapped .gref, .grid .pbcell.tapped .gzoom, .grid .pbcell.tapped .cellcam{opacity:1}
+  .grid .pbcell.tapped .gref, .grid .pbcell.tapped .gzoom, .grid .pbcell.tapped .ginfo, .grid .pbcell.tapped .cellcam{opacity:1}
   .grid .cellcam{position:absolute;top:8px;left:8px;z-index:9;font-family:var(--mono);font-size:11px;color:#fff;
     background:rgba(10,12,15,.7);border:1px solid var(--line);border-radius:6px;padding:3px 4px;text-transform:uppercase;cursor:pointer}
   .grid .cellcam:hover{border-color:#34424e}
@@ -611,6 +652,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   body.pbgrid-mode .liveTag{display:none}
   #pbPlayAll,#pbPauseAll,#pbSyncMode{display:none}                      /* Play all / Pause all / Sync-mode toggle: shown only in playback split */
   body.pbgrid-mode #playBtn{display:none}                               /* playback split uses "Play all/Pause all" instead of the single-stream play key */
+  body.pbgrid-mode #clipInfoBtn{display:none}                           /* split: per-cell ⓘ badges own clip info */
   body.pbgrid-mode #pbPlayAll,body.pbgrid-mode #pbPauseAll{display:inline-block}
   body.pbgrid-mode #pbSyncMode{display:inline-flex}
   #pbSyncMode{border:1px solid var(--cover2);border-radius:7px;overflow:hidden;vertical-align:middle}   /* segmented Coarse|Precise sync-mode toggle */
@@ -732,6 +774,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <button id="fwd10">10s ⟳</button>
     <button id="prevSeg" title="Jump to the previous recording clip">⏮ Prev clip</button>
     <button id="nextSeg" title="Jump to the next recording clip">Next clip ⏭</button>
+    <button id="clipInfoBtn" title="Current clip info: server path / SMB / copy-paste transfer commands">ⓘ Info</button>
     <span class="grow"></span>
     <span class="pill">Speed</span>
     <select id="rateSel">
@@ -1258,13 +1301,14 @@ function setLive(on){
       v.media = 'video,audio';      // with audio
       v.background = true;          // do not stop the stream just because it is invisible
       box.appendChild(v);           // add to DOM (the component creates the inner <video>)
-      if(v.video){ v.video.controls = true; v.video.muted = true; v.video.playsInline = true; }   // set muted/inline before src to guarantee autoplay
+      if(v.video){ v.video.controls = true; v.video.muted = true; v.video.playsInline = true; v.video.addEventListener('dblclick', e => { e.preventDefault(); e.stopPropagation(); }); }   // set muted/inline before src to guarantee autoplay; dblclick inert (no native fullscreen on rapid clicks)
       const url = GO2RTC + '/api/ws?src=' + encodeURIComponent(liveLabel() + liveSuffix());
       v.src = url;                  // trigger connection
       attachResume(v, url);         // play after pause → reconnect to the live end
       attachLiveBadge(v);  // top-right: ● Live + actual protocol (RTC/MSE)
       watchStall(v, url);  // stall self-heal: auto-reconnect when frozen past the threshold
     }, 0);
+    liveHeadTick();        // place the "now" playhead immediately (don't wait up to 1s for the tick)
   } else {
     box.style.display = 'none';     // removing the component = stop pulling the stream
   }
@@ -1289,7 +1333,7 @@ if(matchMedia('(hover:none)').matches){
   };
   const armHide = () => { clearTimeout(tapTimer); tapTimer = setTimeout(hideTapped, 3000); };
   stageEl.addEventListener('click', e => {
-    if(e.target.closest('.gref,.gzoom,.cellcam,.gridfullbtn')){ armHide(); return; }   // using a control: keep visible, restart the timer
+    if(e.target.closest('.gref,.gzoom,.ginfo,.cellcam,.gridfullbtn')){ armHide(); return; }   // using a control: keep visible, restart the timer
     const cell = e.target.closest('.grid video-stream, .grid .pbcell');
     stageEl.querySelectorAll('.grid .tapped').forEach(c => c.classList.remove('tapped'));
     stageEl.classList.add('tapped');
@@ -1377,8 +1421,38 @@ function dpClockText(){
   if(dateStr && w && isFinite(w.sec)) return dateStr + ' ' + hms(Math.max(0, w.sec));
   return dateStr || '—';
 }
+function liveHeadTick(){   // live has no playing <video> to drive the playhead → advance a "now" marker by wall-clock so the timeline bar tracks the current moment. Only when the timeline day is today (nowRel within the day); a past day is left alone.
+  if(!(liveMode || gridMode) || dragging || !dayStart) return;
+  const nowRel = (Date.now() - dayStart) / 1000;
+  if(nowRel >= 0 && nowRel <= DAY) moveHead(nowRel);
+}
+let _coversBusy = false;
+async function liveCoversRefresh(){   // in live the recorded-footage coverage is fetched once at page load then frozen; periodically re-pull the current day's segments so the covered region keeps extending toward "now" (matches the advancing playhead). Light: one /api/segments for the timeline camera, gated to live + today.
+  if(!(liveMode || gridMode) || pbGrid || dragging || _coversBusy) return;
+  if(!cam || !dateStr || !dayStart) return;
+  const nowRel = (Date.now() - dayStart) / 1000;
+  if(nowRel > DAY){   // the clock crossed midnight while sitting in live → the timeline is stuck on a past day. Roll forward to the latest day (same path init() uses for the live-startup timeline). livePreload protects the grid from the background loadSegment.
+    _coversBusy = true;
+    try{ livePreload = true; await loadTimeline(); }catch(_){}
+    finally{ _coversBusy = false; }
+    return;
+  }
+  if(nowRel < 0) return;   // timeline is on a future day (shouldn't happen in live) → leave it
+  const day = dateStr, useCam = cam;
+  _coversBusy = true;
+  try{
+    const r = await api('/api/segments?cam=' + encodeURIComponent(useCam) + '&date=' + day);
+    if((liveMode || gridMode) && !pbGrid && !dragging && dateStr === day && cam === useCam){   // still same mode/day/cam after the await
+      segs = (r.segments || []).map(s => { const st = new Date(s.start), en = new Date(s.end);
+        return { file:s.file, live:s.live, start:st, end:en, s0:(st - dayStart)/1000, s1:(en - dayStart)/1000 }; });
+      renderTrack();
+    }
+  }catch(_){}
+  finally{ _coversBusy = false; }
+}
 $('dpclock').textContent = dpClockText();
-setInterval(() => { const el = $('dpclock'); if(el) el.textContent = dpClockText(); }, 1000);
+setInterval(() => { const el = $('dpclock'); if(el) el.textContent = dpClockText(); liveHeadTick(); }, 1000);
+setInterval(liveCoversRefresh, 30000);   // coverage tracks "now" within ~30s; far lighter than the 1s playhead tick (one small cached JSON GET, only in live + today)
 // ---- Split view: watch all cameras' live pictures at once ----
 function liveGridLabels(){ return cellCams.slice(0, splitN); }   // cameras per cell (determined by cellCams)
 // Stick "● Live · protocol" in the top-right corner of the live component, the protocol read from the component's actual state:
@@ -1386,7 +1460,7 @@ function liveGridLabels(){ return cellCams.slice(0, splitN); }   // cameras per 
 // Custom "zoom/restore" (shared by live split + playback split): tap a cell to fill the grid area, tap again to restore. In-page zoom, not system fullscreen (avoids the Safari bug where the picture shifts up after exiting fullscreen).
 function addZoom(cellEl){
   const g = $('grid');
-  const z = document.createElement('span'); z.className = 'gzoom'; z.textContent = '⤢'; z.title = 'Zoom / restore (double-tap the picture also works)';
+  const z = document.createElement('span'); z.className = 'gzoom'; z.textContent = '⤢'; z.title = 'Zoom / restore';
   const toggle = () => {
     const on = !cellEl.classList.contains('zoom');
     g.querySelectorAll('.zoom').forEach(x => x.classList.remove('zoom'));
@@ -1395,12 +1469,68 @@ function addZoom(cellEl){
     if(on) z.textContent = '⤡';
   };
   z.onclick = (e) => { e.stopPropagation(); toggle(); };
-  // Double-click/double-tap the picture = in-page zoom/restore: detected by "two clicks within 300ms" (click fires on both mouse and touch; dblclick is often unreliable on phones)
-  let lastTap = 0;
-  cellEl.addEventListener('click', () => { const now = Date.now(); if(now - lastTap < 300){ lastTap = 0; toggle(); } else lastTap = now; });
-  // Block the browser's default "native fullscreen" on double-click of <video> (keep only our in-page zoom, to avoid double-click maximizing)
+  // Block the browser's default "native fullscreen" on double-click of <video> (zoom is only via the ⤢ button — double-click must stay inert so rapid clicks, e.g. tapping ±15s twice, never maximize)
   cellEl.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); });
   cellEl.appendChild(z);
+}
+
+// Clip info popup: where the current clip lives (server path / SMB) + copy-paste transfer commands.
+function copyText(t, btn){
+  const done = () => { const o = btn.textContent; btn.textContent = '✓'; setTimeout(() => { btn.textContent = o; }, 900); };
+  const fb = () => { const ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;left:-9999px';
+    document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); }catch(_){} ta.remove(); done(); };
+  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, fb);
+  else fb();
+}
+async function clipInfoBox(camId, seg){
+  if(!camId || !seg || !seg.file) return;
+  const old = document.getElementById('clipinfo'); if(old) old.remove();
+  const box = document.createElement('div'); box.id = 'clipinfo';
+  box.style.cssText = 'position:fixed;bottom:110px;right:6px;z-index:99999;background:#0b0e12;border:1px solid var(--accent);border-radius:8px;padding:10px 12px;color:#c7d1db;font:12px/1.6 monospace;max-width:min(92vw,780px);user-select:text;-webkit-user-select:text;cursor:text;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+  box.ondblclick = (e) => { if(e.target.tagName !== 'BUTTON') box.remove(); };
+  const hd = document.createElement('div'); hd.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;color:#e6edf3;font-weight:700';
+  hd.textContent = 'Clip info';
+  const x = document.createElement('button'); x.textContent = '✕'; x.title = 'Close (double-click the panel also closes)';
+  x.style.cssText = 'margin-left:auto;background:none;border:1px solid var(--line);border-radius:5px;color:#c7d1db;cursor:pointer;padding:1px 7px;font-size:12px';
+  x.onclick = () => box.remove(); hd.appendChild(x); box.appendChild(hd);
+  const bd = document.createElement('div'); bd.textContent = 'loading…'; box.appendChild(bd);
+  document.body.appendChild(box);
+  let info = null;
+  try{ const r = await fetch('/api/clipinfo?cam=' + encodeURIComponent(camId) + '&file=' + encodeURIComponent(seg.file)); if(r.ok) info = await r.json(); }catch(_){}
+  if(!info){ bd.textContent = 'clip info unavailable (server too old? redeploy)'; return; }
+  bd.textContent = '';
+  const row = (k, v, copyVal) => {
+    const r = document.createElement('div'); r.style.cssText = 'display:flex;gap:8px;align-items:flex-start;margin-top:5px';
+    const kk = document.createElement('span'); kk.textContent = k; kk.style.cssText = 'color:#7f8c98;min-width:52px;flex:none';
+    const vv = document.createElement('span'); vv.textContent = v; vv.style.cssText = 'word-break:break-all;flex:1';
+    r.appendChild(kk); r.appendChild(vv);
+    if(copyVal){ const c = document.createElement('button'); c.textContent = 'Copy';
+      c.style.cssText = 'flex:none;background:none;border:1px solid var(--line);border-radius:5px;color:#9fb3c8;cursor:pointer;padding:1px 8px;font-size:11px';
+      c.onclick = () => copyText(copyVal, c); r.appendChild(c); }
+    bd.appendChild(r); return r;
+  };
+  const mb = (info.size / 1048576).toFixed(1) + ' MB';
+  const p2 = n => String(n).padStart(2, '0');
+  const fdt = d => (d instanceof Date && !isNaN(d)) ? d.getFullYear() + '-' + p2(d.getMonth()+1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()) : '';
+  const ft  = d => (d instanceof Date && !isNaN(d)) ? p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()) : '';
+  const span = fdt(seg.start) + ' → ' + ft(seg.end);
+  const smb = 'smb://' + info.smb_host + '/' + info.share + '/' + (info.subdir ? info.subdir + '/' : '') + info.file;
+  const vurl = 'http://' + location.host + '/video?cam=' + encodeURIComponent(camId) + '&file=' + encodeURIComponent(info.file);
+  const curl = "curl -o " + info.file + " '" + vurl + "'";
+  const scp = "scp -O -P 8822 root@" + location.hostname + ":'" + info.path + "' ~/Downloads/";
+  row('Clip', info.label + ' · ' + info.file + ' · ' + span + ' · ' + mb, null);
+  row('Server', info.path + '  (on ' + location.hostname + ')', info.path);
+  row('SMB', smb, smb);
+  row('curl', curl, curl);
+  row('scp', scp, scp);
+  const tip = document.createElement('div'); tip.style.cssText = 'margin-top:7px;color:#5f6d79;font-size:11px';
+  tip.textContent = 'SMB: Finder ⌘K mounts the physical host directly (fastest). curl/scp: paste into a terminal to pull the file.';
+  bd.appendChild(tip);
+}
+function addInfo(cellEl, getRef){
+  const b = document.createElement('span'); b.className = 'ginfo'; b.textContent = 'ⓘ'; b.title = 'Clip info: server path / SMB / transfer commands';
+  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const r = getRef(); if(r && r.seg) clipInfoBox(r.cam, r.seg); };
+  cellEl.appendChild(b);
 }
 
 function attachLiveBadge(v){
@@ -1428,7 +1558,7 @@ function showCellMsg(el, text){   // show/clear placeholder text in a cell (No s
 function addCellCam(cellEl, idx, onChange){   // top-left camera dropdown per cell (c700_01..06), changing it triggers onChange(idx, label)
   const sel = document.createElement('select'); sel.className = 'cellcam'; sel.title = 'Camera for this cell';
   ALL_CAMS.forEach(lbl => { const o = document.createElement('option'); o.value = lbl; o.textContent = dispCam(lbl); if(lbl === cellCams[idx]) o.selected = true; sel.appendChild(o); });
-  sel.onclick = e => e.stopPropagation();           // do not trigger double-click zoom
+  sel.onclick = e => e.stopPropagation();
   sel.onchange = () => onChange(idx, sel.value);
   cellEl.appendChild(sel);
 }
@@ -2149,6 +2279,7 @@ async function setPbGrid(on){
       const b = document.createElement('span'); b.className = 'cellbadge pbname'; b.textContent = ''; b.style.display = 'none';   // top-right badge: only the reference cell shows REF (set by pbMarkMaster); camera name is in the top-left picker
       cell.appendChild(v); cell.appendChild(b); g.appendChild(cell);
       addZoom(cell);   // zoom key (in-page zoom, not system fullscreen)
+      addInfo(cell, () => ({cam: v._id, seg: v._seg}));   // ⓘ under ↻: this cell's clip location + transfer commands
       addCellCam(cell, +c.key, pbReassign);   // camera dropdown per cell (playback)
       // Per-cell refresh: a cell that failed to load (black) can be reloaded alone, re-positioned to the current sync moment, without disturbing the others
       (function(key, cellEl){
@@ -2211,6 +2342,7 @@ $('resSel').onchange = onQualChange;
 $('playBtn').onclick = () => { if(pbGrid){ pbToggle(); return; } if(vid.paused) vid.play().catch(()=>{}); else vid.pause(); };
 vid.addEventListener('play',  () => $('playBtn').textContent = '⏸ Pause');
 vid.addEventListener('pause', () => $('playBtn').textContent = '▶︎ Play');
+vid.addEventListener('dblclick', e => { e.preventDefault(); e.stopPropagation(); });
 $('back10').onclick = () => { if(pbGrid){ const w = currentWall(); gridSeekAll(Math.max(0,(w.sec||0)-10), pbPlaying()); return; } vid.currentTime = Math.max(0, vid.currentTime - 10); };
 $('fwd10').onclick  = () => { if(pbGrid){ const w = currentWall(); gridSeekAll((w.sec||0)+10, pbPlaying()); return; } vid.currentTime = vid.currentTime + 10; };
 // Prev/Next recording clip: step the whole screen to the start of the previous/next segment (split → gridSeekAll, single → loadSegment).
@@ -2231,6 +2363,7 @@ function jumpSeg(delta){
 }
 $('prevSeg').onclick = () => jumpSeg(-1);
 $('nextSeg').onclick = () => jumpSeg(1);
+$('clipInfoBtn').onclick = () => { if(!pbGrid && curIdx >= 0 && segs[curIdx]) clipInfoBox(cam, segs[curIdx]); };
 $('rateSel').onchange = e => { const r = parseFloat(e.target.value); vid.playbackRate = r; pbCams().forEach(c => { const v = pbVids[c.key]; if(v) v.playbackRate = r; }); };
 $('latestBtn').onclick = async () => {
   await reloadCameras();                          // rescan: surface a possibly new latest day (e.g. crossing midnight to 6/9)

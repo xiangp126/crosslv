@@ -312,6 +312,13 @@
         "action": "route",
         "outbound": "proxy"
       },
+      // --- Specific lab host -> proxy (override the nvidia-subnets rule below;
+      //     corporate VPN cannot reach it, must transit the VLESS VPS) ---
+      {
+        "ip_cidr": ["10.220.62.167/32"],
+        "action": "route",
+        "outbound": "proxy"
+      },
       // --- NVIDIA intranet traffic -> corporate VPN ---
       {
         "rule_set": "nvidia-internal",
