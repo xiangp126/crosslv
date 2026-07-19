@@ -20,9 +20,10 @@ real source are kept as-is; the generated PCH wrapper entries are dropped.
 The build is never touched -- Unity build stays on, the binary is unaffected.
 This only post-processes the compile database for code navigation.
 
-This script lives in crosslv/template and is normally invoked automatically by
-`jmake --db` (see linkWorkspaceFiles in nv-tools/jmake), which passes the repo
-root via --root. It can also be run by hand from the repo root.
+This script lives in crosslv/assets/clangd and is normally invoked
+automatically by `jmake --db` (see linkWorkspaceFiles in nv-tools/jmake),
+which passes the repo root via --root. It can also be run by hand from the
+repo root.
 
 Usage:
     # From the repo root, after a build: auto-detect the newest cmakeBuild

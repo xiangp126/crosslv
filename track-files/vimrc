@@ -66,6 +66,8 @@ Plug 'ervandew/supertab'
 Plug 'lincheney/fzf-tab-completion'
 "------ CLIPBOARD (OSC 52) -----
 Plug 'ojroques/vim-oscyank'
+"------ ANSI COLOR RENDERING -----
+Plug 'vim-scripts/AnsiEsc.vim'
 
 " Initialize plugin system
 call plug#end()
@@ -341,6 +343,14 @@ let g:indentLine_char = '¦'
 let g:indentLine_color_term = 245
 let g:indentLine_enabled = 0
 nnoremap <silent> <F2> :IndentLinesToggle<CR>
+
+""""""""""""""""""""""""""""""
+" CONFIG ANSIESC
+""""""""""""""""""""""""""""""
+" Render ANSI escape sequences (e.g. ^[[34m ... ^[[0m) as real colors
+" instead of showing raw escape characters. Great for reading colored logs.
+" Toggle on/off with ;e
+nnoremap <silent> <leader>e :AnsiEsc<CR>
 
 """"""""""""""""""""""""""""""
 " CONFIG SUPERTAB

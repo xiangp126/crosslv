@@ -1408,9 +1408,10 @@ linkCompileDb() {
     # utopx has no per-model compile_db; CMake emits a single compile_commands.json
     # under cmakeBuild. Link the most recently generated one at the repo root for clangd.
     if [[ "$fRepoType" == "utopx" ]]; then
-        local utopxExpander="$SCRIPT_DIR/template/gen_clangd_compile_commands.py"
+        local utopxExpander="$SCRIPT_DIR/assets/clangd/gen_clangd_compile_commands.py"
         if [[ -f "$utopxExpander" ]]; then
             echo -e "$NOTATION ${CYAN}Generating per-file clangd compile database (expanding Unity units)...${RESET}"
+            echo -e "$NOTATION ${GREY}calling: python3 ${utopxExpander}${RESET}"
             python3 "$utopxExpander" --root "$fWorkingDir"
         else
             local utopxDb
@@ -1421,6 +1422,13 @@ linkCompileDb() {
             else
                 echo -e "$NOTATION ${GREY}Skipping compile database link (no compile_commands.json under cmakeBuild yet — build utopx first)${RESET}"
             fi
+        fi
+        local headerSync="$SCRIPT_DIR/assets/clangd/sync_clangd_headers.sh"
+        if [[ -x "$headerSync" && -e "$fWorkingDir/$fCompileCommandsJson" ]]; then
+            echo -e "$NOTATION ${CYAN}Syncing clangd headers with the compile database...${RESET}"
+            echo -e "$NOTATION ${GREY}calling: bash ${headerSync}${RESET}"
+            bash "$headerSync" "$fWorkingDir" \
+                || echo -e "$NOTATION ${YELLOW}clangd header sync failed — run ${headerSync} manually${RESET}"
         fi
         return
     fi
