@@ -1048,20 +1048,30 @@ function bestSegForSec(sec){
 }
 
 // ---- Load and locate a segment ----
+let _lsGen = 0;   // supersede token: a newer loadSegment cancels the previous seek-retry poll (single <vid> is reused, so a stale poll/onMeta must not seek the new file)
 function loadSegment(idx, offsetSec, autoplay){
   if(idx < 0 || idx >= segs.length) return;
   if(gridMode && !livePreload) setGrid(false);   // any playback action exits the live split (but the startup background preload must leave the grid intact)
   curIdx = idx; const s = segs[idx];
   $('liveTag').style.display = s.live ? 'block' : 'none';
-  vid.src = '/video?cam=' + encodeURIComponent(cam) + '&file=' + encodeURIComponent(s.file);
-  const onMeta = () => {
-    vid.removeEventListener('loadedmetadata', onMeta);
-    try{ vid.currentTime = Math.max(0, offsetSec); }catch(e){}
-    if(autoplay && !liveMode && !gridMode && !pbGrid){ vid.play().catch(()=>{}); }   // under live/split, do not let the background hidden single-stream recording autoplay
-    updateHead();
+  const gen = ++_lsGen, target = Math.max(0, offsetSec);
+  const wantPlay = autoplay && !liveMode && !gridMode && !pbGrid;   // under live/split, do not let the background hidden single-stream recording autoplay
+  let tries = 0, done = false;
+  const seekNow = () => { if(vid.readyState >= 1){ try{ vid.currentTime = target; }catch(e){} } };   // a seek only takes effect once metadata is parsed
+  const onMeta = () => { vid.removeEventListener('loadedmetadata', onMeta); if(gen === _lsGen) seekNow(); };   // metadata arrived → seek at once (don't wait for the next 600ms tick); self-removes so a superseded load can't re-seek the new file
+  const finish = () => { if(done) return; done = true; if(wantPlay) vid.play().catch(()=>{}); updateHead(); };
+  // POLL-RETRY until the seek actually LANDS, then play. A cold fMP4 (moov duration=0) CLAMPS the first seek to the clip END until the file warms — re-seek every 600ms until it sticks (same as the split path gridSeekAll; single-view was MISSING this, so "picked 21:43 stuck at 21:50" = seek clamped to the segment end, never corrected). Repeated paused re-seeks + preload warm the fMP4 so it lands; play only after it lands.
+  const trySeek = () => {
+    if(done || gen !== _lsGen || curIdx !== idx) return;                                        // superseded by a newer load
+    if(vid.readyState >= 1 && Math.abs(vid.currentTime - target) <= 1.5){ finish(); return; }   // LANDED on target
+    if(tries++ >= 100){ seekNow(); finish(); return; }                                          // ~60s upper bound; release (play from wherever) rather than hang on a broken clip
+    seekNow();
+    setTimeout(trySeek, 600);
   };
   vid.addEventListener('loadedmetadata', onMeta);
+  vid.src = '/video?cam=' + encodeURIComponent(cam) + '&file=' + encodeURIComponent(s.file);
   vid.load();
+  trySeek();
   livePreload = false;   // one-shot: only the very first startup preload is protected; later timeline clicks tear down the grid as usual
 }
 
@@ -1488,6 +1498,9 @@ async function clipInfoBox(camId, seg){
   const box = document.createElement('div'); box.id = 'clipinfo';
   box.style.cssText = 'position:fixed;bottom:110px;right:6px;z-index:99999;background:#0b0e12;border:1px solid var(--accent);border-radius:8px;padding:10px 12px;color:#c7d1db;font:12px/1.6 monospace;max-width:min(92vw,780px);user-select:text;-webkit-user-select:text;cursor:text;box-shadow:0 6px 24px rgba(0,0,0,.5)';
   box.ondblclick = (e) => { if(e.target.tagName !== 'BUTTON') box.remove(); };
+  // auto-hide like the OCR box: 30s after the last interaction (any click inside restarts the timer, so copying never races the timeout)
+  const arm = () => { clearTimeout(box._t); box._t = setTimeout(() => box.remove(), 30000); };
+  box.addEventListener('click', arm); arm();
   const hd = document.createElement('div'); hd.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;color:#e6edf3;font-weight:700';
   hd.textContent = 'Clip info';
   const x = document.createElement('button'); x.textContent = '✕'; x.title = 'Close (double-click the panel also closes)';
@@ -1518,7 +1531,8 @@ async function clipInfoBox(camId, seg){
   const vurl = 'http://' + location.host + '/video?cam=' + encodeURIComponent(camId) + '&file=' + encodeURIComponent(info.file);
   const curl = "curl -o " + info.file + " '" + vurl + "'";
   const scp = "scp -O -P 8822 root@" + location.hostname + ":'" + info.path + "' ~/Downloads/";
-  row('Clip', info.label + ' · ' + info.file + ' · ' + span + ' · ' + mb, null);
+  const clipLine = info.label + ' · ' + info.file + ' · ' + span + ' · ' + mb;
+  row('Clip', clipLine, clipLine);
   row('Server', info.path + '  (on ' + location.hostname + ')', info.path);
   row('SMB', smb, smb);
   row('curl', curl, curl);
@@ -1759,19 +1773,24 @@ function pbLoadCell(key, sec, autoplay){
   const b = pbBest(key, sec);
   if(!b){ v.removeAttribute('src'); v.load(); v._seg=null; v._idx=-1; v._gapHold=true; showCellMsg(v.parentElement, pbHoldMsg(key, sec)); return; }   // no COMPLETED clip at this moment (real gap, or only an in-progress recording) → park + hold (the refetch resumes it once a clip finalizes)
   showCellMsg(v.parentElement, '');
-  v._idx = b.idx; v._seg = arr[b.idx];
-  v.src = '/video?cam=' + encodeURIComponent(v._id) + '&file=' + encodeURIComponent(arr[b.idx].file);
-  const onMeta = () => { v.removeEventListener('loadedmetadata', onMeta);
-    pbSeek(v, b.offset);
-    if(autoplay) v.play().catch(()=>{}); };
-  v.addEventListener('loadedmetadata', onMeta);
-  let tries = 0;
-  const onSeeked = () => {   // fMP4's first seek can land off-target → re-assert until it's near the requested offset
-    if(v._seg && Math.abs(v.currentTime - b.offset) > 2 && tries < 3){ tries++; pbSeek(v, b.offset); return; }
-    v.removeEventListener('seeked', onSeeked);
+  v._idx = b.idx; v._seg = arr[b.idx]; v._settling = true;   // being positioned → watchdog/maintenance leave it alone until it lands
+  const seg = arr[b.idx];
+  let tries = 0, done = false;
+  const seekNow = () => { if(v.readyState >= 1) pbSeek(v, b.offset); };
+  const onMeta = () => { v.removeEventListener('loadedmetadata', onMeta); seekNow(); };
+  const finish = () => { if(done) return; done = true; v._settling = false; if(autoplay) v.play().catch(()=>{}); };
+  const trySeek = () => {   // POLL-RETRY until the seek LANDS (same as gridSeekAll). A cold fMP4 (moov duration=0) clamps the first seek to the clip END; the old 3-try re-assert wasn't enough for a cold 4K MASTER — which the maintenance loop can't correct (it skips the master) → the reload/reassign could stick at the clip end.
+    if(done) return;
+    if(pbVids[key] !== v || v._seg !== seg){ v._settling = false; done = true; return; }   // torn down / reassigned under us
+    if(v.readyState >= 1 && Math.abs(v.currentTime - b.offset) <= 1.5){ finish(); return; }  // LANDED
+    if(tries++ >= 100){ seekNow(); finish(); return; }                                       // ~60s upper bound; release rather than hang
+    seekNow();
+    setTimeout(trySeek, 600);
   };
-  v.addEventListener('seeked', onSeeked);
+  v.addEventListener('loadedmetadata', onMeta);
+  v.src = '/video?cam=' + encodeURIComponent(v._id) + '&file=' + encodeURIComponent(arr[b.idx].file);
   v.load();
+  trySeek();
 }
 
 function gridSeekAll(sec, play){

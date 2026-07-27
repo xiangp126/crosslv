@@ -91,7 +91,7 @@ _jc_complete() {
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
-               --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status --acl-restart --cam-kick \
+               --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status --acl-restart --acl-kickcam \
                --claude-backup --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
                --codex --codex-remove --codex-backup --codex-restore \
                --cursor-backup --cursor-restore --singbox --link-xray --link-xray-autossh --link-xray-sslh --link-wg \
@@ -173,7 +173,7 @@ _jc_complete() {
             fi
             return 0
             ;;
-        --acl-unblock|--acl-status|--acl-restart|--cam-kick)
+        --acl-unblock|--acl-status|--acl-restart|--acl-kickcam)
             compopt -o nospace 2>/dev/null
             _jc_complete_acl_targets
             return 0

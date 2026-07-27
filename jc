@@ -237,11 +237,11 @@ Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
                              before the Block rule, created/refreshed each run. Prevents the
                              camera from hanging (vs a full cut) while killing remote/P2P.
                              E.g.  jc --acl-block --keep-443 02
-    --cam-kick    <targets>  Force camera(s) to re-associate WiFi (deauth from the AP).
+    --acl-kickcam <targets>  Force camera(s) to re-associate WiFi (deauth from the AP).
                              Recovers a camera stuck in a wedged WiFi association
                              (associated but not passing traffic / not recording) —
                              lighter than a power-cycle. Same <targets> as above.
-                             E.g.  jc --cam-kick 02
+                             E.g.  jc --acl-kickcam 02
 
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
@@ -332,7 +332,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
           bbr,bbr-status,\
-          acl-block:,acl-unblock:,acl-status:,acl-restart:,cam-kick:"
+          acl-block:,acl-unblock:,acl-status:,acl-restart:,acl-kickcam:"
 
 # Pre-strip the --keep-443 modifier so it can appear anywhere on the command line
 # (incl. between an --acl-* action and its target, where getopt would otherwise
@@ -1391,14 +1391,8 @@ while true; do
             shift
             ;;
 
-        --acl-block|--acl-unblock|--acl-status|--acl-restart)
+        --acl-block|--acl-unblock|--acl-status|--acl-restart|--acl-kickcam)
             fGwAclAction="${1#--acl-}"
-            IFS=', ' read -ra _aclTargets <<< "$2"
-            fGwAclTarget+=("${_aclTargets[@]}")
-            shift 2
-            ;;
-        --cam-kick)
-            fGwAclAction="cam-kick"
             IFS=', ' read -ra _aclTargets <<< "$2"
             fGwAclTarget+=("${_aclTargets[@]}")
             shift 2
@@ -1430,7 +1424,7 @@ if [ -n "$fGwAclAction" ]; then
         gwAclBlock "${fGwAclTarget[@]}" || exit $?
     elif [ "$fGwAclAction" = "status" ]; then
         gwAclStatus "${fGwAclTarget[@]}" || exit $?
-    elif [ "$fGwAclAction" = "cam-kick" ]; then
+    elif [ "$fGwAclAction" = "kickcam" ]; then
         gwCamKick "${fGwAclTarget[@]}" || exit $?
     else
         gwAclControl "$fGwAclAction" "${fGwAclTarget[@]}" || exit $?
