@@ -198,7 +198,7 @@ curl -s -D- -o /dev/null -r 0-1023 \
 curl -s 'localhost:8801/api/clipinfo?cam=0:XiaomiCamera_00_TEST&file=00_20260603160000_20260603161000.mp4'
 # -> {"file","label","path" (absolute on the player host),"share","subdir","smb_host","size","mtime"}
 # Backs the ⓘ clip-info popup (single view: transport "ⓘ Info"; split: ⓘ badge under each cell's ↻):
-# server path / smb:// URL / copy-paste curl & scp commands. smb_host maps c700_03/04 -> 192.168.10.100
+# server path / smb:// URL / copy-paste mpv & curl & scp commands. smb_host maps c700_03/04 -> 192.168.10.100
 # (physically on wrt1200ac), everything else -> 192.168.10.200 (SMB_HOSTS at the top of the script).
 kill %1; rm -rf "$TMP"
 ```

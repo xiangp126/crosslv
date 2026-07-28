@@ -1531,14 +1531,16 @@ async function clipInfoBox(camId, seg){
   const vurl = 'http://' + location.host + '/video?cam=' + encodeURIComponent(camId) + '&file=' + encodeURIComponent(info.file);
   const curl = "curl -o " + info.file + " '" + vurl + "'";
   const scp = "scp -O -P 8822 root@" + location.hostname + ":'" + info.path + "' ~/Downloads/";
+  const mpv = "mpv '" + vurl + "'";
   const clipLine = info.label + ' · ' + info.file + ' · ' + span + ' · ' + mb;
   row('Clip', clipLine, clipLine);
   row('Server', info.path + '  (on ' + location.hostname + ')', info.path);
   row('SMB', smb, smb);
+  row('mpv', mpv, mpv);
   row('curl', curl, curl);
   row('scp', scp, scp);
   const tip = document.createElement('div'); tip.style.cssText = 'margin-top:7px;color:#5f6d79;font-size:11px';
-  tip.textContent = 'SMB: Finder ⌘K mounts the physical host directly (fastest). curl/scp: paste into a terminal to pull the file.';
+  tip.textContent = 'SMB: Finder ⌘K mounts the physical host directly (fastest). mpv: paste to play (seekable). curl/scp: paste into a terminal to pull the file.';
   bd.appendChild(tip);
 }
 function addInfo(cellEl, getRef){
