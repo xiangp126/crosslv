@@ -408,27 +408,22 @@ _ai_wants_ja() {
 _ai_nvm_tools=(codex claude)
 for _ai_cmd in "${_ai_nvm_tools[@]}"; do
     _AI_NAME_UC="${_ai_cmd^^}"   # CLAUDE / CODEX (bash 4+)
-    # Baked-in per-invocation defaults. Both tools auto-approve (-y) by
-    # default; only claude also defaults to --verbose (codex has no such
-    # flag). Expanded NOW (unescaped), so each function gets its own literal.
+    # Baked-in per-invocation defaults: both tools auto-approve (-y).
+    # Expanded NOW (unescaped), so each function gets its own literal.
     _AI_DEFAULTS='-y'
-    [[ "$_ai_cmd" == claude ]] && _AI_DEFAULTS='-y --verbose'
     eval "$_ai_cmd() {
         # Prepend the baked defaults, then let the loop below normalise them.
         set -- $_AI_DEFAULTS \"\$@\"
         # Strip --auto-approve / -y from \$@; record whether it appeared.
         # Also honor ${_AI_NAME_UC}_AUTO_APPROVE=1 env var as a persistent default.
-        # --verbose is collapsed to a single flag (default + explicit don't stack).
-        local _auto=0 _verbose=0 _args=() _arg
+        local _auto=0 _args=() _arg
         [[ \"\$${_AI_NAME_UC}_AUTO_APPROVE\" == 1 ]] && _auto=1
         for _arg in \"\$@\"; do
             case \"\$_arg\" in
                 --auto-approve|-y) _auto=1 ;;
-                --verbose) _verbose=1 ;;
                 *) _args+=(\"\$_arg\") ;;
             esac
         done
-        (( _verbose )) && _args+=(--verbose)
 
         # NVM activation. Idempotent — skip if the AI's binary is already
         # findable. If not, source nvm.sh directly (rather than calling the

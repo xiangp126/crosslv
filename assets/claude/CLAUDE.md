@@ -48,3 +48,34 @@ The image and container live on local disk under `/var/lib/docker/` and are **lo
 
 - SSH on **port 12051**, not the default 22. Clone with `git clone ssh://git@gitlab-master.nvidia.com:12051/<group>/<repo>.git`. The server prints this on banner if you connect on port 22.
 - HTTPS clones need a PAT (`https://oauth2:<token>@gitlab-master.nvidia.com/<group>/<repo>.git`).
+
+## Getting the raw failure log behind a test result
+
+Applies to any MARS session (minireg / DoA / regressions) — all you need is the session_id.
+Symptom: the upper layer reports only a verdict (Jenkins `Completed golan_fw_minireg #N : FAILURE`,
+or an email report saying `Failed: 2`) with no hint of which case failed or why.
+
+Three hops to the original log, **no authentication needed at any step**:
+1. `curl https://mars.nvidia.com/api/session/<session_id>` — returns XML (the `/ui/...` web page
+   requires interactive login and 302s; the API does not). Take `<RESULT_DIR>` from it. It also
+   reports `PASSED`/`FAILED`/`IGNORED`/`NATIVE_STATUS` — check these first to tell
+   "ran and then failed" from "never got started".
+2. `<RESULT_DIR>/<setup name>/<session_id>/<session_id>.tgz` — the full archive, readable
+   directly over NFS.
+3. Unpack it, then filter on `result:` in each `status.txt`: `0`=pass, `1`=fail, `2`=not executed.
+   **Only the deepest leaves carrying `result: 1` are the real failing cases** — parent nodes
+   merely propagate it upward. The sibling `log.txt` holds the raw
+   `UFATAL` / `Field mismatch: expected=X Actual=Y` / `To rerun use seed N`.
+
+Where to get the session_id: `--session_id N` in the upstream log, `Amonitor.php?session_id=N`,
+or the table in the email report.
+
+**Attribution discipline**: before calling a failure "environment" or "our code", find a control
+sample matching on **branch + mode + setup** — did someone else's change pass under identical
+conditions? Drop any one of those dimensions and the conclusion can flip. Log size and whether
+the node was taken offline are **not** valid evidence; node offlining is the system's generic
+response to any failure.
+
+`fsearch` only records case-level failures — anything dying in setup/init never reaches it.
+It also **returns 0 rows silently when a parameter value is invalid**, so judge by elapsed time:
+a real query takes 70–90 s; an instant return is a false negative.

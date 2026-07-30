@@ -23,7 +23,7 @@
       "/auto/fwgwork1/$USER/golan_fw3"
     ]
   },
-  "model": "claude-fable-5[1m]",
+  "model": "opus[1m]",
   "hooks": {
     "PreToolUse": [
       {
