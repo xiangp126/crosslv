@@ -1607,8 +1607,8 @@ removeInstalledPackages() {
 }
 
 ubuntuInstallApps() {
-    [ ! -f "$fFirstTimeFile" ] && appInstallUpdate=1
-    [ -z "$appInstallUpdate" ] && return
+    [ ! -f "$fFirstTimeFile" ] && appInstallForce=1
+    [ -z "$appInstallForce"  ] && return
     checkSudoPrivilege
     local appsForUbuntu=(
         # --- Core Command-Line Tools ---
@@ -1712,6 +1712,9 @@ ubuntuInstallApps() {
         sqlite3                 # Command-line interface for SQLite
         ifupdown                # Legacy network configuration tool
         bridge-utils            # Bridge configuration utility
+
+        # --- NV Tools ---
+        mstflint
     )
     echo -e "${COLOR}Updating Apps for Ubuntu${RESET}"
     sudo apt update
