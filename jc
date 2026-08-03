@@ -892,7 +892,7 @@ for n in $RULES; do
     set -- $(printf '%s\n' "$rendered" | sed -n 's/^COUNTS //p')
     mtotal=${1:-0}; mpub=${2:-0}; mpriv=${3:-0}; moff=${4:-0}
     dn=${n#Block_}; [ "$state" = Blocked ] && scolor="$R" || scolor="$G"
-    if [ "$aen" = 1 ]; then a443="Allow"; a443col="$G"; else a443="Blocked"; a443col="$R"; fi
+    if [ "$state" != Blocked ] || [ "$aen" = 1 ]; then a443="Allow"; a443col="$G"; else a443="Blocked"; a443col="$R"; fi
     [ -n "$shown" ] && echo; shown=1
     printf '%s●%s %s%s%s · %s · Public %s%s%s · 443 %s%s%s · %d Flows · %d WAN · %d LAN\n' \
         "$scolor" "$Z" "$B" "$dn" "$Z" "$ip" "$scolor" "$state" "$Z" "$a443col" "$a443" "$Z" "$mtotal" "$mpub" "$mpriv"
