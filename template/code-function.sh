@@ -144,6 +144,19 @@ _code_parse_options() {
     return 0
 }
 
+# Helper function: check whether an IPC socket still has a window behind it.
+# Socket files outlive the window that created them, so existence alone proves
+# nothing; without a listener the CLI silently succeeds and opens nothing.
+_code_ipc_sock_is_live() {
+    local sock="$1" listeners
+    [[ -n "$sock" && -S "$sock" ]] || return 1
+    command -v ss > /dev/null 2>&1 || return 0
+    # Capture and match in-shell: piping into `grep -q` makes ss die of SIGPIPE,
+    # which under the caller's `set -o pipefail` reports 141 even on a match.
+    listeners=$(ss -lxn 2>/dev/null) || return 0
+    [[ "$listeners" == *"$sock"* ]]
+}
+
 _set_vscode_code_path() {
     # Step 1: Find the commit ID of the active server
     # Use process substitution to ensure `commit_id` is set in the current shell scope, not a subshell.
@@ -201,10 +214,33 @@ _set_vscode_code_path() {
     fi
 
     # Step 3: Set the VSCODE_IPC_HOOK_CLI
-    # Get the most recently created vscode-ipc-*.sock file, with bidirectional fallback
+    # The integrated terminal exports the hook belonging to its own window, which
+    # is the only reliable way to target the window the user is actually looking
+    # at. With several windows open, the newest socket belongs to whichever one
+    # was active last, so files end up in an unrelated window. Keep the inherited
+    # hook while it is alive and only guess when it is not.
     # shellcheck disable=SC2012 disable=SC2155
     local _run_path="/run/user/$UID"
-    local newIPCHook=$(ls -t "$_code_f_sys_path"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+    local newIPCHook=
+
+    if _code_ipc_sock_is_live "$VSCODE_IPC_HOOK_CLI"; then
+        newIPCHook="$VSCODE_IPC_HOOK_CLI"
+    elif [[ -n "$TMUX" ]] && command -v tmux > /dev/null 2>&1; then
+        # A tmux pane keeps the environment captured when the session was first
+        # created, so its inherited hook is usually stale. Ask tmux for the value
+        # it picked up on the most recent attach before falling back to guessing.
+        local _tmuxHook
+        _tmuxHook=$(tmux show-environment VSCODE_IPC_HOOK_CLI 2>/dev/null)
+        _tmuxHook="${_tmuxHook#VSCODE_IPC_HOOK_CLI=}"
+        _code_ipc_sock_is_live "$_tmuxHook" && newIPCHook="$_tmuxHook"
+    fi
+
+    if [[ -n "$newIPCHook" ]]; then
+        # Keep the socket directory in sync so --clean acts on the right one
+        _code_f_sys_path=$(dirname "$newIPCHook")
+    else
+        newIPCHook=$(ls -t "$_code_f_sys_path"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+    fi
     if [[ -z "$newIPCHook" ]]; then
         local _fallback
         if [[ "$_code_f_sys_path" == "/tmp" ]]; then
@@ -253,18 +289,22 @@ _code_run_cmd() {
 _code_clean_obsolete_ipc_socks() {
     _set_vscode_code_path || return 1
 
-    local removed=0 remaining=0
+    local removed=0 kept=0
     while IFS= read -r -d '' sock; do
-        if [[ "$sock" != "$VSCODE_IPC_HOOK_CLI" ]]; then
-            echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
-            rm -f "$sock" && ((removed++))
+        # Only sockets nobody listens on are safe to drop. A live socket still
+        # belongs to another window, and deleting it breaks `code` over there,
+        # so being "not the one we picked" is not a reason to remove it.
+        if _code_ipc_sock_is_live "$sock"; then
+            kept=$((kept + 1))
         else
-            ((remaining++))
+            echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
+            rm -f "$sock" && removed=$((removed + 1))
         fi
     done < <(find "$_code_f_sys_path" -maxdepth 1 -type s -name "vscode-ipc-*.sock" -print0 2>/dev/null)
 
     echo "-------------------------------------------------------"
-    echo -e "Removed: $removed socket(s), Remaining: ${MAGENTA}$VSCODE_IPC_HOOK_CLI${RESET}"
+    echo -e "Removed $removed stale socket(s), kept $kept live one(s)"
+    echo -e "In use: ${MAGENTA}$VSCODE_IPC_HOOK_CLI${RESET}"
 }
 
 # Helper function: pre-check
@@ -305,7 +345,7 @@ _code_self_reload() {
     unset -f code _code_self_reload \
              _code_usage _code_parse_options _set_vscode_code_path \
              _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
-             _code_pre_check
+             _code_pre_check _code_ipc_sock_is_live
 
     # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
     if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
