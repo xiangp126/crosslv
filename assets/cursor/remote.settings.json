@@ -1,0 +1,36 @@
+{
+    "editor.cursorSurroundingLines": 100,
+    "editor.cursorSurroundingLinesStyle": "default",
+    "terminal.integrated.shellIntegration.enabled": false,
+    "terminal.integrated.environmentChangesIndicator": "off",
+    "terminal.integrated.environmentChangesRelaunch": false,
+    "terminal.integrated.env.linux": {
+        "VSCODE_SHELL_INTEGRATION": "0"
+    },
+    "clangd.arguments": [
+        "--log=error",
+        "--enable-config",
+        "--pretty",
+        "--background-index",
+        "-j=40",
+        "--all-scopes-completion",
+        "--completion-style=detailed",
+        "--header-insertion=never",
+        "--fallback-style=LLVM",
+        "--clang-tidy",
+        "--pch-storage=memory"
+    ],
+    "clangd.path": "${userHome}/.usr/bin/clangd",
+    "clangd.checkUpdates": false,
+    "remote.autoForwardPorts": false,
+    "files.exclude": {
+        "**/.vscode-server": true,
+        "**/devops": true,
+        "**/fortipkg": true,
+        "**/Downloads": true,
+        "**/Templates/": true,
+        "**/mmt": true,
+        "**/.usr/": true,
+        "**/.bash_completion.d/": true
+    }
+}
