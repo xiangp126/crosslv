@@ -10,10 +10,13 @@ fEditor="code"
 fCheckDepends=
 fzfSelected=
 fREMatching=
+fExactMatching=
+fFuzzyFallback=
+fRgPattern=
+fRgLiteral=
 fNoClipboard=
 fXselTimeout=10
 fQueryFromClipboard=
-fKernelIncluded=  # Include the linux kernel source code in the search
 fAllFiles=        # Search all files (ignore type filters)
 # Constants
 SCRIPTNAME=$(basename $0)
@@ -50,19 +53,25 @@ Clipboard support:
 Options:
     -h, --help               Print this help message
     -d, --debug              Print debug information
-    -k, --kernel             Include the linux kernel source code in the search
     -v, --vim                Open the file with vim (default is $fEditor)
     -c, --check-depends      Check if dependencies are installed
     -n, --no-clipboard       Do not use clipboard content as the search term
     -A, --all-files          Search all files (ignore type filters)
+    -e, --exact              Force literal substring filtering inside fzf
     --rg-only                Only use rg to search, not use fzf to select
-    --re-matching            Force regular expression matching in both rg and fzf
+    --re-matching            Force regular expression matching in rg
+
+Matching behaviour:
+    fzf always filters fuzzily, so typing 'nvmemanager' narrows down to
+    'IsNvmeEmuManager'. rg searches literally first; when a literal search finds
+    nothing, it retries with a subsequence pattern so those camelCase hits still
+    reach fzf.
 
 Example: $SCRIPTNAME wad_tcp_bind
-         $SCRIPTNAME --kernel
+         $SCRIPTNAME nvmemanager
 
 _EOF
-    exit 1
+    exit 0
 }
 
 parseOptions() {
@@ -75,8 +84,8 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
 
-    SHORTOPTS="hvdkcnA"
-    LONGOPTS="help,vim,debug,kernel,rg-only,check-depends,no-clipboard,re-matching,all-files"
+    SHORTOPTS="hvdcnAe"
+    LONGOPTS="help,vim,debug,rg-only,check-depends,no-clipboard,re-matching,exact,all-files"
 
     # Use getopt to parse command-line options
     if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -101,10 +110,6 @@ parseOptions() {
                 set -x
                 shift
                 ;;
-            -k|--kernel)
-                fKernelIncluded=true
-                shift
-                ;;
             -c|--check-depends)
                 fCheckDepends=true
                 shift
@@ -115,6 +120,10 @@ parseOptions() {
                 ;;
             --re-matching)
                 fREMatching=true
+                shift
+                ;;
+            -e|--exact)
+                fExactMatching=true
                 shift
                 ;;
             -A|--all-files)
@@ -234,21 +243,19 @@ GetClipboardContent() {
     fi
 }
 
+# Runs from an EXIT trap, so a failure here only warns: overriding the exit code
+# would misreport the outcome of the search itself.
 ClearClipboard() {
     if [ -n "$fQueryFromClipboard" ]; then
         if [[ "$OS_TYPE" == "Darwin" ]]; then
             # macOS - clear clipboard by writing empty string
-            echo -n "" | pbcopy 2>/dev/null
-            if [[ $? -ne 0 ]]; then
-                echo -e "${COLOR}Error: Failed to clear clipboard content${RESET}"
-                exit 1
+            if ! echo -n "" | pbcopy 2>/dev/null; then
+                echo -e "${COLOR}Warning: Failed to clear clipboard content${RESET}" >&2
             fi
         elif [ -n "$DISPLAY" ]; then
             # Linux with X11 - use xsel
-            timeout $fXselTimeout xsel -c -p 2> /dev/null
-            if [[ $? -ne 0 ]]; then
-                echo -e "${COLOR}Error: Failed to clear PRIMARY clipboard content${RESET}"
-                exit 1
+            if ! timeout $fXselTimeout xsel -c -p 2> /dev/null; then
+                echo -e "${COLOR}Warning: Failed to clear PRIMARY clipboard content${RESET}" >&2
             fi
         fi
     fi
@@ -271,13 +278,73 @@ polishQuery() {
     [[ $fQuery =~ :[0-9]+$ ]] && fQuery="${fQuery%:*}"
 }
 
+# Turn a query into a regex matching its characters as a subsequence of a single
+# word: nvmemanager -> n\w{0,2}v\w{0,2}m... An empty maxGap means unlimited.
+buildFuzzyPattern() {
+    local query="$1" maxGap="$2" gapExpr pattern='' i
+    if [ -n "$maxGap" ]; then
+        gapExpr="\\w{0,$maxGap}"
+    else
+        gapExpr="\\w*"
+    fi
+    for (( i = 0; i < ${#query}; i++ )); do
+        [ $i -gt 0 ] && pattern+="$gapExpr"
+        pattern+="${query:i:1}"
+    done
+    printf '%s' "$pattern"
+}
+
+# rg is the first filter of the pipeline, so fzf can only ever refine what rg
+# already found: a literal search for 'nvmemanager' returns nothing and fzf never
+# gets a chance to reach 'IsNvmeEmuManager'. When the literal search comes up
+# empty, retry with subsequence patterns and keep the tightest one that still
+# hits, since a wider gap pulls in far more unrelated lines.
+# Takes the rg arguments assembled so far; sets fRgPattern and fRgLiteral.
+resolveRgPattern() {
+    local gap candidate
+    fRgPattern="$fQuery"
+    fRgLiteral=
+    [ -n "$fQuery" ] && [ -z "$fREMatching" ] && fRgLiteral=true
+    [ -z "$fRgLiteral" ] && return
+    # Only plain identifiers are worth fuzzing; anything else is likely a literal
+    # phrase or already carries punctuation that would need escaping.
+    [[ $fQuery =~ ^[A-Za-z0-9_]{3,40}$ ]] || return
+    rg --quiet "$@" --fixed-strings "$fQuery" 2> /dev/null && return
+
+    for gap in 2 ""; do
+        candidate=$(buildFuzzyPattern "$fQuery" "$gap")
+        if rg --quiet "$@" "$candidate" 2> /dev/null; then
+            fRgPattern="$candidate"
+            fRgLiteral=
+            fFuzzyFallback=true
+            return
+        fi
+    done
+}
+
+# $fEditor may resolve to a shell function (see code-function.sh), which still
+# works when invoked through a variable, so the path can be passed as a single
+# quoted argument instead of being escaped by hand for eval.
+openInEditor() {
+    local filepath="$1" linenumber="$2"
+    if [[ "$fEditor" == "vim" ]]; then
+        vim "+$linenumber" "$filepath"
+    else
+        "$fEditor" "$filepath:$linenumber"
+    fi
+}
+
 fuzzySearch() {
     # rg options:
     # --fixed-strings Treat the pattern as a literal string
     # '--glob' '*.{c,h,cpp,js,ts,py,html,css,sh,php}'
+    # fzf needs the escape codes to colourise matches, but --rg-only output is
+    # usually piped or redirected, where 'auto' drops them
+    local colorMode="ansi"
+    [ -n "$fRgOnly" ] && colorMode="auto"
     local rgParams=(
         "--smart-case"
-        "--color=ansi"
+        "--color=$colorMode"
         "--colors" "match:fg:204,51,153"
         "--colors" "match:style:bold"
         "--line-number"
@@ -309,7 +376,8 @@ fuzzySearch() {
         "--glob" "!build/*"
         "--glob" "!bin/*"
         "--glob" "!fpx-sync/*"
-        "--glob" "!linux-3.2.16/*"
+        # Skip the linux kernel sources, they only slow the search down
+        "--glob" "!linux-*/*"
     )
     # By default, fzf starts in extended-search mode, which allows multiple search terms separated by spaces
     # fzf options:
@@ -333,15 +401,17 @@ fuzzySearch() {
         "--exit-0"
     )
 
-    # 1. Exclude the linux kernel source code from the search by default to speed up the process
-    # 2. If the query is not empty, use exact matching in both rg and fzf
-    #    If the query is empty, use regular expression matching in both rg and fzf
-    [ -z "$fKernelIncluded" ] && rgParams+=("--glob" "!linux-*/*")
-    [ -n "$fQuery" ] && [ -z "$fREMatching" ] && rgParams+=("--fixed-strings") && fzfParams+=("--exact")
-    rgParams+=("${fQuery:-.}")
+    # An empty query lists everything and lets fzf do all the filtering
+    resolveRgPattern "${rgParams[@]}"
+    [ -n "$fRgLiteral" ] && rgParams+=("--fixed-strings")
+    rgParams+=("${fRgPattern:-.}")
     fzfParams+=("--query" "${fQuery}")
+    [ -n "$fExactMatching" ] && fzfParams+=("--exact")
+    [ -n "$fFuzzyFallback" ] && fzfParams+=("--header=fuzzy fallback: no literal match for '$fQuery'")
 
     if [ -n "$fRgOnly" ]; then
+        [ -n "$fFuzzyFallback" ] &&
+            echo -e "$USER_NOTATION ${COLOR}No literal match for '$fQuery', falling back to fuzzy matching${RESET}" >&2
         rg "${rgParams[@]}"
         exit 0
     fi
@@ -354,27 +424,24 @@ fuzzySearch() {
         exit 0
     fi
 
-    # Sample output of fzfResult:
+    # fzf runs with --multi, so every selected line has to be handled.
+    # Sample output of fzfSelected:
     # daemon/wad/wad_app_eng.c:3071:          goto session_make_failed;
     # Z15 Bug 0996624 FTP fails active in TP mode/debug2_passive.c:398:CLNT lftp/4.9.2
-    local filepath linenumber
-    pattern='([^:]+):([0-9]+):'
-    if [[ $fzfSelected =~ $pattern ]]; then
-        filepath=${BASH_REMATCH[1]}
-        linenumber="${BASH_REMATCH[2]}"
-    else
-        echo -e "${COLOR}Error: The result is in unexpected format${RESET}"
-        exit 1
-    fi
-    filepath=${filepath// /\\ } # Escape spaces in filepath
+    local line opened=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        if [[ $line =~ ^([^:]+):([0-9]+): ]]; then
+            openInEditor "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+            opened=$((opened + 1))
+            echo -e "Line opened: ${COLOR}${line:0:80}${RESET}"
+        else
+            echo -e "${COLOR}Skipped unexpected format: ${line:0:80}${RESET}" >&2
+        fi
+    done <<< "$fzfSelected"
 
-    if [[ "$fEditor" == "vim" ]]; then
-        eval vim +"$linenumber" "$filepath"
-    else
-        eval "$fEditor" "$filepath":"$linenumber"
-    fi
-
-    echo -e "Line opened: ${COLOR}${fzfSelected:0:80}${RESET}"
+    [ "$opened" -eq 0 ] && exit 1
+    return 0
 }
 
 main() {
@@ -384,10 +451,13 @@ main() {
     # Do the main work
     parseOptions "$@"
     [ -n "$fCheckDepends" ] && checkDepends
-    [ -z "$fNoClipboard" ] && GetClipboardContent
+    # fuzzySearch exits early on several paths, so clean up from a trap
+    if [ -z "$fNoClipboard" ]; then
+        GetClipboardContent
+        trap ClearClipboard EXIT
+    fi
     [ -z "$fREMatching" ] && polishQuery
     fuzzySearch
-    [ -z "$fNoClipboard" ] && ClearClipboard
 }
 
 main "$@"

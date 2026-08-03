@@ -21,6 +21,8 @@
     "remote.SSH.connectTimeout": 20,
     "editor.inlayHints.enabled": "off",
     "editor.accessibilitySupport": "off",
+    "editor.cursorSurroundingLines": 100,
+    "editor.cursorSurroundingLinesStyle": "default",
     "editor.indentSize": "tabSize",
     "editor.tabSize": 4,
     "editor.insertSpaces": true,

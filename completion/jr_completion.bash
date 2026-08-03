@@ -7,9 +7,9 @@ _jr_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define options
-    opts="-h -v -d -k -c -n -A"
-    long_opts="--help --vim --debug --kernel --all-files --rg-only --check-depends \
-               --no-clipboard --re-matching"
+    opts="-h -v -d -c -n -A -e"
+    long_opts="--help --vim --debug --all-files --rg-only --check-depends \
+               --no-clipboard --re-matching --exact"
 
     case "${prev}" in
 	*)
