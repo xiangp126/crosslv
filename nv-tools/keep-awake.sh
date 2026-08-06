@@ -1,0 +1,17 @@
+#!/bin/bash
+# ~/bin/keep-awake.sh
+THRESHOLD=60      # nudge the system if idle exceeds this many seconds
+INTERVAL=20       # check interval in seconds
+
+caffeinate -dim &
+CAFF=$!
+trap 'kill $CAFF 2>/dev/null' EXIT INT TERM
+
+while true; do
+  idle=$(ioreg -c IOHIDSystem \
+         | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}')
+  if [ "${idle:-0}" -ge "$THRESHOLD" ]; then
+    osascript -e 'tell application "System Events" to key code 63'
+  fi
+  sleep "$INTERVAL"
+done
