@@ -41,6 +41,8 @@
   "sandbox": {
     "enabled": false
   },
+  "effortLevel": "xhigh",
+  "tui": "default",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark-ansi",
   "mcpServers": {
@@ -184,6 +186,5 @@
       "type": "http",
       "url": "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
     }
-  },
-  "tui": "default"
+  }
 }

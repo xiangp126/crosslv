@@ -1,0 +1,515 @@
+#!/usr/bin/env python3
+"""List / save / restore the Claude Code and Codex sessions running inside tmux.
+
+Both agents expose their session id to anyone who looks in /proc, just differently.
+Claude Code writes ~/.claude/sessions/<pid>.json holding the sessionId, cwd and
+session name. Codex instead keeps its rollout transcript open, so the session id
+can be read straight off the open file descriptor. This tool pairs either one with
+the tmux pane it lives in, so the layout can be rebuilt after a reboot with the
+right resume command already wired up.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+SESSION_DIR = CLAUDE_DIR / "sessions"
+DEFAULT_SNAPSHOT = CLAUDE_DIR / "tmux-snapshot.json"
+
+CODEX_DIR = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+CODEX_SESSION_DIR = CODEX_DIR / "sessions"
+# ~/.codex/sessions/2026/08/04/rollout-2026-08-04T15-09-21-<uuid>.jsonl
+ROLLOUT_RE = re.compile(
+    r"^rollout-(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(?P<uuid>[0-9a-fA-F-]{36})\.jsonl$"
+)
+
+RESUME_COMMANDS = {
+    "claude": "claude --resume {session_id}",
+    "codex": "codex resume {session_id}",
+}
+
+
+def proc_start_ticks(pid):
+    """Field 22 (starttime) of /proc/<pid>/stat.
+
+    comm may contain spaces and parentheses, so split after the last ')'.
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    try:
+        fields = stat[stat.rindex(")") + 2 :].split()
+    except ValueError:
+        return None
+    return fields[19] if len(fields) > 19 else None
+
+
+def proc_environ(pid):
+    try:
+        raw = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return {}
+    env = {}
+    for entry in raw.split(b"\0"):
+        if b"=" in entry:
+            key, value = entry.split(b"=", 1)
+            env[key.decode("utf-8", "replace")] = value.decode("utf-8", "replace")
+    return env
+
+
+def tmux(*args, check=True):
+    return subprocess.run(
+        ["tmux", *args], capture_output=True, text=True, check=check
+    ).stdout.rstrip("\n")
+
+
+def pane_lookup():
+    """Map pane_id to the tmux session, window index, window name and pane index."""
+    fmt = "#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}"
+    try:
+        out = tmux("list-panes", "-a", "-F", fmt)
+    except (OSError, subprocess.CalledProcessError):
+        return {}
+    panes = {}
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 5:
+            pane_id, sess, win_idx, win_name, pane_idx = parts
+            panes[pane_id] = {
+                "tmux_session": sess,
+                "window_index": win_idx,
+                "window_name": win_name,
+                "pane_index": pane_idx,
+                "target": f"{sess}:{win_idx}.{pane_idx}",
+            }
+    return panes
+
+
+def proc_state(pid):
+    """State field of /proc/<pid>/stat; 'T' means suspended via Ctrl-Z."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return stat[stat.rindex(")") + 2 :].split()[0]
+    except (OSError, ValueError, IndexError):
+        return ""
+
+
+def sessions_from_cli():
+    """`claude agents --json` is the supported scripting interface; needs no TTY."""
+    try:
+        proc = subprocess.run(
+            ["claude", "agents", "--json"], capture_output=True, text=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        # stderr may carry warnings, so only parse stdout
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    return data if isinstance(data, list) else None
+
+
+def sessions_from_files():
+    """Fallback for claude versions without `agents --json`: read the state files."""
+    out = []
+    for path in sorted(SESSION_DIR.glob("*.json")):
+        try:
+            out.append(json.loads(path.read_text()))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def codex_sessions():
+    """Codex holds its rollout transcript open, so /proc/<pid>/fd maps pid to session.
+
+    Nothing to expire here: the descriptor only exists while the process does, which
+    is why these records need no equivalent of Claude's procStart check.
+    """
+    prefix = f"{CODEX_SESSION_DIR}/"
+    found, seen = [], set()
+    for proc_dir in Path("/proc").glob("[0-9]*"):
+        try:
+            if b"codex" not in (proc_dir / "cmdline").read_bytes():
+                continue
+            entries = list((proc_dir / "fd").iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                target = os.readlink(entry)
+            except OSError:
+                continue
+            if not target.startswith(prefix):
+                continue
+            match = ROLLOUT_RE.match(os.path.basename(target))
+            if not match or match["uuid"] in seen:
+                continue
+            seen.add(match["uuid"])
+            pid = int(proc_dir.name)
+            try:
+                cwd = os.readlink(f"/proc/{pid}/cwd")
+            except OSError:
+                cwd = ""
+            found.append(
+                {
+                    "agent": "codex",
+                    "sessionId": match["uuid"],
+                    "cwd": cwd,
+                    "kind": "interactive",
+                    "pid": pid,
+                    "startedAt": rollout_started_at(match["stamp"]),
+                }
+            )
+            break
+    return found
+
+
+def rollout_started_at(stamp):
+    """Turn the local timestamp in a rollout filename into epoch milliseconds."""
+    try:
+        return int(time.mktime(time.strptime(stamp, "%Y-%m-%dT%H-%M-%S")) * 1000)
+    except ValueError:
+        return None
+
+
+def is_live_agent(pid, agent, proc_start=None):
+    """Check the pid is alive and really that agent; procStart guards against pid reuse."""
+    if proc_start is not None:
+        return str(proc_start) == str(proc_start_ticks(pid))
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+    return agent.encode() in cmdline
+
+
+def resume_command(agent, session_id):
+    return RESUME_COMMANDS[agent].format(session_id=session_id)
+
+
+def collect(include_stale=False):
+    """List the running agent sessions, each paired with the tmux pane it occupies."""
+    panes = pane_lookup()
+    raw = sessions_from_cli()
+    if raw is None:
+        raw = sessions_from_files()
+    for data in raw:
+        data.setdefault("agent", "claude")
+    raw = raw + codex_sessions()
+
+    records = []
+    for data in raw:
+        pid = data.get("pid")
+        session_id = data.get("sessionId")
+        agent = data.get("agent", "claude")
+        if not session_id or agent not in RESUME_COMMANDS:
+            continue
+        alive = bool(pid) and is_live_agent(pid, agent, data.get("procStart"))
+        if not alive and not include_stale:
+            continue
+        env = proc_environ(pid) if alive else {}
+        pane = panes.get(env.get("TMUX_PANE", ""), {})
+        records.append(
+            {
+                "session_id": session_id,
+                "agent": agent,
+                "cwd": data.get("cwd", ""),
+                "name": data.get("name") or "",
+                "kind": data.get("kind") or "",
+                "status": data.get("status") or "",
+                "started_at": data.get("startedAt"),
+                "pid": pid,
+                "alive": alive,
+                "stopped": proc_state(pid) == "T" if alive else False,
+                "pane_id": env.get("TMUX_PANE", ""),
+                "tmux_session": pane.get("tmux_session", ""),
+                "window_index": pane.get("window_index", ""),
+                "window_name": pane.get("window_name", ""),
+                "pane_index": pane.get("pane_index", ""),
+                "target": pane.get("target", ""),
+            }
+        )
+
+    def sort_key(rec):
+        try:
+            return (0, rec["tmux_session"], int(rec["window_index"]))
+        except ValueError:
+            return (1, rec["tmux_session"], 0)
+
+    records.sort(key=sort_key)
+    return records
+
+
+def cmd_list(args):
+    records = collect(include_stale=args.all)
+    if not records:
+        print("No running agent sessions found.", file=sys.stderr)
+        return 1
+    if args.ids_only:
+        for rec in records:
+            print(rec["session_id"])
+        return 0
+    if args.json:
+        print(json.dumps(records, indent=2, ensure_ascii=False))
+        return 0
+
+    headers = ("TMUX", "WINDOW", "AGENT", "PID", "NAME", "CWD", "SESSION ID")
+    rows = [
+        (
+            rec["target"] or "-",
+            rec["window_name"] or "-",
+            rec["agent"],
+            str(rec["pid"]),
+            rec["name"] or "-",
+            rec["cwd"],
+            rec["session_id"],
+        )
+        for rec in records
+    ]
+    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+    print("  ".join(h.ljust(w) for h, w in zip(headers, widths)))
+    print("  ".join("-" * w for w in widths))
+    for row in rows:
+        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths)))
+    return 0
+
+
+def cmd_save(args):
+    records = collect()
+    if not records:
+        print("No running agent sessions, snapshot not written.", file=sys.stderr)
+        return 1
+    snapshot = {
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "host": os.uname().nodename,
+        "sessions": records,
+    }
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")
+    print(f"Saved {len(records)} session(s) to {out}")
+    return 0
+
+
+def cmd_restore(args):
+    try:
+        snapshot = json.loads(Path(args.file).read_text())
+    except OSError as exc:
+        print(f"Cannot read snapshot {args.file}: {exc}", file=sys.stderr)
+        return 1
+    records = snapshot.get("sessions", [])
+    if not records:
+        print("Snapshot holds no sessions.", file=sys.stderr)
+        return 1
+    print(f"Snapshot taken {snapshot.get('saved_at', 'unknown')}, {len(records)} session(s)")
+
+    live_ids = {rec["session_id"] for rec in collect()}
+    existing_sessions = set()
+    try:
+        existing_sessions = set(tmux("list-sessions", "-F", "#{session_name}").split())
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+    for rec in records:
+        session_id = rec["session_id"]
+        agent = rec.get("agent", "claude")
+        cwd = rec["cwd"]
+        tmux_session = rec["tmux_session"] or agent
+        window_name = rec["window_name"] or agent
+        label = f"{tmux_session}:{window_name} [{agent} {session_id}]"
+
+        if session_id in live_ids:
+            print(f"Skipped, already running: {label}")
+            continue
+        if agent not in RESUME_COMMANDS:
+            print(f"Skipped, unknown agent {agent}: {label}")
+            continue
+        if rec.get("kind") not in ("", "interactive"):
+            # Background agents belong to claude's own supervisor, not to tmux
+            print(f"Skipped, {rec['kind']} session belongs to claude agents: {label}")
+            continue
+        if not Path(cwd).is_dir():
+            print(f"Skipped, directory is gone {cwd}: {label}")
+            continue
+
+        command = f"cd {shell_quote(cwd)} && {resume_command(agent, session_id)}"
+        if args.dry_run:
+            print(f"[dry-run] {tmux_session} / {window_name}: {command}")
+            continue
+
+        fmt = ("-P", "-F", "#{session_name}:#{window_index}")
+        try:
+            # Append to a tmux session that already exists; never touch its windows
+            if tmux_session in existing_sessions:
+                target = tmux(
+                    "new-window", "-d", "-t", tmux_session, "-n", window_name, "-c", cwd, *fmt
+                )
+            else:
+                target = tmux(
+                    "new-session", "-d", "-s", tmux_session, "-n", window_name, "-c", cwd, *fmt
+                )
+                existing_sessions.add(tmux_session)
+            tmux("send-keys", "-t", target, command, "Enter")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"Failed: {label}: {exc}", file=sys.stderr)
+            continue
+        print(f"Restored {target}: {label}")
+    return 0
+
+
+def cmd_patch_resurrect(args):
+    """Rewrite a saved tmux-resurrect layout so agent panes carry their resume command.
+
+    Wired to @resurrect-hook-post-save-layout, which passes the layout path as an
+    argument. The layout is TSV; on a pane row column 11 (index 10) holds
+    ':<full command>'.
+    """
+    path = Path(args.layout_file).resolve()
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as exc:
+        print(f"Cannot read layout file {path}: {exc}", file=sys.stderr)
+        return 1
+
+    records = [
+        r
+        for r in collect()
+        if r["target"] and r.get("kind") in ("", "interactive")
+    ]
+    by_pane = {}
+    for rec in records:
+        key = (rec["tmux_session"], rec["window_index"], rec["pane_index"])
+        prev = by_pane.get(key)
+        # A pane can hold several sessions (Ctrl-Z suspended ones); prefer the
+        # one still in the foreground, then the most recently started
+        if prev is None or (prev["stopped"] and not rec["stopped"]):
+            by_pane[key] = rec
+        elif prev["stopped"] == rec["stopped"]:
+            if (rec["started_at"] or 0) > (prev["started_at"] or 0):
+                by_pane[key] = rec
+
+    record_types = ("pane", "window", "state", "grouped_session")
+    patched, out, dropped_lines = [], [], 0
+    for line in lines:
+        fields = line.split("\t")
+        if fields[0] not in record_types:
+            # With several processes in one pane, resurrect's ps strategy spills
+            # the extra commands onto their own lines
+            dropped_lines += 1
+            continue
+        if fields[0] == "pane" and len(fields) >= 11:
+            rec = by_pane.get((fields[1], fields[2], fields[5]))
+            if rec:
+                # tmux may report a stale "/path (deleted)"; use the cwd the agent recorded
+                if rec["cwd"]:
+                    fields[7] = ":" + rec["cwd"].replace(" ", "\\ ")
+                # Only the resume command, none of the flags the pane was started
+                # with: they are rarely wanted on restore and codex takes its session
+                # id as a positional argument, where replaying them is unsafe
+                fields[10] = ":" + resume_command(rec.get("agent", "claude"), rec["session_id"])
+                patched.append(f"{rec['tmux_session']}:{rec['window_index']}.{rec['pane_index']}")
+                line = "\t".join(fields)
+        out.append(line)
+
+    if args.dry_run:
+        for line in out:
+            print(line)
+        return 0
+
+    path.write_text("\n".join(out) + "\n")
+    # Quiet by default: as a hook, anything on stdout lands in tmux copy mode
+    if args.verbose:
+        msg = f"Tagged {len(patched)} agent pane(s) in {path.name}"
+        shared = len(records) - len(by_pane)
+        if dropped_lines:
+            msg += f", dropped {dropped_lines} spilled line(s)"
+        if shared > 0:
+            msg += (
+                f", left out {shared} session(s) sharing a pane"
+                " (resurrect restores one command per pane)"
+            )
+        print(msg)
+    return 0
+
+
+def shell_quote(text):
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Find the Claude Code and Codex sessions running in tmux and bring them back"
+            " after a reboot. Two independent ways to do that: let tmux-resurrect carry"
+            " the sessions along with your layout (patch-resurrect), or keep a standalone"
+            " snapshot of just the sessions (save / restore)."
+        )
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    p_list = sub.add_parser(
+        "list", help="Show running sessions and the tmux pane each is in"
+    )
+    p_list.add_argument(
+        "-a", "--all", action="store_true", help="Also show stale records of exited processes"
+    )
+    p_list.add_argument("--json", action="store_true", help="Emit JSON")
+    p_list.add_argument("--ids-only", action="store_true", help="Print session ids only")
+    p_list.set_defaults(func=cmd_list)
+
+    p_save = sub.add_parser(
+        "save", help="Snapshot the running sessions to a file before a reboot"
+    )
+    p_save.add_argument("-o", "--output", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
+    p_save.set_defaults(func=cmd_save)
+
+    p_restore = sub.add_parser(
+        "restore", help="Reopen snapshotted sessions that are no longer running"
+    )
+    p_restore.add_argument("-f", "--file", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
+    p_restore.add_argument(
+        "-n", "--dry-run", action="store_true", help="Print the commands instead of running them"
+    )
+    p_restore.set_defaults(func=cmd_restore)
+
+    p_patch = sub.add_parser(
+        "patch-resurrect",
+        help="Rewrite a tmux-resurrect layout so each agent pane resumes its own session",
+        description=(
+            "Rewrite a layout file saved by tmux-resurrect so that every Claude Code and"
+            " Codex pane carries the session id it was actually running, plus the working"
+            " directory the agent recorded. Without this a restored pane starts a brand"
+            " new conversation. Runs from the @resurrect-hook-post-save-layout hook on"
+            " every save; running it by hand is safe and repeatable."
+        ),
+    )
+    p_patch.add_argument(
+        "layout_file", help="Layout file to rewrite; the resurrect hook passes this in"
+    )
+    p_patch.add_argument(
+        "-n", "--dry-run", action="store_true", help="Print the rewritten layout, save nothing"
+    )
+    p_patch.add_argument(
+        "-v", "--verbose", action="store_true", help="Report what was rewritten"
+    )
+    p_patch.set_defaults(func=cmd_patch_resurrect)
+
+    args = parser.parse_args()
+    if not args.command:
+        args = parser.parse_args(["list"])
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
