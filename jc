@@ -2250,10 +2250,11 @@ linkFiles() {
         return
     fi
     # Remove broken symlinks
-    find "$linkPath" -type l ! \
-            -exec test -e {} \; \
-            -exec rm -f {} \; \
-            -exec echo -e "${CYAN}Deleting broken link: {}${RESET}" \;
+    local brokenLink
+    while IFS= read -r brokenLink; do
+        rm -f "$brokenLink"
+        echo -e "${CYAN}Deleting broken link: ${brokenLink}${RESET}"
+    done < <(find "$linkPath" -type l ! -exec test -e {} \; -print)
 }
 
 buildBatTheme() {
@@ -7178,7 +7179,7 @@ showUfwStatus() {
     echo -e "  ${GREY}- sudo ufw disable       : Disable the firewall.${RESET}"
     echo -e "  ${GREY}- sudo ufw allow <port>  : Allow traffic on a specific port (e.g., sudo ufw allow 445/tcp).${RESET}"
     echo -e "  ${GREY}- sudo ufw deny <port>   : Deny traffic on a specific port.${RESET}"
-    echo -e "  ${GREY}- sudo ufw delete allow <port>: Delete an allow rule (e.g., sudo ufw delete allow 445/tcp).\n${RESET}"
+    echo -e "  ${GREY}- sudo ufw delete allow <port>: Delete an allow rule (e.g., sudo ufw delete allow 445/tcp).${RESET}"
 }
 
 main() {
@@ -7191,7 +7192,10 @@ main() {
         mac)    doMacJobs    ;;
     esac
     showUfwStatus
+    local separator=$(printf -- '-%.0s' {1..60})
+    echo -e "${GREY}${separator}${RESET}"
     echo -e "${GREEN}${SCRIPT_NAME} completed successfully in ${SECONDS}s.${RESET}"
+    echo -e "${GREY}${separator}${RESET}"
 }
 
 main "$@"

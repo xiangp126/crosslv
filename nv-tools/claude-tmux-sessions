@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """List / save / restore the Claude Code and Codex sessions running inside tmux.
 
-Both agents expose their session id to anyone who looks in /proc, just differently.
+Both agents expose their session id to anyone who cares to look, just differently.
 Claude Code writes ~/.claude/sessions/<pid>.json holding the sessionId, cwd and
 session name. Codex instead keeps its rollout transcript open, so the session id
 can be read straight off the open file descriptor. This tool pairs either one with
 the tmux pane it lives in, so the layout can be rebuilt after a reboot with the
 right resume command already wired up.
+
+Runs on Linux and macOS: process details come from /proc where it exists and from
+ps / lsof where it does not.
 """
 
 import argparse
@@ -34,12 +37,66 @@ RESUME_COMMANDS = {
     "codex": "codex resume {session_id}",
 }
 
+# Linux hands out process details through /proc; macOS has no such thing, so
+# everything below falls back to ps (and to lsof for the codex fd scan).
+HAS_PROC = Path("/proc/self/stat").exists()
 
-def proc_start_ticks(pid):
-    """Field 22 (starttime) of /proc/<pid>/stat.
+_PS_CACHE = {}
 
-    comm may contain spaces and parentheses, so split after the last ')'.
+
+def ps_info(pid):
+    """Process details from a single ps call, for platforms without /proc.
+
+    -E appends the environment after the command, so state, start time, command
+    and environment all come out of one fork. The lot is cached: a pid is looked
+    at several times per run and the data cannot change under us in a way we care
+    about. TZ=UTC matches the ctime string claude records in procStart, LC_ALL=C
+    keeps the weekday and month names parseable.
+
+    Returns None when the process is gone (ps then exits 1 with empty stdout).
     """
+    if pid in _PS_CACHE:
+        return _PS_CACHE[pid]
+    info = None
+    try:
+        proc = subprocess.run(
+            ["ps", "-Ewwo", "state=,lstart=,command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, "TZ": "UTC", "LC_ALL": "C"},
+        )
+        out = proc.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    # state, then the five pieces of "Mon Aug 10 14:03:08 2026", then command+env
+    parts = out.split(None, 6)
+    if len(parts) == 7:
+        env = {}
+        for token in parts[6].split():
+            key, sep, value = token.partition("=")
+            if sep and key.isidentifier():
+                env[key] = value
+        info = {
+            "state": parts[0],
+            "lstart": " ".join(parts[1:6]),
+            "command": parts[6],
+            "env": env,
+        }
+    _PS_CACHE[pid] = info
+    return info
+
+
+def proc_start_marker(pid):
+    """A string that changes when the pid is reused, to be compared as-is.
+
+    On Linux that is field 22 (starttime) of /proc/<pid>/stat; comm may contain
+    spaces and parentheses, so split after the last ')'. Elsewhere it is the ps
+    start time, normalised because ctime pads single-digit days with a space.
+    """
+    if not HAS_PROC:
+        info = ps_info(pid)
+        return info["lstart"] if info else None
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
     except OSError:
@@ -52,6 +109,9 @@ def proc_start_ticks(pid):
 
 
 def proc_environ(pid):
+    if not HAS_PROC:
+        info = ps_info(pid)
+        return info["env"] if info else {}
     try:
         raw = Path(f"/proc/{pid}/environ").read_bytes()
     except OSError:
@@ -94,6 +154,10 @@ def pane_lookup():
 
 def proc_state(pid):
     """State field of /proc/<pid>/stat; 'T' means suspended via Ctrl-Z."""
+    if not HAS_PROC:
+        info = ps_info(pid)
+        # ps decorates the state with flags ('S+', 'TN'); only the first letter matters
+        return info["state"][:1] if info else ""
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
         return stat[stat.rindex(")") + 2 :].split()[0]
@@ -131,11 +195,16 @@ def sessions_from_files():
 
 
 def codex_sessions():
-    """Codex holds its rollout transcript open, so /proc/<pid>/fd maps pid to session.
+    """Codex holds its rollout transcript open, so its open fds map pid to session.
 
     Nothing to expire here: the descriptor only exists while the process does, which
     is why these records need no equivalent of Claude's procStart check.
     """
+    return codex_sessions_proc() if HAS_PROC else codex_sessions_lsof()
+
+
+def codex_sessions_proc():
+    """Read the open descriptors out of /proc/<pid>/fd."""
     prefix = f"{CODEX_SESSION_DIR}/"
     found, seen = [], set()
     for proc_dir in Path("/proc").glob("[0-9]*"):
@@ -175,6 +244,67 @@ def codex_sessions():
     return found
 
 
+def codex_sessions_lsof():
+    """Same idea for platforms without /proc: ask lsof for the open descriptors.
+
+    -F prints one field per line, tagged: 'p' opens a process, then 'f'/'n' pairs
+    for each descriptor, where fd 'cwd' carries the working directory.
+    """
+    prefix = f"{CODEX_SESSION_DIR}/"
+    try:
+        proc = subprocess.run(
+            ["lsof", "-n", "-P", "-c", "codex", "-F", "pfn"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    by_pid, order = {}, []
+    pid, fd = None, None
+    for line in proc.stdout.splitlines():
+        tag, value = line[:1], line[1:]
+        if tag == "p":
+            try:
+                pid = int(value)
+            except ValueError:
+                pid = None
+                continue
+            fd = None
+            if pid not in by_pid:
+                by_pid[pid] = {"cwd": "", "uuid": None, "stamp": None}
+                order.append(pid)
+        elif tag == "f":
+            fd = value
+        elif tag == "n" and pid is not None:
+            if fd == "cwd":
+                by_pid[pid]["cwd"] = value
+            elif by_pid[pid]["uuid"] is None and value.startswith(prefix):
+                match = ROLLOUT_RE.match(os.path.basename(value))
+                if match:
+                    by_pid[pid]["uuid"] = match["uuid"]
+                    by_pid[pid]["stamp"] = match["stamp"]
+
+    found, seen = [], set()
+    for pid in order:
+        entry = by_pid[pid]
+        if not entry["uuid"] or entry["uuid"] in seen:
+            continue
+        seen.add(entry["uuid"])
+        found.append(
+            {
+                "agent": "codex",
+                "sessionId": entry["uuid"],
+                "cwd": entry["cwd"],
+                "kind": "interactive",
+                "pid": pid,
+                "startedAt": rollout_started_at(entry["stamp"]),
+            }
+        )
+    return found
+
+
 def rollout_started_at(stamp):
     """Turn the local timestamp in a rollout filename into epoch milliseconds."""
     try:
@@ -185,8 +315,16 @@ def rollout_started_at(stamp):
 
 def is_live_agent(pid, agent, proc_start=None):
     """Check the pid is alive and really that agent; procStart guards against pid reuse."""
+    if not HAS_PROC:
+        info = ps_info(pid)
+        if not info or agent not in info["command"]:
+            return False
+        if proc_start is None:
+            return True
+        # ctime pads single-digit days, so normalise before comparing
+        return " ".join(str(proc_start).split()) == info["lstart"]
     if proc_start is not None:
-        return str(proc_start) == str(proc_start_ticks(pid))
+        return str(proc_start) == str(proc_start_marker(pid))
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:
@@ -449,12 +587,7 @@ def shell_quote(text):
 
 def main():
     parser = argparse.ArgumentParser(
-        description=(
-            "Find the Claude Code and Codex sessions running in tmux and bring them back"
-            " after a reboot. Two independent ways to do that: let tmux-resurrect carry"
-            " the sessions along with your layout (patch-resurrect), or keep a standalone"
-            " snapshot of just the sessions (save / restore)."
-        )
+        description="Bring the Claude Code and Codex sessions running in tmux back after a reboot."
     )
     sub = parser.add_subparsers(dest="command")
 

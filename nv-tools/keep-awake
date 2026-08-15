@@ -1,5 +1,5 @@
 #!/bin/bash
-# ~/bin/keep-awake.sh
+# ~/bin/keep-awake
 THRESHOLD=60      # nudge the system if idle exceeds this many seconds
 INTERVAL=20       # check interval in seconds
 
