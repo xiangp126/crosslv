@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -35,6 +36,15 @@ ROLLOUT_RE = re.compile(
 RESUME_COMMANDS = {
     "claude": "claude --resume {session_id}",
     "codex": "codex resume {session_id}",
+}
+
+# Each agent's TUI binds a different key to "quit", confirmed by hand: claude
+# needs it twice (the first press just arms a confirmation), codex exits on a
+# single press. Sent via tmux send-keys, not a signal, so each agent exits
+# through its own normal shutdown path.
+QUIT_KEYS = {
+    "claude": ["C-d", "C-d"],
+    "codex": ["C-d"],
 }
 
 # Linux hands out process details through /proc; macOS has no such thing, so
@@ -506,6 +516,121 @@ def cmd_restore(args):
     return 0
 
 
+def wait_for_exit(pid, timeout):
+    """Poll for the pid to disappear; works on Linux and macOS alike.
+
+    Signal 0 rather than /proc (absent on macOS) or ps_info (cached, so it
+    would keep reporting the first snapshot instead of noticing an exit).
+    These are foreign processes, not our children, so waitpid is not an option.
+    """
+    deadline = time.time() + timeout
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            pass  # exists, just not ours to signal
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.1)
+
+
+def cmd_refresh(args):
+    """Restart every live session in place so it re-reads ~/.claude/.credentials.json.
+
+    `claude auth login` in one pane updates the credentials file on disk, but every
+    other already-running process keeps whatever it read at startup; only a restart
+    picks up the new login. This kills each one and relaunches it with --resume in
+    the same pane, so the conversation carries over and only the auth is fresh.
+    """
+    records = [
+        rec
+        for rec in collect()
+        if rec["alive"] and rec["target"] and rec.get("kind") in ("", "interactive")
+    ]
+    if args.agent != "all":
+        records = [rec for rec in records if rec["agent"] == args.agent]
+
+    # Refuse to kill the session this command is itself running inside of unless
+    # told otherwise: CLAUDE_CODE_SESSION_ID is only set when invoked from a
+    # Claude Code Bash tool call, so a plain terminal never trips this.
+    self_session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if self_session_id and not args.include_self:
+        before = len(records)
+        records = [rec for rec in records if rec["session_id"] != self_session_id]
+        if len(records) < before:
+            print("Skipping the session this command is running in (use --include-self to include it).")
+
+    if not records:
+        print("No matching live sessions to refresh.", file=sys.stderr)
+        return 1
+
+    print(f"{len(records)} session(s) will be restarted with a fresh login:")
+    for rec in records:
+        print(f"  {rec['target']}  {rec['agent']:<7}{rec['name'] or rec['cwd']}")
+    print()
+
+    failures = 0
+    for rec in records:
+        pid, target = rec["pid"], rec["target"]
+        command = f"cd {shell_quote(rec['cwd'])} && {resume_command(rec['agent'], rec['session_id'])}"
+        label = f"{target} [{rec['agent']} {rec['session_id']}]"
+        if args.dry_run:
+            keys = QUIT_KEYS.get(rec["agent"])
+            how = " then ".join(keys) if keys else f"SIGTERM {pid}"
+            print(f"[dry-run] {how} (fallback: SIGTERM/SIGKILL {pid}), then {target}: {command}")
+            continue
+
+        # Prefer the agent's own quit keystroke over a signal: it exits through
+        # the app's normal shutdown path (flushing whatever it flushes on the
+        # way out) instead of relying on however it happens to handle SIGTERM.
+        # Signals are only the fallback for a stuck or unresponsive pane.
+        exited = False
+        quit_keys = QUIT_KEYS.get(rec["agent"], [])
+        if quit_keys:
+            try:
+                for key in quit_keys:
+                    tmux("send-keys", "-t", target, key)
+                    time.sleep(0.3)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                print(f"Failed to send quit keys to {label}: {exc}", file=sys.stderr)
+            else:
+                exited = wait_for_exit(pid, args.timeout)
+
+        if not exited:
+            if quit_keys:
+                print(f"{label}: quit keys didn't exit it within {args.timeout}s, sending SIGTERM", file=sys.stderr)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                exited = True
+            except OSError as exc:
+                print(f"Failed to signal {pid} ({label}): {exc}", file=sys.stderr)
+                failures += 1
+                continue
+            else:
+                exited = wait_for_exit(pid, 5)
+
+        if not exited:
+            print(f"{label}: still running, sending SIGKILL", file=sys.stderr)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            wait_for_exit(pid, 5)
+
+        try:
+            tmux("send-keys", "-t", target, command, "Enter")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"Failed to relaunch {label}: {exc}", file=sys.stderr)
+            failures += 1
+            continue
+        print(f"Refreshed {label}")
+
+    return 1 if failures else 0
+
+
 def cmd_patch_resurrect(args):
     """Rewrite a saved tmux-resurrect layout so agent panes carry their resume command.
 
@@ -615,6 +740,34 @@ def main():
         "-n", "--dry-run", action="store_true", help="Print the commands instead of running them"
     )
     p_restore.set_defaults(func=cmd_restore)
+
+    p_refresh = sub.add_parser(
+        "refresh",
+        help="Restart every live session in place to pick up a new login",
+        description=(
+            "Kill each live interactive session's process and relaunch it with"
+            " --resume in the same tmux pane, so it survives a `claude auth login`"
+            " / `claude auth logout` done in one other pane without losing history."
+            " Run list first, or pass -n, to see what would be restarted."
+        ),
+    )
+    p_refresh.add_argument(
+        "--agent", choices=["claude", "codex", "all"], default="claude",
+        help="Restrict to one agent kind (default: claude)",
+    )
+    p_refresh.add_argument(
+        "--include-self", action="store_true",
+        help="Also restart the session this command is itself running inside of",
+    )
+    p_refresh.add_argument(
+        "--timeout", type=float, default=15.0,
+        help="Seconds to wait for the quit keystroke to exit before falling back"
+             " to SIGTERM, then SIGKILL (default: 15)",
+    )
+    p_refresh.add_argument(
+        "-n", "--dry-run", action="store_true", help="Print what would run, kill nothing"
+    )
+    p_refresh.set_defaults(func=cmd_refresh)
 
     p_patch = sub.add_parser(
         "patch-resurrect",

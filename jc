@@ -28,6 +28,7 @@ fTKClaudeDir=$fMainDir/assets/claude
 fTKClaudeCodeSettings=$fTKClaudeDir/settings.json
 fTKClaudeCodeLocalSettings=$fTKClaudeDir/settings.local.json
 fTKClaudeCodeMd=$fTKClaudeDir/CLAUDE.md
+fTKClaudeCodeSkills=$fTKClaudeDir/skills
 fTKClaudeDesktopConfig=$fTKClaudeDir/claude_desktop_config.json
 fTKClaudeMcpJson=$fTKClaudeDir/.mcp.json
 # Codex
@@ -283,9 +284,10 @@ WireGuard Options (server-side only — run on the WireGuard server host):
 Claude Options:
     --claude                        Install or upgrade Claude Code (CLI)
     --claude-remove                 Remove Claude Code
-    --claude-backup                 Back up Claude Code CLI settings
-                                    (settings.json, settings.local.json, CLAUDE.md)
-    --claude-restore                Restore Claude Code CLI settings
+    --claude-backup                 Back up Claude Code CLI settings and skills
+                                    (settings.json, settings.local.json, CLAUDE.md,
+                                     skills/ -- mirrored, local deletions propagate)
+    --claude-restore                Restore Claude Code CLI settings and skills
     --claude-link-mcp               Symlink tracked .mcp.json into current directory
     --claude-desktop-backup         Back up macOS Claude Desktop config
                                     (claude_desktop_config.json)
@@ -2191,6 +2193,15 @@ syncFile() {
     echo -e "   ├─ ${GREY}Source:${RESET} ${CYAN}$src${RESET}"
     echo -e "   └─ ${GREY}Target:${RESET} ${CYAN}$dst${RESET}"
 
+    # A tracked file may be symlinked into place (~/.claude/CLAUDE.md -> assets/claude/CLAUDE.md),
+    # in which case source and target are already the same file. rsync would still write via a
+    # temp file and rename, replacing the symlink with a regular copy -- after which the two
+    # sides silently drift apart. Nothing to copy here, so say so and leave the link alone.
+    if [ -e "$dst" ] && [ "$(readlink -f "$src")" = "$(readlink -f "$dst")" ]; then
+        echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Already up to date.${RESET} ${GREY}(same file, linked)${RESET}"
+        return 1
+    fi
+
     if ! command -v rsync &> /dev/null; then
         echo -e "   └─ ${GREY}Status:${RESET} ❌ ${RED}rsync is not installed.${RESET}"
         return 3
@@ -2205,6 +2216,86 @@ syncFile() {
         fi
 
         echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Success!${RESET}"
+        return 0
+    fi
+
+    echo -e "   └─ ${GREY}Status:${RESET} ❌ ${RED}Failed!${RESET}"
+    [ -n "$rsyncOutput" ] && echo -e "      ${GREY}${rsyncOutput}${RESET}"
+    return 3
+}
+
+# syncDir: Mirrors a directory into a destination parent directory.
+#
+# Same calling convention and exit codes as syncFile, so the two can be mixed
+# freely with _trackSyncResult.
+#
+# The mirror is exact (--delete): removing a skill locally removes it from the
+# backup too. That is the point of a backup, and git keeps the history either
+# way. A missing source is skipped rather than treated as "delete everything".
+#
+# Symlinks are followed (-L) and their contents copied: a backup has to survive
+# the link target going away, which is exactly what a reimage does.
+#
+# Usage:
+#   syncDir <source_dir> <destination_parent_dir> [new_name]
+#
+# Exit codes:
+#   0 - synced, something changed
+#   1 - already up to date
+#   2 - source does not exist, skipped
+#   3 - failed
+syncDir() {
+    local src="${1%/}"
+    local syncPath="$2"
+    local newName="$3"
+    local rsyncOutput=
+    local rsyncStatus=0
+
+    local dirname=$(basename "$src")
+    local syncName=${newName:-$dirname}
+    local dst="$syncPath/${syncName}"
+
+    if [ ! -d "$src" ]; then
+        echo -e "${LIGHTYELLOW}Warning: ${BLUE}$src${LIGHTYELLOW} does not exist, skipping.${RESET}"
+        return 2
+    fi
+
+    if [ ! -d "$syncPath" ] && ! mkdir -p "$syncPath"; then
+        echo -e "${RED}Error: Failed to create directory ${BLUE}$syncPath${RESET}"
+        return 3
+    fi
+
+    echo -e "📁 ${LIGHTYELLOW}Syncing Directory${RESET}"
+    echo -e "   ├─ ${GREY}Source:${RESET} ${CYAN}$src/${RESET}"
+    echo -e "   └─ ${GREY}Target:${RESET} ${CYAN}$dst/${RESET}"
+
+    # Same guard as syncFile: if the directory is symlinked into place, source and target
+    # are one and the same, and mirroring it onto itself with --delete would be a very
+    # expensive way to do nothing (or worse).
+    if [ -e "$dst" ] && [ "$(readlink -f "$src")" = "$(readlink -f "$dst")" ]; then
+        echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Already up to date.${RESET} ${GREY}(same directory, linked)${RESET}"
+        return 1
+    fi
+
+    if ! command -v rsync &> /dev/null; then
+        echo -e "   └─ ${GREY}Status:${RESET} ❌ ${RED}rsync is not installed.${RESET}"
+        return 3
+    fi
+
+    # -rLptD rather than -a: ownership/group are deliberately not preserved, so a
+    # restore onto a freshly imaged box does not carry stale uids.
+    rsyncOutput=$(rsync -rLptDci --delete \
+        --exclude='__pycache__/' --exclude='*.pyc' --exclude='.DS_Store' \
+        "$src/" "$dst/" 2>&1)
+    rsyncStatus=$?
+    if [ $rsyncStatus -eq 0 ]; then
+        if [ -z "$rsyncOutput" ]; then
+            echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Already up to date.${RESET}"
+            return 1
+        fi
+
+        local changed=$(echo "$rsyncOutput" | grep -c '^')
+        echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Success!${RESET} ${GREY}(${changed} item(s))${RESET}"
         return 0
     fi
 
@@ -2616,6 +2707,8 @@ backupClaudeCodeSettings() {
     _trackSyncResult $? processedCount failedCount
     syncFile "$srcDir/CLAUDE.md"           "$fTKClaudeDir"
     _trackSyncResult $? processedCount failedCount
+    syncDir  "$srcDir/skills"              "$fTKClaudeDir"
+    _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then
         return 1
@@ -2638,6 +2731,8 @@ restoreClaudeCodeSettings() {
     syncFile "$fTKClaudeCodeLocalSettings" "$dstDir"
     _trackSyncResult $? processedCount failedCount
     syncFile "$fTKClaudeCodeMd"            "$dstDir"
+    _trackSyncResult $? processedCount failedCount
+    syncDir  "$fTKClaudeCodeSkills"        "$dstDir"
     _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then

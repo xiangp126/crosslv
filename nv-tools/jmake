@@ -144,7 +144,6 @@ RELEASE_BASE="/mswg/release/host_fw"
 
 # GOLAN supported models (same order as MODEL_HARDWARE)
 # GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
-# Due to a compilation bug, carmel must be built (immediately) before argaman
 GOLAN_MODELS="arava tamar viper mustang carmel gilboa argaman alpine"
 GOLAN_MODELS_EXTENDED="alpine arava arava_codecov arava_ethlt aravacov argaman argaman_codecov \
 carmel carmel_codecov carmel_ethlt carmelcov gilboa gilboa_codecov gilboacov \

@@ -38,7 +38,7 @@
     },
     "nvidia-gdrive": {
       "type": "http",
-      "url": "https://maas.prd.astra.nvidia.com/maas/gdrive/mcp"
+      "url": "https://maas.prd.astra.nvidia.com/maas/gdrive_v2/mcp"
     },
     "nvidia-onedrive": {
       "type": "http",

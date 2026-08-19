@@ -35,12 +35,12 @@ _claude_tmux_sessions_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore patch-resurrect"
+    local commands="list save restore refresh patch-resurrect"
 
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | patch-resurrect)
+            list | save | restore | refresh | patch-resurrect)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -51,6 +51,10 @@ _claude_tmux_sessions_complete() {
     case "$prev" in
         -o | --output | -f | --file)
             COMPREPLY=($(compgen -f -- "$cur"))
+            return 0
+            ;;
+        --agent)
+            COMPREPLY=($(compgen -W "claude codex all" -- "$cur"))
             return 0
             ;;
     esac
@@ -68,6 +72,7 @@ _claude_tmux_sessions_complete() {
         list) opts="-h --help -a --all --json --ids-only" ;;
         save) opts="-h --help -o --output" ;;
         restore) opts="-h --help -f --file -n --dry-run" ;;
+        refresh) opts="-h --help --agent --include-self --timeout -n --dry-run" ;;
         patch-resurrect) opts="-h --help -n --dry-run -v --verbose" ;;
     esac
 

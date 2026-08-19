@@ -59,7 +59,7 @@ url = "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
 
 # [mcp_servers.nvidia-gdrive]
 # type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/gdrive/mcp"
+# url = "https://maas.prd.astra.nvidia.com/maas/gdrive_v2/mcp"
 
 # [mcp_servers.nvidia-onedrive]
 # type = "http"
@@ -161,9 +161,8 @@ url = "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
 # type = "http"
 # url = "https://maas.prd.astra.nvidia.com/maas/nvspecs/mcp"
 
-# [mcp_servers.nvidia-outlook]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
+[mcp_servers.nvidia-outlook]
+url = "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
 
 [notice.model_migrations]
 "gpt-5.3-codex" = "gpt-5.4"

@@ -36,7 +36,7 @@ Options:
     -h, --help                       Show this help message and exit
     -d, --debug                      Enable debug mode (set -x)
     -f, --force                      Pass --force to the actual CLI binary (e.g. force extension install)
-    -a, --anyway                     Force search for the code binary, ignoring \$VSCODE_BIN_PATH
+    -e, --refresh                     Force re-detection of the server binary and IPC socket, ignoring cache
     -v, --version                    Show version information
     -s, --status                     Print process usage and diagnostics information
     -c, --clean                      Clean obsolete IPC sockets
@@ -59,8 +59,8 @@ _EOF
 
 # Helper function: parse options
 _code_parse_options() {
-    local shortopts="hdfavpscr"
-    local longopts="help,debug,force,anyway,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
+    local shortopts="hdfevpscr"
+    local longopts="help,debug,force,refresh,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
     local script_name="code"
 
     local PARSED
@@ -85,8 +85,8 @@ _code_parse_options() {
                 _code_f_args+=("--force")
                 shift
                 ;;
-            -a|--anyway)
-                _code_f_force=true
+            -e|--refresh)
+                _code_f_refresh=true
                 shift
                 ;;
             -v|--version)
@@ -145,16 +145,43 @@ _code_parse_options() {
 }
 
 # Helper function: check whether an IPC socket still has a window behind it.
-# Socket files outlive the window that created them, so existence alone proves
-# nothing; without a listener the CLI silently succeeds and opens nothing.
+# Socket files outlive the window that created them, AND the server process
+# keeps the listener fd open (SO_ACCEPTCON) even after the window that owned
+# it closes — so `ss -lxn` / lsof LISTEN state matches every socket the
+# server ever created, live or orphaned, and can't tell them apart. The one
+# thing that actually distinguishes a live window is that its extensionHost
+# process (`--type=extensionHost`) holds an open fd to that exact socket. A
+# unix-socket fd under /proc/<pid>/fd resolves to `socket:[inode]`, not the
+# bound path, so match via the socket's inode from /proc/net/unix rather
+# than comparing readlink output to the path directly.
 _code_ipc_sock_is_live() {
-    local sock="$1" listeners
+    local sock="$1" pid inode fd
     [[ -n "$sock" && -S "$sock" ]] || return 1
-    command -v ss > /dev/null 2>&1 || return 0
-    # Capture and match in-shell: piping into `grep -q` makes ss die of SIGPIPE,
-    # which under the caller's `set -o pipefail` reports 141 even on a match.
-    listeners=$(ss -lxn 2>/dev/null) || return 0
-    [[ "$listeners" == *"$sock"* ]]
+    command -v pgrep > /dev/null 2>&1 || return 0
+    inode=$(awk -v s="$sock" '$NF==s{print $(NF-1)}' /proc/net/unix 2>/dev/null | head -n 1)
+    [[ -n "$inode" ]] || return 1
+    for pid in $(pgrep -f -- '--type=extensionHost' 2>/dev/null); do
+        for fd in /proc/"$pid"/fd/*; do
+            [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$inode]" ]] && return 0
+        done
+    done
+    return 1
+}
+
+# Helper function: newest-first scan of a directory's IPC sockets, returning
+# the first one that actually has a window listening behind it. A closed
+# window's server-side listener fd can outlive the window itself, so the
+# newest socket file by mtime is not necessarily attached to anything; taking
+# it blindly sends the open request into a void with no error and no window.
+_code_pick_live_ipc_sock() {
+    local dir="$1" sock
+    while IFS= read -r sock; do
+        if _code_ipc_sock_is_live "$sock"; then
+            echo "$sock"
+            return 0
+        fi
+    done < <(ls -t "$dir"/vscode-ipc-*.sock 2>/dev/null)
+    return 1
 }
 
 _set_vscode_code_path() {
@@ -239,7 +266,7 @@ _set_vscode_code_path() {
         # Keep the socket directory in sync so --clean acts on the right one
         _code_f_sys_path=$(dirname "$newIPCHook")
     else
-        newIPCHook=$(ls -t "$_code_f_sys_path"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+        newIPCHook=$(_code_pick_live_ipc_sock "$_code_f_sys_path")
     fi
     if [[ -z "$newIPCHook" ]]; then
         local _fallback
@@ -248,7 +275,7 @@ _set_vscode_code_path() {
         else
             _fallback="/tmp"
         fi
-        newIPCHook=$(ls -t "$_fallback"/vscode-ipc-*.sock 2>/dev/null | head -n 1)
+        newIPCHook=$(_code_pick_live_ipc_sock "$_fallback")
         [[ -n "$newIPCHook" ]] && _code_f_sys_path="$_fallback"
     fi
     if [ -z "$newIPCHook" ]; then
@@ -345,7 +372,7 @@ _code_self_reload() {
     unset -f code _code_self_reload \
              _code_usage _code_parse_options _set_vscode_code_path \
              _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
-             _code_pre_check _code_ipc_sock_is_live
+             _code_pre_check _code_ipc_sock_is_live _code_pick_live_ipc_sock
 
     # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
     if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
@@ -368,7 +395,7 @@ code() {
     # - VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code
     # - Cursor:  ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
     local _code_f_args=()
-    local _code_f_force=
+    local _code_f_refresh=
     local _code_f_debug=
     local _code_f_print=
     local _code_f_sys_path
@@ -406,7 +433,7 @@ code() {
         return 0
     fi
 
-    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$_code_f_force" ] || [ -n "$_code_f_print" ]; then
+    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$_code_f_refresh" ] || [ -n "$_code_f_print" ]; then
         _set_vscode_code_path || return 1
     fi
 
