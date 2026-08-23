@@ -35,8 +35,7 @@ Description:
 Options:
     -h, --help                       Show this help message and exit
     -d, --debug                      Enable debug mode (set -x)
-    -f, --force                      Pass --force to the actual CLI binary (e.g. force extension install)
-    -e, --refresh                     Force re-detection of the server binary and IPC socket, ignoring cache
+    -e, --refresh                    Force re-detection of the server binary and IPC socket, ignoring cache
     -v, --version                    Show version information
     -s, --status                     Print process usage and diagnostics information
     -c, --clean                      Clean obsolete IPC sockets
@@ -44,7 +43,8 @@ Options:
     -r, --reload                     Reload and update this function from its source file
 
 Commands:
-    --install-extension              Install the specified extension from a .vsix file
+    --install-extension              Install the specified extension from a .vsix file,
+                                     overwriting an already installed version
     --list-extensions                List the installed extensions with versions
     --locate-shell-integration-path  Print the path to a terminal shell integration script
 
@@ -59,8 +59,8 @@ _EOF
 
 # Helper function: parse options
 _code_parse_options() {
-    local shortopts="hdfevpscr"
-    local longopts="help,debug,force,refresh,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
+    local shortopts="hdevpscr"
+    local longopts="help,debug,refresh,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
     local script_name="code"
 
     local PARSED
@@ -79,10 +79,6 @@ _code_parse_options() {
             -d|--debug)
                 _code_f_debug=true
                 set -x
-                shift
-                ;;
-            -f|--force)
-                _code_f_args+=("--force")
                 shift
                 ;;
             -e|--refresh)
@@ -110,7 +106,9 @@ _code_parse_options() {
                 return 2 # Special return code to signal a reload
                 ;;
             --install-extension)
-                _code_f_args+=("--install-extension" "$2")
+                # Without --force the CLI refuses to touch an already installed
+                # version, which is never what handing it a local .vsix means.
+                _code_f_args+=("--install-extension" "$2" "--force")
                 shift 2
                 ;;
             --list-extensions)
@@ -433,7 +431,15 @@ code() {
         return 0
     fi
 
-    if [ -z "$VSCODE_BIN_PATH" ] || [ -n "$_code_f_refresh" ] || [ -n "$_code_f_print" ]; then
+    # VSCODE_BIN_PATH being set is not enough to skip detection: the exported
+    # VSCODE_IPC_HOOK_CLI a long-lived shell inherited can go stale while the
+    # binary path stays valid. A socket whose window closed keeps its listener
+    # fd open in the still-running server process, so connect() succeeds and the
+    # CLI returns 0 with no output and no file opened. rc=0 makes the retry loop
+    # in _code_run_cmd break immediately, so nothing ever re-detects. Re-run
+    # detection whenever the inherited hook has no window behind it.
+    if [ -z "$VSCODE_BIN_PATH" ] || ! _code_ipc_sock_is_live "$VSCODE_IPC_HOOK_CLI" \
+        || [ -n "$_code_f_refresh" ] || [ -n "$_code_f_print" ]; then
         _set_vscode_code_path || return 1
     fi
 

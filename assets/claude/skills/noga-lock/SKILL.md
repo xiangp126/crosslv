@@ -71,7 +71,10 @@ that one line answers "is the task alive" and "how much longer" at a glance.
 - **Session commands such as `/model` can kill background tasks.** If the user switches models
   mid-wait, re-check liveness (output-file mtime, plus `ps`) and restart the monitor. A silent
   dead monitor looks exactly like a busy one.
-- Poll at 60 s. Anything faster only adds load; the interesting transition happens once a day.
+- **Poll at 60 s — never longer.** The poll interval *is* the window in which somebody else can
+  take the box out from under you. 2026-08-20: mars_reg's lock on m-fwreg-016 expired at
+  18:12:58 and a monitor polling every 5 minutes found it already held by another user on its
+  next check — who then kept it for the following 8 hours. Faster than 60 s only adds load.
 - Reaching the box:
   ```bash
   sshpass -p <pw> ssh -o StrictHostKeyChecking=no -o ControlMaster=auto \

@@ -7,15 +7,17 @@ _code_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define options
-    opts="-h -d -f -a -v -p -s -c -r"
-    long_opts="--help --debug --force --anyway --version --print --status --clean --reload \
+    opts="-h -d -e -v -p -s -c -r"
+    long_opts="--help --debug --refresh --version --print --status --clean --reload \
                --install-extension \
-               --locate-shell-integration-path \
-               --list-extensions"
+               --list-extensions \
+               --locate-shell-integration-path"
 
     case "${prev}" in
-	*)
-	    ;;
+        --install-extension)
+            COMPREPLY=( $(compgen -f -X '!*.vsix' -- "${cur}") $(compgen -d -- "${cur}") )
+            return 0
+            ;;
     esac
 
     if [[ ${cur} == -* ]]; then
