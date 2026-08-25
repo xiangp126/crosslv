@@ -488,7 +488,24 @@ _monitorPid() {
     fi
     [ -n "$pid" ] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
+    _isOurPid "$pid" || return 1
     echo "$pid"
+}
+
+# True when <pid> is one of our own processes rather than just any live pid.
+#
+# kill -0 on its own is not enough: after a reboot (or a pid wrap) the pid in a
+# leftover lockfile can land on an unrelated process, and every caller of
+# _monitorPid would then believe a daemon watches a pane that has none — which
+# also means --stop would signal a stranger. The script name is matched as a
+# whole token, so "bash /path/to/ja --daemon" and a bare "ja" both count while
+# neighbours like "java" do not. If ps says nothing at all we keep believing
+# kill -0, since guessing "not ours" would let a second daemon onto the pane.
+_isOurPid() {
+    local pid="$1" cmd
+    cmd=$(ps -o command= -p "$pid" 2>/dev/null)
+    [ -n "$cmd" ] || return 0
+    [[ "$cmd" =~ (^|[/[:space:]])${SCRIPT_NAME}([[:space:]]|$) ]]
 }
 
 # Return the tty name of a pid (e.g. "pts/4"), or empty (with non-zero
@@ -1586,6 +1603,43 @@ _stateFileForPane() {
     return 1
 }
 
+# Delete the state (and lock) files of daemons that are gone for good, and
+# echo how many went. A daemon only clears its own files from _cleanup, which
+# runs on INT/TERM/EXIT — a SIGKILL or a reboot leaves them behind for ever,
+# and since --status counts state files those pile up as phantom instances.
+#
+# A dead daemon goes when its pane is gone too, or when it predates the
+# running tmux server. That second test is what makes the first one mean
+# anything: pane ids are only unique within one server lifetime — after a
+# restart they are handed out from %0 again — so an old state file's pane_id
+# gets adopted by an unrelated new pane, and "its pane still exists" would keep
+# a June daemon listed against a pane it never watched.
+#
+# What survives is a daemon that died inside the current server's lifetime with
+# its pane still open: that row is how you notice auto-approve stopped in a pane
+# you can still see. The .log is always kept, it is the only record left of what
+# that daemon did.
+_pruneDeadStates() {
+    local f tpid started srvStart n=0
+    srvStart=$(tmux display-message -p '#{start_time}' 2>/dev/null)
+    # Not an epoch (older tmux formats it): skip the age test rather than guess
+    [[ "$srvStart" =~ ^[0-9]+$ ]] || srvStart=0
+    for f in "$(_runtimeDir)"/*.state.json; do
+        [ -e "$f" ] || continue
+        tpid=$(_readStateField "$f" target_pane_id)
+        # No recorded pane_id (legacy file): nothing to resolve, leave it alone
+        [ -n "$tpid" ] || continue
+        _monitorPid "$tpid" >/dev/null && continue
+        started=$(_readStateField "$f" started_ts)
+        if ! [[ "$started" =~ ^[0-9]+$ ]] || [ "$started" -ge "$srvStart" ]; then
+            [ -n "$(_liveLocation "$tpid")" ] && continue
+        fi
+        rm -f "$f" "${f%.state.json}.lock"
+        n=$((n + 1))
+    done
+    echo "$n"
+}
+
 # Stop the daemon monitoring a target pane. Idempotent — "already not
 # running" is reported but exits 0. Cleans up stale lockfile/state if
 # the recorded pid is dead. Locates the daemon by recorded pane_id so it
@@ -1639,7 +1693,9 @@ handleStopRequest() {
             "$(_boxRow pane "$label" "${BLUE}${label}${RESET}")"
         return 0
     fi
-    if ! kill -0 "$pid" 2>/dev/null; then
+    # _isOurPid as well as kill -0: a recorded pid that a reboot handed to some
+    # unrelated process is stale state, and signalling it would hit a stranger.
+    if ! kill -0 "$pid" 2>/dev/null || ! _isOurPid "$pid"; then
         # Stale state — daemon died without cleaning up. Remove the
         # detritus so next launch isn't blocked.
         rm -f "$lockfile" "$statefile"
@@ -1789,6 +1845,23 @@ _readStateField() {
         | head -1
 }
 
+# The state a state file describes right now: dead when the daemon that wrote
+# it is gone, paused when it is alive but the pane holds no AI it monitors,
+# active when it is alive and watching one. Shared by the per-instance block
+# and the summary tally so the two can never disagree.
+_instanceState() {
+    local pid=$(_readStateField "$1" pid)
+    # _isOurPid as well as kill -0, same rule --stop applies: a recorded pid
+    # that a reboot handed to an unrelated process is dead, not active.
+    if ! kill -0 "$pid" 2>/dev/null || ! _isOurPid "$pid"; then
+        echo dead
+    elif [ "$(_readStateField "$1" paused)" = "true" ]; then
+        echo paused
+    else
+        echo active
+    fi
+}
+
 # Render one instance's detail block (no leading rule) given its state file
 # and a pre-formatted index marker (e.g. "[3]" or "[3*]"). Extracted from
 # handleStatusRequest so the session-grouping loop stays readable; the block
@@ -1798,7 +1871,7 @@ _renderInstanceBlock() {
     local f="$1" index_label="$2"
     local _labW=12 _valW=19 _lab2W=12
     local now=$(date +%s)
-    local target target_pane_id pid ai daemon_int started approved paused
+    local target target_pane_id pid ai daemon_int started approved
     local last_ts last_type host state_plain state_colored state_pad last_when
     local target_label live_loc uptime
 
@@ -1809,7 +1882,6 @@ _renderInstanceBlock() {
     daemon_int=$(_readStateField "$f" daemon)
     started=$(_readStateField "$f" started_ts)
     approved=$(_readStateField "$f" approved_count)
-    paused=$(_readStateField "$f" paused)
     last_ts=$(_readStateField "$f" last_event_ts)
     last_type=$(_readStateField "$f" last_event_type)
     host=$(_readStateField "$f" host)
@@ -1825,13 +1897,11 @@ _renderInstanceBlock() {
     fi
 
     # State: pad-then-color (ANSI escapes throw off %-Ns downstream).
-    if ! kill -0 "$pid" 2>/dev/null; then
-        state_plain="dead";    state_colored="${RED}dead${RESET}"
-    elif [ "$paused" = "true" ]; then
-        state_plain="paused";  state_colored="${LIGHTYELLOW}paused${RESET}"
-    else
-        state_plain="active";  state_colored="${GREEN}active${RESET}"
-    fi
+    case $(_instanceState "$f") in
+        dead)   state_plain="dead";   state_colored="${RED}dead${RESET}" ;;
+        paused) state_plain="paused"; state_colored="${LIGHTYELLOW}paused${RESET}" ;;
+        *)      state_plain="active"; state_colored="${GREEN}active${RESET}" ;;
+    esac
     state_pad=$(printf "%-${_valW}s" "$state_plain")
     state_pad="${state_colored}${state_pad#$state_plain}"
 
@@ -1898,6 +1968,9 @@ _renderInstanceBlock() {
 # distinct sessions. Always shows every instance, no -t / --all branching.
 # If the caller is inside tmux, the row for the caller's pane is marked `*`.
 handleStatusRequest() {
+    # Before counting anything, drop the entries no daemon and no pane is left
+    # for, so the totals below describe what is actually running.
+    local pruned=$(_pruneDeadStates)
     local files=( "$(_runtimeDir)"/*.state.json )
     # Glob with no match expands to a literal that doesn't exist — guard.
     if [ ! -e "${files[0]}" ]; then
@@ -1926,9 +1999,17 @@ handleStatusRequest() {
     # from the stable pane_id; if the pane is gone we fall back to the
     # recorded target. Instances with no resolvable session (sort prefix 1)
     # land in a trailing "(no session)" group; everything else is prefix 0.
+    # The state tally for the heading is collected here too, off the same
+    # _instanceState the per-instance rows use, so the two always agree.
     local entries=() f loc winpane win pane pfx sdisp
+    local nActive=0 nPaused=0 nDead=0
     for f in "${files[@]}"; do
         local tpid tgt sess
+        case $(_instanceState "$f") in
+            active) nActive=$(( nActive + 1 )) ;;
+            paused) nPaused=$(( nPaused + 1 )) ;;
+            dead)   nDead=$((   nDead   + 1 )) ;;
+        esac
         tpid=$(_readStateField "$f" target_pane_id)
         tgt=$(_readStateField "$f" target)
         loc=$(_liveLocation "$tpid")
@@ -1971,17 +2052,6 @@ handleStatusRequest() {
         fi
     done
 
-    # Summary heading — a plain line (no rule, no box), reporting total
-    # instances across distinct sessions. Singular-aware.
-    local N=${#files[@]} M=${#grpKeys[@]}
-    local instNoun="INSTANCES"; [ "$N" -eq 1 ] && instNoun="INSTANCE"
-    local sessNoun="SESSIONS";  [ "$M" -eq 1 ] && sessNoun="SESSION"
-    # Tool name as a bold uppercase title (tr, not ${..^^}, for bash 3.2/macOS).
-    local _disp; _disp=$(printf '%s' "$SCRIPT_NAME" | tr '[:lower:]' '[:upper:]')
-    printf "${BOLD}${CYAN}%s${RESET} ${GREY}·${RESET} ${CYAN}%s${RESET} ${GREY}%s · ${RESET}${CYAN}%s${RESET} ${GREY}%s${RESET}\n" \
-        "$_disp" "$N" "$instNoun" "$M" "$sessNoun"
-    echo
-
     # Width of the per-session header rule — spans the two-column instance
     # grid (marker + label1 + val1 + label2 + val2) so it aligns with blocks.
     local _labW=12 _valW=19 _lab2W=12
@@ -2020,6 +2090,28 @@ handleStatusRequest() {
         _renderInstanceBlock "$f" "$index_label"
         i=$((i + 1))
     done
+
+    # Summary — a plain line (no rule, no box) with the totals and the state
+    # breakdown. Printed last, not first: with a screenful of instances the
+    # figures would already have scrolled off by the time the output stops.
+    # The instance blocks each end in a blank line, so it needs no spacer.
+    # Singular-aware.
+    local N=${#files[@]} M=${#grpKeys[@]}
+    local instNoun="INSTANCES"; [ "$N" -eq 1 ] && instNoun="INSTANCE"
+    local sessNoun="SESSIONS";  [ "$M" -eq 1 ] && sessNoun="SESSION"
+    # Tool name as a bold uppercase title (tr, not ${..^^}, for bash 3.2/macOS).
+    local _disp; _disp=$(printf '%s' "$SCRIPT_NAME" | tr '[:lower:]' '[:upper:]')
+    printf "${BOLD}${CYAN}%s${RESET} ${GREY}·${RESET} ${CYAN}%s${RESET} ${GREY}%s · ${RESET}${CYAN}%s${RESET} ${GREY}%s${RESET}" \
+        "$_disp" "$N" "$instNoun" "$M" "$sessNoun"
+    # State breakdown, in the order an instance degrades. Only the states that
+    # actually occur are shown — "0 dead" would be noise on a healthy machine.
+    [ "$nActive" -gt 0 ] && printf " ${GREY}·${RESET} ${GREEN}%s ACTIVE${RESET}" "$nActive"
+    [ "$nPaused" -gt 0 ] && printf " ${GREY}·${RESET} ${LIGHTYELLOW}%s PAUSED${RESET}" "$nPaused"
+    [ "$nDead"   -gt 0 ] && printf " ${GREY}·${RESET} ${RED}%s DEAD${RESET}" "$nDead"
+    printf "\n"
+    if [ "$pruned" -gt 0 ]; then
+        printf "${GREY}cleaned %s stale instance(s) — dead daemons whose pane is gone${RESET}\n" "$pruned"
+    fi
 }
 
 # Tail the daemon's log file. `-F` (capital) follows by name not fd, so
@@ -2163,31 +2255,60 @@ resolveTarget() {
     fi
 }
 
+# Report the daemon already watching this pane, then exit. Both of
+# acquireLockfile's exits land here: the up-front check, and losing the race
+# for the lockfile itself.
+_exitAlreadyMonitoring() {
+    local pid="$1"
+    local _lbl=$(_targetLabel)
+    _drawBox \
+        "● ${SCRIPT_NAME} already monitoring" \
+        "${LIGHTYELLOW}●${RESET} ${SCRIPT_NAME} ${LIGHTYELLOW}already monitoring${RESET}" \
+        "$(_boxRow pane "$_lbl" "${BLUE}${_lbl}${RESET}")" \
+        "$(_boxRow pid  "$pid"  "${CYAN}${pid}${RESET}")" \
+        "$(_boxRow stop "${SCRIPT_NAME} --stop" "${LIGHTYELLOW}${SCRIPT_NAME} --stop${RESET}")"
+    exit 1
+}
+
 # Acquire the per-target lockfile so only one ja monitors a given pane.
-# If a stale (dead-pid) lockfile exists, we silently overwrite it.
 #
 # Duplicate detection routes through _monitorPid, so it sees a live
 # daemon even if the lockfile got deleted out from under it (the
 # state file is consulted as a fallback). Without that, a second
 # `ja -D` would happily start next to the already-running one and
 # both would race on send-keys into the same pane.
+#
+# That check cannot settle a tie on its own, though: two daemons starting in
+# the same instant both find no live monitor, and with a plain `echo $$ >` both
+# would carry on into mainLoop. The lockfile then names only one of them, so
+# --stop and --status can't see the other while it keeps sending keys, and
+# whichever exits first takes the survivor's lockfile and state file with it.
+# Creating the file under noclobber (O_EXCL) is what decides the tie: exactly
+# one create succeeds, and the loser re-checks and bows out.
 acquireLockfile() {
     # Path computed via _lockFilePath (keyed by pane_id) so it stays in sync
     # with everything else (_monitorPid, --stop, --status, the wrapper, etc.).
     fLockFile=$(_lockFilePath "$fTargetPaneId")
 
-    local _liveMonitorPid
+    local _liveMonitorPid _try
     if _liveMonitorPid=$(_monitorPid "$fTargetPaneId"); then
-        local _lbl=$(_targetLabel)
-        _drawBox \
-            "● ${SCRIPT_NAME} already monitoring" \
-            "${LIGHTYELLOW}●${RESET} ${SCRIPT_NAME} ${LIGHTYELLOW}already monitoring${RESET}" \
-            "$(_boxRow pane "$_lbl"              "${BLUE}${_lbl}${RESET}")" \
-            "$(_boxRow pid  "$_liveMonitorPid"   "${CYAN}${_liveMonitorPid}${RESET}")" \
-            "$(_boxRow stop "${SCRIPT_NAME} --stop" "${LIGHTYELLOW}${SCRIPT_NAME} --stop${RESET}")"
-        exit 1
+        _exitAlreadyMonitoring "$_liveMonitorPid"
     fi
-    echo $$ > "$fLockFile"
+
+    for _try in 1 2 3; do
+        if ( set -o noclobber; echo $$ > "$fLockFile" ) 2>/dev/null; then
+            return 0
+        fi
+        # The file exists: either we lost the race to a live daemon, or it is
+        # left over from one that was killed. Only the latter is ours to clear.
+        if _liveMonitorPid=$(_monitorPid "$fTargetPaneId"); then
+            _exitAlreadyMonitoring "$_liveMonitorPid"
+        fi
+        rm -f "$fLockFile"
+    done
+
+    echo -e "${RED}Error: could not claim lockfile $fLockFile${RESET}" >&2
+    exit 1
 }
 
 # Define _cleanup and arm the trap. _cleanup runs on Ctrl+C (INT), kill
@@ -2197,11 +2318,17 @@ setupCleanupTrap() {
     # which exits, but exiting also fires EXIT — if the trap is still
     # armed, the "Stopped" message prints twice.
     _cleanup() {
-        rm -f "$fLockFile"
-        # Also remove the state file — --status should not list a daemon
-        # that has clearly stopped. Keyed by pane_id via _stateFilePath so
-        # the rule stays in sync with where mainLoop wrote it.
-        [ -n "$fTargetPaneId" ] && rm -f "$(_stateFilePath "$fTargetPaneId")"
+        # Only clear the files while they are still ours. Deleting by path
+        # alone means any daemon that no longer holds the lock — one that lost
+        # the race, or one whose pane was re-claimed — would wipe the running
+        # daemon's lockfile and state, leaving it invisible to --stop.
+        if [ -n "$fLockFile" ] && [ "$(cat "$fLockFile" 2>/dev/null)" = "$$" ]; then
+            rm -f "$fLockFile"
+            # Also remove the state file — --status should not list a daemon
+            # that has clearly stopped. Keyed by pane_id via _stateFilePath so
+            # the rule stays in sync with where mainLoop wrote it.
+            [ -n "$fTargetPaneId" ] && rm -f "$(_stateFilePath "$fTargetPaneId")"
+        fi
         echo
         _log "Stopped. Approved ${GREEN}$fApprovedCount${RESET} prompts."
         trap - INT TERM EXIT
@@ -2268,14 +2395,14 @@ daemonize() {
     fi
 
     # Wait briefly for the child to claim its lockfile so we can report its
-    # pid and avoid racing a follow-up invocation.
-    local lockfile=$(_lockFilePath "$fTargetPaneId")
+    # pid and avoid racing a follow-up invocation. Via _monitorPid rather than
+    # reading the file directly: a leftover lockfile from a dead daemon is
+    # non-empty too, and the child clears it only once it gets that far, so a
+    # plain read here would report a pid that no longer exists.
     local i cpid=""
     for i in 1 2 3 4 5 6 7 8; do
-        if [ -f "$lockfile" ]; then
-            cpid=$(cat "$lockfile" 2>/dev/null)
-            [ -n "$cpid" ] && break
-        fi
+        cpid=$(_monitorPid "$fTargetPaneId") && break
+        cpid=""
         sleep 0.1
     done
     local _lbl=$(_targetLabel)

@@ -35,12 +35,12 @@ _claude_tmux_sessions_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore refresh patch-resurrect"
+    local commands="list save restore refresh set-effort patch-resurrect"
 
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | refresh | patch-resurrect)
+            list | save | restore | refresh | set-effort | patch-resurrect)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -73,11 +73,19 @@ _claude_tmux_sessions_complete() {
         save) opts="-h --help -o --output" ;;
         restore) opts="-h --help -f --file -n --dry-run" ;;
         refresh) opts="-h --help --agent --include-self --timeout -n --dry-run" ;;
+        set-effort) opts="-h --help --include-self --delay --timeout --no-verify -n --dry-run" ;;
         patch-resurrect) opts="-h --help -n --dry-run -v --verbose" ;;
     esac
 
     if [[ $cur == -* ]]; then
         COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+        return 0
+    fi
+
+    # set-effort's only positional is the level: claude's own --effort list,
+    # plus the 'auto' that just the slash command knows
+    if [[ $cmd == set-effort ]]; then
+        COMPREPLY=($(compgen -W "low medium high xhigh max auto" -- "$cur"))
         return 0
     fi
 

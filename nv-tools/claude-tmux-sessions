@@ -47,6 +47,10 @@ QUIT_KEYS = {
     "codex": ["C-d"],
 }
 
+# Levels claude's TUI takes for `/effort`. 'ultracode' needs dynamic workflows
+# enabled, so it is left out; codex has no such command at all.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max", "auto")
+
 # Linux hands out process details through /proc; macOS has no such thing, so
 # everything below falls back to ps (and to lsof for the codex fd scan).
 HAS_PROC = Path("/proc/self/stat").exists()
@@ -399,6 +403,153 @@ def collect(include_stale=False):
     return records
 
 
+def foreground_by_pane(records):
+    """One record per tmux pane, keyed by (session, window, pane).
+
+    A pane can hold several sessions (Ctrl-Z suspended ones); prefer the one in
+    the foreground, then the most recently started.
+    """
+    by_pane = {}
+    for rec in records:
+        key = (rec["tmux_session"], rec["window_index"], rec["pane_index"])
+        prev = by_pane.get(key)
+        if prev is None or (prev["stopped"] and not rec["stopped"]):
+            by_pane[key] = rec
+        elif prev["stopped"] == rec["stopped"]:
+            if (rec["started_at"] or 0) > (prev["started_at"] or 0):
+                by_pane[key] = rec
+    return by_pane
+
+
+def claude_panes(include_self=False):
+    """Live claude sessions that can be typed into, one per pane.
+
+    Left out: suspended (Ctrl-Z) sessions, whose pane is back at the shell;
+    records with no target, whose pane is already gone; background agents, which
+    have no pane at all. CLAUDE_CODE_SESSION_ID is only set inside a Claude Code
+    Bash call, so only then is there a session of our own to skip.
+    """
+    records = [
+        rec
+        for rec in collect()
+        if rec["agent"] == "claude"
+        and rec["alive"]
+        and rec["target"]
+        and not rec["stopped"]
+        and rec.get("kind") in ("", "interactive")
+    ]
+    self_session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if self_session_id and not include_self:
+        records = [rec for rec in records if rec["session_id"] != self_session_id]
+    return list(foreground_by_pane(records).values())
+
+
+def pane_tail(pane_id, lines=40):
+    """The last `lines` of a pane's visible region, or None once the pane is gone.
+
+    capture-pane reads the tmux server's own buffer, so no client need be
+    attached. -J unwraps long lines, which an 80-column pane (the default until
+    a client attaches) would otherwise split and hide from a literal match.
+    """
+    try:
+        proc = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-J", "-t", pane_id],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return "\n".join(proc.stdout.splitlines()[-lines:])
+
+
+def new_match(before, after, needles):
+    """The newest line of `after` matching a needle, or "" if none is new.
+
+    Counted, not just matched: the same reply may still be on screen from an
+    earlier run, so only an extra copy of it is ours.
+    """
+    def hits(text):
+        return [
+            line.strip()
+            for line in text.splitlines()
+            if any(needle in line.lower() for needle in needles)
+        ]
+
+    found = hits(after)
+    if len(found) <= len(hits(before)):
+        return ""
+    return found[-1]
+
+
+def broadcast_to_claude(text, records=None, confirm=(), delay=0.3, timeout=8.0,
+                        tail=40, dry_run=False, include_self=False):
+    """Type `text` into every live claude pane and submit it.
+
+    C-l (chat:clearInput) first, because anything left in the input box would be
+    prefixed to the text, and a /command with something in front of it goes in as
+    an ordinary prompt. Escape would clear it too, but also cancels the turn in
+    flight. -l stops tmux reading the text as key names; the Enter follows
+    separately, `delay` later, once the TUI has the whole line.
+
+    `confirm` holds lowercased substrings of the expected reply, short enough to
+    survive a narrow pane wrapping it. Panes are all typed into first and polled
+    afterwards, so the wait is one timeout for all of them, and a fast pane is
+    not slept over.
+
+    Returns a dict per record: {"rec", "status", "detail"}. Status is dry-run,
+    failed (tmux refused the keys), gone (pane vanished), sent (nothing to
+    confirm), confirmed, or unconfirmed (no reply in time, e.g. a busy session
+    queued the text).
+    """
+    if records is None:
+        records = claude_panes(include_self=include_self)
+
+    results, pending = [], []
+    for rec in records:
+        # The pane id is stable across moves and relinks, the index is not
+        pane = rec["pane_id"] or rec["target"]
+        if dry_run:
+            results.append({"rec": rec, "status": "dry-run", "detail": text})
+            continue
+        before = pane_tail(pane, tail) or "" if confirm else ""
+        try:
+            tmux("send-keys", "-t", pane, "C-l")
+            tmux("send-keys", "-t", pane, "-l", text)
+            time.sleep(delay)
+            tmux("send-keys", "-t", pane, "Enter")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            results.append({"rec": rec, "status": "failed", "detail": str(exc)})
+            continue
+        if not confirm:
+            results.append({"rec": rec, "status": "sent", "detail": ""})
+            continue
+        result = {"rec": rec, "status": "unconfirmed", "detail": ""}
+        results.append(result)
+        pending.append((result, pane, before))
+
+    deadline = time.time() + timeout
+    while pending:
+        waiting = []
+        for result, pane, before in pending:
+            after = pane_tail(pane, tail)
+            if after is None:
+                result["status"] = "gone"
+                continue
+            line = new_match(before, after, confirm)
+            if line:
+                result["status"] = "confirmed"
+                result["detail"] = line
+                continue
+            waiting.append((result, pane, before))
+        pending = waiting
+        if not pending or time.time() >= deadline:
+            break
+        time.sleep(0.1)
+    return results
+
+
 def cmd_list(args):
     records = collect(include_stale=args.all)
     if not records:
@@ -631,6 +782,60 @@ def cmd_refresh(args):
     return 1 if failures else 0
 
 
+def cmd_set_effort(args):
+    """Set the effort level of every live claude session without restarting it.
+
+    Sessions start at settings.json's effortLevel, so raising them all otherwise
+    means typing /effort into each pane. claude saves a level the organisation
+    allows as a default (xhigh here) and calls anything above it "(this session
+    only)", which is why max has to be re-sent to every new session.
+    """
+    records = claude_panes(include_self=args.include_self)
+    if not args.include_self and os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        print("Leaving out the session this command is running in (use --include-self to include it).")
+    if not records:
+        print("No live claude panes to type into.", file=sys.stderr)
+        return 1
+
+    command = f"/effort {args.level}"
+    print(f"Sending {command} to {len(records)} pane(s):")
+    results = broadcast_to_claude(
+        command,
+        records=records,
+        # Short substrings on purpose, a narrow pane wraps the whole sentence
+        confirm=() if args.no_verify else ("effort level", "not applied"),
+        delay=args.delay,
+        timeout=args.timeout,
+        dry_run=args.dry_run,
+    )
+
+    width = max(len(rec["target"]) for rec in records)
+    failures, refused, unconfirmed = 0, 0, 0
+    for result in results:
+        rec = result["rec"]
+        status, detail = result["status"], result["detail"]
+        # A reply is not a change: claude answers "Not applied" when something
+        # outranks the request, e.g. CLAUDE_CODE_EFFORT_LEVEL in the environment
+        if status == "confirmed" and "not applied" in detail.lower():
+            status, refused = "refused", refused + 1
+        elif status == "failed":
+            failures += 1
+        elif status == "unconfirmed":
+            unconfirmed += 1
+        line = f"  {rec['target']:<{width}}  {status:<11} {rec['name'] or rec['cwd']}"
+        if detail and status != "dry-run":
+            line += f"  {detail}"
+        print(line)
+
+    if unconfirmed:
+        print(
+            f"{unconfirmed} pane(s) said nothing back within {args.timeout}s: a busy"
+            " session holds the text in its queue until the current turn ends, so"
+            " check those with /effort current, or raise --timeout."
+        )
+    return 1 if failures or refused else 0
+
+
 def cmd_patch_resurrect(args):
     """Rewrite a saved tmux-resurrect layout so agent panes carry their resume command.
 
@@ -650,17 +855,7 @@ def cmd_patch_resurrect(args):
         for r in collect()
         if r["target"] and r.get("kind") in ("", "interactive")
     ]
-    by_pane = {}
-    for rec in records:
-        key = (rec["tmux_session"], rec["window_index"], rec["pane_index"])
-        prev = by_pane.get(key)
-        # A pane can hold several sessions (Ctrl-Z suspended ones); prefer the
-        # one still in the foreground, then the most recently started
-        if prev is None or (prev["stopped"] and not rec["stopped"]):
-            by_pane[key] = rec
-        elif prev["stopped"] == rec["stopped"]:
-            if (rec["started_at"] or 0) > (prev["started_at"] or 0):
-                by_pane[key] = rec
+    by_pane = foreground_by_pane(records)
 
     record_types = ("pane", "window", "state", "grouped_session")
     patched, out, dropped_lines = [], [], 0
@@ -768,6 +963,43 @@ def main():
         "-n", "--dry-run", action="store_true", help="Print what would run, kill nothing"
     )
     p_refresh.set_defaults(func=cmd_refresh)
+
+    p_effort = sub.add_parser(
+        "set-effort",
+        help="Type /effort <level> into every live claude pane",
+        description=(
+            "Send claude's /effort to every live claude session in tmux, so they"
+            " all move off the level in settings.json without a restart. max only"
+            " ever reaches the sessions running now, claude refuses to save it as"
+            " the default. Each input box is cleared first (C-l), so an unsent"
+            " draft there is lost. Codex has no such command and is skipped."
+            " Pass -n to see which panes would be typed into."
+        ),
+    )
+    p_effort.add_argument(
+        "level", nargs="?", default="max", choices=EFFORT_LEVELS,
+        help="Effort level to set (default: max)",
+    )
+    p_effort.add_argument(
+        "--include-self", action="store_true",
+        help="Also type into the session this command is itself running inside of",
+    )
+    p_effort.add_argument(
+        "--delay", type=float, default=0.3,
+        help="Seconds between the text and the Enter submitting it (default: 0.3)",
+    )
+    p_effort.add_argument(
+        "--timeout", type=float, default=8.0,
+        help="Seconds to wait for claude's reply; a busy pane only answers once"
+             " its turn ends (default: 8)",
+    )
+    p_effort.add_argument(
+        "--no-verify", action="store_true", help="Send without reading the panes back"
+    )
+    p_effort.add_argument(
+        "-n", "--dry-run", action="store_true", help="List the panes, type nothing"
+    )
+    p_effort.set_defaults(func=cmd_set_effort)
 
     p_patch = sub.add_parser(
         "patch-resurrect",
