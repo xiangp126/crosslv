@@ -57,6 +57,36 @@ _EOF
     return 0
 }
 
+# Helper function: paths pasted straight out of `git diff` / `git show` carry
+# git's a/ or b/ diff prefix, which is not a real directory. Those paths are
+# relative to the repository root rather than to $PWD, so resolve them from
+# there. Only reached once the path as given has already failed to resolve, so
+# a directory genuinely named a/ or b/ still takes precedence.
+# Prints the resolved path (unchanged when nothing applies).
+_code_strip_git_prefix() {
+    local path="$1" rest root
+    if [[ "$path" == [ab]/* ]]; then
+        rest="${path#*/}"
+        root=$(git rev-parse --show-toplevel 2>/dev/null)
+        if [[ -n "$root" && -e "$root/$rest" ]]; then
+            # Keep it short when the repo root is where the shell already is
+            if [[ "$PWD" == "$root" ]]; then
+                printf '%s' "$rest"
+            else
+                printf '%s' "$root/$rest"
+            fi
+            return 0
+        fi
+        # Not in a repo (or not tracked there): a plain relative try still helps
+        if [[ -e "$rest" ]]; then
+            printf '%s' "$rest"
+            return 0
+        fi
+    fi
+    printf '%s' "$path"
+    return 1
+}
+
 # Helper function: a path copied out of grep/jr output or a chat message often
 # carries the very directory the shell is already sitting in - running
 # `code OCI_EMU/notes.md` from inside OCI_EMU/. Drop the leading directory run
@@ -173,6 +203,16 @@ _code_parse_options() {
             pos="${path#"${BASH_REMATCH[1]}"}$pos"
             path="${BASH_REMATCH[1]}"
         done
+        if [[ ! -e "$path" ]]; then
+            stripped=$(_code_strip_git_prefix "$path")
+            if [[ "$stripped" != "$path" ]]; then
+                echo -e "${LIGHTYELLOW}Dropped git diff prefix ${path:0:2}, opening${RESET} $stripped" >&2
+                path="$stripped"
+            fi
+        fi
+        # Complementary rather than alternative: a/ and b/ mark a path pasted
+        # from a diff, while this covers prefix-free paths from jr or ls output.
+        # The more specific signal gets the first say.
         if [[ ! -e "$path" ]]; then
             stripped=$(_code_strip_cwd_prefix "$path")
             if [[ "$stripped" != "$path" ]]; then
@@ -438,7 +478,7 @@ _code_self_reload() {
              _code_usage _code_parse_options _set_vscode_code_path \
              _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
              _code_pre_check _code_ipc_sock_is_live _code_pick_live_ipc_sock \
-             _code_strip_cwd_prefix
+             _code_strip_cwd_prefix _code_strip_git_prefix
 
     # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
     if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then

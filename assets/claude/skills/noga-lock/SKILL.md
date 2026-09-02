@@ -71,10 +71,23 @@ that one line answers "is the task alive" and "how much longer" at a glance.
 - **Session commands such as `/model` can kill background tasks.** If the user switches models
   mid-wait, re-check liveness (output-file mtime, plus `ps`) and restart the monitor. A silent
   dead monitor looks exactly like a busy one.
-- **Poll at 60 s — never longer.** The poll interval *is* the window in which somebody else can
-  take the box out from under you. 2026-08-20: mars_reg's lock on m-fwreg-016 expired at
-  18:12:58 and a monitor polling every 5 minutes found it already held by another user on its
-  next check — who then kept it for the following 8 hours. Faster than 60 s only adds load.
+- **Poll at 15 s — never longer.** The poll interval *is* the window in which somebody else can
+  take the box out from under you. Two incidents, both lost boxes:
+  - 2026-08-20: mars_reg's lock on m-fwreg-016 expired at 18:12:58 and a monitor polling every
+    5 minutes found it already held by another user on its next check — who then kept it for the
+    following 8 hours.
+  - 2026-09-02: a monitor polling every **60 s** saw m-fwreg-017 go `Release` at 19:28:32 and
+    fired `jmake --reg-malloc` in the *same second* — and still lost it to another user. The
+    malloc round-trip through the Noga REST layer takes ~6 s, so on top of that you may be up to
+    a full poll interval behind whoever else is watching. 60 s was not tight enough.
+  15 s costs ~4x the queries and is still trivial load. Do not stretch it back out for
+  log readability — log only state CHANGES plus a ~20 min heartbeat instead.
+- **Losing the race is normal; the script must survive it.** After malloc, always re-query and
+  require `lock_owner == $USER` before declaring success, then keep looping for the next
+  `Release`. A malloc that returns 0 is not proof you own the box.
+- **A `Status.status` that parses as empty is not a Release.** Noga queries occasionally return
+  a malformed record (observed once in a 4 h watch). Treat an unparseable status as "unknown,
+  retry", never as an opportunity to grab — and never as a reason to stop watching.
 - Reaching the box:
   ```bash
   sshpass -p <pw> ssh -o StrictHostKeyChecking=no -o ControlMaster=auto \

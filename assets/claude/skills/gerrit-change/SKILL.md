@@ -18,7 +18,7 @@ continuation lines start at column 0 — NOT indented to align under
 
 Issue: 5149895
 
-Reviewed By: AI, yanku
+Reviewed By: AI, Jinbow(+1), Yanku(+2)
 
 (cherry picked from commit <full 40-char sha>)
 
@@ -36,16 +36,43 @@ Rules that actually matter:
   - Unsure? Read a recently merged commit on that branch and copy its shape.
 - **Keep every line ≤ 72 chars.** The `Title:` line may exceed it — gerrit only warns
   `subject >50 characters`, which is harmless. Wrap prose yourself; do not rely on the renderer.
+  - On a hanging-indent project the budget is **72 minus the indent**: under `Description: `
+    (13 spaces) prose must be **≤ 59 chars**. Forgetting this is the usual cause of
+    `warning: too many message lines longer than 72 characters` — and the web UI then
+    re-wraps the overflow to column 0, so every second line is flush-left and the message
+    reads as garbage even though the raw text looked aligned. 2026-09-02 on 1494424.
+  - A **verbatim quote that cannot fit in 59** (a FATAL line, a syndrome string) still stays
+    at the hanging indent — **break it at a natural boundary** (`;;`, `:`, `[`) across two or
+    three lines. Do NOT dedent the quote to buy width: Peter reviews the rendered message and
+    a block that is not vertically aligned with the rest of the Description gets bounced.
+    2026-09-02 on 1494424 — PS2 put the quote at 4 spaces to keep it in one piece, PS3 had to
+    re-align it. Alignment beats keeping the string on one line.
+- **Default reviewer line — write it, do not ask and do not omit it:**
+
+  ```
+  Reviewed By: AI, Jinbow(+1), Yanku(+2)
+  ```
+
+  `AI` credits this session. The `(+1)` / `(+2)` are the votes those reviewers are expected to
+  give, so the line goes in from the first push, before anyone has actually voted. Only
+  deviate when Peter names different reviewers for that change.
 - **Blank line between every block**: Title / Description / Issue / Reviewed By /
   cherry-pick note / Change-Id.
 - `Change-Id` must be the **last** block. A `(cherry picked from …)` line goes in its own
   block **before** it, or gerrit stops parsing the footer.
 - Take the cherry-pick sha from `git rev-parse <short>` — never hand-type it.
 
-Verify before pushing:
+Verify before pushing — **including before every amend-and-repush**, not just the first push:
 
 ```bash
-git log -1 --format=%B <sha> | awk '{print length($0), $0}'
+git log -1 --format=%B | awk 'length($0)>72 {print length($0), $0}'   # must print nothing
+git log -1 --format=%B | grep -c '^Change-Id'                         # must print 1
+```
+
+Run it on the message **file** before committing, so a bad message never reaches gerrit:
+
+```bash
+awk 'length($0)>72' /path/to/commit_msg.txt | wc -l                   # must print 0
 ```
 
 ## Two failures that reject a push
