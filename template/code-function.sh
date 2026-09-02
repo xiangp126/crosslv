@@ -57,6 +57,34 @@ _EOF
     return 0
 }
 
+# Helper function: a path copied out of grep/jr output or a chat message often
+# carries the very directory the shell is already sitting in - running
+# `code OCI_EMU/notes.md` from inside OCI_EMU/. Drop the leading directory run
+# that $PWD already ends with, and only that: falling back to the bare basename
+# would just as happily open an unrelated file of the same name from elsewhere
+# in the tree, which is harder to notice than not opening anything at all.
+# Prints the resolved path (unchanged when nothing applies).
+_code_strip_cwd_prefix() {
+    local path="$1" prefix= rest
+    # An absolute path has no repeated-prefix story; a typo there is just a typo
+    if [[ "$path" != /* ]]; then
+        rest="$path"
+        # Shortest prefix first, so as much of the original path as possible
+        # survives; the -e test keeps a match that still cannot be opened from
+        # ending the search early.
+        while [[ "$rest" == */* ]]; do
+            prefix="${prefix:+$prefix/}${rest%%/*}"
+            rest="${rest#*/}"
+            if [[ "$PWD" == */$prefix && -e "$rest" ]]; then
+                printf '%s' "$rest"
+                return 0
+            fi
+        done
+    fi
+    printf '%s' "$path"
+    return 1
+}
+
 # Helper function: parse options
 _code_parse_options() {
     local shortopts="hdevpscr"
@@ -129,9 +157,48 @@ _code_parse_options() {
         esac
     done
 
+    # A path that does not exist is opened as an empty untitled buffer, so a typo
+    # is indistinguishable from a successful open until you notice the file is
+    # blank. Reject it here instead. --goto takes path:line[:col], so a trailing
+    # position suffix has to come off before checking - but only while the path
+    # does not exist, so a file whose name really ends in :<digits> still wins.
+    local arg path pos stripped resolved=() missing=()
+    for arg in "$@"; do
+        path="$arg"
+        pos=
+        # Peel one numeric suffix at a time: bash ERE is greedy, so a single
+        # pattern with an optional :col leaves path:line:col at path:line. The
+        # suffix is put back afterwards so --goto still lands on the right line.
+        while [[ ! -e "$path" && "$path" =~ ^(.+):[0-9]+$ ]]; do
+            pos="${path#"${BASH_REMATCH[1]}"}$pos"
+            path="${BASH_REMATCH[1]}"
+        done
+        if [[ ! -e "$path" ]]; then
+            stripped=$(_code_strip_cwd_prefix "$path")
+            if [[ "$stripped" != "$path" ]]; then
+                echo -e "${LIGHTYELLOW}Already inside ${path%"/$stripped"}/, opening${RESET} $stripped" >&2
+                path="$stripped"
+            fi
+        fi
+        if [[ -e "$path" ]]; then
+            resolved+=("$path$pos")
+        else
+            missing+=("$path")
+        fi
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        for path in "${missing[@]}"; do
+            echo -e "${RED}Error: No such file or directory:${RESET} $path" >&2
+        done
+        # Handing the editor a new name used to be a way to start a file, so
+        # point at the explicit replacement instead of only refusing.
+        echo -e "${GREY}To create it: touch ${missing[0]} && code ${missing[0]}${RESET}" >&2
+        return 1
+    fi
+
     # If _code_f_args is empty here, _code_run_cmd will exit without execution.
     local first_arg=true
-    for arg in "$@"; do
+    for arg in "${resolved[@]}"; do
         if [[ -n $first_arg ]]; then
             _code_f_args+=("--goto")
             first_arg=
@@ -370,7 +437,8 @@ _code_self_reload() {
     unset -f code _code_self_reload \
              _code_usage _code_parse_options _set_vscode_code_path \
              _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
-             _code_pre_check _code_ipc_sock_is_live _code_pick_live_ipc_sock
+             _code_pre_check _code_ipc_sock_is_live _code_pick_live_ipc_sock \
+             _code_strip_cwd_prefix
 
     # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
     if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
