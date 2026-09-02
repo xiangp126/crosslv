@@ -58,6 +58,7 @@ it; run them after any change.
 | `nic-livefish-recovery` | un-bricking a NIC that vanished from PCI; the mlxconfig rule |
 | `satpf-171` | sat-PF env on l-fwreg-171, BlueField mlxconfig read-back traps |
 | `aipim-cli-env` | the ai-pim CLI container, Confluence write path |
+| `regression-report-mail` | nightly UtopX / NICX regression + coverage mails: subjects, senders, branch-pointer table, Outlook MCP limits |
 
 Full prose for anything above was split out of this file on 2026-08-13; the pre-split version is
 at `~/.claude/backups/CLAUDE.md.pre-skill-split.20260813-190042`.

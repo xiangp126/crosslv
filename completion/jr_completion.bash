@@ -9,9 +9,14 @@ _jr_completion() {
     # Define options
     opts="-h -v -d -c -n -A -e"
     long_opts="--help --vim --debug --all-files --rg-only --check-depends \
-               --no-clipboard --re-matching --exact"
+               --no-clipboard --re-matching --exact --add-type"
 
     case "${prev}" in
+	--add-type)
+	    # rg's own type names, so 'config' shows up without having to guess it
+	    COMPREPLY=( $(compgen -W "$(rg --type-list | cut -d: -f1)" -- ${cur}) )
+	    return 0
+	    ;;
 	*)
 	    ;;
     esac

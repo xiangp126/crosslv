@@ -349,8 +349,14 @@ _ai_start_ja_if_needed() {
             "$_C_RED" "$ai" "$_C_RESET" "$_C_CYAN" "$_C_RESET" "$_C_GREY" "$_C_RESET" >&2
         return 0
     fi
-    local paneid
-    paneid=$(tmux display-message -p '#{pane_id}' 2>/dev/null)
+    # $TMUX_PANE is the pane this shell actually lives in. `display-message`
+    # without -t answers with the client's ACTIVE pane instead, which is a
+    # different pane whenever the AI starts somewhere you are not looking — a
+    # send-keys launch, a pane in a background window. Binding the daemon to
+    # that pane leaves the one running the AI unguarded, and simultaneous
+    # launches all pile onto whichever pane happened to be active.
+    local paneid="${TMUX_PANE:-}"
+    [[ -z $paneid ]] && paneid=$(tmux display-message -p '#{pane_id}' 2>/dev/null)
     if [[ -z "$paneid" ]]; then
         printf '%s%s:%s --auto-approve could not resolve current tmux pane. %sFalling back.%s\n' \
             "$_C_RED" "$ai" "$_C_RESET" "$_C_GREY" "$_C_RESET" >&2

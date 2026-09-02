@@ -6,7 +6,6 @@
 fQuery=
 fRgOnly=
 fEditor="code"
-# fEditor="jrcode"
 fCheckDepends=
 fzfSelected=
 fREMatching=
@@ -18,10 +17,10 @@ fNoClipboard=
 fXselTimeout=10
 fQueryFromClipboard=
 fAllFiles=        # Search all files (ignore type filters)
+fAddTypes=()      # --add-type values, may repeat
 # Constants
 SCRIPTNAME=$(basename $0)
-# Cache uname result to avoid repeated calls
-OS_TYPE=$(uname)
+OSType=$(uname)   # Cache uname result to avoid repeated calls
 # Colors
 MAGENTA='\033[35m'
 CYAN='\033[36m'
@@ -60,6 +59,9 @@ Options:
     -e, --exact              Force literal substring filtering inside fzf
     --rg-only                Only use rg to search, not use fzf to select
     --re-matching            Force regular expression matching in rg
+    --add-type <name>        Also search this file type on top of the defaults.
+                             Takes an rg type name ('config') or a bare extension
+                             ('conf'). Repeatable.
 
 Matching behaviour:
     fzf always filters fuzzily, so typing 'nvmemanager' narrows down to
@@ -69,6 +71,7 @@ Matching behaviour:
 
 Example: $SCRIPTNAME wad_tcp_bind
          $SCRIPTNAME nvmemanager
+         $SCRIPTNAME --add-type conf caps_by_resource_manager
 
 _EOF
     exit 0
@@ -85,7 +88,7 @@ parseOptions() {
     fi
 
     SHORTOPTS="hvdcnAe"
-    LONGOPTS="help,vim,debug,rg-only,check-depends,no-clipboard,re-matching,exact,all-files"
+    LONGOPTS="help,vim,debug,rg-only,check-depends,no-clipboard,re-matching,exact,all-files,add-type:"
 
     # Use getopt to parse command-line options
     if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
@@ -130,6 +133,10 @@ parseOptions() {
                 fAllFiles=true
                 shift
                 ;;
+            --add-type)
+                fAddTypes+=("$2")
+                shift 2
+                ;;
             --rg-only)
                 fRgOnly=true
                 shift
@@ -155,7 +162,7 @@ checkDepends() {
     local depVersion
 
     # Add OS-specific clipboard dependency
-    if [[ "$OS_TYPE" == "Darwin" ]]; then
+    if [[ "$OSType" == "Darwin" ]]; then
         depends+=("pbpaste" "pbcopy")
     else
         depends+=("xsel")
@@ -216,7 +223,7 @@ checkDepends() {
 #      - Rarely used, mainly for legacy applications
 GetClipboardContent() {
     if [ -z "$fQuery" ]; then
-        if [[ "$OS_TYPE" == "Darwin" ]]; then
+        if [[ "$OSType" == "Darwin" ]]; then
             # macOS - use pbpaste (unified clipboard)
             fQuery=$(pbpaste 2>/dev/null)
             if [[ $? -ne 0 ]]; then
@@ -247,7 +254,7 @@ GetClipboardContent() {
 # would misreport the outcome of the search itself.
 ClearClipboard() {
     if [ -n "$fQueryFromClipboard" ]; then
-        if [[ "$OS_TYPE" == "Darwin" ]]; then
+        if [[ "$OSType" == "Darwin" ]]; then
             # macOS - clear clipboard by writing empty string
             if ! echo -n "" | pbcopy 2>/dev/null; then
                 echo -e "${COLOR}Warning: Failed to clear clipboard content${RESET}" >&2
@@ -334,6 +341,33 @@ openInEditor() {
     fi
 }
 
+# --add-type widens the default type whitelist, which a plain --glob cannot do:
+# rg treats an inclusive glob as a narrowing filter, so '--type c --glob *.conf'
+# returns only .conf files and drops every .c. Defining a throwaway type unions
+# with the --type flags already in play instead - the same trick the linkerscript
+# and adb entries in fuzzySearch use.
+addTypeParams=()
+buildAddTypes() {
+    local name knownTypes usedJrx=
+    [ ${#fAddTypes[@]} -eq 0 ] && return
+    knownTypes=$(rg --type-list | cut -d ":" -f1)
+    for name in "${fAddTypes[@]}"; do
+        [ -z "$name" ] && continue
+        if grep -qxF "$name" <<< "$knownTypes"; then
+            addTypeParams+=("--type" "$name")
+        else
+            # rg calls .conf files 'config' and exits 2 on a name it does not know,
+            # so treat anything unrecognised as a bare extension rather than failing.
+            echo -e "$USER_NOTATION ${COLOR}'$name' is not an rg type, treating as *.$name${RESET}" >&2
+            addTypeParams+=("--type-add" "jrx:*.$name")
+            usedJrx=true
+        fi
+    done
+    # The throwaway type only takes effect once it is selected
+    [ -n "$usedJrx" ] && addTypeParams+=("--type" "jrx")
+    return 0
+}
+
 fuzzySearch() {
     # rg options:
     # --fixed-strings Treat the pattern as a literal string
@@ -352,6 +386,8 @@ fuzzySearch() {
         "--max-columns-preview"
     )
     if [ -n "$fAllFiles" ]; then
+        # --add-type is skipped here on purpose: with no other --type in play it
+        # would narrow the search down to that one type instead of widening it
         rgParams+=("--no-ignore")
     else
         rgParams+=(
@@ -366,7 +402,9 @@ fuzzySearch() {
             "--type-add" "adb:*.adb"
             "--type" "adb"
             "--type" "txt"
+            "--type" "config" # rg's builtin config type: *.cfg, *.conf, *.config, *.ini
         )
+        [ ${#addTypeParams[@]} -gt 0 ] && rgParams+=("${addTypeParams[@]}")
     fi
     rgParams+=(
         # Exclude directories
@@ -451,6 +489,7 @@ main() {
     # Do the main work
     parseOptions "$@"
     [ -n "$fCheckDepends" ] && checkDepends
+    buildAddTypes
     # fuzzySearch exits early on several paths, so clean up from a trap
     if [ -z "$fNoClipboard" ]; then
         GetClipboardContent

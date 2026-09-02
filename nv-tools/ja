@@ -1570,8 +1570,11 @@ _resolveTargetForTaskMode() {
         return 0
     fi
     if [ -n "$TMUX" ]; then
-        local cur
-        cur=$(tmux display-message -p '#{pane_id}' 2>/dev/null)
+        # $TMUX_PANE is the pane we are running in; display-message without -t
+        # would answer with the client's active pane, so `ja --stop` typed into
+        # a pane you are not looking at would go for someone else's daemon.
+        local cur="${TMUX_PANE:-}"
+        [ -n "$cur" ] || cur=$(tmux display-message -p '#{pane_id}' 2>/dev/null)
         if [ -n "$cur" ]; then
             printf '%s' "$cur"
             return 0
@@ -1990,7 +1993,9 @@ handleStatusRequest() {
     # Failure is silent — outside tmux we just don't mark anything.
     local current_pane_id=""
     if [ -n "$TMUX" ]; then
-        current_pane_id=$(tmux display-message -p '#{pane_id}' 2>/dev/null)
+        # Our own pane, not the client's active one (see _resolveTargetForTaskMode)
+        current_pane_id="${TMUX_PANE:-}"
+        [ -n "$current_pane_id" ] || current_pane_id=$(tmux display-message -p '#{pane_id}' 2>/dev/null)
     fi
 
     # Pass 1 — derive each instance's session + spatial sort keys. Session is
