@@ -1,6 +1,6 @@
 ---
 name: ci-forensics
-description: Get from a red CI job or a bare test verdict down to the original failure log — Jenkins build to session_id to the MARS archive to status.txt/log.txt with the UFATAL or field mismatch. Covers minireg, DoA and regression sessions, and the attribution discipline for calling a failure environmental vs a real defect. Use when a CI build went red, an email report says "Failed: N" with no detail, or when asked why a test failed, which case failed, or whether a failure is ours.
+description: Get from a red CI job or a bare test verdict down to the original failure log — Jenkins build to session_id to the MARS archive to status.txt/log.txt with the UFATAL or field mismatch. Also covers the two svc-sw-hca-bot mail senders that carry details the Jenkins console and gerrit votes do not. Covers minireg, DoA and regression sessions, and the attribution discipline for calling a failure environmental vs a real defect. Use when a CI build went red, when monitoring a change's CI and votes, when an email report says "Failed: N" with no detail, or when asked why a test failed, which case failed, or whether a failure is ours.
 ---
 
 # Test & CI failure forensics
@@ -92,6 +92,37 @@ Each `log.txt` holds the raw `UFATAL` / `Field mismatch: expected=X Actual=Y` /
 
 Where to get a session_id if you don't have one: `--session_id N` in the upstream log,
 `Amonitor.php?session_id=N`, or the table in the email report.
+
+## Phase 3 — the bot mails, which carry things the console does not
+
+When monitoring a change, polling Jenkins and the gerrit API is **not enough**. Two *different*
+senders both render as "svc-sw-hca-bot" and are easy to conflate:
+
+| sender | address | carries |
+|---|---|---|
+| **Automation Bot** | `svc-sw-hca-bot@nvidia.com` | `PASSED/FAILED: CI_DOA_<n> <branch>` (per-device table: setup, pass %, session id, ran/passed/failed) · `nicx_minireg_doa #<n> - SUCCESS/FAILURE - UTOPX_CI_<n>` · the nightly regression / coverage reports |
+| **svc-sw-hca-bot (Code Review)** | `git12023@mtl-git-gf-05.nvidia.com` | gerrit events: `doa #<n> FAILED - CI_DOA_<n>` · `Patch set N: <label> ±1` · `[S] Change in ...utopx[<branch>]: <title>` |
+
+Two real examples of information that exists **only** in the mail:
+
+- `PASSED: CI_DOA_24672 …` — body says *"Mini-Regression **Passed, but failed in coverage**"*.
+  Jenkins said SUCCESS and gerrit voted `CI-Minireg+1`; neither shows the coverage tail.
+- `nicx_minireg_doa #51886 - SUCCESS - UTOPX_CI_24675` — body lists
+  **`Ignored Failure Stages`** by name. Those never surface as a stage failure anywhere else.
+
+```
+outlook_list_messages(query="from:svc-sw-hca-bot@nvidia.com", start_date="<today>", limit=15)
+outlook_search_messages(query="CI_DOA_<n> OR UTOPX_CI_<n>", limit=15)
+```
+
+The free-text search finds **both** senders at once and is the better default when you already
+know the build number. `outlook_list_messages` takes KQL fields only — see skill
+`regression-report-mail` for that tool's traps.
+
+> ⚠ **Outlook is MCP-only — there is no CLI for it** (it is not among the ai-pim CLIs). A
+> background bash watcher therefore **cannot poll mail**; it can only reach Jenkins and the
+> gerrit API. Split the work: let the watcher own gerrit/Jenkins, and check the mail yourself
+> via MCP at every reporting step. Do not assume a silent watcher means nothing happened.
 
 ## Attribution discipline
 

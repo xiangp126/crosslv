@@ -1,6 +1,6 @@
 ---
 name: tracking-redmine
-description: Track and manage Redmine issues via redmine-cli. Query issues, create and update tickets, add comments, search across projects, look up reference data (statuses, trackers, priorities), and resolve users. Use when looking up Redmine issues, creating tickets, updating issue status, commenting on issues, searching Redmine, or checking valid status/tracker/priority IDs.
+description: Fallback path for Redmine when the nvidia-redmine MCP is unavailable — track and manage issues via redmine-cli. Query issues, create and update tickets, add comments, search across projects, look up reference data (statuses, trackers, priorities), and resolve users. Use ONLY when the nvidia-redmine MCP tools (yai__get_tickets, yai__search_tickets, yai__list_tickets, yai__update_ticket, ...) are not connected or are failing; prefer those tools in every normal session.
 ---
 <!--
 Progressive Disclosure:
@@ -13,6 +13,18 @@ Related skills:
 -->
 
 # Issue Tracking with redmine-cli
+
+> **Use the `nvidia-redmine` MCP first. This CLI is the fallback.**
+>
+> When the MCP server is connected, `yai__get_tickets` / `yai__search_tickets` /
+> `yai__list_tickets` / `yai__update_ticket` / `yai__resolve_redmine_url` do everything below
+> and are strictly easier to drive from an agent session: no container, no TTY, no API key to
+> place, and URLs resolve directly. Two paths to the same tracker is one path too many —
+> reach for `redmine-cli` only when the MCP is absent from the tool list or its calls are
+> failing, and say which one you used when reporting results.
+>
+> (Recorded 2026-09-04. Every Redmine lookup in the #5232246 / #5257102 work went through the
+> MCP; `redmine-cli` was never needed.)
 
 Track and manage issues in Redmine via `redmine-cli`. **WSL note:** In WSL with Windows-installed binaries, append `.exe` to CLI names (`<tool>-cli.exe`).
 

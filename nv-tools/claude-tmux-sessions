@@ -550,6 +550,38 @@ def broadcast_to_claude(text, records=None, confirm=(), delay=0.3, timeout=8.0,
     return results
 
 
+def report_broadcast(results, refuse_marker, timeout, recheck):
+    """Print one line per pane and fold the statuses into an exit code.
+
+    Shared by set-effort and set-model. Both need the reply read rather than
+    just counted: claude answers instead of erroring when something outranks the
+    request, so a confirmed reply can still mean nothing changed.
+    """
+    width = max((len(r["rec"]["target"]) for r in results), default=0)
+    failures = refused = unconfirmed = 0
+    for result in results:
+        rec = result["rec"]
+        status, detail = result["status"], result["detail"]
+        if status == "confirmed" and refuse_marker in detail.lower():
+            status, refused = "refused", refused + 1
+        elif status == "failed":
+            failures += 1
+        elif status == "unconfirmed":
+            unconfirmed += 1
+        line = f"  {rec['target']:<{width}}  {status:<11} {rec['name'] or rec['cwd']}"
+        if detail and status != "dry-run":
+            line += f"  {detail}"
+        print(line)
+
+    if unconfirmed:
+        print(
+            f"{unconfirmed} pane(s) said nothing back within {timeout}s: a busy"
+            " session holds the text in its queue until the current turn ends, so"
+            f" check those with {recheck}, or raise --timeout."
+        )
+    return 1 if failures or refused else 0
+
+
 def cmd_list(args):
     records = collect(include_stale=args.all)
     if not records:
@@ -809,31 +841,40 @@ def cmd_set_effort(args):
         dry_run=args.dry_run,
     )
 
-    width = max(len(rec["target"]) for rec in records)
-    failures, refused, unconfirmed = 0, 0, 0
-    for result in results:
-        rec = result["rec"]
-        status, detail = result["status"], result["detail"]
-        # A reply is not a change: claude answers "Not applied" when something
-        # outranks the request, e.g. CLAUDE_CODE_EFFORT_LEVEL in the environment
-        if status == "confirmed" and "not applied" in detail.lower():
-            status, refused = "refused", refused + 1
-        elif status == "failed":
-            failures += 1
-        elif status == "unconfirmed":
-            unconfirmed += 1
-        line = f"  {rec['target']:<{width}}  {status:<11} {rec['name'] or rec['cwd']}"
-        if detail and status != "dry-run":
-            line += f"  {detail}"
-        print(line)
+    # claude answers "Not applied" rather than erroring when something outranks
+    # the request, e.g. CLAUDE_CODE_EFFORT_LEVEL in the environment
+    return report_broadcast(results, "not applied", args.timeout, "/effort current")
 
-    if unconfirmed:
-        print(
-            f"{unconfirmed} pane(s) said nothing back within {args.timeout}s: a busy"
-            " session holds the text in its queue until the current turn ends, so"
-            " check those with /effort current, or raise --timeout."
-        )
-    return 1 if failures or refused else 0
+
+def cmd_set_model(args):
+    """Set the model of every live claude session without restarting it.
+
+    Managed settings pin the model here, so every session starts on the pinned
+    one and going through `refresh` puts it straight back - typing /model is the
+    only way to move a running session off it. claude says so itself: "saved as
+    your default for new sessions" comes with the pin winning on the next start.
+    """
+    records = claude_panes(include_self=args.include_self)
+    if not args.include_self and os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        print("Leaving out the session this command is running in (use --include-self to include it).")
+    if not records:
+        print("No live claude panes to type into.", file=sys.stderr)
+        return 1
+
+    command = f"/model {args.model}"
+    print(f"Sending {command} to {len(records)} pane(s):")
+    results = broadcast_to_claude(
+        command,
+        records=records,
+        # Short substrings on purpose, a narrow pane wraps the whole sentence
+        confirm=() if args.no_verify else ("set model to", "is not available"),
+        delay=args.delay,
+        timeout=args.timeout,
+        dry_run=args.dry_run,
+    )
+
+    # An alias the organisation blocks comes back as "Model 'x' is not available"
+    return report_broadcast(results, "is not available", args.timeout, "/model")
 
 
 def cmd_patch_resurrect(args):
@@ -1000,6 +1041,48 @@ def main():
         "-n", "--dry-run", action="store_true", help="List the panes, type nothing"
     )
     p_effort.set_defaults(func=cmd_set_effort)
+
+    p_model = sub.add_parser(
+        "set-model",
+        help="Type /model <name> into every live claude pane",
+        description=(
+            "Send claude's /model to every live claude session in tmux, so they"
+            " all move off the model in managed settings without a restart. The"
+            " pin wins again on the next start, which is exactly what refresh"
+            " does, so run this after a refresh and not before. Any alias /model"
+            " itself accepts works: opus, sonnet, opusplan, opus[1m], or a full"
+            " model id. Each input box is cleared first (C-l), so an unsent draft"
+            " there is lost. Codex has no such command and is skipped."
+            " Pass -n to see which panes would be typed into."
+        ),
+    )
+    # Deliberately not a choices= list: the aliases claude accepts change with
+    # every model release, and a stale list here would reject a valid one. A
+    # name claude does not know is reported back as refused.
+    p_model.add_argument(
+        "model", nargs="?", default="opus",
+        help="Model alias or id to set (default: opus)",
+    )
+    p_model.add_argument(
+        "--include-self", action="store_true",
+        help="Also type into the session this command is itself running inside of",
+    )
+    p_model.add_argument(
+        "--delay", type=float, default=0.3,
+        help="Seconds between the text and the Enter submitting it (default: 0.3)",
+    )
+    p_model.add_argument(
+        "--timeout", type=float, default=8.0,
+        help="Seconds to wait for claude's reply; a busy pane only answers once"
+             " its turn ends (default: 8)",
+    )
+    p_model.add_argument(
+        "--no-verify", action="store_true", help="Send without reading the panes back"
+    )
+    p_model.add_argument(
+        "-n", "--dry-run", action="store_true", help="List the panes, type nothing"
+    )
+    p_model.set_defaults(func=cmd_set_model)
 
     p_patch = sub.add_parser(
         "patch-resurrect",

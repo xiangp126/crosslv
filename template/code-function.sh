@@ -52,8 +52,62 @@ Example: code --version
          code -d
          code --install-extension gitlens-13.0.2.vsix
          code myfile.txt
+         code src/hca/CmdSetHcaCap.cpp:451
+         code b/src/hca/CmdSetHcaCap.cpp   (git diff prefix is dropped)
+         code somedir/                     (pick a file under it with fzf)
 
 _EOF
+    return 0
+}
+
+# Helper function: a directory is not something the editor can open in the
+# window you are looking at - it spawns a new one. Offer the files under it
+# instead, through the same fzf/bat picker jr uses, so the choice happens here
+# rather than by reading a listing and running code a second time.
+# Prints the chosen path(s), one per line.
+# Exit: 0 chose something, 1 nothing chosen (user escaped), 2 could not ask.
+_code_pick_in_dir() {
+    local dir="$1" listing selected line shown=0
+    # rg honours .gitignore, so pointing this at a repo does not drown the picker
+    # in build output; find is only the fallback when rg is not installed.
+    # `command` keeps an interactive shell's aliases out of this: rg is aliased
+    # to --color=ansi in .bashrc and this function is parsed by that same shell,
+    # so a bare rg would hand back names wrapped in escape codes. --color=never
+    # covers the same ground for a RIPGREP_CONFIG_PATH doing it globally.
+    if command -v rg > /dev/null 2>&1; then
+        listing=$(command rg --files --color=never "$dir" 2>/dev/null)
+    else
+        listing=$(command find "$dir" -type f 2>/dev/null)
+    fi
+    if [[ -z "$listing" ]]; then
+        echo -e "${RED}Error:${RESET} $dir is a directory with no files under it." >&2
+        return 2
+    fi
+    # stdout is captured by the caller, so it is never a tty and cannot be the
+    # test here; stderr still points at the terminal in an interactive shell.
+    if ! command -v fzf > /dev/null 2>&1 || [ ! -t 2 ]; then
+        echo -e "${RED}Error:${RESET} $dir is a directory. Files under it:" >&2
+        while IFS= read -r line; do
+            printf '  %s\n' "$line" >&2
+            shown=$((shown + 1))
+            if [[ $shown -ge 20 ]]; then
+                echo "  ..." >&2
+                break
+            fi
+        done <<< "$listing"
+        return 2
+    fi
+    selected=$(printf '%s\n' "$listing" | FZF_DEFAULT_OPTS="" fzf \
+        --prompt="☞ " \
+        --layout=reverse \
+        --inline-info \
+        --multi \
+        --cycle \
+        --exit-0 \
+        --preview "bat --color=always --style=numbers {} 2>/dev/null || cat {}" \
+        --preview-window "top,60%,border-bottom")
+    [[ -z "$selected" ]] && return 1
+    printf '%s' "$selected"
     return 0
 }
 
@@ -187,15 +241,19 @@ _code_parse_options() {
         esac
     done
 
-    # A path that does not exist is opened as an empty untitled buffer, so a typo
-    # is indistinguishable from a successful open until you notice the file is
-    # blank. Reject it here instead. --goto takes path:line[:col], so a trailing
+    # Only a regular file can be opened in the window you are looking at. A path
+    # that does not exist opens as an empty untitled buffer, so a typo is
+    # indistinguishable from a successful open until you notice the file is
+    # blank - that one is refused. A directory would open a whole new window, so
+    # it turns into a pick among the files under it instead.
+    # --goto takes path:line[:col], so a trailing
     # position suffix has to come off before checking - but only while the path
     # does not exist, so a file whose name really ends in :<digits> still wins.
-    local arg path pos stripped resolved=() missing=()
+    local arg path pos stripped note picked line rejected= resolved=() missing=() notfile=()
     for arg in "$@"; do
         path="$arg"
         pos=
+        note=
         # Peel one numeric suffix at a time: bash ERE is greedy, so a single
         # pattern with an optional :col leaves path:line:col at path:line. The
         # suffix is put back afterwards so --goto still lands on the right line.
@@ -206,7 +264,7 @@ _code_parse_options() {
         if [[ ! -e "$path" ]]; then
             stripped=$(_code_strip_git_prefix "$path")
             if [[ "$stripped" != "$path" ]]; then
-                echo -e "${LIGHTYELLOW}Dropped git diff prefix ${path:0:2}, opening${RESET} $stripped" >&2
+                note="${LIGHTYELLOW}Dropped git diff prefix ${path:0:2}, opening${RESET} $stripped"
                 path="$stripped"
             fi
         fi
@@ -216,23 +274,59 @@ _code_parse_options() {
         if [[ ! -e "$path" ]]; then
             stripped=$(_code_strip_cwd_prefix "$path")
             if [[ "$stripped" != "$path" ]]; then
-                echo -e "${LIGHTYELLOW}Already inside ${path%"/$stripped"}/, opening${RESET} $stripped" >&2
+                note="${LIGHTYELLOW}Already inside ${path%"/$stripped"}/, opening${RESET} $stripped"
                 path="$stripped"
             fi
         fi
-        if [[ -e "$path" ]]; then
+        # The strip notice is held back until the path is known to be openable:
+        # announcing "opening X" and then refusing X reads like a contradiction.
+        if [[ -f "$path" ]]; then
+            [[ -n "$note" ]] && echo -e "$note" >&2
             resolved+=("$path$pos")
+        elif [[ -d "$path" ]]; then
+            [[ -n "$note" ]] && echo -e "$note" >&2
+            picked=$(_code_pick_in_dir "$path")
+            case $? in
+                # Escaping the picker is a deliberate cancel, not an error: say
+                # nothing and open nothing. Only "could not ask" is a failure,
+                # and the helper has already printed why.
+                0)
+                    while IFS= read -r line; do
+                        [[ -n "$line" ]] && resolved+=("$line")
+                    done <<< "$picked"
+                    ;;
+                2)
+                    rejected=true
+                    ;;
+            esac
+        elif [[ -e "$path" ]]; then
+            notfile+=("$path")
         else
             missing+=("$path")
         fi
     done
+    # Every bad path is reported before giving up, so a command naming several of
+    # them does not have to be run again to see the rest.
+    if [[ ${#notfile[@]} -gt 0 ]]; then
+        for path in "${notfile[@]}"; do
+            if [[ -d "$path" ]]; then
+                echo -e "${RED}Error:${RESET} $path is a directory." >&2
+            else
+                echo -e "${RED}Error:${RESET} $path is not a regular file." >&2
+            fi
+        done
+        rejected=true
+    fi
     if [[ ${#missing[@]} -gt 0 ]]; then
         for path in "${missing[@]}"; do
-            echo -e "${RED}Error: No such file or directory:${RESET} $path" >&2
+            echo -e "${RED}Error:${RESET} $path does not exist." >&2
         done
         # Handing the editor a new name used to be a way to start a file, so
         # point at the explicit replacement instead of only refusing.
         echo -e "${GREY}To create it: touch ${missing[0]} && code ${missing[0]}${RESET}" >&2
+        rejected=true
+    fi
+    if [[ -n "$rejected" ]]; then
         return 1
     fi
 
@@ -478,7 +572,7 @@ _code_self_reload() {
              _code_usage _code_parse_options _set_vscode_code_path \
              _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
              _code_pre_check _code_ipc_sock_is_live _code_pick_live_ipc_sock \
-             _code_strip_cwd_prefix _code_strip_git_prefix
+             _code_strip_cwd_prefix _code_strip_git_prefix _code_pick_in_dir
 
     # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
     if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then

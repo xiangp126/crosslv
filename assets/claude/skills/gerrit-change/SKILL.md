@@ -29,8 +29,22 @@ Rules that actually matter:
 
 - **Continuation-line style is per-project. Do not carry one project's style to another.**
   - `fw_ver/utopx` — **hanging indent** (Peter's standard as of 2026-08-05): continuation
-    lines aligned under the text after `Description: ` (13 spaces), `Issue:` lines tight
-    below with no blank line, blank line only before `Change-Id:`.
+    lines aligned under the text after `Description: ` (13 spaces). Blank line above
+    `Issue:`; `Reviewed By:` sits tight under `Issue:` with **no** blank line between
+    them; blank line above `Change-Id:`. So the tail is exactly:
+
+    ```
+    Fix:         <last line of the fix prose>
+                                              <- blank
+    Issue: 5257102
+    Reviewed By: AI, Jinbow(+1), Yanku(+2)
+                                              <- blank
+    Change-Id: I...
+    ```
+
+    (Settled 2026-09-04 on 5257102. Earlier revisions of this file had the blank line on
+    the wrong side of `Issue:` — `Issue:`/`Reviewed By:` are one block, and the blank line
+    separates that block from `Fix:`.)
   - `fw_ver/golan_fw` — continuation lines at **column 0**. Gerrit re-wrapped hand-aligned
     text there: the first line wraps, padded ones don't.
   - Unsure? Read a recently merged commit on that branch and copy its shape.
@@ -74,6 +88,23 @@ Run it on the message **file** before committing, so a bad message never reaches
 ```bash
 awk 'length($0)>72' /path/to/commit_msg.txt | wc -l                   # must print 0
 ```
+
+## What the message carries, and what the code must not
+
+Peter reviews the rendered message, not the diff comments. Two standing preferences, both
+from 5257102 (2026-09-04):
+
+- **No explanatory comments in the code change.** A fix that needed a seven-line comment
+  block explaining which FW function it mirrors, which syndrome it stops, and why a field
+  was added got the whole block deleted: "remove all the comments in the code". Every one
+  of those facts belongs in the `Description:`. Ship the diff as pure logic — the reviewer
+  reads the *why* above it, not beside it.
+- **Write the Description in plain prose, not in implementation terms.** Naming the
+  functions on both sides and saying one "ANDs that group with" the other reads as a
+  transcript of the code. Say what the tool did, what FW wanted instead, and why it used
+  to work. Keep verbatim FATAL/syndrome text and real cap field names — those are what a
+  reviewer greps for; drop internal function names, and prefer the domain verb (the ECPF
+  **delegates** a cap; it does not "hand" it).
 
 ## Two failures that reject a push
 

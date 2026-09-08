@@ -42,9 +42,31 @@ build timestamp** — check any one of them and you know them all.
 curl -fsSL https://outlook-cli-80d21a.gitlab-master-pages.nvidia.com/version.json | head -5
 # what you have
 docker exec -e AI_PIM_UTILS_TELEMETRY_DISABLED=1 pim nvbugs-cli --version
-# upgrade = rebuild (the Dockerfile always fetches latest); then recreate the container
-docker build --pull -t ai-pim:latest ~/myGit/crosslv/assets/aipim
-docker rm -f pim          # next CLI call recreates it from the new image via pim_ensure
+# upgrade = rebuild, then recreate the container
+docker tag ai-pim:latest ai-pim:<old-ver>-rollback                        # rollback first
+docker build --no-cache --pull -t ai-pim:latest ~/myGit/crosslv/assets/aipim
+docker rm -f pim
+```
+
+⚠ **`--no-cache` is mandatory. `--pull` alone silently rebuilds the SAME version.** The
+Dockerfile's install step is one `RUN curl … install.sh` line; its text never changes, so Docker
+reuses the cached layer and "the Dockerfile always fetches latest" does not happen. Measured
+2026-09-04: `docker build --pull` reported `#8 … CACHED` / `DONE 0.0s` and produced an image
+still on 0.119.0 while upstream was 0.121.3. **Always check the version of the image you just
+built, not just the build's exit code:**
+
+```bash
+docker run --rm ai-pim:latest nvbugs-cli --version      # must show the new version
+```
+
+⚠ **`pim_ensure` is a bashrc function — an AI session does not have it**, so after `docker rm -f
+pim` nothing recreates the container and every CLI call fails with "No such container". Spell out
+the same `docker run` bashrc uses (`~/.bashrc`, ~line 475):
+
+```bash
+docker run -d --name pim -v "$HOME:$HOME" -v /auto:/auto:rslave \
+    -u "$(id -u):$(id -g)" --network host -e HOME="$HOME" -w "$HOME" \
+    ai-pim:latest sleep infinity
 ```
 
 ⚠ **Rebuilding the image is not enough — the running `pim` container keeps the old binaries.**
@@ -55,6 +77,19 @@ Tag the old image first for a rollback: `docker tag ai-pim:latest ai-pim:<old-ve
 Drift observed 2026-08-27: installed **0.99.3** (built 2026-05-27) vs upstream **0.119.0**
 (released 2026-08-26) — three months / 20 minors behind. Nothing auto-updates this; check
 periodically.
+
+### 0.119.0 → 0.121.3 upgrade, done 2026-09-04 — what changed
+
+**Nothing that affects us.** Recorded mainly so the next drift check has a baseline.
+
+- ✅ **Credentials survive** the container recreate again (`$HOME` bind mount) —
+  `Authenticated: true`, same token, env var still `CONFLUENCE_CLI_ACCESS_TOKEN`.
+- ✅ `space list --limit 5` still the right smoke test, still ~seconds.
+- ✅ **The write gate did NOT change.** `page create` from a non-interactive shell still exits
+  **11 / CONFIRMATION_REQUIRED** on 0.121.3, exactly as on 0.119.0. The `confluence-update`
+  raw-curl path stays the AI write route; do not re-litigate this per release.
+- Build took ~2.5 min with `--no-cache` (apt layer 118 s + install layer 27 s).
+- Rollback image kept as `ai-pim:0.119.0-rollback`.
 
 ### 0.99.3 → 0.119.0 upgrade, done 2026-08-27 — what changed
 
@@ -143,9 +178,51 @@ themselves — it exists solely for AI use.
 **Do NOT use `confluence-cli page create/update` for writes** — those require an interactive TTY
 for typed confirmation, which an AI session cannot provide. Reads (`page get`, etc.) are fine.
 
+> **Verified 2026-09-04** (ai-pim-utils 0.119.0, with a freshly rotated, working token — so this
+> is the confirmation gate, not an auth failure). Both subcommands, run from the Bash tool with
+> `< /dev/null`, exit **11**:
+>
+> ```
+> CONFIRMATION_REQUIRED
+> human confirmation is required for confluence-cli page create, but the current session
+> cannot present that prompt to a human. Re-run in an interactive terminal or graphical
+> session with a human present: no usable confirmation backend is available: typed
+> confirmation requires an interactive terminal (stdin and stderr must be TTYs)
+> ```
+>
+> The gate fires **before** the API call — `page update 999999999999` (a page id that cannot
+> exist) still returns 11, not 3/not-found. So nothing is written and nothing is reachable.
+>
+> ⚠ **Do not try to infer this from `--help`.** The exit-code table says
+> *"11 - Confirmation required (**destructive** operation not confirmed)"*, and neither
+> `create` nor `update` has any `--yes` / `--force` / `--no-confirm` flag — which reads as
+> "creating a page is not destructive, so it will go through". It does not. Creating and
+> updating are both gated. This misreading cost a round on 2026-09-04.
+
+**The split is by *who runs the command*, not by read-vs-write.** Peter in an interactive shell
+uses `confluence-cli page create/update` — that is what the CLI is for, and the
+`managing-confluence` skill documents it correctly for that case. An AI session simply cannot
+satisfy the TTY prompt, so for **AI writes only** the path is `confluence-update`.
+
 Credentials in `~/.confluence_env` (mode 600), exporting `ATLASSIAN_EMAIL`,
 `ATLASSIAN_API_TOKEN`, `CONFLUENCE_BASE` (= `https://nvidia.atlassian.net/wiki`).
 User: `pexiang@nvidia.com`.
+
+> ⚠ **The "two places" hold the SAME token value — so an expired token breaks BOTH paths at
+> once, including `confluence-update`.** Measured 2026-09-04: `~/.confluence_env` and
+> `tokens.toml` both ended `...37221`, and every endpoint returned **403 "Request rejected
+> because caller cannot access Confluence"** — *identical to an unauthenticated request*, which
+> is how you tell a dead token from a scope problem.
+>
+> So when `confluence-update` fails, **check the credential before suspecting the script**:
+>
+> ```bash
+> set -a; . ~/.confluence_env; set +a
+> curl -s -o /dev/null -w '%{http_code}\n' -u "$ATLASSIAN_EMAIL:$ATLASSIAN_API_TOKEN" \
+>      "$CONFLUENCE_BASE/rest/api/user/current"        # 200 = alive, 403 = rotate
+> ```
+>
+> Token rotated 2026-09-04 after both paths went 403.
 
 > ⚠ **`jira-cli` does NOT share this token automatically** (corrected 2026-08-26). It has its own
 > slot (`JIRA_CLI_API_TOKEN` / `jira-cli auth set-token`) and a **different site**
@@ -232,8 +309,12 @@ curl -s -o /dev/null -w '%{http_code}\n' -u "$ATLASSIAN_EMAIL:$ATLASSIAN_API_TOK
 docker exec -e AI_PIM_UTILS_TELEMETRY_DISABLED=1 -w "$PWD" pim \
      confluence-cli auth set-token '<new-token>'
 docker exec -e AI_PIM_UTILS_TELEMETRY_DISABLED=1 -w "$PWD" pim \
-     confluence-cli space list | head -3                # real read, not `auth status`
+     confluence-cli space get FW                        # real read, not `auth status`
 ```
+
+**Bare `space list` will hang** — since 0.99.3 it walks every space in the instance (it ate a
+120 s timeout on 2026-09-04). Either `space get FW` or `space list --limit 5` proves the same
+thing in seconds; both are fine.
 
 **Updating only `~/.confluence_env` is not enough** — `confluence-cli` never reads that file; it
 uses the base64 cache in `tokens.toml` and will keep failing with

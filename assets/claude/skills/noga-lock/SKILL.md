@@ -82,6 +82,19 @@ that one line answers "is the task alive" and "how much longer" at a glance.
     a full poll interval behind whoever else is watching. 60 s was not tight enough.
   15 s costs ~4x the queries and is still trivial load. Do not stretch it back out for
   log readability — log only state CHANGES plus a ~20 min heartbeat instead.
+- **One agent per box — `noga_wait.sh` is already multi-instance safe.** Give each agent its
+  own `-n <host>` and run it as a background task; the script writes progress to **stdout**, so
+  every instance is isolated by its own task output. Do not fan out with a script that hardcodes
+  a log path or a result file — two instances then append to the same log and the second grab
+  overwrites the first one's result.
+  ```bash
+  # agent A                                        # agent B
+  scripts/noga_wait.sh -n m-fwreg-017 -L 8 &       scripts/noga_wait.sh -n m-fwreg-018 -L 8 &
+  ```
+- **Never point two agents at the SAME box.** The success test is `lock_owner == $USER`, which
+  cannot tell two of your own agents apart: the one that lost the malloc race still reads back
+  its own username and also reports `LOCK_ACQUIRED`. Both then think they own it and will
+  happily burn FW on top of each other.
 - **Losing the race is normal; the script must survive it.** After malloc, always re-query and
   require `lock_owner == $USER` before declaring success, then keep looping for the next
   `Release`. A malloc that returns 0 is not proof you own the box.
@@ -99,6 +112,42 @@ that one line answers "is the task alive" and "how much longer" at a glance.
   Scripts have reported READY off a stale or partially-applied config more than once.
 - **Release locks you are no longer using** — holding several boxes "just in case" blocks other
   teams.
+
+## The two traps in `noga_wait.sh` (both cost a silent dead monitor)
+
+`noga_expiry.py` uses its **exit code as the verdict** (0 = expired, 1 = still valid,
+2 = unparseable) *and* prints the number. The consumer must take the value and discard
+the status — getting either half wrong breaks the watch in a way that looks like nothing
+happened:
+
+```bash
+exp=$(python3 "$EXPIRY" "$tout" 2>/dev/null | head -1) || true
+#                                             ^^^^^^^     ^^^^^^^
+#                                             value       status
+```
+
+- Drop `| head -1` (or use the old `|| echo 0`): `$exp` becomes two lines and every poll
+  dies on `[: integer expression expected`. The `--grace` path is then dead, so an
+  expired-but-owned lease is never grabbed — NOGA does not clear `lock_owner` on expiry,
+  so that is the normal state of a free box. Cost: a 7-hour silent wait.
+- Drop `|| true`: `set -euo pipefail` turns exit 1 into a **silent script death** — no
+  `GAVE_UP`, no message, the monitor simply vanishes after the banner line. Cost: you
+  believe a box is being watched when nothing is watching it.
+
+Both were hit on 2026-09-07/08, the second while fixing the first.
+
+**Arm long waits with the `Monitor` tool and `persistent: true`.** A Bash
+`run_in_background` command is capped by the tool timeout (10 min max), so a
+`nohup`/`setsid` monitor is killed mid-wait and reports exit 1 with no explanation.
+
+Smoke-test any change to the script before trusting it:
+
+```bash
+timeout 40 bash noga_wait.sh -n <box> --hours 1 --poll 10; echo $?   # want 124
+```
+
+`124` means `timeout` killed a still-running script — i.e. it survived several polls.
+Any other code means it died on its own.
 
 ## Related
 

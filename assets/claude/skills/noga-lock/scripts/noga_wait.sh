@@ -17,7 +17,7 @@ HOST=""
 LEASE=8         # hours to hold once taken
 HOURS=8         # ceiling on how long to keep waiting
 GRACE=900       # a lease this many seconds past expiry counts as free
-POLL=60
+POLL=15         # 15s, not 60 -- see the note in SKILL.md; grabs are first-come-first-served
 THEN=""
 
 usage() {
@@ -28,7 +28,11 @@ Usage: noga_wait.sh -n <host> [-L 8] [--hours 8] [--grace 900] [--poll 60] [--th
   -L, --lease H      hold the lock for H hours once taken (default 8)
       --hours H      give up after H hours of waiting (default 8)
       --grace S      treat a lease expired by more than S seconds as free (default 900)
-      --poll S       seconds between polls (default 60; faster only adds load)
+      --poll S       seconds between polls (default 15). Do NOT raise it: the poll
+                     interval is the window in which somebody else takes the box.
+                     2026-09-02: a 60 s poll saw m-fwreg-017 go free and fired malloc
+                     in the same second, and still lost it -- the malloc round-trip
+                     alone is ~6 s.
       --then CMD     shell command to run once the lock is held
   -h, --help
 
@@ -83,7 +87,18 @@ for i in $(seq 1 "$ITERS"); do
     break
   fi
 
-  exp=$(python3 "$EXPIRY" "$tout" 2>/dev/null || echo 0)
+  # noga_expiry.py prints the value and uses its EXIT CODE as the verdict
+  # (0 = expired, 1 = still valid, 2 = unparseable). The old "|| echo 0" treated
+  # exit 1 as an error and appended a second line, so $exp became "-2997\n0" and
+  # every poll died on "[: integer expression expected" -- the --grace path was
+  # dead and an expired-but-owned lease would never be grabbed. Fixed 2026-09-07.
+  # `|| true` is load-bearing: noga_expiry.py exits 1 for "not expired yet", and with
+  # `set -euo pipefail` that non-zero pipeline status kills the whole script silently
+  # (no GAVE_UP, no message -- the monitor just vanishes). The original `|| echo 0`
+  # masked the exit code as a side effect; dropping it on 2026-09-07 reintroduced the
+  # death. Keep BOTH: `| head -1` for the value, `|| true` for the status.
+  exp=$(python3 "$EXPIRY" "$tout" 2>/dev/null | head -1) || true
+  case "$exp" in ''|*[!0-9-]*) exp=0 ;; esac
 
   if [ -z "$owner" ] || [ "$exp" -gt "$GRACE" ]; then
     python3 "$CLI" -l -t host -n "$HOST" -L "$LEASE" >/dev/null 2>&1 || true
