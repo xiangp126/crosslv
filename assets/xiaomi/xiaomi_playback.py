@@ -1664,6 +1664,7 @@ function setGrid(on){
   const g = $('grid');
   killStreams(g);                   // first disconnect the old component's WebRTC (avoid zombie consumers)
   g.innerHTML = '';                 // then clear
+  g.classList.remove('zoomed');     // the zoomed cell is gone with the children — leaving the class would hide every new cell
   if(on){
     vid.pause();
     g.dataset.n = splitN;           // grid layout (2/4/6)
@@ -2087,7 +2088,7 @@ function pbAlignCoarse(){      // fallback: align by assumed time (master._seg.s
   $('playBtn').textContent = '▶︎ Play';                // stay paused after syncing
   updateHead();
 }
-function pbTeardown(){ pbGridGen++; pbStopSync(); pbGrid=false; document.body.classList.remove('pbgrid-mode'); $('grid').innerHTML=''; pbVids={}; updateModeBar(); }
+function pbTeardown(){ pbGridGen++; pbStopSync(); pbGrid=false; document.body.classList.remove('pbgrid-mode'); const g=$('grid'); g.innerHTML=''; g.classList.remove('zoomed'); pbVids={}; updateModeBar(); }
 
 function pbStopSync(){ if(pbSyncTimer){ clearInterval(pbSyncTimer); pbSyncTimer = null; } if(pbRefetchTimer){ clearInterval(pbRefetchTimer); pbRefetchTimer = null; } }
 // Keep the non-master cells aligned to the master by QUICK (hard-seek) positioning, not smooth rate-nudging:
@@ -2288,7 +2289,7 @@ async function setPbGrid(on){
     updateModeBar();
     document.title = 'Xiaomi Recordings · Playback Split';
     vid.pause(); try{ vid.removeAttribute('src'); vid.load(); }catch(_){}   // FULLY unload the single-stream video (not just pause) → frees its H265 hardware decoder + its server connection for the split cells. Leaving it loaded steals a decoder, and 4K H265 decoders are scarce — that starved 1-2 split cells (black/spinning).
-    const g = $('grid'); killStreams(g); g.innerHTML = ''; pbVids = {};
+    const g = $('grid'); killStreams(g); g.innerHTML = ''; g.classList.remove('zoomed'); pbVids = {};   // drop the zoom state with the cells it belonged to: `.grid.zoomed > :not(.zoom){display:none}` would otherwise hide EVERY freshly built cell (zoom once → split count change shows a blank grid until reload)
     g.dataset.n = splitN;             // grid layout (2/4/6)
     const cams = pbCams();
     // Reference = the cell showing the same camera as the current single stream, otherwise the first cell with an id, otherwise the first cell
