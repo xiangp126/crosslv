@@ -1,5 +1,9 @@
 # Create Documentation Workflow
 
+> ⚠ **AI sessions:** the `confluence-cli page create/update` calls below are correct **for a human
+> at a terminal**. From an agent they exit 11 (`CONFIRMATION_REQUIRED`) before reaching the API —
+> publish with `~/myGit/crosslv/assets/aipim/confluence-update` instead. See `../SKILL.md`.
+
 Use this workflow when the user wants to publish or update documentation in Confluence.
 
 ## Typical flow

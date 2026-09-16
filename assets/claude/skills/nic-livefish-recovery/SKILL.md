@@ -137,5 +137,5 @@ and pushing another burn + cold boot is what finished it off.
 
 ## Related
 
-- More mlxconfig read-back traps: skill `satpf-171`.
+- More mlxconfig read-back traps: skill `bluefield-fwconfig`.
 - Taking / releasing the box: skill `noga-lock`.

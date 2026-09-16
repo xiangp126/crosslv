@@ -1,4 +1,7 @@
 #!/bin/bash
+
+# NOTE (AI sessions): `confluence-cli page create` below is TTY-gated and exits 11 from an agent.
+# Publish with ~/myGit/crosslv/assets/aipim/confluence-update instead. See ../SKILL.md.
 # create-from-markdown.sh - Create or update a Confluence page from a markdown file
 
 set -euo pipefail

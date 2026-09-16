@@ -61,6 +61,17 @@ Rules that actually matter:
     a block that is not vertically aligned with the rest of the Description gets bounced.
     2026-09-02 on 1494424 — PS2 put the quote at 4 spaces to keep it in one piece, PS3 had to
     re-align it. Alignment beats keeping the string on one line.
+- **Several tickets → one `Issue:` line each. Never a comma-separated list.**
+
+  ```
+  Issue: 4690480
+  Issue: 4284608
+  ```
+
+  `Issue: 4690480, 4284608` is wrong; it was pushed that way on 1501505 (2026-09-10) and had
+  to be corrected in a second patchset. The lines stay in the same block as each other and as
+  `Reviewed By:` — no blank line between them.
+
 - **Default reviewer line — write it, do not ask and do not omit it:**
 
   ```

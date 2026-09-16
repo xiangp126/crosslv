@@ -1,0 +1,2131 @@
+#!/usr/bin/env python3
+"""List / save / restore the Claude Code and Codex sessions running inside tmux.
+
+Both agents expose their session id to anyone who cares to look, just differently.
+Claude Code writes ~/.claude/sessions/<pid>.json holding the sessionId, cwd and
+session name. Codex instead keeps its rollout transcript open, so the session id
+can be read straight off the open file descriptor. This tool pairs either one with
+the tmux pane it lives in, so the layout can be rebuilt after a reboot with the
+right resume command already wired up.
+
+Runs on Linux and macOS: process details come from /proc where it exists and from
+ps / lsof where it does not.
+"""
+
+import argparse
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+SESSION_DIR = CLAUDE_DIR / "sessions"
+DEFAULT_SNAPSHOT = CLAUDE_DIR / "tmux-snapshot.json"
+CREDENTIALS_FILE = CLAUDE_DIR / ".credentials.json"
+DEFAULT_AUTH_BACKUP = CLAUDE_DIR / "mcp-oauth-backup.json"
+
+# The MCP OAuth fields that travel together as one unit. The refresh token is
+# bound to the client registration it was issued against, so clientId and
+# redirectUri have to come along or the first silent refresh 400s. A recipient's
+# serverName, serverUrl and discoveryState are its own and are never touched.
+AUTH_FIELDS = (
+    "accessToken",
+    "refreshToken",
+    "expiresAt",
+    "issuer",
+    "scope",
+    "clientId",
+    "redirectUri",
+)
+
+CODEX_DIR = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+CODEX_SESSION_DIR = CODEX_DIR / "sessions"
+# ~/.codex/sessions/2026/08/04/rollout-2026-08-04T15-09-21-<uuid>.jsonl
+ROLLOUT_RE = re.compile(
+    r"^rollout-(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(?P<uuid>[0-9a-fA-F-]{36})\.jsonl$"
+)
+
+RESUME_COMMANDS = {
+    "claude": "claude --resume {session_id}",
+    "codex": "codex resume {session_id}",
+}
+
+# Each agent's TUI binds a different key to "quit", confirmed by hand: claude
+# needs it twice (the first press just arms a confirmation), codex exits on a
+# single press. Sent via tmux send-keys, not a signal, so each agent exits
+# through its own normal shutdown path.
+QUIT_KEYS = {
+    "claude": ["C-d", "C-d"],
+    "codex": ["C-d"],
+}
+
+
+# Linux hands out process details through /proc; macOS has no such thing, so
+# everything below falls back to ps (and to lsof for the codex fd scan).
+HAS_PROC = Path("/proc/self/stat").exists()
+
+_PS_CACHE = {}
+
+
+def ps_info(pid):
+    """Process details from a single ps call, for platforms without /proc.
+
+    -E appends the environment after the command, so state, start time, command
+    and environment all come out of one fork. The lot is cached: a pid is looked
+    at several times per run and the data cannot change under us in a way we care
+    about. TZ=UTC matches the ctime string claude records in procStart, LC_ALL=C
+    keeps the weekday and month names parseable.
+
+    Returns None when the process is gone (ps then exits 1 with empty stdout).
+    """
+    if pid in _PS_CACHE:
+        return _PS_CACHE[pid]
+    info = None
+    try:
+        proc = subprocess.run(
+            ["ps", "-Ewwo", "state=,lstart=,command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={**os.environ, "TZ": "UTC", "LC_ALL": "C"},
+        )
+        out = proc.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    # state, then the five pieces of "Mon Aug 10 14:03:08 2026", then command+env
+    parts = out.split(None, 6)
+    if len(parts) == 7:
+        env = {}
+        for token in parts[6].split():
+            key, sep, value = token.partition("=")
+            if sep and key.isidentifier():
+                env[key] = value
+        info = {
+            "state": parts[0],
+            "lstart": " ".join(parts[1:6]),
+            "command": parts[6],
+            "env": env,
+        }
+    _PS_CACHE[pid] = info
+    return info
+
+
+def proc_start_marker(pid):
+    """A string that changes when the pid is reused, to be compared as-is.
+
+    On Linux that is field 22 (starttime) of /proc/<pid>/stat; comm may contain
+    spaces and parentheses, so split after the last ')'. Elsewhere it is the ps
+    start time, normalised because ctime pads single-digit days with a space.
+    """
+    if not HAS_PROC:
+        info = ps_info(pid)
+        return info["lstart"] if info else None
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    try:
+        fields = stat[stat.rindex(")") + 2 :].split()
+    except ValueError:
+        return None
+    return fields[19] if len(fields) > 19 else None
+
+
+def proc_environ(pid):
+    if not HAS_PROC:
+        info = ps_info(pid)
+        return info["env"] if info else {}
+    try:
+        raw = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return {}
+    env = {}
+    for entry in raw.split(b"\0"):
+        if b"=" in entry:
+            key, value = entry.split(b"=", 1)
+            env[key.decode("utf-8", "replace")] = value.decode("utf-8", "replace")
+    return env
+
+
+def tmux(*args, check=True):
+    return subprocess.run(
+        ["tmux", *args], capture_output=True, text=True, check=check
+    ).stdout.rstrip("\n")
+
+
+def pane_lookup():
+    """Map pane_id to the tmux session, window index, window name and pane index."""
+    fmt = "#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}"
+    try:
+        out = tmux("list-panes", "-a", "-F", fmt)
+    except (OSError, subprocess.CalledProcessError):
+        return {}
+    panes = {}
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 5:
+            pane_id, sess, win_idx, win_name, pane_idx = parts
+            panes[pane_id] = {
+                "tmux_session": sess,
+                "window_index": win_idx,
+                "window_name": win_name,
+                "pane_index": pane_idx,
+                "target": f"{sess}:{win_idx}.{pane_idx}",
+            }
+    return panes
+
+
+def proc_state(pid):
+    """State field of /proc/<pid>/stat; 'T' means suspended via Ctrl-Z."""
+    if not HAS_PROC:
+        info = ps_info(pid)
+        # ps decorates the state with flags ('S+', 'TN'); only the first letter matters
+        return info["state"][:1] if info else ""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return stat[stat.rindex(")") + 2 :].split()[0]
+    except (OSError, ValueError, IndexError):
+        return ""
+
+
+def sessions_from_cli():
+    """`claude agents --json` is the supported scripting interface; needs no TTY."""
+    try:
+        proc = subprocess.run(
+            ["claude", "agents", "--json"], capture_output=True, text=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        # stderr may carry warnings, so only parse stdout
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    return data if isinstance(data, list) else None
+
+
+def sessions_from_files():
+    """Fallback for claude versions without `agents --json`: read the state files."""
+    out = []
+    for path in sorted(SESSION_DIR.glob("*.json")):
+        try:
+            out.append(json.loads(path.read_text()))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def codex_sessions():
+    """Codex holds its rollout transcript open, so its open fds map pid to session.
+
+    Nothing to expire here: the descriptor only exists while the process does, which
+    is why these records need no equivalent of Claude's procStart check.
+    """
+    return codex_sessions_proc() if HAS_PROC else codex_sessions_lsof()
+
+
+def codex_sessions_proc():
+    """Read the open descriptors out of /proc/<pid>/fd."""
+    prefix = f"{CODEX_SESSION_DIR}/"
+    found, seen = [], set()
+    for proc_dir in Path("/proc").glob("[0-9]*"):
+        try:
+            if b"codex" not in (proc_dir / "cmdline").read_bytes():
+                continue
+            entries = list((proc_dir / "fd").iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                target = os.readlink(entry)
+            except OSError:
+                continue
+            if not target.startswith(prefix):
+                continue
+            match = ROLLOUT_RE.match(os.path.basename(target))
+            if not match or match["uuid"] in seen:
+                continue
+            seen.add(match["uuid"])
+            pid = int(proc_dir.name)
+            try:
+                cwd = os.readlink(f"/proc/{pid}/cwd")
+            except OSError:
+                cwd = ""
+            found.append(
+                {
+                    "agent": "codex",
+                    "sessionId": match["uuid"],
+                    "cwd": cwd,
+                    "kind": "interactive",
+                    "pid": pid,
+                    "startedAt": rollout_started_at(match["stamp"]),
+                }
+            )
+            break
+    return found
+
+
+def codex_sessions_lsof():
+    """Same idea for platforms without /proc: ask lsof for the open descriptors.
+
+    -F prints one field per line, tagged: 'p' opens a process, then 'f'/'n' pairs
+    for each descriptor, where fd 'cwd' carries the working directory.
+    """
+    prefix = f"{CODEX_SESSION_DIR}/"
+    try:
+        proc = subprocess.run(
+            ["lsof", "-n", "-P", "-c", "codex", "-F", "pfn"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    by_pid, order = {}, []
+    pid, fd = None, None
+    for line in proc.stdout.splitlines():
+        tag, value = line[:1], line[1:]
+        if tag == "p":
+            try:
+                pid = int(value)
+            except ValueError:
+                pid = None
+                continue
+            fd = None
+            if pid not in by_pid:
+                by_pid[pid] = {"cwd": "", "uuid": None, "stamp": None}
+                order.append(pid)
+        elif tag == "f":
+            fd = value
+        elif tag == "n" and pid is not None:
+            if fd == "cwd":
+                by_pid[pid]["cwd"] = value
+            elif by_pid[pid]["uuid"] is None and value.startswith(prefix):
+                match = ROLLOUT_RE.match(os.path.basename(value))
+                if match:
+                    by_pid[pid]["uuid"] = match["uuid"]
+                    by_pid[pid]["stamp"] = match["stamp"]
+
+    found, seen = [], set()
+    for pid in order:
+        entry = by_pid[pid]
+        if not entry["uuid"] or entry["uuid"] in seen:
+            continue
+        seen.add(entry["uuid"])
+        found.append(
+            {
+                "agent": "codex",
+                "sessionId": entry["uuid"],
+                "cwd": entry["cwd"],
+                "kind": "interactive",
+                "pid": pid,
+                "startedAt": rollout_started_at(entry["stamp"]),
+            }
+        )
+    return found
+
+
+def rollout_started_at(stamp):
+    """Turn the local timestamp in a rollout filename into epoch milliseconds."""
+    try:
+        return int(time.mktime(time.strptime(stamp, "%Y-%m-%dT%H-%M-%S")) * 1000)
+    except ValueError:
+        return None
+
+
+def is_live_agent(pid, agent, proc_start=None):
+    """Check the pid is alive and really that agent; procStart guards against pid reuse."""
+    if not HAS_PROC:
+        info = ps_info(pid)
+        if not info or agent not in info["command"]:
+            return False
+        if proc_start is None:
+            return True
+        # ctime pads single-digit days, so normalise before comparing
+        return " ".join(str(proc_start).split()) == info["lstart"]
+    if proc_start is not None:
+        return str(proc_start) == str(proc_start_marker(pid))
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+    return agent.encode() in cmdline
+
+
+def resume_command(agent, session_id):
+    return RESUME_COMMANDS[agent].format(session_id=session_id)
+
+
+def collect(include_stale=False):
+    """List the running agent sessions, each paired with the tmux pane it occupies."""
+    panes = pane_lookup()
+    raw = sessions_from_cli()
+    if raw is None:
+        raw = sessions_from_files()
+    for data in raw:
+        data.setdefault("agent", "claude")
+    raw = raw + codex_sessions()
+
+    records = []
+    for data in raw:
+        pid = data.get("pid")
+        session_id = data.get("sessionId")
+        agent = data.get("agent", "claude")
+        if not session_id or agent not in RESUME_COMMANDS:
+            continue
+        alive = bool(pid) and is_live_agent(pid, agent, data.get("procStart"))
+        if not alive and not include_stale:
+            continue
+        env = proc_environ(pid) if alive else {}
+        pane = panes.get(env.get("TMUX_PANE", ""), {})
+        records.append(
+            {
+                "session_id": session_id,
+                "agent": agent,
+                "cwd": data.get("cwd", ""),
+                "name": data.get("name") or "",
+                "kind": data.get("kind") or "",
+                "status": data.get("status") or "",
+                "started_at": data.get("startedAt"),
+                "pid": pid,
+                "alive": alive,
+                "stopped": proc_state(pid) == "T" if alive else False,
+                "pane_id": env.get("TMUX_PANE", ""),
+                "tmux_session": pane.get("tmux_session", ""),
+                "window_index": pane.get("window_index", ""),
+                "window_name": pane.get("window_name", ""),
+                "pane_index": pane.get("pane_index", ""),
+                "target": pane.get("target", ""),
+            }
+        )
+
+    def sort_key(rec):
+        try:
+            return (0, rec["tmux_session"], int(rec["window_index"]))
+        except ValueError:
+            return (1, rec["tmux_session"], 0)
+
+    records.sort(key=sort_key)
+    return records
+
+
+def foreground_by_pane(records):
+    """One record per tmux pane, keyed by (session, window, pane).
+
+    A pane can hold several sessions (Ctrl-Z suspended ones); prefer the one in
+    the foreground, then the most recently started.
+    """
+    by_pane = {}
+    for rec in records:
+        key = (rec["tmux_session"], rec["window_index"], rec["pane_index"])
+        prev = by_pane.get(key)
+        if prev is None or (prev["stopped"] and not rec["stopped"]):
+            by_pane[key] = rec
+        elif prev["stopped"] == rec["stopped"]:
+            if (rec["started_at"] or 0) > (prev["started_at"] or 0):
+                by_pane[key] = rec
+    return by_pane
+
+
+def typeable_panes():
+    """Live agent sessions that can be typed into, one per pane, either agent.
+
+    Left out: suspended (Ctrl-Z) sessions, whose pane is back at the shell;
+    records with no target, whose pane is already gone; background agents, which
+    have no pane at all.
+
+    Also always left out: the session the command is running in. There is no
+    opt-in for it, deliberately. CLAUDE_CODE_SESSION_ID is set only inside a
+    Claude Code Bash call, so this only ever skips something when an agent is
+    driving - and an agent that kills or types into its own session cannot
+    report what became of it. Restarting that one is a thing to do from a
+    terminal, where the variable is unset and nothing is skipped at all.
+    """
+    records = [
+        rec
+        for rec in collect()
+        if rec["alive"]
+        and rec["target"]
+        and not rec["stopped"]
+        and rec.get("kind") in ("", "interactive")
+    ]
+    self_session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if self_session_id:
+        records = [rec for rec in records if rec["session_id"] != self_session_id]
+    return list(foreground_by_pane(records).values())
+
+
+def pane_tail(pane_id, lines=40):
+    """The last `lines` of a pane's visible region, or None once the pane is gone.
+
+    capture-pane reads the tmux server's own buffer, so no client need be
+    attached. -J unwraps long lines, which an 80-column pane (the default until
+    a client attaches) would otherwise split and hide from a literal match.
+    """
+    try:
+        proc = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-J", "-t", pane_id],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return "\n".join(proc.stdout.splitlines()[-lines:])
+
+
+def new_match(before, after, needles):
+    """The newest line of `after` matching a needle, or "" if none is new.
+
+    Counted, not just matched: the same reply may still be on screen from an
+    earlier run, so only an extra copy of it is ours.
+    """
+    def hits(text):
+        return [
+            line.strip()
+            for line in text.splitlines()
+            if any(needle in line.lower() for needle in needles)
+        ]
+
+    found = hits(after)
+    if len(found) <= len(hits(before)):
+        return ""
+    return found[-1]
+
+
+def broadcast_to_claude(text, records=None, confirm=(), delay=0.3, timeout=8.0,
+                        tail=40, dry_run=False):
+    """Type `text` into every live claude pane and submit it.
+
+    C-l (chat:clearInput) first, because anything left in the input box would be
+    prefixed to the text, and a /command with something in front of it goes in as
+    an ordinary prompt. Escape would clear it too, but also cancels the turn in
+    flight. -l stops tmux reading the text as key names; the Enter follows
+    separately, `delay` later, once the TUI has the whole line.
+
+    `confirm` holds lowercased substrings of the expected reply, short enough to
+    survive a narrow pane wrapping it. Panes are all typed into first and polled
+    afterwards, so the wait is one timeout for all of them, and a fast pane is
+    not slept over.
+
+    Returns a dict per record: {"rec", "status", "detail"}. Status is dry-run,
+    failed (tmux refused the keys), gone (pane vanished), sent (nothing to
+    confirm), confirmed, or unconfirmed (no reply in time, e.g. a busy session
+    queued the text).
+    """
+    if records is None:
+        records = typeable_panes()
+
+    results, pending = [], []
+    for rec in records:
+        # The pane id is stable across moves and relinks, the index is not
+        pane = rec["pane_id"] or rec["target"]
+        if dry_run:
+            results.append({"rec": rec, "status": "dry-run", "detail": text})
+            continue
+        before = pane_tail(pane, tail) or "" if confirm else ""
+        try:
+            tmux("send-keys", "-t", pane, "C-l")
+            tmux("send-keys", "-t", pane, "-l", text)
+            time.sleep(delay)
+            tmux("send-keys", "-t", pane, "Enter")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            results.append({"rec": rec, "status": "failed", "detail": str(exc)})
+            continue
+        if not confirm:
+            results.append({"rec": rec, "status": "sent", "detail": ""})
+            continue
+        result = {"rec": rec, "status": "unconfirmed", "detail": ""}
+        results.append(result)
+        pending.append((result, pane, before))
+
+    deadline = time.time() + timeout
+    while pending:
+        waiting = []
+        for result, pane, before in pending:
+            after = pane_tail(pane, tail)
+            if after is None:
+                result["status"] = "gone"
+                continue
+            line = new_match(before, after, confirm)
+            if line:
+                result["status"] = "confirmed"
+                result["detail"] = line
+                continue
+            waiting.append((result, pane, before))
+        pending = waiting
+        if not pending or time.time() >= deadline:
+            break
+        time.sleep(0.1)
+    return results
+
+
+def report_broadcast(results, refuse_marker, timeout, recheck):
+    """Print one line per pane and fold the statuses into an exit code.
+
+    Shared by set-effort and set-model. Both need the reply read rather than
+    just counted: claude answers instead of erroring when something outranks the
+    request, so a confirmed reply can still mean nothing changed.
+    """
+    c = palette()
+    # Green only for a reply that actually confirms the change; a pane that said
+    # nothing, or said no, must not look like it succeeded.
+    status_colour = {
+        "confirmed": c["GREEN"], "sent": c["GREEN"],
+        "refused": c["LIGHTYELLOW"], "unconfirmed": c["LIGHTYELLOW"],
+        "failed": c["RED"], "gone": c["RED"], "dry-run": c["GREY"],
+    }
+    width = max((len(r["rec"]["target"]) for r in results), default=0)
+    failures = refused = unconfirmed = 0
+    for result in results:
+        rec = result["rec"]
+        status, detail = result["status"], result["detail"]
+        if status == "confirmed" and refuse_marker in detail.lower():
+            status, refused = "refused", refused + 1
+        elif status == "failed":
+            failures += 1
+        elif status == "unconfirmed":
+            unconfirmed += 1
+        colour = status_colour.get(status, "")
+        line = (f"  {c['CYAN']}{rec['target']:<{width}}{c['RESET']}  "
+                f"{colour}{status:<11}{c['RESET']} {rec['name'] or rec['cwd']}")
+        if detail and status != "dry-run":
+            line += f"  {c['GREY']}{detail}{c['RESET']}"
+        print(line)
+
+    if unconfirmed:
+        print(
+            f"{c['LIGHTYELLOW']}{unconfirmed} pane(s) said nothing back within {timeout}s{c['RESET']}:"
+            f"{c['GREY']} a busy session holds the text in its queue until the current"
+            f" turn ends, so check those with {recheck}, or raise --timeout.{c['RESET']}"
+        )
+    return 1 if failures or refused else 0
+
+
+# The palette jc uses, so the two tools look like they come from the same box.
+# Colour is dropped whenever the destination is not a terminal: `jcl list` gets
+# piped into awk and grep, and this repo's own completion parses `list --json`,
+# so escape codes leaking into a pipe would break callers rather than merely
+# look odd. stdout and stderr are asked separately - stdout is often redirected
+# while errors still land on the terminal.
+COLOURS = {
+    "RESET": "\033[0m", "BOLD": "\033[1m", "GREY": "\033[90m",
+    "RED": "\033[31m", "GREEN": "\033[32m", "BLUE": "\033[34m",
+    "MAGENTA": "\033[35m", "CYAN": "\033[36m", "LIGHTYELLOW": "\033[93m",
+}
+
+
+def palette(stream=None):
+    stream = stream if stream is not None else sys.stdout
+    if not stream.isatty() or os.environ.get("NO_COLOR"):
+        return {key: "" for key in COLOURS}
+    return dict(COLOURS)
+
+
+def agent_colour(agent, c):
+    return c["MAGENTA"] if agent == "claude" else c["BLUE"]
+
+
+def _cell_colour(idx, value, rec, c):
+    # A record only --all keeps is greyed out whole: it describes a process that
+    # has already exited, and none of the per-column meanings apply to it.
+    if not rec.get("alive"):
+        return c["GREY"]
+    if idx == 0:  # TMUX target - the handle every other command takes
+        return c["GREY"] if value == "-" else c["CYAN"]
+    if idx == 2:  # AGENT
+        return c["MAGENTA"] if value == "claude" else c["BLUE"]
+    if idx == 4:  # NAME - left plain so it stands out against the rest
+        return c["GREY"] if value == "-" else ""
+    if idx == 5:  # CWD
+        return c["BLUE"]
+    return c["GREY"]  # WINDOW, PID, SESSION ID
+
+
+def _list_summary(records, c):
+    agents = {}
+    for rec in records:
+        agents[rec["agent"]] = agents.get(rec["agent"], 0) + 1
+    by_agent = ", ".join(
+        f"{n} {c['MAGENTA'] if a == 'claude' else c['BLUE']}{a}{c['RESET']}"
+        for a, n in sorted(agents.items())
+    )
+    paned = sum(1 for rec in records if rec["target"])
+    loose = len(records) - paned
+    parts = [f"{c['BOLD']}{len(records)}{c['RESET']} session(s)", by_agent]
+    where = f"{paned} in tmux"
+    if loose:
+        # These are reachable by list only: refresh/set-* all drive a tmux pane
+        where += f", {c['GREY']}{loose} with no pane{c['RESET']}"
+    parts.append(where)
+    dead = sum(1 for rec in records if not rec.get("alive"))
+    if dead:
+        parts.append(f"{c['GREY']}{dead} exited{c['RESET']}")
+    return "  ·  ".join(parts)
+
+
+def cmd_list(args):
+    records = collect(include_stale=args.all)
+    if not records:
+        print(f"{palette(sys.stderr)['RED']}No running agent sessions found."
+              f"{palette(sys.stderr)['RESET']}", file=sys.stderr)
+        return 1
+    if args.ids_only:
+        for rec in records:
+            print(rec["session_id"])
+        return 0
+    if args.json:
+        print(json.dumps(records, indent=2, ensure_ascii=False))
+        return 0
+
+    c = palette()
+    headers = ("TMUX", "WINDOW", "AGENT", "PID", "NAME", "CWD", "SESSION ID")
+    rows = [
+        (
+            rec["target"] or "-",
+            rec["window_name"] or "-",
+            rec["agent"],
+            str(rec["pid"]),
+            rec["name"] or "-",
+            rec["cwd"],
+            rec["session_id"],
+        )
+        for rec in records
+    ]
+    # Widths come from the plain text; colour is wrapped on afterwards, or the
+    # escape codes would be counted as visible characters and break the columns.
+    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+    # The same rule closes the table below, so the summary reads as something
+    # outside it rather than as one more record
+    rule = c["GREY"] + "  ".join("-" * w for w in widths) + c["RESET"]
+    print(c["BOLD"] + "  ".join(h.ljust(w) for h, w in zip(headers, widths)) + c["RESET"])
+    print(rule)
+    for row, rec in zip(rows, records):
+        cells = []
+        for i, (cell, w) in enumerate(zip(row, widths)):
+            colour = _cell_colour(i, cell, rec, c)
+            padded = cell.ljust(w)
+            # No reset without a colour to reset: NAME is left deliberately
+            # plain, and a bare reset there is just noise in the output.
+            cells.append(colour + padded + c["RESET"] if colour else padded)
+        print("  ".join(cells))
+    print(rule)
+    print(_list_summary(records, c))
+    return 0
+
+
+def cmd_save(args):
+    c, e = palette(), palette(sys.stderr)
+    records = collect()
+    if not records:
+        print(f"{e['RED']}No running agent sessions, snapshot not written.{e['RESET']}", file=sys.stderr)
+        return 1
+    snapshot = {
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "host": os.uname().nodename,
+        "sessions": records,
+    }
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")
+    print(f"{c['GREEN']}Saved{c['RESET']} {c['BOLD']}{len(records)}{c['RESET']}"
+          f" session(s) to {c['CYAN']}{out}{c['RESET']}")
+    return 0
+
+
+def cmd_restore(args):
+    c, e = palette(), palette(sys.stderr)
+    try:
+        snapshot = json.loads(Path(args.file).read_text())
+    except OSError as exc:
+        print(f"{e['RED']}Cannot read snapshot {args.file}{e['RESET']}: {exc}", file=sys.stderr)
+        return 1
+    records = snapshot.get("sessions", [])
+    if not records:
+        print(f"{e['RED']}Snapshot holds no sessions.{e['RESET']}", file=sys.stderr)
+        return 1
+    print(f"{c['GREY']}Snapshot taken {snapshot.get('saved_at', 'unknown')}{c['RESET']},"
+          f" {c['BOLD']}{len(records)}{c['RESET']} session(s)")
+
+    live_ids = {rec["session_id"] for rec in collect()}
+    existing_sessions = set()
+    try:
+        existing_sessions = set(tmux("list-sessions", "-F", "#{session_name}").split())
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+    for rec in records:
+        session_id = rec["session_id"]
+        agent = rec.get("agent", "claude")
+        cwd = rec["cwd"]
+        tmux_session = rec["tmux_session"] or agent
+        window_name = rec["window_name"] or agent
+        label = f"{tmux_session}:{window_name} [{agent} {session_id}]"
+
+        if session_id in live_ids:
+            print(f"{c['GREY']}Skipped, already running{c['RESET']}: {label}")
+            continue
+        if agent not in RESUME_COMMANDS:
+            print(f"{c['LIGHTYELLOW']}Skipped, unknown agent {agent}{c['RESET']}: {label}")
+            continue
+        if rec.get("kind") not in ("", "interactive"):
+            # Background agents belong to claude's own supervisor, not to tmux
+            print(f"{c['GREY']}Skipped, {rec['kind']} session belongs to claude agents{c['RESET']}: {label}")
+            continue
+        if not Path(cwd).is_dir():
+            print(f"{c['LIGHTYELLOW']}Skipped, directory is gone{c['RESET']} {cwd}: {label}")
+            continue
+
+        command = f"cd {shell_quote(cwd)} && {resume_command(agent, session_id)}"
+        if args.dry_run:
+            print(f"{c['GREY']}[dry-run]{c['RESET']} {c['CYAN']}{tmux_session} / {window_name}{c['RESET']}: {c['GREY']}{command}{c['RESET']}")
+            continue
+
+        fmt = ("-P", "-F", "#{session_name}:#{window_index}")
+        try:
+            # Append to a tmux session that already exists; never touch its windows
+            if tmux_session in existing_sessions:
+                target = tmux(
+                    "new-window", "-d", "-t", tmux_session, "-n", window_name, "-c", cwd, *fmt
+                )
+            else:
+                target = tmux(
+                    "new-session", "-d", "-s", tmux_session, "-n", window_name, "-c", cwd, *fmt
+                )
+                existing_sessions.add(tmux_session)
+            tmux("send-keys", "-t", target, command, "Enter")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"{e['RED']}Failed{e['RESET']}: {label}: {exc}", file=sys.stderr)
+            continue
+        print(f"{c['GREEN']}Restored{c['RESET']} {c['CYAN']}{target}{c['RESET']}: {label}")
+    return 0
+
+
+def wait_for_exit(pid, timeout):
+    """Poll for the pid to disappear; works on Linux and macOS alike.
+
+    Signal 0 rather than /proc (absent on macOS) or ps_info (cached, so it
+    would keep reporting the first snapshot instead of noticing an exit).
+    These are foreign processes, not our children, so waitpid is not an option.
+    """
+    deadline = time.time() + timeout
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            pass  # exists, just not ours to signal
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.1)
+
+
+def select_records(records, selectors):
+    """Narrow records down to the panes named on the command line.
+
+    Only a tmux target (0:6.2) selects. It is what `list` puts in its first
+    column, it is unique per pane, and it does not drift: session names change
+    as work gets renamed, so matching those would risk restarting a different
+    pane than the one just read off the screen.
+
+    Returns (selected, errors). errors is empty only when every selector landed
+    on exactly one session; an unknown or ambiguous one is reported rather than
+    guessed at, since the caller is about to kill whatever comes back.
+    """
+    selected, errors, seen = [], [], set()
+    for want in selectors:
+        matches = [rec for rec in records if rec.get("target") == want]
+        if not matches:
+            errors.append(f"No live session at {want!r}")
+            continue
+        if len(matches) > 1:
+            # Rare, but a pane can host more than one session
+            shown = ", ".join(r["name"] or r["cwd"] for r in matches)
+            errors.append(f"{want!r} hosts {len(matches)} sessions: {shown}")
+            continue
+        rec = matches[0]
+        if rec["session_id"] not in seen:
+            seen.add(rec["session_id"])
+            selected.append(rec)
+    return selected, errors
+
+
+def cmd_refresh(args):
+    """Restart every live session in place so it re-reads ~/.claude/.credentials.json.
+
+    `claude auth login` in one pane updates the credentials file on disk, but every
+    other already-running process keeps whatever it read at startup; only a restart
+    picks up the new login. This kills each one and relaunches it with --resume in
+    the same pane, so the conversation carries over and only the auth is fresh.
+    """
+    c, e = palette(), palette(sys.stderr)
+    records = [
+        rec
+        for rec in collect()
+        if rec["alive"] and rec["target"] and rec.get("kind") in ("", "interactive")
+    ]
+    # Restarting everything is the destructive end of this command, so it has to
+    # be asked for by name. It used to be what no arguments meant, which was
+    # safe enough while that was the only thing refresh could do - but now that
+    # sessions can be named, forgetting to name one would quietly sweep them all.
+    if not args.sessions:
+        print(f"{e['RED']}Name at least one SESSION, or `all` for every one.{e['RESET']}", file=sys.stderr)
+        print(f"{e['GREY']}Run `jcl list` to see what is available.{e['RESET']}", file=sys.stderr)
+        return 1
+
+    # Commas as well as spaces, so a list pasted from anywhere splits the same way
+    selectors = [part for item in args.sessions for part in item.split(",") if part]
+    sweeping = "all" in selectors
+
+    if sweeping:
+        if args.agent != "all":
+            records = [rec for rec in records if rec["agent"] == args.agent]
+    else:
+        # Naming a session says exactly which one is meant, so --agent (which
+        # defaults to claude) must not quietly drop it; the filter is there to
+        # narrow the sweep, and there is no sweep once a selector is given.
+        records, errors = select_records(records, selectors)
+        if errors:
+            for line in errors:
+                print(f"{e['RED']}{line}{e['RESET']}", file=sys.stderr)
+            print(f"{e['GREY']}Run `jcl list` to see what is available.{e['RESET']}", file=sys.stderr)
+            return 1
+
+    # Refuse to kill the session this command is itself running inside of unless
+    # told otherwise: CLAUDE_CODE_SESSION_ID is only set when invoked from a
+    # Claude Code Bash tool call, so a plain terminal never trips this.
+    self_session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if self_session_id:
+        before = len(records)
+        records = [rec for rec in records if rec["session_id"] != self_session_id]
+        if len(records) < before:
+            # Naming it explicitly and then being told it was "skipped" reads as
+            # if the selector failed, so say which of the two happened.
+            if not sweeping:
+                print(f"{c['LIGHTYELLOW']}That is the session this command runs in{c['RESET']};"
+                      f" restart it from a terminal instead.")
+            else:
+                print(f"{c['GREY']}Skipping the session this command is running in;"
+                      f" restart it from a terminal.{c['RESET']}")
+
+    if not records:
+        print(f"{e['RED']}No matching live sessions to refresh.{e['RESET']}", file=sys.stderr)
+        return 1
+
+    print(f"{c['BOLD']}{len(records)}{c['RESET']} session(s) will be restarted with a fresh login:")
+    width = max(len(rec["target"]) for rec in records)
+    for rec in records:
+        print(f"  {c['CYAN']}{rec['target']:<{width}}{c['RESET']}  "
+              f"{agent_colour(rec['agent'], c)}{rec['agent']:<7}{c['RESET']}"
+              f"{rec['name'] or rec['cwd']}")
+    print()
+
+    failures = 0
+    for rec in records:
+        pid, target = rec["pid"], rec["target"]
+        command = f"cd {shell_quote(rec['cwd'])} && {resume_command(rec['agent'], rec['session_id'])}"
+        label = f"{target} [{rec['agent']} {rec['session_id']}]"
+        if args.dry_run:
+            keys = QUIT_KEYS.get(rec["agent"])
+            how = " then ".join(keys) if keys else f"SIGTERM {pid}"
+            print(f"{c['GREY']}[dry-run]{c['RESET']} {how} "
+                  f"{c['GREY']}(fallback: SIGTERM/SIGKILL {pid}){c['RESET']}, then "
+                  f"{c['CYAN']}{target}{c['RESET']}: {c['GREY']}{command}{c['RESET']}")
+            continue
+
+        # Prefer the agent's own quit keystroke over a signal: it exits through
+        # the app's normal shutdown path (flushing whatever it flushes on the
+        # way out) instead of relying on however it happens to handle SIGTERM.
+        # Signals are only the fallback for a stuck or unresponsive pane.
+        exited = False
+        quit_keys = QUIT_KEYS.get(rec["agent"], [])
+        if quit_keys:
+            try:
+                for key in quit_keys:
+                    tmux("send-keys", "-t", target, key)
+                    time.sleep(0.3)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                print(f"{e['RED']}Failed to send quit keys to {label}{e['RESET']}: {exc}", file=sys.stderr)
+            else:
+                exited = wait_for_exit(pid, args.timeout)
+
+        if not exited:
+            if quit_keys:
+                print(f"{e['LIGHTYELLOW']}{label}: quit keys didn't exit it within {args.timeout}s, sending SIGTERM{e['RESET']}", file=sys.stderr)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                exited = True
+            except OSError as exc:
+                print(f"{e['RED']}Failed to signal {pid} ({label}){e['RESET']}: {exc}", file=sys.stderr)
+                failures += 1
+                continue
+            else:
+                exited = wait_for_exit(pid, 5)
+
+        if not exited:
+            print(f"{e['LIGHTYELLOW']}{label}: still running, sending SIGKILL{e['RESET']}", file=sys.stderr)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            wait_for_exit(pid, 5)
+
+        try:
+            tmux("send-keys", "-t", target, command, "Enter")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"{e['RED']}Failed to relaunch {label}{e['RESET']}: {exc}", file=sys.stderr)
+            failures += 1
+            continue
+        print(f"{c['GREEN']}Refreshed{c['RESET']} {label}")
+
+    return 1 if failures else 0
+
+
+# Effort claude and codex do not spell the same way. claude has a separate
+# /effort; codex folds it into /model's second positional and has no standalone
+# command, so a codex pane is always given this level rather than carrying the
+# extra machinery to read its current model back off the status bar.
+CODEX_EFFORT = "max"
+
+# The two agents share no model names at all: opus[1m] means nothing to codex,
+# gpt-5.6-sol means nothing to claude. So a name is routed by what it looks like
+# rather than broadcast to both - sending an agent a name it cannot use would at
+# best be refused and at worst silently leave it on the wrong model.
+CODEX_MODEL_PREFIXES = ("gpt-", "gpt5", "o1", "o3", "o4", "codex")
+
+
+def agent_for_model(name):
+    low = name.lower()
+    return "codex" if low.startswith(CODEX_MODEL_PREFIXES) else "claude"
+
+
+# What each slash command needs in order to be sent and judged. Kept in one
+# place so the single-purpose subcommands and `set` cannot drift apart.
+def _model_spec(value, agent="claude"):
+    if agent == "codex":
+        return {
+            "command": f"/model {value} {CODEX_EFFORT}",
+            # codex answers in whatever language it is configured for - the reply
+            # here comes back in Chinese - so the only language-independent thing
+            # to look for is the model name it echoes back.
+            "confirm": (value.lower(),),
+            "refuse": "\0",  # never matches: codex has no known refusal wording
+            "recheck": "/model",
+        }
+    return {
+        "command": f"/model {value}",
+        # Short substrings on purpose, a narrow pane wraps the whole sentence
+        "confirm": ("set model to", "is not available"),
+        # An alias the organisation blocks comes back as "Model 'x' is not available"
+        "refuse": "is not available",
+        "recheck": "/model",
+    }
+
+
+def _effort_spec(value):
+    return {
+        "command": f"/effort {value}",
+        "confirm": ("effort level", "not applied"),
+        # claude answers "Not applied" rather than erroring when something
+        # outranks the request, e.g. CLAUDE_CODE_EFFORT_LEVEL in the environment
+        "refuse": "not applied",
+        "recheck": "/effort current",
+    }
+
+
+def panes_to_type_into(c, e):
+    """The panes a slash command can be typed into, or [] with the reason printed."""
+    records = typeable_panes()
+    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        print(f"{c['GREY']}Leaving out the session this command is running in.{c['RESET']}")
+    if not records:
+        print(f"{e['RED']}No live agent panes to type into.{e['RESET']}", file=sys.stderr)
+    return records
+
+
+def send_to_panes(spec, records, args, c):
+    """Type one slash command into every pane and report what came back."""
+    agents = sorted({rec["agent"] for rec in records})
+    tag = "".join(f" {agent_colour(a, c)}{a}{c['RESET']}" for a in agents)
+    print(f"Sending {c['CYAN']}{spec['command']}{c['RESET']} to "
+          f"{c['BOLD']}{len(records)}{c['RESET']}{tag} pane(s):")
+    results = broadcast_to_claude(
+        spec["command"],
+        records=records,
+        confirm=() if args.no_verify else spec["confirm"],
+        delay=args.delay,
+        timeout=args.timeout,
+        dry_run=args.dry_run,
+    )
+    return report_broadcast(results, spec["refuse"], args.timeout, spec["recheck"])
+
+
+def send_by_agent(records, args, c, e, model=None, effort=None):
+    """Type the right command into each pane for whichever agent runs it.
+
+    claude takes /model and /effort as two commands; codex has only /model, with
+    the effort as its second word. The same request therefore becomes a
+    different number of commands per agent, so panes are grouped by agent before
+    anything is typed. Effort alone cannot be expressed on codex - its /model
+    wants the model name too - so those panes are reported as skipped instead of
+    guessed at from whatever the status bar happens to show.
+    """
+    by_agent = {}
+    for rec in records:
+        by_agent.setdefault(rec["agent"], []).append(rec)
+
+    rc = 0
+    models = [model] if isinstance(model, str) else list(model or [])
+    wanted = {agent_for_model(m): m for m in models}
+    if models:
+        for agent, group in sorted(by_agent.items()):
+            name = wanted.get(agent)
+            if name is None:
+                others = ", ".join(sorted(wanted.values()))
+                print(f"{c['GREY']}Skipping {len(group)} {agent} pane(s): "
+                      f"{others} is not a {agent} model name.{c['RESET']}")
+                continue
+            rc |= send_to_panes(_model_spec(name, agent), group, args, c)
+    if effort:
+        for agent, group in sorted(by_agent.items()):
+            if agent == "claude":
+                rc |= send_to_panes(_effort_spec(effort), group, args, c)
+            elif agent not in wanted:
+                print(f"{c['GREY']}Skipping {len(group)} {agent} pane(s): it sets"
+                      f" effort through /model, so a model is needed too -"
+                      f" `jcl set --model <name> --effort {effort}`.{c['RESET']}")
+            else:
+                print(f"{c['GREY']}{len(group)} {agent} pane(s) already got effort"
+                      f" {CODEX_EFFORT} with the model above.{c['RESET']}")
+    return rc
+
+
+def cmd_set_effort(args):
+    """Set the effort level of every live claude session without restarting it.
+
+    Sessions start at settings.json's effortLevel, so raising them all otherwise
+    means typing /effort into each pane. claude saves a level the organisation
+    allows as a default (xhigh here) and calls anything above it "(this session
+    only)", which is why max has to be re-sent to every new session.
+    """
+    c, e = palette(), palette(sys.stderr)
+    records = panes_to_type_into(c, e)
+    if not records:
+        return 1
+    return send_by_agent(records, args, c, e, effort=args.level)
+
+
+def cmd_set_model(args):
+    """Set the model of every live claude session without restarting it.
+
+    Managed settings pin the model here, so every session starts on the pinned
+    one and going through `refresh` puts it straight back - typing /model is the
+    only way to move a running session off it. claude says so itself: "saved as
+    your default for new sessions" comes with the pin winning on the next start.
+    """
+    c, e = palette(), palette(sys.stderr)
+    records = panes_to_type_into(c, e)
+    if not records:
+        return 1
+    return send_by_agent(records, args, c, e, model=args.model)
+
+
+def cmd_set(args):
+    """Set model and effort over one pass of the panes.
+
+    Running set-model and set-effort back to back scans tmux and /proc once
+    each, and that scan is what costs the time here - the typing is cheap. This
+    takes the pane list once and reuses it for both.
+    """
+    c, e = palette(), palette(sys.stderr)
+    if not args.model and not args.effort:
+        print(f"{e['RED']}Give --model, --effort, or both.{e['RESET']}", file=sys.stderr)
+        return 1
+    records = panes_to_type_into(c, e)
+    if not records:
+        return 1
+    # Model first: claude treats an effort above the org default as "this
+    # session only", so if switching model were to reset it, this order still
+    # leaves the requested effort standing.
+    return send_by_agent(records, args, c, e, model=args.model, effort=args.effort)
+
+
+def cmd_patch_resurrect(args):
+    """Rewrite a saved tmux-resurrect layout so agent panes carry their resume command.
+
+    Wired to @resurrect-hook-post-save-layout, which passes the layout path as an
+    argument. The layout is TSV; on a pane row column 11 (index 10) holds
+    ':<full command>'.
+    """
+    path = Path(args.layout_file).resolve()
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as exc:
+        print(f"{palette(sys.stderr)['RED']}Cannot read layout file {path}"
+              f"{palette(sys.stderr)['RESET']}: {exc}", file=sys.stderr)
+        return 1
+
+    records = [
+        r
+        for r in collect()
+        if r["target"] and r.get("kind") in ("", "interactive")
+    ]
+    by_pane = foreground_by_pane(records)
+
+    record_types = ("pane", "window", "state", "grouped_session")
+    patched, out, dropped_lines = [], [], 0
+    for line in lines:
+        fields = line.split("\t")
+        if fields[0] not in record_types:
+            # With several processes in one pane, resurrect's ps strategy spills
+            # the extra commands onto their own lines
+            dropped_lines += 1
+            continue
+        if fields[0] == "pane" and len(fields) >= 11:
+            rec = by_pane.get((fields[1], fields[2], fields[5]))
+            if rec:
+                # tmux may report a stale "/path (deleted)"; use the cwd the agent recorded
+                if rec["cwd"]:
+                    fields[7] = ":" + rec["cwd"].replace(" ", "\\ ")
+                # Only the resume command, none of the flags the pane was started
+                # with: they are rarely wanted on restore and codex takes its session
+                # id as a positional argument, where replaying them is unsafe
+                fields[10] = ":" + resume_command(rec.get("agent", "claude"), rec["session_id"])
+                patched.append(f"{rec['tmux_session']}:{rec['window_index']}.{rec['pane_index']}")
+                line = "\t".join(fields)
+        out.append(line)
+
+    if args.dry_run:
+        for line in out:
+            print(line)
+        return 0
+
+    path.write_text("\n".join(out) + "\n")
+    # Quiet by default: as a hook, anything on stdout lands in tmux copy mode
+    if args.verbose:
+        msg = f"Tagged {len(patched)} agent pane(s) in {path.name}"
+        shared = len(records) - len(by_pane)
+        if dropped_lines:
+            msg += f", dropped {dropped_lines} spilled line(s)"
+        if shared > 0:
+            msg += (
+                f", left out {shared} session(s) sharing a pane"
+                " (resurrect restores one command per pane)"
+            )
+        c = palette()
+        print(f"{c['GREEN']}{msg}{c['RESET']}")
+    return 0
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def read_credentials(path):
+    """Load a credentials file whole, returning (data, mtime_ns) or (None, None).
+
+    Everything is read and written as one blob and only the mcpOAuth key is ever
+    touched, because on some platforms this same file also carries the Anthropic
+    account login. The mtime comes back with the data so the writer can tell
+    whether a live claude rewrote the file in the meantime and refuse to undo it.
+    """
+    try:
+        # stat first, read second. The other way round a write landing between the
+        # two hands back old content stamped with the new mtime, and the check in
+        # write_credentials then passes and overwrites the very change it exists to
+        # protect. This order can only stamp new content as older than it is, which
+        # costs a refused write and a re-run.
+        mtime_ns = path.stat().st_mtime_ns
+        raw = path.read_text()
+    except OSError as exc:
+        print(f"{palette(sys.stderr)['RED']}Cannot read {path}{palette(sys.stderr)['RESET']}: {exc}", file=sys.stderr)
+        return None, None
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        print(f"{palette(sys.stderr)['RED']}{path} is not valid JSON{palette(sys.stderr)['RESET']}: {exc}", file=sys.stderr)
+        return None, None
+    if not isinstance(data, dict):
+        print(f"{palette(sys.stderr)['RED']}{path} does not hold a JSON object.{palette(sys.stderr)['RESET']}", file=sys.stderr)
+        return None, None
+    return data, mtime_ns
+
+
+def write_credentials(path, data, expect_mtime_ns):
+    """Replace a credentials file atomically at mode 0600, nobody else having written it first.
+
+    A running claude rewrites ~/.claude/.credentials.json from memory whenever it
+    renews a token, so a plain read-modify-write can silently lose the merge; the
+    mtime it was read at is compared again here and the write is refused if it
+    moved. Pass expect_mtime_ns=None for a file nothing else owns. The temp file
+    is created 0600 from the first byte so the tokens are never briefly readable.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        # Checked here rather than on the way in: serializing tens of kilobytes to
+        # NFS takes milliseconds, and every one of them would be window between the
+        # check and the rename.
+        if expect_mtime_ns is not None and path.exists():
+            if path.stat().st_mtime_ns != expect_mtime_ns:
+                w = palette(sys.stderr)
+                print(
+                    f"{w['LIGHTYELLOW']}{path} changed on disk while this ran"
+                    f" (a live claude rewrote it); nothing written, re-run.{w['RESET']}",
+                    file=sys.stderr,
+                )
+                tmp.unlink()
+                return False
+        os.replace(str(tmp), str(path))
+        return True
+    except OSError as exc:
+        print(f"{palette(sys.stderr)['RED']}Cannot write {path}{palette(sys.stderr)['RESET']}: {exc}", file=sys.stderr)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+
+def oauth_entries(data):
+    entries = data.get("mcpOAuth")
+    return entries if isinstance(entries, dict) else {}
+
+
+def entry_name(key, entry):
+    return entry.get("serverName") or key.split("|")[0]
+
+
+def token_expiry(entry):
+    # expiresAt is epoch milliseconds; 0 or absent on an entry that never
+    # completed its OAuth dance.
+    stamp = entry.get("expiresAt") or 0
+    if not stamp:
+        return "no expiry recorded"
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(stamp / 1000))
+
+
+def copy_auth_fields(dst, src):
+    # Popping the fields the source lacks matters: an entry that never
+    # authenticated has no refreshToken at all, and leaving a stale one next to a
+    # freshly copied accessToken would send the next renewal to the wrong client.
+    for field in AUTH_FIELDS:
+        if field in src:
+            dst[field] = src[field]
+        else:
+            dst.pop(field, None)
+
+
+def _payload_from_body(body):
+    # Streamable HTTP answers either with a bare JSON object or with SSE frames,
+    # where the object sits after "data:" on its own line.
+    stripped = body.strip()
+    if stripped.startswith("{"):
+        try:
+            return json.loads(stripped)
+        except ValueError:
+            pass
+    for line in stripped.splitlines():
+        if line.startswith("data:"):
+            try:
+                return json.loads(line[len("data:"):].strip())
+            except ValueError:
+                continue
+    return None
+
+
+def probe_mcp(url, token, timeout=10):
+    """Offer a bearer token to an MCP server and say whether it was accepted.
+
+    Nothing in the stored entries says which servers will take each other's
+    tokens: servers sharing one audience can sit behind different authorization
+    server paths, and servers sharing a client id can too, so grouping on either
+    field splits the wrong ones apart. Asking the gateway is the only answer that
+    holds. initialize is a handshake, so a probe changes nothing on the far side.
+    """
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "jcl", "version": "1"},
+            },
+        }
+    ).encode()
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+    )
+    # urllib follows redirects by default and re-sends the Authorization header to
+    # whatever host Location names, which would hand the token to a third party.
+    # Refusing to follow turns any 3xx into an HTTPError that is reported instead.
+    opener = urllib.request.build_opener(_NoRedirect())
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            # Only 2xx reaches this: the opener raises HTTPError on 4xx/5xx, and
+            # _NoRedirect turns 3xx into one too. A 2xx that is not 200 still is
+            # not an initialize answer.
+            if response.status != 200:
+                return False, str(response.status)
+            payload = _payload_from_body(response.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        if 300 <= exc.code < 400:
+            return False, f"redirect to {exc.headers.get('Location', 'elsewhere')}"
+        return False, str(exc.code)
+    except (urllib.error.URLError, OSError) as exc:
+        return False, str(getattr(exc, "reason", exc))
+    # An MCP server reports application errors as 200 plus a JSON-RPC error
+    # envelope, so the status alone does not mean the token got in.
+    if not isinstance(payload, dict) or "result" not in payload:
+        return False, "200 but no result"
+    return True, "200 ok"
+
+
+def entries_by_name(entries):
+    """Index mcpOAuth entries by serverName, mapping each name to a list of keys.
+
+    The "<serverName>|<hash>" key is a digest over the server's config and changes
+    whenever that config does, so every match across two files - restoring one and
+    saving one - has to go through the name instead. A fresh list per name each
+    call: the restore side claims keys out of it as it goes.
+    """
+    index = {}
+    for key, entry in entries.items():
+        index.setdefault(entry_name(key, entry), []).append(key)
+    return index
+
+
+def _auth_server(entry):
+    url = (entry.get("discoveryState") or {}).get("authorizationServerUrl") or ""
+    # The path alone: every one of these sits on the same host, so printing the
+    # whole URL once per rejected donor buries the part that differs.
+    return urllib.parse.urlsplit(url).path or "?"
+
+
+def _borrow_blocker(donor, recipient):
+    """Say why a donor's token cannot serve this server, before spending a probe on it.
+
+    A probe cannot answer this. An MCP initialize proves the token is valid and
+    nothing else; even tools/list and a health check go through, because neither
+    needs a business scope. Both failure modes were learned by shipping them:
+    a token borrowed across authorization servers left an entry whose issuer and
+    authorization server disagreed, and claude wiped the whole entry on the first
+    failed renewal; a token borrowed across scopes handshook fine and then failed
+    every real call with Missing required scopes, which looks like a working server
+    until someone tries to use it.
+    """
+    if _auth_server(donor) != _auth_server(recipient):
+        return f"renews at {_auth_server(donor)}"
+    donor_scope, recipient_scope = donor.get("scope"), recipient.get("scope")
+    if donor_scope and recipient_scope and donor_scope != recipient_scope:
+        return f"scope is {donor_scope}, not {recipient_scope}"
+    return None
+
+
+def _freshest_with_token(entries, keys):
+    # Which credential is least likely to be dead, a different question from
+    # which live entry is this server - so this does not belong in
+    # _pick_auth_target, which answers that one by comparing serverUrl.
+    tokened = [key for key in keys if entries[key].get("accessToken")]
+    if not tokened:
+        return None
+    return max(tokened, key=lambda key: entries[key].get("expiresAt") or 0)
+
+
+def merge_auth_entries(current, saved):
+    """Build the backup's mcpOAuth from the live entries without dropping a token the backup holds.
+
+    save-auth used to write the live entries wholesale, so a save taken while one
+    server happened to have lost its token replaced that server's saved token with
+    an empty entry and destroyed it. Each server is now taken from whichever side
+    has a token. Returns (merged, states) and touches nothing else - the guards,
+    the clock and the printing all live in the handler.
+    """
+    merged = {key: dict(entry) for key, entry in current.items()}
+    states = {}
+    for key, entry in current.items():
+        states[key] = "fresh" if entry.get("accessToken") else "none"
+
+    current_by_name = entries_by_name(current)
+    for name, saved_keys in entries_by_name(saved).items():
+        donor_key = _freshest_with_token(saved, saved_keys)
+        if donor_key is None:
+            # A tokenless entry for a server that is gone is unrestorable and
+            # unmatchable; carrying it would grow the backup by one dead key per
+            # config revision, forever.
+            continue
+        candidates = current_by_name.get(name, [])
+        if not candidates:
+            merged[donor_key] = dict(saved[donor_key])
+            states[donor_key] = "kept"
+            continue
+        if any(current[key].get("accessToken") for key in candidates):
+            continue
+        # Carried once per name, and as auth fields copied into the current entry
+        # rather than the backup's entry moved over whole: a changed hash means a
+        # changed config, so the backup's serverUrl may be stale, and _pick_auth_target
+        # compares serverUrl - a stale one makes the next restore pick wrong, silently.
+        target = _pick_auth_target(current, candidates, saved[donor_key])
+        copy_auth_fields(merged[target], saved[donor_key])
+        states[target] = "kept"
+    return merged, states
+
+
+def _print_auth_table(merged, states, current):
+    width = max(len(entry_name(key, entry)) for key, entry in merged.items())
+    for key, entry in sorted(merged.items(), key=lambda item: entry_name(*item)):
+        state = states.get(key, "none")
+        if state == "none":
+            detail = "no token"
+        else:
+            detail = f"token expires {token_expiry(entry)}"
+        notes = []
+        if state == "kept":
+            if key not in current:
+                notes.append("server no longer configured")
+            expires = entry.get("expiresAt") or 0
+            if 0 < expires < time.time() * 1000:
+                # How long, not a bare "expired": 40 minutes past is nothing, three
+                # weeks past probably means the refresh token rotated away, and
+                # only the number tells those apart.
+                age = time.time() - expires / 1000
+                ago = f"{int(age / 86400)} day(s)" if age >= 86400 else f"{int(age / 3600)}h"
+                notes.append(
+                    f"expired {ago} ago; its refresh token may have been rotated away since"
+                )
+        note = f"  ({'; '.join(notes)})" if notes else ""
+        c = palette()
+        state_colour = {"fresh": c["GREEN"], "kept": c["CYAN"], "none": c["GREY"]}
+        print(f"  {entry_name(key, entry):<{width}}  "
+              f"{state_colour.get(state, '')}{state:<5}{c['RESET']}  "
+              f"{detail}" + (f"{c['GREY']}{note}{c['RESET']}" if note else ""))
+
+
+def cmd_save_auth(args):
+    """Merge the live MCP OAuth tokens into the backup before a logout.
+
+    Logging out or switching Anthropic accounts throws the MCP tokens away along
+    with the account login, and getting them back means one interactive browser
+    dance per server. The merge is per server and only ever adds: a server that
+    has lost its token locally keeps whatever the backup already held for it, so
+    re-running this is always safe. --force is the one way to lose a token.
+    """
+    c, e = palette(), palette(sys.stderr)
+    data, _ = read_credentials(CREDENTIALS_FILE)
+    if data is None:
+        return 1
+    entries = oauth_entries(data)
+    if not entries:
+        print(f"{e['RED']}No mcpOAuth entries in {CREDENTIALS_FILE}, nothing to save.{e['RESET']}", file=sys.stderr)
+        return 1
+
+    out = Path(args.output)
+    old, old_mtime, saved = None, None, {}
+    if not args.force and out.exists():
+        old, old_mtime = read_credentials(out)
+        if old is None:
+            # Falling through to "no backup" here would overwrite a file that may
+            # still hold tokens, which is the very loss this merge exists to stop.
+            print(
+                f"{e['RED']}Cannot merge into {out}{e['RESET']}; move it aside,"
+                f" or use --force to overwrite it.",
+                file=sys.stderr,
+            )
+            return 1
+        saved = oauth_entries(old)
+
+    merged, states = merge_auth_entries(entries, saved)
+    fresh = sum(1 for state in states.values() if state == "fresh")
+    kept = sum(1 for state in states.values() if state == "kept")
+    none = sum(1 for state in states.values() if state == "none")
+
+    if not fresh and not kept:
+        print(
+            f"{e['LIGHTYELLOW']}All {len(entries)} entry/entries have an empty accessToken"
+            f" and the backup holds none either{e['RESET']} - looks like the logout already"
+            f" happened. Use {e['CYAN']}--force{e['RESET']} to save them anyway.",
+            file=sys.stderr,
+        )
+        return 1
+    if not fresh:
+        # Writing would only bump saved_at, and restore-auth shows that timestamp
+        # as the backup's freshness.
+        was = old.get("saved_at", "unknown") if old else "unknown"
+        print(
+            f"{c['LIGHTYELLOW']}No entry has a token left - the logout already happened."
+            f"{c['RESET']} {c['CYAN']}{out}{c['RESET']} kept as it"
+            f" was {c['GREY']}(written {was}, {kept} token(s) intact).{c['RESET']}"
+        )
+        _print_auth_table(merged, states, entries)
+        return 0
+
+    summary = f"{fresh} fresh, {kept} kept from the previous backup, {none} without a token"
+    if args.dry_run:
+        print(f"{c['GREY']}[dry-run]{c['RESET']} would merge into {c['CYAN']}{out}{c['RESET']}: {summary}{c['GREY']}; nothing written{c['RESET']}")
+        _print_auth_table(merged, states, entries)
+        return 0
+
+    snapshot = {
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "host": os.uname().nodename,
+        "source": str(CREDENTIALS_FILE),
+        "mcpOAuth": merged,
+    }
+    if not write_credentials(out, snapshot, old_mtime):
+        return 1
+    print(f"{c['GREEN']}Merged into{c['RESET']} {c['CYAN']}{out}{c['RESET']}: {summary}")
+    _print_auth_table(merged, states, entries)
+    print(f"{c['LIGHTYELLOW']}This file holds live bearer tokens at mode 0600; do not copy it off the host.{c['RESET']}")
+    return 0
+
+
+def cmd_restore_auth(args):
+    """Merge a saved mcpOAuth snapshot back into the credentials file after a login.
+
+    A fresh login writes a credentials file with no MCP tokens in it at all. The
+    merge runs per entry and matches on serverName, because the "<serverName>|<hash>"
+    key is a digest over the server's config and changes whenever that config does -
+    matching on it would quietly insert a duplicate claude never reads. Everything
+    outside the mcpOAuth key is left exactly as it was found.
+
+    Whatever the backup cannot account for - a server authorized after the snapshot,
+    or one that never was - is then handed to fill_empty_entries, so restoring is a
+    single action rather than a judgement call about which command applies. An entry
+    whose backed-up token has already expired is handed over too, since a live token
+    borrowed from a sibling beats one whose refresh token may have rotated away; it
+    comes back from the backup only if no sibling lends one.
+    """
+    c, e = palette(), palette(sys.stderr)
+    backup, _ = read_credentials(Path(args.file))
+    if backup is None:
+        return 1
+    saved = oauth_entries(backup)
+    if not saved:
+        print(f"{e['RED']}Backup {args.file} holds no mcpOAuth entries.{e['RESET']}", file=sys.stderr)
+        return 1
+    print(
+        f"{c['GREY']}Backup file written {backup.get('saved_at', 'unknown')};"
+        f" {len(saved)} entry/entries, each token's own date below{c['RESET']}"
+    )
+
+    data, mtime_ns = read_credentials(CREDENTIALS_FILE)
+    if data is None:
+        return 1
+    entries = data.setdefault("mcpOAuth", {})
+    if not isinstance(entries, dict):
+        print(f"{e['RED']}{CREDENTIALS_FILE} has a non-object mcpOAuth key.{e['RESET']}", file=sys.stderr)
+        return 1
+
+    by_name = entries_by_name(entries)
+
+    restored = 0
+    deferred = []
+    for saved_key, saved_entry in sorted(saved.items(), key=lambda item: entry_name(*item)):
+        name = entry_name(saved_key, saved_entry)
+        if not saved_entry.get("accessToken"):
+            print(f"{c['GREY']}Skipped, backup has no token for{c['RESET']} {name}")
+            continue
+
+        candidates = by_name.get(name, [])
+        if not candidates:
+            # Keeping an entry claude has no server for is harmless: it is looked
+            # up by key and that key is never generated again.
+            target_key, note = saved_key, " (server not currently configured)"
+        else:
+            target_key, note = _pick_auth_target(entries, candidates, saved_entry), ""
+            if len(candidates) > 1:
+                print(f"{c['LIGHTYELLOW']}Warning{c['RESET']}: {len(candidates)} entries named {name}, picked {target_key}")
+            # Claiming the key keeps a second backup entry of the same name - which
+            # happens when the server's config changed and left an old key behind -
+            # from landing on top of the one just restored.
+            candidates.remove(target_key)
+
+        current = entries.get(target_key, {})
+        if current.get("accessToken") and not args.force:
+            print(f"{c['GREY']}Skipped, already authenticated{c['RESET']}: {name}")
+            continue
+
+        expires = saved_entry.get("expiresAt") or 0
+        if 0 < expires < time.time() * 1000 and not args.no_fill:
+            # An expired backup token is the weaker candidate: renewing it needs the
+            # refresh token saved beside it, which a rotation since the snapshot may
+            # have killed, while a sibling server behind the same gateway may be
+            # holding a live one right now. So let the fill pass bid first and put
+            # this back only if nobody lends. Restoring it here instead would look
+            # like success and leave a dead token behind.
+            deferred.append((target_key, saved_entry, name, note))
+            print(f"{name}: {c['LIGHTYELLOW']}backup token expired, trying a live donor first{c['RESET']}")
+            continue
+
+        # The merge happens in memory even under --dry-run, so that the fill pass
+        # below sees the state a real run would leave behind instead of offering
+        # to borrow a token for an entry this pass just accounted for.
+        entry = dict(current) if current else dict(saved_entry)
+        copy_auth_fields(entry, saved_entry)
+        entries[target_key] = entry
+        restored += 1
+        prefix = "[dry-run] restore " if args.dry_run else "Restored "
+        tint = c["GREY"] if args.dry_run else c["GREEN"]
+        print(f"{tint}{prefix}{c['RESET']}{name}{note}")
+
+    filled = 0
+    if not args.no_fill:
+        filled, missing = fill_empty_entries(entries, args.dry_run)
+        for target_key, saved_entry, name, note in deferred:
+            if entries.get(target_key, {}).get("accessToken"):
+                continue
+            entry = dict(entries.get(target_key) or saved_entry)
+            copy_auth_fields(entry, saved_entry)
+            entries[target_key] = entry
+            restored += 1
+            prefix = "[dry-run] restore " if args.dry_run else "Restored "
+            print(
+                f"{prefix}{name}{note} from the backup after all"
+                f"{c['LIGHTYELLOW']} (no donor accepted; the token is expired"
+                f" and may not renew){c['RESET']}"
+            )
+        still_empty = sum(
+            1 for key, _ in missing if not entries.get(key, {}).get("accessToken")
+        )
+        if still_empty:
+            print(
+                f"{c['LIGHTYELLOW']}{still_empty} server(s) need an interactive"
+                f" authorization{c['RESET']}: run claude in a terminal and authorize"
+                f" them from {c['CYAN']}/mcp{c['RESET']}."
+            )
+
+    changed = restored + filled
+    if not changed:
+        empty = sum(1 for entry in entries.values() if not entry.get("accessToken"))
+        if empty:
+            print(f"{c['LIGHTYELLOW']}Nothing restored{c['RESET']}; {empty} entry/entries still have no token.")
+        else:
+            print(f"{c['GREEN']}Nothing to restore{c['RESET']}, all {len(entries)} entry/entries already authenticated.")
+        return 0
+    if args.dry_run:
+        print(f"{c['GREY']}[dry-run] would change {changed} entry/entries, nothing written{c['RESET']}")
+        return 0
+    if not write_credentials(CREDENTIALS_FILE, data, mtime_ns):
+        return 1
+    print(f"{c['GREEN']}Restored {restored} and filled {filled}{c['RESET']} entry/entries in {c['CYAN']}{CREDENTIALS_FILE}{c['RESET']}")
+    print(f"{c['GREY']}Running claude processes still hold the old credentials; run{c['RESET']}")
+    print(f"  {c['CYAN']}jcl refresh all{c['RESET']}")
+    print(f"{c['GREY']}to restart them in place, then save-auth again once they have renewed:{c['RESET']}")
+    print(f"{c['GREY']}a renewal rotates the refresh token and leaves this backup behind.{c['RESET']}")
+    print(f"{c['GREY']}Re-saving only ever adds; it cannot lose a token the backup already holds.{c['RESET']}")
+    return 0
+
+
+def _pick_auth_target(entries, candidates, saved_entry):
+    url = saved_entry.get("serverUrl")
+    for key in candidates:
+        if url and entries[key].get("serverUrl") == url:
+            return key
+    for key in candidates:
+        if not entries[key].get("accessToken"):
+            return key
+    return candidates[0]
+
+
+def fill_empty_entries(entries, dry_run):
+    """Offer every authenticated server's token to every server that has none.
+
+    Servers sharing a gateway often accept each other's tokens, but no stored field
+    says which ones do, so each candidate is tried against the empty server's own
+    URL and copied only where the gateway answers. Modifies entries in place and
+    returns (filled, recipients); the caller owns the write.
+    """
+    c, e = palette(), palette(sys.stderr)
+    # Freshest first: an expired access token is a guaranteed 401, so trying it
+    # first spends a network round trip to learn nothing.
+    donors = sorted(
+        ((key, entry) for key, entry in entries.items() if entry.get("accessToken")),
+        key=lambda item: (-(item[1].get("expiresAt") or 0), entry_name(*item)),
+    )
+    recipients = [
+        (key, entry)
+        for key, entry in entries.items()
+        if not entry.get("accessToken") and entry.get("serverUrl")
+    ]
+    if not recipients:
+        return 0, []
+    if not donors:
+        print(f"{e['RED']}No authenticated MCP server to copy a token from.{e['RESET']}", file=sys.stderr)
+        return 0, recipients
+    print(f"{c['BOLD']}{len(recipients)}{c['RESET']} server(s) with no token, {c['BOLD']}{len(donors)}{c['RESET']} donor(s) to try.")
+
+    filled = 0
+    for key, entry in sorted(recipients, key=lambda item: entry_name(*item)):
+        name = entry_name(key, entry)
+        refused = []
+        for donor_key, donor in donors:
+            donor_name = entry_name(donor_key, donor)
+            blocker = _borrow_blocker(donor, entry)
+            if blocker:
+                refused.append(f"{donor_name} {blocker}")
+                continue
+            ok, detail = probe_mcp(entry["serverUrl"], donor["accessToken"])
+            if not ok:
+                refused.append(f"{donor_name} {detail}")
+                continue
+            prefix = "[dry-run] fill " if dry_run else "Filled "
+            print(f"{c['GREEN']}{prefix}{c['RESET']}{name} <- {donor_name} {c['GREY']}({detail}){c['RESET']}")
+            copy_auth_fields(entry, donor)
+            filled += 1
+            break
+        else:
+            print(
+                f"{name} {c['GREY']}(authorizes at {_auth_server(entry)}){c['RESET']}:"
+                f" {c['LIGHTYELLOW']}no donor accepted{c['RESET']}"
+                f" {c['GREY']}({', '.join(refused)}){c['RESET']}"
+            )
+    return filled, recipients
+
+
+def cmd_fill_auth(args):
+    """Give MCP servers with no token a working one borrowed from a server that has one.
+
+    restore-auth already does this as its second pass; reach for this one on its own
+    after adding a server to the MCP config, or when a token was lost with no backup
+    to restore from.
+    """
+    c, e = palette(), palette(sys.stderr)
+    data, mtime_ns = read_credentials(CREDENTIALS_FILE)
+    if data is None:
+        return 1
+    entries = oauth_entries(data)
+    if not entries:
+        print(f"{e['RED']}No mcpOAuth entries in {CREDENTIALS_FILE}.{e['RESET']}", file=sys.stderr)
+        return 1
+
+    filled, recipients = fill_empty_entries(entries, args.dry_run)
+    if not recipients:
+        print(f"{c['GREEN']}All {len(entries)} entry/entries already have a token{c['RESET']}, nothing to fill.")
+        return 0
+    if args.dry_run:
+        print(f"{c['GREY']}[dry-run] would fill {filled} of {len(recipients)} entry/entries, nothing written{c['RESET']}")
+        return 0
+    if filled and not write_credentials(CREDENTIALS_FILE, data, mtime_ns):
+        return 1
+    print(f"{c['GREEN']}Filled {filled} of {len(recipients)}{c['RESET']} entry/entries in {c['CYAN']}{CREDENTIALS_FILE}{c['RESET']}")
+    if filled:
+        print(f"Run {c['CYAN']}jcl refresh all{c['RESET']} to make running sessions pick it up.")
+    return 0 if filled == len(recipients) else 1
+
+
+def shell_quote(text):
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Bring the Claude Code and Codex sessions running in tmux back after a reboot."
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    p_list = sub.add_parser(
+        "list", help="Show running sessions and the tmux pane each is in"
+    )
+    p_list.add_argument(
+        "-a", "--all", action="store_true", help="Also show stale records of exited processes"
+    )
+    p_list.add_argument("--json", action="store_true", help="Emit JSON")
+    p_list.add_argument("--ids-only", action="store_true", help="Print session ids only")
+    p_list.set_defaults(func=cmd_list)
+
+    p_save = sub.add_parser(
+        "save", help="Snapshot the running sessions to a file before a reboot"
+    )
+    p_save.add_argument("-o", "--output", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
+    p_save.set_defaults(func=cmd_save)
+
+    p_restore = sub.add_parser(
+        "restore", help="Reopen snapshotted sessions that are no longer running"
+    )
+    p_restore.add_argument("-f", "--file", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
+    p_restore.add_argument(
+        "-n", "--dry-run", action="store_true", help="Print the commands instead of running them"
+    )
+    p_restore.set_defaults(func=cmd_restore)
+
+    p_refresh = sub.add_parser(
+        "refresh",
+        help="Restart the named sessions in place to pick up a new login",
+        description=(
+            "Kill the named interactive sessions and relaunch each with --resume"
+            " in the same tmux pane, so they survive a `claude auth login` /"
+            " `claude auth logout` done in one other pane without losing history."
+            " At least one SESSION must be named; pass `all` to take every live"
+            " one. Run list first, or pass -n, to see what would be restarted."
+        ),
+    )
+    p_refresh.add_argument(
+        "sessions", nargs="*", metavar="SESSION",
+        help="Panes to restart, as tmux targets (0:6.2) - the first column of"
+             " `list`. Give several separated by spaces or commas, or `all` for"
+             " every live session. There is no default. Naming one overrides"
+             " --agent.",
+    )
+    p_refresh.add_argument(
+        "--agent", choices=["claude", "codex", "all"], default="claude",
+        help="Restrict to one agent kind, when no SESSION is named (default: claude)",
+    )
+    p_refresh.add_argument(
+        "--timeout", type=float, default=15.0,
+        help="Seconds to wait for the quit keystroke to exit before falling back"
+             " to SIGTERM, then SIGKILL (default: 15)",
+    )
+    p_refresh.add_argument(
+        "-n", "--dry-run", action="store_true", help="Print what would run, kill nothing"
+    )
+    p_refresh.set_defaults(func=cmd_refresh)
+
+    p_effort = sub.add_parser(
+        "set-effort",
+        help="Type /effort <level> into every live claude pane",
+        description=(
+            "Send claude's /effort to every live claude session in tmux, so they"
+            " all move off the level in settings.json without a restart. max only"
+            " ever reaches the sessions running now, claude refuses to save it as"
+            " the default. Each input box is cleared first (C-l), so an unsent"
+            " draft there is lost. Codex has no such command and is skipped."
+            " Pass -n to see which panes would be typed into."
+        ),
+    )
+    p_effort.add_argument(
+        "level", nargs="?", default="max",
+        help="Effort level to set, anything /effort itself accepts (default: max)",
+    )
+    p_effort.add_argument(
+        "--delay", type=float, default=0.3,
+        help="Seconds between the text and the Enter submitting it (default: 0.3)",
+    )
+    p_effort.add_argument(
+        "--timeout", type=float, default=8.0,
+        help="Seconds to wait for claude's reply; a busy pane only answers once"
+             " its turn ends (default: 8)",
+    )
+    p_effort.add_argument(
+        "--no-verify", action="store_true", help="Send without reading the panes back"
+    )
+    p_effort.add_argument(
+        "-n", "--dry-run", action="store_true", help="List the panes, type nothing"
+    )
+    p_effort.set_defaults(func=cmd_set_effort)
+
+    p_model = sub.add_parser(
+        "set-model",
+        help="Type /model <name> into every live claude pane",
+        description=(
+            "Send claude's /model to every live claude session in tmux, so they"
+            " all move off the model in managed settings without a restart. The"
+            " pin wins again on the next start, which is exactly what refresh"
+            " does, so run this after a refresh and not before. Any alias /model"
+            " itself accepts works: opus, sonnet, opusplan, opus[1m], or a full"
+            " model id. Each input box is cleared first (C-l), so an unsent draft"
+            " there is lost. Codex has no such command and is skipped."
+            " Pass -n to see which panes would be typed into."
+        ),
+    )
+    # Deliberately not a choices= list, here or on --effort/level: what claude
+    # accepts changes with every release, and a stale list baked in here would
+    # reject a value that is perfectly valid. Anything claude does not know comes
+    # back from the pane as refused, which is a better place to find out.
+    p_model.add_argument(
+        "model", nargs="*", default=["opus"], metavar="MODEL",
+        help="Model alias or id to set (default: opus)",
+    )
+    p_model.add_argument(
+        "--delay", type=float, default=0.3,
+        help="Seconds between the text and the Enter submitting it (default: 0.3)",
+    )
+    p_model.add_argument(
+        "--timeout", type=float, default=8.0,
+        help="Seconds to wait for claude's reply; a busy pane only answers once"
+             " its turn ends (default: 8)",
+    )
+    p_model.add_argument(
+        "--no-verify", action="store_true", help="Send without reading the panes back"
+    )
+    p_model.add_argument(
+        "-n", "--dry-run", action="store_true", help="List the panes, type nothing"
+    )
+    p_model.set_defaults(func=cmd_set_model)
+
+    p_set = sub.add_parser(
+        "set",
+        help="Set model and/or effort on every live claude pane in one pass",
+        description=(
+            "Send /model and /effort to every live claude session in tmux,"
+            " taking the pane list once instead of twice. Running set-model and"
+            " set-effort back to back scans tmux and /proc for each, and that"
+            " scan is where the time goes - the typing itself is cheap. At"
+            " least one of --model/--effort must be given. Each input box is"
+            " cleared first (C-l), so an unsent draft there is lost. Codex has"
+            " neither command and is skipped. Pass -n to see the panes only."
+        ),
+    )
+    p_set.add_argument(
+        "--model", action="append", metavar="MODEL",
+        help="Model name, anything /model itself accepts. Repeat to cover both"
+             " agents (e.g. --model opus[1m] --model gpt-5.6-terra); each name"
+             " goes only to the agent it belongs to.",
+    )
+    p_set.add_argument(
+        "--effort",
+        help="Effort level, anything /effort itself accepts (e.g. max)",
+    )
+    p_set.add_argument(
+        "--delay", type=float, default=0.3,
+        help="Seconds between the text and the Enter submitting it (default: 0.3)",
+    )
+    p_set.add_argument(
+        "--timeout", type=float, default=8.0,
+        help="Seconds to wait for claude's reply, per command (default: 8)",
+    )
+    p_set.add_argument(
+        "--no-verify", action="store_true", help="Send without reading the panes back"
+    )
+    p_set.add_argument(
+        "-n", "--dry-run", action="store_true", help="List the panes, type nothing"
+    )
+    p_set.set_defaults(func=cmd_set)
+
+    p_patch = sub.add_parser(
+        "patch-resurrect",
+        help="Rewrite a tmux-resurrect layout so each agent pane resumes its own session",
+        description=(
+            "Rewrite a layout file saved by tmux-resurrect so that every Claude Code and"
+            " Codex pane carries the session id it was actually running, plus the working"
+            " directory the agent recorded. Without this a restored pane starts a brand"
+            " new conversation. Runs from the @resurrect-hook-post-save-layout hook on"
+            " every save; running it by hand is safe and repeatable."
+        ),
+    )
+    p_patch.add_argument(
+        "layout_file", help="Layout file to rewrite; the resurrect hook passes this in"
+    )
+    p_patch.add_argument(
+        "-n", "--dry-run", action="store_true", help="Print the rewritten layout, save nothing"
+    )
+    p_patch.add_argument(
+        "-v", "--verbose", action="store_true", help="Report what was rewritten"
+    )
+    p_patch.set_defaults(func=cmd_patch_resurrect)
+
+    p_save_auth = sub.add_parser(
+        "save-auth",
+        help="Merge the MCP OAuth tokens into the backup (re-run freely, they rotate)",
+        description=(
+            "Copy the mcpOAuth block out of ~/.claude/.credentials.json so that logging"
+            " out, or switching Anthropic accounts, does not cost one interactive browser"
+            " authorization per MCP server. Run it before the logout, and re-run it now"
+            " and then: claude rotates a refresh token every time it renews, so a backup"
+            " goes stale on its own. Re-running is always safe - the merge is per server"
+            " and only ever adds, so a server that has lost its token locally keeps what"
+            " the backup already held for it. Only --force can lose a token. The file it"
+            " writes holds live bearer tokens and is created mode 0600."
+        ),
+    )
+    p_save_auth.add_argument(
+        "-o",
+        "--output",
+        default=str(DEFAULT_AUTH_BACKUP),
+        help=f"Backup path (default: {DEFAULT_AUTH_BACKUP})",
+    )
+    p_save_auth.add_argument(
+        "--force",
+        action="store_true",
+        help="Snapshot the live state strictly, dropping backed-up tokens it no longer has",
+    )
+    p_save_auth.add_argument(
+        "-n", "--dry-run", action="store_true", help="Print what would be saved, write nothing"
+    )
+    p_save_auth.set_defaults(func=cmd_save_auth)
+
+    p_restore_auth = sub.add_parser(
+        "restore-auth",
+        help="Merge saved MCP OAuth tokens back after a login",
+        description=(
+            "Put the tokens saved by save-auth back into ~/.claude/.credentials.json."
+            " Only entries that are missing or have an empty token are filled; --force"
+            " overwrites every one of them. Anything the backup cannot account for is"
+            " then offered a token borrowed from a server that shares its gateway, the"
+            " way fill-auth does, so restoring is one command rather than a choice"
+            " between two. The merge happens at the mcpOAuth key, so an Anthropic"
+            " account login living in the same file is left alone. Run"
+            " `jcl refresh` afterwards - a live process keeps the"
+            " credentials it read at startup, and it can rewrite this file from memory."
+        ),
+    )
+    p_restore_auth.add_argument(
+        "-f",
+        "--file",
+        default=str(DEFAULT_AUTH_BACKUP),
+        help=f"Backup to restore from (default: {DEFAULT_AUTH_BACKUP})",
+    )
+    p_restore_auth.add_argument(
+        "--force", action="store_true", help="Overwrite entries that already hold a token"
+    )
+    p_restore_auth.add_argument(
+        "--no-fill",
+        action="store_true",
+        help="Skip the borrowing pass, restore from the backup only",
+    )
+    p_restore_auth.add_argument(
+        "-n", "--dry-run", action="store_true", help="Print the merge, write nothing"
+    )
+    p_restore_auth.set_defaults(func=cmd_restore_auth)
+
+    p_fill_auth = sub.add_parser(
+        "fill-auth",
+        help="Copy a working token onto MCP servers that have none",
+        description=(
+            "Servers sharing a gateway often accept each other's tokens, but no stored"
+            " field says which ones do. Each authenticated server's token is offered to"
+            " each empty server against its own URL with an MCP initialize call, and"
+            " copied only where the gateway answers. So a set of servers behind one"
+            " gateway costs a single interactive authorization instead of one each."
+            " restore-auth runs this as its second pass, so reach for it on its own"
+            " after adding a server, or when there is no backup to restore from."
+        ),
+    )
+    p_fill_auth.add_argument(
+        "-n", "--dry-run", action="store_true", help="Probe and report, write nothing"
+    )
+    p_fill_auth.set_defaults(func=cmd_fill_auth)
+
+    args = parser.parse_args()
+    if not args.command:
+        args = parser.parse_args(["list"])
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

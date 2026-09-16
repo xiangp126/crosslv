@@ -5,13 +5,21 @@ description: Reproduce a regression, CI or DoA failure locally, bit-for-bit, fro
 
 # Regression repro
 
-When Peter says **"regression repro template"** — or asks to reproduce a regression / CI / DoA
-failure locally — he means this file:
+Turns a single Redmine URL (or a MARS session id) into a bit-for-bit local reproduction.
+When Peter says **"regression repro template"**, this is what he means.
 
-**`/auto/fwgwork1/pexiang/bugZilla/template/regression_repro_plan.md`**
+## Where everything lives
 
-Read it first and follow its phases. It turns a single Redmine URL (or a MARS session id) into a
-bit-for-bit local reproduction.
+| File | What it is | When to open it |
+|---|---|---|
+| `templates/repro_plan.md` | the **per-ticket skeleton** — frontmatter, todo list, Goal, Environment table, Run log | **first** — copy it to `/auto/fwgwork1/<user>/bugZilla/<ticket#>_<core>/repro_plan_<ticket#>.md` and fill it in as you go |
+| `references/procedure.md` | Phases 1–11: decode the ticket → extract versions from the tarball → allocate the box → pin repos → burn → bring up → run → confirm → codify → commit | while working a phase; read the phase you are on, not all of it |
+| `references/key-learnings.md` | accumulated traps + a worked example (#5090131, BRONCO/BF4) | when something behaves oddly, and before declaring a verdict |
+| the rules below | things that must fire *without* anyone opening a file | always |
+
+The paths above are relative to this skill's directory.
+`/auto/fwgwork1/pexiang/bugZilla/template/regression_repro_plan.md` is the original single-file
+version these were split out of — kept for reference, no longer the source of truth.
 
 ## The parts that get skipped most often, and shouldn't be
 
@@ -30,6 +38,57 @@ bit-for-bit local reproduction.
   `check_arm_agent`) read out of the session tarball — not a "cleaner" equivalent.
 - Per-ticket work goes in `/auto/fwgwork1/pexiang/bugZilla/<ticket#>_<core>/`; the
   repro-dedicated clones are `golan_fw2` / `utopx2`, **not** the primary feature repos.
+
+## Rules that must fire without opening the template
+
+The template is a ~1300-line per-ticket artifact you copy and fill in — these are the rules that
+cost a day each when skipped, so they live here too instead of only there.
+
+### Never edit source in `/tmp/mars_tests/<test-DB>/tests/`
+
+That tree is **MARS's own deployment, and mars_reg runs the nightly regression out of it.** Reuse
+it read-only — run its `utopx.exe`, read its configs, check its commit. Never patch a file, add a
+probe, or rebuild in place, not even "temporarily, with a backup": if the lease expires or the box
+is grabbed before you restore, the next regression runs on your binary and nothing in the archive
+points back at you.
+
+Source edits — a candidate fix *or* a read-only debug probe — go in the repro clone on a named
+private branch, or in a worktree per skill `fw-build-burn-utopx`. Run that binary on the box over
+NFS; no copying needed.
+
+### A branch checkout does not give you a clean tree
+
+Two things survive `git checkout` and will silently poison a build:
+
+- **submodule working trees** — always `git submodule update --init --recursive`.
+- **gitignored generated files**, e.g. `hca_fwv_shared/autogen/`. Nothing regenerates them
+  (the CMakeLists only globs what is on disk) and `--git-clean` preserves submodules. Otherwise
+  you link a weeks-old library, the reproduction stops reproducing, and every run segfaults.
+  Wipe with `git clean -fdx` on **every** autogen tree, not a `*.cpp` glob — the layout differs
+  per submodule revision, so a glob leaves the other branch's subdirectories behind.
+
+Build with **`jmake -c -o`** — clean, then build. Then **read the log**: jmake prints
+`BUILD SUCCESS` and exits 0 even when the `shared` stage died. Details in skill
+`fw-build-burn-utopx`.
+
+### Judge a run by how it ENDED, not by the signature counters
+
+Check `To rerun use seed` / `TEST PASSED|FAILED` / `terminate called` / `SEGMENTATION FAULT`
+before reading any counter. A run that scores 0 on every target signature and then crashes is not
+a pass. Missed twice in two days (2026-09-15/16).
+
+### The control must differ by exactly ONE variable
+
+Always rerun the unmodified build on the same seed, or a pre-existing failure and one you
+introduced look identical. The control must be *the same tree, same configs, same command, patch
+removed*. Comparing "my clone + patch" against "the deployed binary" changes two things at once;
+on 2026-09-16 that made an environment artifact look like a segfault in the patch and cost three
+rounds of rewriting correct code.
+
+### Do not "improve" a verified patch on the way to gerrit
+
+Whatever expression you verified on the box is what you push. A cleaner or more general form is a
+**new, unverified change** that needs its own run; "strictly better" reasoning is not evidence.
 
 ## NEVER touch `l-fwminireg-*` — they are dedicated CI machines
 
@@ -66,4 +125,6 @@ out of rotation. Both are cheaper than corrupting someone's CI result.
 
 - Getting the failure signature to match against: skill `ci-forensics`.
 - Taking a lab box for the repro: skill `noga-lock`.
-- Rebuilding a sat-PF environment: skill `satpf-171`.
+- BlueField mlxconfig / ARM-liveness traps: skill `bluefield-fwconfig`.
+- Rebuilding the BF-3 sat-PF env on l-fwreg-171 (environment state, not a skill):
+  `/auto/fwgwork1/pexiang/bugZilla/OCI_EMU/SATPF_171_ENV.md`.

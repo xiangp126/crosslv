@@ -1,6 +1,6 @@
 ---
 name: noga-lock
-description: Reserve, extend, release and monitor lab servers in the NOGA pool — both the `jmake --reg-malloc/--reg-extend/--reg-cancel` wrappers and raw noga_manage.py, the unattended wait-then-grab loop for a box held by mars_reg, and how to read the UTC lock_time_out. Use when asked to take/grab/lock a lab machine, malloc or extend an allocation, wait for a server to free up, check who holds a box, release a lock, or find machines by PSID.
+description: Query, lock, release and monitor lab servers in the NOGA pool with noga_manage.py — including the unattended wait-then-grab loop for a box held by mars_reg, and how to read the UTC lock_time_out. Use when asked to take/grab/lock a lab machine, wait for a server to free up, check who holds a box, release a lock, or find machines by PSID.
 ---
 
 # Monitoring and locking a lab server (NOGA)
@@ -31,80 +31,6 @@ Find machines by PSID:
 /mswg/projects/fw/fw_ver/hca_fw_tools/noga_allocation/get_setups_info.py \
     --team_name hca_fw --where "psid <PSID>"
 ```
-
-## Reserve via the jmake wrappers — malloc / extend / cancel
-
-These are jmake wrappers over the lab reservation aliases (`malloc`/`extend_my_alloc`/
-`scancelme` in `/mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias`). Run from any dev box:
-
-```bash
-# Inventory / find state:
-jmake --reg-info                     # full regression-server inventory (minfo)
-jmake --reg-idle                     # idle servers (midle)
-jmake --reg-mine                     # servers currently allocated to me (sqme)
-
-# MALLOC — allocate the failing box (default 8h):
-jmake --reg-malloc <machine>         # = malloc <machine> -t 8
-#   If it prints "Resource locked by <holder> until <ts>": it's taken — wait for that
-#   time or ping the holder; do NOT reproduce on a different host.
-#   If it prints "Resource <machine> not in allocation pool (missing
-#   HCA_FW_ALLOCATION_POOL_HOST label)": that box isn't in the malloc/sqme pool (some
-#   dedicated BRONCO/BF reg boxes carry only the PARTITION_NOGA_ALLOC_reg label). malloc
-#   and --reg-mine can't see it — lock it DIRECTLY via Noga instead (same lock the
-#   regression/other users use; see the Noga fallback below). A direct Noga lock will NOT
-#   show in `jmake --reg-mine`/sqme (sqme filters on HCA_FW_ALLOCATION_POOL_HOST) — confirm
-#   you own it with `noga_manage.py -q -n <machine> -D | grep lock_owner` instead.
-
-# EXTEND — add 3h to my current allocation (run before it expires mid-repro):
-jmake --reg-extend                   # = extend_my_alloc
-#   INTERACTIVE when you hold >1 box: it lists them and reads a number from stdin —
-#   non-interactive shells get EOFError. Pipe the selection: `echo <n> | jmake --reg-extend`.
-#   Semantics: extend = NOW+3h (replaces the old end time; can even SHORTEN a fresh 8h lease).
-#   Verify what you actually have with `jmake --reg-mine` (TIME LEFT column is unambiguous;
-#   raw Noga lock_time_out timestamps are in the Noga DB timezone — trust TIME LEFT, not tz math).
-
-# CANCEL — release my allocation(s) when done:
-jmake --reg-cancel                   # = scancelme
-
-# Confirm the lock + owner (Noga, authoritative):
-python3 /.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py \
-  -q -n <machine> -D 2>&1 | grep -E 'Status\.(status|lock_owner|lock_time_out)'
-# want: Status.status = Lock, Status.lock_owner = <you>
-```
-> Raw fallback if `jmake --reg-*` is unavailable: `source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias`
-> then `malloc <machine> -t <hours>` / `extend_my_alloc` / `scancelme` / `sqme` / `midle` / `minfo`.
-> Or lock via Noga directly (REQUIRED for boxes lacking the malloc-pool label, above):
-> `noga_manage.py -l -t server -n <machine> -L <hours> -N "repro #<ticket>"` — the `-t server`
-> (type) is mandatory for `lock` ("required either id or type+name or expr"); `-L` is hours;
-> verify with `-q -n <machine> -D | grep -E 'Status\.(status|lock_owner|lock_time_out)'`.
-> Unlock with `noga_manage.py -u -t server -n <machine>`. Respect existing locks — see memory
-> respect-reg-server-locks.
-
-> **Noga REST outage (HTTP 504) — recognize it, don't misread it.** `malloc`, `minfo`, `sqme`
-> AND `noga_manage.py -q` all go through the same REST backend
-> (`https://noga.nvidia.com/app/server/php/rest_api/`). When every one of them hangs/504s,
-> it's a backend outage — NOT a lock conflict; never read malloc's 504 traceback as "box
-> taken". Cheap health probe (lightest api_cmd):
-> ```bash
-> curl -sS -m 20 -o /dev/null -w "%{http_code}\n" \
->   "https://noga.nvidia.com/app/server/php/rest_api/?api_cmd=get_teams"   # 504 = backend down
-> ```
-> The web UI `/app/view/` returning 200 proves nothing (static page; its data comes from the
-> same dead REST). Outages self-heal (observed: hours) — poll the probe in the background and
-> re-query owners on recovery. The only non-REST alternative is Noga's direct Oracle DB API
-> (`/.autodirect/sw_tools/Internal/Noga/RELEASE/latest/import/lib/noga_api.py`, class
-> `Noga_DB_API`: `set_cursor` → `res_type_by_name('server')` → `find_matching_ids(<box>)` →
-> `get_resource_data_by_id`) — but it needs the Oracle client (`libclntsh.so`), which exists
-> on STM/MARS hosts only (dev boxes lack `/opt/oraclient`); run it there with the
-> `$MARS_PYVERSION` python.
->
-> **`lock_time_out` is Israel time, and expiry LAGS.** Convert with
-> `date -d 'TZ="Asia/Jerusalem" <ts>'`. A box can stay `Lock` well past its lock_time_out
-> (lazy auto-release sweep, or the holder extended) — monitor the actual `Status.status`
-> flip to `Release`, never schedule around the timestamp.
-
-> Moved here from the repro procedure on 2026-09-16: this is lock machinery and belongs with the
-> rest of it, not duplicated inside a reproduction runbook.
 
 ## Reading `lock_time_out`
 

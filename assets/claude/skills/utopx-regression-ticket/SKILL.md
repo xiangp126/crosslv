@@ -10,30 +10,21 @@ nightly regression or CI DoA session. They are `Task`/`Story` in a Verification 
 
 ## The channel is set by Peter's wording, not by your judgement
 
-**Peter's rule (2026-09-07), verbatim in effect:**
-
 | he says | you file |
 |---|---|
 | **"open a ticket"** (or anything short of the phrase below) | **a Redmine ticket — always, by default.** Do not reroute it because the problem looks like CI plumbing |
-| **"open a CI ticket"** — explicitly | the ServiceNow request **"Networking SW - Host Firmware Automation Support"** (`nbu-fw_automation_team`) |
+| **"open a CI ticket"** — explicitly | the ServiceNow request — see skill `ci-support-ticket` |
 
-Do **not** infer the channel from what is broken. If a Redmine ticket looks like the wrong home for
-the finding, **say so in your reply and file the Redmine ticket anyway** — the reroute is his call,
-not yours.
+If a Redmine ticket looks like the wrong home for the finding, **say so in your reply and file the
+Redmine ticket anyway** — the reroute is his call, not yours.
 
-Within Redmine there is still one real choice, and that one *is* by subject matter:
+Within Redmine there is still one choice, by subject matter:
 
 - **utopx test defect** (wrong expected value, bad model, a UFATAL in a case that ran) →
   project **5581 `ConnectX FW Core - Verification`**, Task/Story — the rest of this skill.
 - **firmware defect** (FW returns the wrong cap/syndrome, the test is right) →
   project **5580 `ConnectX FW Core - Design`**, tracker **`Bug SW`**, with
-  `Reported by Department` / `Detected In Version`. See memory
-  `reference_satpf_fw_wa_redmine_tickets`.
-
-### When he does say "open a CI ticket"
-
-That is a different system and a different discipline — the Description there reports the
-failure only, never your analysis. **See skill `ci-support-ticket`.**
+  `Reported by Department` / `Detected In Version`.
 
 ## The field set
 
@@ -43,12 +34,12 @@ Canonical example to copy from: **[#5255514](https://redmine.nvidia.com/issues/5
 
 | field | value | notes |
 |---|---|---|
-| tool | **`yai__create_task`** | NOT `create_bug` — that picks a Bug tracker the project may not enable |
+| tool | **`yai__create_task`**, or the REST fallback below if the MCP is down | NOT `create_bug` — that picks a Bug tracker the project may not enable |
 | `project` | **`5581`** (`ConnectX FW Core - Verification`) | pass the numeric id |
 | `tracker` | `Task` | |
 | `scrum_type` | `Story` | required for it to land on the scrum board |
 | `sprint_id` | see **Sprint lookup** below | |
-| `priority` | `P1: Critical` / `P2: High` | judge by real impact, don't just copy the template |
+| `priority` | **`P1: Critical` (id 6) — this is the default, use it** | Peter's rule 2026-09-15: these regression tickets go in as P1. Do not downgrade to P2 because the failure "only" kills one case — the judgement call is his, not yours |
 | `assigned_to` | full name, e.g. `Peter Xiang`, or `me` | author is always the authenticated user |
 | `target_version` | `9505` = `Host FW - 51.1000 GA Release (GA-October26)` | **pass the numeric id**; name resolution only checks the project's own versions |
 | `custom_fields` | `{"Chips": "<id>"}` | **numeric chip id only** — `167` = Bronco (BF4), `84` = Mustang (BF3). The `"167=Bronco"` string form is rejected |
@@ -57,6 +48,12 @@ Canonical example to copy from: **[#5255514](https://redmine.nvidia.com/issues/5
 | `Show Stopper` | defaults to `0` — leave it unless the failure really blocks a release | |
 
 `start_date` / `due_date` are not create-time parameters; they come from the sprint window.
+
+## When the redmine MCP is down
+
+`yai__create_task` unavailable and `redmine-cli` broken by glibc? Use the REST API with the key
+in `~/.redmine_env`. Field-name → numeric-id mapping, the id lookup endpoints, and the
+"ask which sprint, don't infer it from the date" rule: **`references/rest-fallback.md`**.
 
 ## Sprint lookup — the sprint does NOT live in the ticket's project
 
@@ -90,6 +87,17 @@ dedup tooling match on this string. Examples:
 [UTOPX]status != OK is supported only in error test on command QUERY_EMULATED_RESOURCES_INFO syndrome : 0xe5dfad;query_emulated_resources_info: operation is not supported;
 [UTOPX]cmd_hca_cap: general_obj_type_dpa_db_cq_mapping not greater than (or zero if expected) : expected= 0x0 Actual 0x1
 ```
+
+## Description — keep it SHORT
+
+**Peter's rule (2026-09-15): the description was too complex.** It is a landing page, not the
+analysis. Look at [#5232246](https://redmine.mellanox.com/issues/5232246) — its description is the
+fatal line plus the MARS link, nothing else.
+
+Budget: **fatal message + MARS link + a Root cause paragraph of ~5 lines.** Everything longer —
+the A/B evidence, per-branch SHAs, the candidate patch, the NOT-verified list — goes into the
+**first comment**, with the full write-up as an **attachment**. A reader opening the ticket should
+see what broke and where, and be able to choose whether to read further.
 
 ## Description — three parts, in this order
 
@@ -126,7 +134,8 @@ has `result: 1` **and** a sibling `log.txt`. Getting from a session id to that n
 
 ### What the Root cause paragraph needs
 
-State the confidence in the first words, then earn it. A good one carries:
+In the **description**, keep it to the confidence word plus the mechanism in a few lines.
+Everything below belongs in the **first comment**, not the description:
 
 - **The suspect change**, as a gerrit URL + title + owner + merge date + per-branch SHAs.
 - **A/B evidence over sessions**, not anecdotes: N sessions before with 0 occurrences vs M sessions
@@ -141,13 +150,23 @@ State the confidence in the first words, then earn it. A good one carries:
 - **Whether reverting the suspect is an option**, if the suspect fixed something real.
 - A pointer to the full local analysis file.
 
+## Attachments
+
+**Upload as much as you can — this is not optional.** The MARS per-case artifacts do not live
+under the failing `key_id` (they sit in sibling nodes), the `.cap` files are MARS metadata rather
+than the artifact, and your own A/B logs and patches belong on the ticket too.
+
+Full procedure, naming convention, one-shot `tar` extraction and the two-step REST upload flow:
+**`references/attachments.md`**.
+
 ## After creating — verify, don't assume
 
 ```
 yai__get_tickets(ticket_ids=[<new id>], include="basic")
 ```
 
-Check `author`, `assigned_to`, `tag_list`, `story_points`, `custom_fields[Chips]`, and
+Check `author`, `assigned_to`, `priority`, `attachments`, `tag_list`, `story_points`,
+`custom_fields[Chips]`, and
 `start_date`/`due_date` — **the dates are the only visible proof the sprint took**, since the API
 response has no sprint field. If they don't match the sprint window, set the sprint on the UI board.
 
@@ -156,3 +175,17 @@ response has no sprint field. If they don't match the sprint window, set the spr
 - session_id → the archive → the actual UFATAL and node path: skill `ci-forensics`.
 - If the MCP is down, `redmine-cli` fallback: skill `tracking-redmine`.
 - Reporting a *firmware* defect instead: memory `reference_satpf_fw_wa_redmine_tickets`.
+
+## Fields the REST API silently drops on this instance
+
+Measured on #5273244 (2026-09-15): a `PUT` returns **204** but the value never lands for
+
+| field | workaround |
+|---|---|
+| `story_points` | set it on the UI scrum board |
+| `tags` / `tag_list` | set it on the UI |
+
+`sprint_id`, `priority_id`, `fixed_version_id`, `assigned_to_id`, `custom_fields[Chips]` and
+`uploads` all write fine. **Always read back after writing** — a 204 is not proof the value took.
+For the sprint the only visible proof is `start_date`/`due_date` matching the sprint window
+(`MTBC_YL 26-08` -> 2026-08-01 .. 2026-08-31).
