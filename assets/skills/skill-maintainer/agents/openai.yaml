@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shared Skill Maintainer"
+  short_description: "Maintain one skill source for Claude and Codex"
+  default_prompt: "Use $skill-maintainer to add or update a skill shared by Claude Code and Codex."

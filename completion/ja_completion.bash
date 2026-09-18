@@ -19,90 +19,43 @@ _ja_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    short_opts="-h -t -w -l -v -D -s -S -L -R -A"
-    long_opts="--help --target --wait --list --verbose --daemon \
+    short_opts="-h -w -l -v -D -s -S -L -R -A"
+    long_opts="--help --wait --list --verbose --daemon \
                --stop --restart --all --status --log --log-full"
 
-    # Complete tmux targets in session[:window[.pane]] format.
-    # Generates candidates with raw colons, then uses
-    # __ltrim_colon_completions to handle readline's colon word-break.
-    _complete_tmux_target() {
-        local IFS=$'\n'
-        local prefix="$1"
-        local candidates
-
-        if [[ "$prefix" == *:*.* ]]; then
-            # session:window.pane — complete pane indices
-            local session="${prefix%%:*}"
-            local after_colon="${prefix#*:}"
-            local window="${after_colon%%.*}"
-            candidates=$(tmux list-panes -t "${session}:${window}" 2>/dev/null | \
-                sed -re "s/^([^:]+):.*$/${session}:${window}.\1/")
-        elif [[ "$prefix" == *:* ]]; then
-            # session:window — complete window indices
-            local session="${prefix%%:*}"
-            candidates=$(tmux list-windows -t "$session" 2>/dev/null | \
-                sed -re "s/^([^:]+):.*$/${session}:\1./")
-            compopt -o nospace
-        else
-            # session name
-            candidates=$(tmux list-sessions 2>/dev/null | \
-                sed -re 's/([^:]+:).*$/\1/')
-            compopt -o nospace
-        fi
-
-        COMPREPLY=( $(compgen -W "$candidates" -- "$prefix") )
-        __ltrim_colon_completions "$prefix"
+    # The panes ja is for: the ones running an AI.
+    #
+    # One `tmux list-panes -a` gives every pane's foreground command at once and
+    # costs ~0ms, so there is no need to walk session -> window -> pane the way
+    # this used to. It matches what `ja --list` reports without paying that
+    # command's ~0.9s. ja also accepts a pane not running an AI yet (it boots
+    # paused and waits), so when nothing matches, every pane is offered.
+    # $1 picks the form: session:window.pane (default) or the pane id (%47).
+    # ja takes either, and a word starting with % can only mean the latter, so
+    # the two are offered separately instead of doubling every candidate list.
+    _ja_ai_panes() {
+        local col=2 all ai
+        [[ $1 == id ]] && col=3
+        all=$(tmux list-panes -a -F \
+            '#{pane_current_command} #{session_name}:#{window_index}.#{pane_index} #{pane_id}' 2>/dev/null)
+        # codex runs under `node`; claude reports itself
+        ai=$(awk -v c="$col" '$1 ~ /^(claude|codex|node)$/ {print $c}' <<< "$all")
+        [[ -n $ai ]] && { printf '%s\n' "$ai"; return; }
+        awk -v c="$col" '{print $c}' <<< "$all"
     }
 
-    # Check if we're completing a -t / --target tmux-target argument.
-    # Because ':' is in COMP_WORDBREAKS, bash splits targets like "1:2"
-    # into ["1", ":", "2"]. We walk back through COMP_WORDS to find
-    # -t / --target and reconstruct the full target prefix typed so far.
-    local _completing_target=false
-    local _full_cur="$cur"
-
-    if [[ "$prev" == "-t" || "$prev" == "--target" ]]; then
-        _completing_target=true
-    elif [[ "$cur" != -* ]] && [[ -n "$cur" || "$prev" == ":" ]]; then
-        local i w
-        for (( i = COMP_CWORD - 1; i >= 1; i-- )); do
-            w="${COMP_WORDS[i]}"
-            if [[ "$w" == "-t" || "$w" == "--target" ]]; then
-                _completing_target=true
-                _full_cur=""
-                local j
-                for (( j = i + 1; j <= COMP_CWORD; j++ )); do
-                    _full_cur+="${COMP_WORDS[j]}"
-                done
-                break
-            elif [[ "$w" == -* ]]; then
-                break
-            elif [[ "$w" == ":" ]] || [[ "$w" =~ ^[0-9a-zA-Z_.]+$ ]]; then
-                continue
-            else
-                break
-            fi
-        done
-    fi
-
-    if [[ "$_completing_target" == true ]]; then
-        _complete_tmux_target "$_full_cur"
-        return 0
-    fi
-
-    case "${prev}" in
+    # -w is the only option taking a value, so it is the only thing that can
+    # sit between a flag and its argument.
+    case "$prev" in
         -w|--wait)
-            COMPREPLY=( $(compgen -W "0 1 2 3 5 8 10" -- "${cur}") )
+            COMPREPLY=( $(compgen -W "0 1 2 3 5 8 10" -- "$cur") )
             return 0
             ;;
     esac
 
     if [[ ${cur} == -* ]]; then
         # Mirror jc's split-suggestion style: `--<TAB>` shows only long
-        # options, `-<TAB>` shows only short options. Keeps the candidate
-        # list focused — when the user has already typed two dashes they
-        # clearly don't want to see -t / -w / etc.
+        # options, `-<TAB>` shows only short options.
         if [[ ${cur} == --* ]]; then
             COMPREPLY=( $(compgen -W "${long_opts}" -- "${cur}") )
         else
@@ -110,6 +63,27 @@ _ja_complete() {
         fi
         return 0
     fi
+
+    # Anything else is the PANE, whatever mode flags came before it. ja takes
+    # exactly one, so once the line already carries a target there is nothing
+    # left to offer. Targets contain a colon, which readline treats as a word
+    # break, hence the trim.
+    # $cur cannot be used here: readline breaks words on ':' (it is in
+    # COMP_WORDBREAKS), so for `ja --log 3:` it holds just ":" and nothing
+    # would ever match. The raw line still has the whole word.
+    local line="${COMP_LINE:0:$COMP_POINT}"
+    local word="${line##* }"
+    local before="${line%"$word"}"
+    if [[ $before =~ (^|[[:space:]])[%0-9][^[:space:]]*[[:space:]]+$ ]]; then
+        return 0
+    fi
+    # % is not a word-break character, so a pane id arrives whole and needs no trim
+    if [[ $word == %* ]]; then
+        COMPREPLY=( $(compgen -W "$(_ja_ai_panes id)" -- "$word") )
+        return 0
+    fi
+    COMPREPLY=( $(compgen -W "$(_ja_ai_panes)" -- "$word") )
+    __ltrim_colon_completions "$word"
 }
 
 complete -F _ja_complete ja

@@ -1,0 +1,512 @@
+#!/usr/bin/env python3
+"""Maintain the skill tree shared by Claude Code and Codex.
+
+The repository contains one canonical copy under assets/skills.  Claude Code
+loads that directory as a whole; Codex receives one link per skill so its other
+user-installed skills remain untouched.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+import textwrap
+from datetime import datetime
+from pathlib import Path
+
+
+NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+LEGACY_REFERENCE_RE = re.compile(
+    r"(?:~/\.claude/skills/|~/\.agents/skills/|assets/(?:claude|codex)/skills/)"
+)
+
+
+def repository_root():
+    """Return the checkout containing this script, following an installed link."""
+    return Path(__file__).resolve().parents[1]
+
+
+def canonical_root():
+    override = os.environ.get("CROSSLV_SKILLS_ROOT")
+    if override:
+        return Path(override).expanduser().absolute()
+    return repository_root() / "assets" / "skills"
+
+
+def claude_skills_path():
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    return config.expanduser() / "skills"
+
+
+def codex_skills_path():
+    agents_home = Path(os.environ.get("AGENTS_HOME", Path.home() / ".agents"))
+    return agents_home.expanduser() / "skills"
+
+
+def legacy_skill_roots(root):
+    """Old repository locations, recognized only to migrate existing home links."""
+    assets = root.parent
+    return (assets / "claude" / "skills", assets / "codex" / "skills")
+
+
+def skill_dirs(root=None):
+    root = root or canonical_root()
+    if not root.is_dir():
+        return []
+    return sorted(
+        (path for path in root.iterdir() if path.is_dir() and (path / "SKILL.md").is_file()),
+        key=lambda path: path.name,
+    )
+
+
+def raw_link_target(path):
+    """Return an absolute lexical link target without resolving links inside it."""
+    target = Path(os.readlink(str(path)))
+    if not target.is_absolute():
+        target = path.parent / target
+    return Path(os.path.abspath(str(target)))
+
+
+def same_resolved_path(left, right):
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return False
+
+
+def is_beneath(path, parent):
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def managed_link(path, root):
+    if not path.is_symlink():
+        return False
+    target = raw_link_target(path)
+    parents = (root,) + legacy_skill_roots(root)
+    return any(is_beneath(target, parent) for parent in parents)
+
+
+class Syncer:
+    def __init__(self, dry_run=False, backup_conflicts=False, backup_dir=None):
+        self.dry_run = dry_run
+        self.backup_conflicts = backup_conflicts
+        self.backup_dir = Path(backup_dir).expanduser() if backup_dir else None
+        self.changed = 0
+        self.errors = []
+
+    def say(self, action, path, detail=""):
+        prefix = "would " if self.dry_run else ""
+        suffix = " -> {}".format(detail) if detail else ""
+        print("{}{} {}{}".format(prefix, action, path, suffix))
+
+    def error(self, message):
+        self.errors.append(message)
+        print("ERROR: {}".format(message), file=sys.stderr)
+
+    def _backup_path(self, path):
+        if self.backup_dir is None:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.backup_dir = Path.home() / ".skill-backups" / stamp
+        candidate = self.backup_dir / path.name
+        index = 1
+        while candidate.exists() or candidate.is_symlink():
+            candidate = self.backup_dir / "{}.{}".format(path.name, index)
+            index += 1
+        return candidate
+
+    def _remove_or_backup(self, path, known_link=False):
+        if path.is_symlink() and known_link:
+            self.say("unlink", path)
+            if not self.dry_run:
+                path.unlink()
+            return True
+
+        if not self.backup_conflicts:
+            self.error(
+                "{} exists and is not a managed skill link; rerun with "
+                "--backup-conflicts after reviewing it".format(path)
+            )
+            return False
+
+        backup = self._backup_path(path)
+        self.say("backup", path, backup)
+        if not self.dry_run:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(backup))
+        return True
+
+    def ensure_link(self, source, destination, allow_whole_tree=False):
+        source = Path(os.path.abspath(str(source)))
+        destination = Path(destination)
+
+        if destination.is_symlink():
+            direct = raw_link_target(destination) == source
+            if direct:
+                return
+            known = managed_link(destination, canonical_root())
+            if allow_whole_tree:
+                known = known or same_resolved_path(destination, source)
+                known = known or raw_link_target(destination) in legacy_skill_roots(canonical_root())
+            if not self._remove_or_backup(destination, known_link=known):
+                return
+        elif destination.exists():
+            if not self._remove_or_backup(destination):
+                return
+
+        self.say("link", destination, source)
+        if not self.dry_run:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.symlink_to(source, target_is_directory=True)
+        self.changed += 1
+
+
+def validate_frontmatter(skill):
+    errors = []
+    path = skill / "SKILL.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return ["{}: cannot read: {}".format(path, exc)]
+
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ["{}: missing opening YAML frontmatter delimiter".format(path)]
+    try:
+        end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
+    except StopIteration:
+        return ["{}: missing closing YAML frontmatter delimiter".format(path)]
+
+    frontmatter = lines[1:end]
+    names = [line.split(":", 1)[1].strip() for line in frontmatter if line.startswith("name:")]
+    description_indexes = [
+        index for index, line in enumerate(frontmatter) if line.startswith("description:")
+    ]
+    unknown = [
+        line for line in frontmatter
+        if line and not line[0].isspace() and not line.startswith(("name:", "description:"))
+    ]
+    if names != [skill.name]:
+        errors.append("{}: frontmatter name must equal folder name {!r}".format(path, skill.name))
+    if len(description_indexes) != 1:
+        errors.append("{}: frontmatter needs exactly one description".format(path))
+    else:
+        index = description_indexes[0]
+        value = frontmatter[index].split(":", 1)[1].strip()
+        if value in (">", ">-", "|", "|-"):
+            continuation = []
+            for line in frontmatter[index + 1:]:
+                if line and not line[0].isspace():
+                    break
+                continuation.append(line.strip())
+            value = " ".join(part for part in continuation if part)
+        if not value:
+            errors.append("{}: description must not be empty".format(path))
+        elif "<" in value or ">" in value:
+            errors.append("{}: description cannot contain angle brackets (< or >)".format(path))
+        elif len(value) > 1024:
+            errors.append("{}: description exceeds 1024 characters".format(path))
+    if unknown:
+        errors.append("{}: unsupported top-level frontmatter: {}".format(path, ", ".join(unknown)))
+    if not NAME_RE.fullmatch(skill.name):
+        errors.append("{}: skill name must use lowercase letters, digits, and hyphens".format(skill))
+    elif len(skill.name) > 64:
+        errors.append("{}: skill name exceeds 64 characters".format(skill))
+    return errors
+
+
+def source_errors(root):
+    if not root.is_dir():
+        return ["canonical skill root does not exist: {}".format(root)]
+
+    errors = []
+    skills = skill_dirs(root)
+    if not skills:
+        errors.append("canonical skill root contains no skills: {}".format(root))
+    for entry in sorted(root.iterdir(), key=lambda path: path.name):
+        if entry.name.startswith("."):
+            continue
+        if entry.is_symlink():
+            errors.append("{}: canonical top-level skill must not be a symlink".format(entry))
+        elif entry.is_dir() and not (entry / "SKILL.md").is_file():
+            errors.append("{}: directory is missing SKILL.md".format(entry))
+    for skill in skills:
+        errors.extend(validate_frontmatter(skill))
+        hosts = skill / "references" / "hosts"
+        if hosts.exists():
+            for host in ("claude.md", "codex.md"):
+                if not (hosts / host).is_file():
+                    errors.append("{}: host adapters must include {}".format(hosts, host))
+    errors.extend(legacy_reference_errors(root))
+    return errors
+
+
+def legacy_reference_errors(root):
+    errors = []
+    for skill in skill_dirs(root):
+        # This skill intentionally documents both installation layouts.
+        if skill.name == "skill-maintainer":
+            continue
+        for path in skill.rglob("*"):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            for number, line in enumerate(text.splitlines(), 1):
+                if LEGACY_REFERENCE_RE.search(line):
+                    errors.append(
+                        "{}:{}: use assets/skills, not a Claude/Codex installation path".format(
+                            path, number
+                        )
+                    )
+    return errors
+
+
+def installation_errors(root):
+    errors = []
+    claude = claude_skills_path()
+    if not claude.is_symlink() or not same_resolved_path(claude, root):
+        errors.append("{} is not linked to {}".format(claude, root))
+
+    codex = codex_skills_path()
+    for skill in skill_dirs(root):
+        installed = codex / skill.name
+        if not installed.is_symlink() or not same_resolved_path(installed, skill):
+            errors.append("{} is not linked to {}".format(installed, skill))
+
+    if codex.is_dir():
+        names = {skill.name for skill in skill_dirs(root)}
+        for installed in codex.iterdir():
+            if installed.name not in names and managed_link(installed, root):
+                errors.append("{} is a stale managed link".format(installed))
+    return errors
+
+
+def command_check(args):
+    root = canonical_root()
+    errors = source_errors(root)
+    if not errors and not args.source_only:
+        errors.extend(installation_errors(root))
+
+    if args.json:
+        print(json.dumps({"ok": not errors, "root": str(root), "errors": errors}, indent=2))
+    elif errors:
+        for error in errors:
+            print("ERROR: {}".format(error), file=sys.stderr)
+        print("{} problem(s) found".format(len(errors)), file=sys.stderr)
+    else:
+        scope = "source" if args.source_only else "source and installations"
+        print("OK: {} shared skills; {} are consistent".format(len(skill_dirs(root)), scope))
+    return 1 if errors else 0
+
+
+def command_sync(args):
+    root = canonical_root()
+    errors = source_errors(root)
+    if errors:
+        for error in errors:
+            print("ERROR: {}".format(error), file=sys.stderr)
+        print("sync stopped: canonical source is invalid", file=sys.stderr)
+        return 1
+
+    syncer = Syncer(args.dry_run, args.backup_conflicts, args.backup_dir)
+    syncer.ensure_link(root, claude_skills_path(), allow_whole_tree=True)
+
+    codex = codex_skills_path()
+    if not args.dry_run:
+        codex.mkdir(parents=True, exist_ok=True)
+    for skill in skill_dirs(root):
+        syncer.ensure_link(skill, codex / skill.name)
+
+    names = {skill.name for skill in skill_dirs(root)}
+    if codex.is_dir():
+        for installed in sorted(codex.iterdir(), key=lambda path: path.name):
+            if installed.name not in names and managed_link(installed, root):
+                syncer.say("remove stale link", installed)
+                if not args.dry_run:
+                    installed.unlink()
+                syncer.changed += 1
+
+    if syncer.errors:
+        print("sync incomplete: {} conflict(s)".format(len(syncer.errors)), file=sys.stderr)
+        return 1
+    print("{}: {} change(s)".format("dry run" if args.dry_run else "synced", syncer.changed))
+    return 0
+
+
+def command_list(args):
+    root = canonical_root()
+    codex = codex_skills_path()
+    rows = []
+    for skill in skill_dirs(root):
+        installed = codex / skill.name
+        rows.append(
+            {
+                "name": skill.name,
+                "source": str(skill),
+                "codex": installed.is_symlink() and same_resolved_path(installed, skill),
+            }
+        )
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        for row in rows:
+            print("{:<32} codex:{}".format(row["name"], "linked" if row["codex"] else "missing"))
+        claude = claude_skills_path()
+        state = "linked" if claude.is_symlink() and same_resolved_path(claude, root) else "missing"
+        shared_names = {row["name"] for row in rows}
+        independent = []
+        stale = []
+        if codex.is_dir():
+            for installed in sorted(codex.iterdir(), key=lambda path: path.name):
+                if installed.name in shared_names:
+                    continue
+                if managed_link(installed, root):
+                    stale.append(installed.name)
+                else:
+                    independent.append(installed.name)
+        linked = sum(1 for row in rows if row["codex"])
+        print("\nClaude tree: {} ({})".format(state, claude))
+        print("Codex directory: {}".format(codex))
+        print("Codex shared: {}/{} linked".format(linked, len(rows)))
+        detail = " ({})".format(", ".join(independent)) if independent else ""
+        print("Codex independent: {} preserved{}".format(len(independent), detail))
+        if stale:
+            print("Codex stale managed: {} ({})".format(len(stale), ", ".join(stale)))
+        print("Canonical: {}".format(root))
+    return 0
+
+
+def command_path(args):
+    root = canonical_root()
+    if args.name is not None and not NAME_RE.fullmatch(args.name):
+        print("ERROR: invalid skill name: {}".format(args.name), file=sys.stderr)
+        return 1
+    path = root if args.name is None else root / args.name
+    if args.name is not None and not (path / "SKILL.md").is_file():
+        print("ERROR: no such shared skill: {}".format(args.name), file=sys.stderr)
+        return 1
+    print(path)
+    return 0
+
+
+def folded_description(description):
+    lines = textwrap.wrap(" ".join(description.split()), width=92) or [""]
+    return "\n".join("  " + line for line in lines)
+
+
+def command_add(args):
+    if not NAME_RE.fullmatch(args.name) or len(args.name) > 64:
+        print(
+            "ERROR: name must be at most 64 characters and use lowercase letters, digits, "
+            "and single hyphens",
+            file=sys.stderr,
+        )
+        return 1
+    description = " ".join(args.description.split())
+    if not description or len(description) > 1024:
+        print("ERROR: description must contain 1-1024 characters", file=sys.stderr)
+        return 1
+    if "<" in description or ">" in description:
+        print("ERROR: description cannot contain angle brackets (< or >)", file=sys.stderr)
+        return 1
+    root = canonical_root()
+    skill = root / args.name
+    if skill.exists() or skill.is_symlink():
+        print("ERROR: skill already exists: {}".format(skill), file=sys.stderr)
+        return 1
+    if args.dry_run:
+        print("would create {}".format(skill))
+        return 0
+
+    skill.mkdir(parents=True)
+    title = args.title or args.name.replace("-", " ").title()
+    body = """---
+name: {name}
+description: >-
+{description}
+---
+
+# {title}
+
+## Purpose
+
+Explain the outcome this skill produces and the conditions under which it applies.
+
+## Workflow
+
+1. Replace this scaffold with the shortest reliable procedure.
+2. Put detailed reference material under `references/` and reusable automation under `scripts/`.
+3. Keep shared behavior here; put runtime-only invocation details in `references/hosts/`.
+""".format(name=args.name, description=folded_description(description), title=title)
+    (skill / "SKILL.md").write_text(body, encoding="utf-8")
+    if args.host_adapters:
+        hosts = skill / "references" / "hosts"
+        hosts.mkdir(parents=True)
+        for host in ("claude", "codex"):
+            (hosts / "{}.md".format(host)).write_text(
+                "# {} adapter\n\nDocument only runtime-specific tool names and invocation details here.\n".format(
+                    host.title()
+                ),
+                encoding="utf-8",
+            )
+    print("created {}".format(skill))
+    sync_args = argparse.Namespace(
+        dry_run=False, backup_conflicts=False, backup_dir=None
+    )
+    return command_sync(sync_args)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Manage the canonical skill tree shared by Claude Code and Codex."
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    listing = subparsers.add_parser("list", help="list canonical skills and link state")
+    listing.add_argument("--json", action="store_true")
+    listing.set_defaults(func=command_list)
+
+    path = subparsers.add_parser("path", help="print the canonical root or one skill path")
+    path.add_argument("name", nargs="?")
+    path.set_defaults(func=command_path)
+
+    check = subparsers.add_parser("check", help="validate source files and installed links")
+    check.add_argument("--source-only", action="store_true", help="skip installed-link checks")
+    check.add_argument("--json", action="store_true")
+    check.set_defaults(func=command_check)
+
+    sync = subparsers.add_parser("sync", help="repair Claude and Codex links")
+    sync.add_argument("--dry-run", action="store_true")
+    sync.add_argument(
+        "--backup-conflicts",
+        action="store_true",
+        help="move real files/directories aside instead of stopping",
+    )
+    sync.add_argument("--backup-dir", help="directory used with --backup-conflicts")
+    sync.set_defaults(func=command_sync)
+
+    add = subparsers.add_parser("add", help="create a canonical shared-skill scaffold")
+    add.add_argument("name")
+    add.add_argument("--description", required=True)
+    add.add_argument("--title")
+    add.add_argument("--host-adapters", action="store_true")
+    add.add_argument("--dry-run", action="store_true")
+    add.set_defaults(func=command_add)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

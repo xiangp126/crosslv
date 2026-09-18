@@ -1,14 +1,20 @@
 model = "gpt-5.6-sol"
+model_context_window = 1000000
 service_tier = "fast"
 model_reasoning_effort = "xhigh"
 check_for_update_on_startup = false
 sandbox_mode = "danger-full-access"
+sqlite_home = "/var/tmp/pexiang-codex-sqlite"
 
 [mcp_servers.nvidia-redmine]
 url = "https://maas.prd.astra.nvidia.com/maas/redmine/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-redmine"
+startup_timeout_sec = 70
 
 [mcp_servers.nvidia-gerrit]
 url = "https://maas.prd.astra.nvidia.com/maas/gerrit/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-gerrit"
+startup_timeout_sec = 70
 
 [mcp_servers.nvidia-gerrit.tools.analyze_change_chunk]
 approval_mode = "approve"
@@ -37,8 +43,16 @@ approval_mode = "approve"
 [mcp_servers.nvidia-gerrit.tools.get_reviewers]
 approval_mode = "approve"
 
+[mcp_servers.nvidia-gerrit.tools.list_patchsets]
+approval_mode = "approve"
+
+[mcp_servers.nvidia-gerrit.tools.get_change_messages]
+approval_mode = "approve"
+
 [mcp_servers.nvidia-glean]
 url = "https://maas.prd.astra.nvidia.com/maas/glean/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-glean"
+startup_timeout_sec = 70
 
 [mcp_servers.nvidia-glean.tools.glean_chat]
 approval_mode = "approve"
@@ -46,8 +60,19 @@ approval_mode = "approve"
 [mcp_servers.nvidia-glean.tools.health_check]
 approval_mode = "approve"
 
+[mcp_servers.nvidia-glean.tools.glean_search]
+approval_mode = "approve"
+
 [mcp_servers.nvidia-jenkins]
 url = "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-jenkins"
+startup_timeout_sec = 70
+
+[mcp_servers.nvidia-jenkins.tools.check_jenkins_connectivity]
+approval_mode = "approve"
+
+[mcp_servers.nvidia-jenkins.tools.analyze_failed_build]
+approval_mode = "approve"
 
 # [mcp_servers.nvidia-jama-cache]
 # type = "http"
@@ -163,27 +188,35 @@ url = "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
 
 [mcp_servers.nvidia-outlook]
 url = "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-outlook"
+startup_timeout_sec = 70
+
+[mcp_servers.nvidia-nvbugs]
+url = "https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-nvbugs"
+startup_timeout_sec = 70
+
+[mcp_servers.nvidia-nvbugs.tools.nvbugs_check_connection_v2]
+approval_mode = "approve"
+
+[mcp_servers.nvidia-teams]
+url = "https://maas.prd.astra.nvidia.com/maas/teams/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-teams"
+startup_timeout_sec = 70
+
+[mcp_servers.nvidia-teams.tools.teams_health_check]
+approval_mode = "approve"
 
 [notice.model_migrations]
 "gpt-5.3-codex" = "gpt-5.4"
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4
+gpt-6-astra = 3
 
-[projects."/Users/pexiang"]
-trust_level = "trusted"
+[marketplaces.openai-bundled]
+source_type = "local"
+source = "/labhome/pexiang/.codex/.tmp/bundled-marketplaces/openai-bundled"
 
-[projects."/Users/pexiang/myGit/crosslv"]
-trust_level = "trusted"
-
-[projects."/auto/fwgwork1/pexiang/golan_fw"]
-trust_level = "trusted"
-
-[projects."/labhome/pexiang/myGit/crosslv"]
-trust_level = "trusted"
-
-[projects."/auto/fwgwork1/pexiang/bugZilla/5070718_utopx"]
-trust_level = "trusted"
-
-[projects."/auto/fwgwork1/pexiang/bugZilla"]
-trust_level = "trusted"
+[plugins."visualize@openai-bundled"]
+enabled = true

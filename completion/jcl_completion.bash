@@ -21,9 +21,9 @@ fi
 # takes to scan tmux and /proc, so parsing the json properly is effectively free,
 # and it is what keeps pane-less background agents out of the list.
 _jcl_live_ids() {
-    jcl list --json 2>/dev/null | python3 -c '
+    jcl list --json --agent "${2:-all}" 2>/dev/null | python3 -c '
 import json, sys
-used = set(sys.argv[1].split()) if len(sys.argv) > 1 else set()
+used = set(sys.argv[1].replace(",", " ").split()) if len(sys.argv) > 1 else set()
 try:
     records = json.load(sys.stdin)
 except ValueError:
@@ -33,7 +33,9 @@ if "all" in used:
     sys.exit(0)
 print("all")
 for rec in records:
-    if not (rec.get("alive") and rec.get("target")):
+    if not (rec.get("alive") and rec.get("target")) or rec.get("stopped"):
+        continue
+    if rec.get("kind") not in (None, "", "interactive"):
         continue
     if rec["target"] not in used:
         print(rec["target"])
@@ -55,7 +57,7 @@ _jcl_complete_session() {
     local word="${line##* }"
     local before="${line% *}"
     local candidates
-    candidates=$(_jcl_live_ids "$before")
+    candidates=$(_jcl_live_ids "$before" "${1:-all}")
 
     COMPREPLY=($(compgen -W "$candidates" -- "$word"))
     __ltrim_colon_completions "$word"
@@ -95,49 +97,85 @@ _jcl_layout_files() {
 # which is what jcl actually sends) accepts it, so it is appended.
 _jcl_effort_levels() {
     {
+        if [[ ${1:-all} != codex ]]; then
         claude --help 2>/dev/null \
             | grep -A1 -- '--effort <level>' \
             | grep -oE '\(([a-z]+,[ ]*)+[a-z]+\)' \
             | tr -d '()' | tr ',' '\n' | tr -d ' '
         echo auto
+        fi
+        if [[ ${1:-all} != claude ]]; then
+            _jcl_codex_catalog efforts
+        fi
     } | awk 'NF && !seen[$0]++'
 }
 
-# Model names for both agents. Neither publishes a complete list, so this is
-# the best that is cheap: each one's own --help examples and whatever each is
-# configured with right now. Asking codex itself would mean starting it, which
-# takes ~12s - far too slow for a TAB - so its extra names are a static list.
-# Any name still works typed in full; nothing here validates, an unknown one
-# comes back from the pane as refused.
+# Read Codex's local cache; TAB must not start an agent or a network request.
+_jcl_codex_catalog() {
+    python3 -c '
+import json, os, re, sys
+from pathlib import Path
+root = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+try:
+    models = json.loads((root / "models_cache.json").read_text()).get("models", [])
+except (OSError, ValueError):
+    models = []
+if sys.argv[1] == "efforts":
+    values = [level["effort"] for m in models for level in m.get("supported_reasoning_levels", [])]
+    print("\n".join(dict.fromkeys(values or ["minimal", "low", "medium", "high", "xhigh", "max"])))
+else:
+    for m in models:
+        if m.get("slug"): print(m["slug"])
+    try:
+        for line in (root / "config.toml").read_text().splitlines():
+            if line.lstrip().startswith("["): break
+            match = re.match(r"\s*model\s*=\s*\"([^\"]+)\"", line)
+            if match: print(match[1])
+    except OSError:
+        pass
+' "$1" 2>/dev/null
+}
+
+# Claude model names come from --help and settings; Codex names come from its
+# local models cache and config. Explicit --agent narrows both sets.
 _jcl_model_names() {
     {
+        if [[ ${1:-all} != codex ]]; then
         # claude: --help examples plus the configured model
         claude --help 2>/dev/null \
             | sed -n "/--model <model>/,/^\s*--[a-z]/p" \
             | grep -oE "'[A-Za-z0-9._-]+'" | tr -d "'"
-        python3 -c "
-import json, io
-for f in ('$HOME/.claude/settings.json', '$HOME/.claude/settings.local.json'):
+        python3 -c '
+import json, os
+from pathlib import Path
+root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+for f in (root / "settings.json", root / "settings.local.json"):
     try:
-        v = json.load(io.open(f)).get('model')
+        v = json.loads(f.read_text()).get("model")
         if v: print(v)
-    except Exception:
+    except (OSError, ValueError):
         pass
-" 2>/dev/null
-        # codex: the model in its config.toml, plus the current family
-        sed -n 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
-            "$HOME/.codex/config.toml" 2>/dev/null
-        printf '%s\n' gpt-6-astra gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna
+' 2>/dev/null
+        fi
+        if [[ ${1:-all} != claude ]]; then
+            _jcl_codex_catalog models
+        fi
     } | awk 'NF && !seen[$0]++'
 }
 
 _jcl_complete() {
-    local cur prev cmd i opts
+    local cur prev cmd i opts agent=all
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
     local commands="list save restore refresh set set-effort set-model patch-resurrect save-auth restore-auth fill-auth"
+    for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
+        case "${COMP_WORDS[i]}" in
+            --agent) agent="${COMP_WORDS[i+1]:-all}" ;;
+            --agent=*) agent="${COMP_WORDS[i]#--agent=}" ;;
+        esac
+    done
 
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
@@ -156,11 +194,11 @@ _jcl_complete() {
             return 0
             ;;
         --model)
-            COMPREPLY=($(compgen -W "$(_jcl_model_names)" -- "$cur"))
+            COMPREPLY=($(compgen -W "$(_jcl_model_names "$agent")" -- "$cur"))
             return 0
             ;;
         --effort)
-            COMPREPLY=($(compgen -W "$(_jcl_effort_levels)" -- "$cur"))
+            COMPREPLY=($(compgen -W "$(_jcl_effort_levels "$agent")" -- "$cur"))
             return 0
             ;;
         --agent)
@@ -179,13 +217,13 @@ _jcl_complete() {
     fi
 
     case "$cmd" in
-        list) opts="-h --help -a --all --json --ids-only" ;;
-        save) opts="-h --help -o --output" ;;
-        restore) opts="-h --help -f --file -n --dry-run" ;;
+        list) opts="-h --help --agent -a --all --json --ids-only" ;;
+        save) opts="-h --help --agent -o --output" ;;
+        restore) opts="-h --help --agent -f --file -n --dry-run" ;;
         refresh) opts="-h --help --agent --timeout -n --dry-run" ;;
-        set) opts="-h --help --model --effort --delay --timeout --no-verify -n --dry-run" ;;
-        set-effort) opts="-h --help --delay --timeout --no-verify -n --dry-run" ;;
-        set-model) opts="-h --help --delay --timeout --no-verify -n --dry-run" ;;
+        set) opts="-h --help --agent --model --effort --delay --timeout --no-verify -n --dry-run" ;;
+        set-effort) opts="-h --help --agent --delay --timeout --no-verify -n --dry-run" ;;
+        set-model) opts="-h --help --agent --delay --timeout --no-verify -n --dry-run" ;;
         patch-resurrect) opts="-h --help -n --dry-run -v --verbose" ;;
         save-auth) opts="-h --help -o --output --force -n --dry-run" ;;
         restore-auth) opts="-h --help -f --file --force --no-fill -n --dry-run" ;;
@@ -206,14 +244,13 @@ _jcl_complete() {
 
     # refresh takes any number of SESSION arguments
     if [[ $cmd == refresh ]]; then
-        _jcl_complete_session
+        _jcl_complete_session "$agent"
         return 0
     fi
 
-    # set-effort's only positional is the level: claude's own --effort list,
-    # plus the 'auto' that just the slash command knows
+    # Use the selected agent's effort catalogue.
     if [[ $cmd == set-effort ]]; then
-        COMPREPLY=($(compgen -W "$(_jcl_effort_levels)" -- "$cur"))
+        COMPREPLY=($(compgen -W "$(_jcl_effort_levels "$agent")" -- "$cur"))
         return 0
     fi
 
@@ -224,7 +261,7 @@ _jcl_complete() {
     # reports an unknown one back as refused. compgen -W does no pathname
     # expansion, so the [1m] survives even with a file named opus1 in the way.
     if [[ $cmd == set-model ]]; then
-        COMPREPLY=($(compgen -W "$(_jcl_model_names)" -- "$cur"))
+        COMPREPLY=($(compgen -W "$(_jcl_model_names "$agent")" -- "$cur"))
         return 0
     fi
 

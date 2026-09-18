@@ -14,8 +14,27 @@ if [[ $_UNAME_S == 'Darwin' ]]; then
     fi
 fi
 
-# If not running interactively, don't do anything
-[ -z "$PS1" ] && return
+# Remote apps launch commands through non-interactive SSH. Expose the
+# user-local and NVM tools they need, then skip interactive shell setup.
+if [ -z "$PS1" ]; then
+    export NVM_DIR="$HOME/.nvm"
+
+    if [ -s "$NVM_DIR/nvm.sh" ]; then
+        source "$NVM_DIR/nvm.sh" >/dev/null
+        nvm use default --silent >/dev/null 2>&1
+    fi
+
+    # The desktop SSH bootstrap prepends CODEX_INSTALL_DIR to PATH. Point it
+    # at the active NVM default without changing interactive-shell behavior.
+    if [ -n "${NVM_BIN:-}" ] && [ -x "$NVM_BIN/codex" ]; then
+        export CODEX_INSTALL_DIR="$NVM_BIN"
+    fi
+
+    # Keep user-local commands available to remote apps as well.
+    export PATH="$HOME/.usr/bin:$HOME/.local/bin:$PATH"
+
+    return
+fi
 
 # don't put duplicate lines or lines starting with space in the history.
 # See bash(1) for more options
@@ -323,7 +342,7 @@ fi
 #     export CODEX_AUTO_APPROVE=1   same for codex
 #     unset CLAUDE_AUTO_APPROVE     turn off the persistent default
 #
-# Stop the daemon at any time with: ja --stop  (or ja --stop -t <pane>).
+# Stop the daemon at any time with: ja --stop  (or ja --stop <pane>).
 #
 # Helper: start a ja background daemon for the current tmux pane. Two
 # guards, then delegate to ja:
@@ -375,7 +394,7 @@ _ai_start_ja_if_needed() {
     # "auto-approve", not "only approve <this AI>", so the daemon keeps
     # working if the pane later switches claude<->codex. Users who want a
     # strict filter can launch ja manually: ja -D --claude.
-    ja --daemon -t "$paneid"
+    ja --daemon "$paneid"
 }
 
 # Decide whether an AI invocation will open the interactive TUI (the only

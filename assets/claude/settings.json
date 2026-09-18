@@ -44,6 +44,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"语言要求(每轮强制):面向用户的回复一律用中文,包括状态汇报、分析结论和追问。技术术语、代码标识符、文件路径、命令、日志片段保持原文不翻译。写进文件的产物(skill 文档、commit message、plan 文件)沿用其原有语言习惯。\"}}'",
+            "suppressOutput": true
+          }
+        ]
+      }
     ]
   },
   "language": "chinese",

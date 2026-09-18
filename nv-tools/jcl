@@ -3,8 +3,8 @@
 
 Both agents expose their session id to anyone who cares to look, just differently.
 Claude Code writes ~/.claude/sessions/<pid>.json holding the sessionId, cwd and
-session name. Codex instead keeps its rollout transcript open, so the session id
-can be read straight off the open file descriptor. This tool pairs either one with
+session name. Codex keeps a rollout transcript or thread-writer lock open; its
+state database supplies names and model settings. This tool pairs either one with
 the tmux pane it lives in, so the layout can be rebuilt after a reboot with the
 right resume command already wired up.
 
@@ -16,7 +16,9 @@ import argparse
 import json
 import os
 import re
+import shlex
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -51,6 +53,7 @@ CODEX_SESSION_DIR = CODEX_DIR / "sessions"
 ROLLOUT_RE = re.compile(
     r"^rollout-(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-(?P<uuid>[0-9a-fA-F-]{36})\.jsonl$"
 )
+THREAD_LOCK_RE = re.compile(r"^([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\.lock$")
 
 RESUME_COMMANDS = {
     "claude": "claude --resume {session_id}",
@@ -224,53 +227,131 @@ def sessions_from_files():
     return out
 
 
-def codex_sessions():
-    """Codex holds its rollout transcript open, so its open fds map pid to session.
+def codex_thread_metadata(session_id, databases):
+    """Read only the owning process's state DB, including a custom sqlite_home.
 
-    Nothing to expire here: the descriptor only exists while the process does, which
-    is why these records need no equivalent of Claude's procStart check.
+    Open descriptors establish liveness; a historical database row alone never
+    creates a running session. Column discovery keeps older DB schemas usable.
     """
+    for database in sorted(set(databases), reverse=True):
+        try:
+            conn = sqlite3.connect(Path(database).as_uri() + "?mode=ro", uri=True, timeout=0.2)
+            try:
+                conn.row_factory = sqlite3.Row
+                columns = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
+                wanted = [c for c in ("id", "cwd", "name", "title", "model",
+                          "reasoning_effort", "source", "thread_source", "agent_path",
+                          "created_at", "created_at_ms") if c in columns]
+                if "id" not in wanted:
+                    continue
+                row = conn.execute(
+                    "SELECT " + ",".join(wanted) + " FROM threads WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+                if row:
+                    return dict(row)
+            finally:
+                conn.close()
+        except (OSError, ValueError, sqlite3.Error):
+            continue
+    return {}
+
+
+def codex_records(pid, cwd, targets, argv):
+    """Interpret Linux or lsof descriptors; ignore helpers and exec sessions."""
+    if not argv:
+        return []
+    if Path(argv[0]).name in ("node", "nodejs") and len(argv) > 1:
+        argv = argv[1:]
+    if Path(argv[0]).name not in ("codex", "codex.exe", "codex.js"):
+        return []
+    # Skip option values while finding the subcommand: `codex -c X exec ...`
+    # is still non-interactive. Plain prompt text is not a subcommand.
+    takes_value = {"-c", "--config", "-m", "--model", "-p", "--profile",
+                   "-C", "--cd", "-a", "--ask-for-approval", "-s", "--sandbox",
+                   "--enable", "--disable", "--add-dir", "--remote",
+                   "--remote-auth-token-env", "--local-provider", "-i", "--image"}
+    skip_value = False
+    for arg in argv[1:]:
+        if skip_value:
+            skip_value = False
+            continue
+        if arg == "--":
+            break
+        if arg in takes_value:
+            skip_value = True
+        elif arg.startswith("-"):
+            continue
+        else:
+            if arg in ("exec", "e", "review", "app-server", "exec-server", "mcp",
+                       "debug", "doctor", "agents", "remote-control"):
+                return []
+            break
+    databases = [p for p in targets if re.fullmatch(r"state_\d+\.sqlite", Path(p).name)]
+    # Derive the home from the actual descriptor, not the caller's CODEX_HOME.
+    sessions = {}
+    for target in targets:
+        path = Path(target)
+        match = THREAD_LOCK_RE.fullmatch(path.name)
+        if path.parent.name == "thread-writer-locks" and match:
+            sessions.setdefault(match[1], {}).update(home=str(path.parent.parent))
+        match = ROLLOUT_RE.fullmatch(path.name)
+        if match and "sessions" in path.parts:
+            home = Path(*path.parts[:path.parts.index("sessions")])
+            sessions.setdefault(match["uuid"], {}).update(
+                home=str(home), started=rollout_started_at(match["stamp"]),
+            )
+    records = []
+    for session_id, evidence in sessions.items():
+        meta = codex_thread_metadata(session_id, databases)
+        if meta.get("source", "cli") not in ("cli", "tui"):
+            continue
+        if meta.get("agent_path") not in (None, "", "/root"):
+            continue
+        if meta.get("thread_source") not in (None, "", "user", "cli"):
+            continue
+        records.append({
+            "agent": "codex", "sessionId": session_id, "pid": pid,
+            "procStart": proc_start_marker(pid), "kind": "interactive",
+            "cwd": meta.get("cwd") or cwd,
+            "name": meta.get("name") or meta.get("title") or "",
+            "model": meta.get("model") or "",
+            "effort": meta.get("reasoning_effort") or "",
+            "agent_home": evidence["home"],
+            "startedAt": meta.get("created_at_ms") or
+                ((meta.get("created_at") or 0) * 1000) or evidence.get("started"),
+        })
+    return records
+
+
+def codex_sessions():
+    """Map live Codex descriptors to sessions on Linux and macOS."""
     return codex_sessions_proc() if HAS_PROC else codex_sessions_lsof()
 
 
 def codex_sessions_proc():
     """Read the open descriptors out of /proc/<pid>/fd."""
-    prefix = f"{CODEX_SESSION_DIR}/"
-    found, seen = [], set()
+    found = []
     for proc_dir in Path("/proc").glob("[0-9]*"):
         try:
-            if b"codex" not in (proc_dir / "cmdline").read_bytes():
+            argv = (proc_dir / "cmdline").read_bytes().decode("utf-8", "replace").strip("\0").split("\0")
+            if not any(Path(a).name in ("codex", "codex.exe", "codex.js") for a in argv[:2]):
                 continue
             entries = list((proc_dir / "fd").iterdir())
         except OSError:
             continue
+        targets = []
         for entry in entries:
             try:
-                target = os.readlink(entry)
+                targets.append(os.readlink(entry))
             except OSError:
                 continue
-            if not target.startswith(prefix):
-                continue
-            match = ROLLOUT_RE.match(os.path.basename(target))
-            if not match or match["uuid"] in seen:
-                continue
-            seen.add(match["uuid"])
-            pid = int(proc_dir.name)
-            try:
-                cwd = os.readlink(f"/proc/{pid}/cwd")
-            except OSError:
-                cwd = ""
-            found.append(
-                {
-                    "agent": "codex",
-                    "sessionId": match["uuid"],
-                    "cwd": cwd,
-                    "kind": "interactive",
-                    "pid": pid,
-                    "startedAt": rollout_started_at(match["stamp"]),
-                }
-            )
-            break
+        pid = int(proc_dir.name)
+        try:
+            cwd = os.readlink(proc_dir / "cwd")
+        except OSError:
+            cwd = ""
+        found.extend(codex_records(pid, cwd, targets, argv))
     return found
 
 
@@ -280,7 +361,6 @@ def codex_sessions_lsof():
     -F prints one field per line, tagged: 'p' opens a process, then 'f'/'n' pairs
     for each descriptor, where fd 'cwd' carries the working directory.
     """
-    prefix = f"{CODEX_SESSION_DIR}/"
     try:
         proc = subprocess.run(
             ["lsof", "-n", "-P", "-c", "codex", "-F", "pfn"],
@@ -303,35 +383,25 @@ def codex_sessions_lsof():
                 continue
             fd = None
             if pid not in by_pid:
-                by_pid[pid] = {"cwd": "", "uuid": None, "stamp": None}
+                by_pid[pid] = {"cwd": "", "targets": []}
                 order.append(pid)
         elif tag == "f":
             fd = value
         elif tag == "n" and pid is not None:
             if fd == "cwd":
                 by_pid[pid]["cwd"] = value
-            elif by_pid[pid]["uuid"] is None and value.startswith(prefix):
-                match = ROLLOUT_RE.match(os.path.basename(value))
-                if match:
-                    by_pid[pid]["uuid"] = match["uuid"]
-                    by_pid[pid]["stamp"] = match["stamp"]
+            else:
+                by_pid[pid]["targets"].append(value)
 
-    found, seen = [], set()
+    found = []
     for pid in order:
         entry = by_pid[pid]
-        if not entry["uuid"] or entry["uuid"] in seen:
+        info = ps_info(pid) or {}
+        try:
+            argv = shlex.split(info.get("command", ""))
+        except ValueError:
             continue
-        seen.add(entry["uuid"])
-        found.append(
-            {
-                "agent": "codex",
-                "sessionId": entry["uuid"],
-                "cwd": entry["cwd"],
-                "kind": "interactive",
-                "pid": pid,
-                "startedAt": rollout_started_at(entry["stamp"]),
-            }
-        )
+        found.extend(codex_records(pid, entry["cwd"], entry["targets"], argv))
     return found
 
 
@@ -363,18 +433,33 @@ def is_live_agent(pid, agent, proc_start=None):
 
 
 def resume_command(agent, session_id):
-    return RESUME_COMMANDS[agent].format(session_id=session_id)
+    return RESUME_COMMANDS[agent].format(session_id=shlex.quote(session_id))
 
 
-def collect(include_stale=False):
+def resume_record(rec):
+    command = resume_command(rec.get("agent", "claude"), rec["session_id"])
+    if rec.get("agent") == "codex":
+        if rec.get("model"):
+            command += " --model " + shlex.quote(rec["model"])
+        if rec.get("effort"):
+            command += " -c " + shlex.quote("model_reasoning_effort=" + json.dumps(rec["effort"]))
+        if rec.get("agent_home") and rec["agent_home"] != str(CODEX_DIR):
+            command = "env CODEX_HOME=" + shlex.quote(rec["agent_home"]) + " " + command
+    return command
+
+
+def collect(include_stale=False, agent="all"):
     """List the running agent sessions, each paired with the tmux pane it occupies."""
     panes = pane_lookup()
-    raw = sessions_from_cli()
-    if raw is None:
-        raw = sessions_from_files()
+    raw = []
+    if agent in ("all", "claude"):
+        raw = sessions_from_cli()
+        if raw is None:
+            raw = sessions_from_files()
     for data in raw:
         data.setdefault("agent", "claude")
-    raw = raw + codex_sessions()
+    if agent in ("all", "codex"):
+        raw += codex_sessions()
 
     records = []
     for data in raw:
@@ -398,6 +483,10 @@ def collect(include_stale=False):
                 "status": data.get("status") or "",
                 "started_at": data.get("startedAt"),
                 "pid": pid,
+                "proc_start": data.get("procStart") or (proc_start_marker(pid) if alive else None),
+                "model": data.get("model") or "",
+                "effort": data.get("effort") or "",
+                "agent_home": data.get("agent_home") or "",
                 "alive": alive,
                 "stopped": proc_state(pid) == "T" if alive else False,
                 "pane_id": env.get("TMUX_PANE", ""),
@@ -411,9 +500,9 @@ def collect(include_stale=False):
 
     def sort_key(rec):
         try:
-            return (0, rec["tmux_session"], int(rec["window_index"]))
+            return (0, rec["tmux_session"], int(rec["window_index"]), int(rec["pane_index"]))
         except ValueError:
-            return (1, rec["tmux_session"], 0)
+            return (1, rec["tmux_session"], 0, 0)
 
     records.sort(key=sort_key)
     return records
@@ -437,7 +526,13 @@ def foreground_by_pane(records):
     return by_pane
 
 
-def typeable_panes():
+def is_self_session(rec):
+    ids = {os.environ.get(k) for k in
+           ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID")}
+    return rec["session_id"] in ids
+
+
+def typeable_panes(agent="all"):
     """Live agent sessions that can be typed into, one per pane, either agent.
 
     Left out: suspended (Ctrl-Z) sessions, whose pane is back at the shell;
@@ -445,23 +540,19 @@ def typeable_panes():
     have no pane at all.
 
     Also always left out: the session the command is running in. There is no
-    opt-in for it, deliberately. CLAUDE_CODE_SESSION_ID is set only inside a
-    Claude Code Bash call, so this only ever skips something when an agent is
-    driving - and an agent that kills or types into its own session cannot
-    report what became of it. Restarting that one is a thing to do from a
-    terminal, where the variable is unset and nothing is skipped at all.
+    opt-in for it: the agent session environment identifies the caller. An agent
+    cannot report what became of a command that kills its own session. Restart
+    that session from a terminal, where these variables are normally unset.
     """
     records = [
         rec
-        for rec in collect()
+        for rec in collect(agent=agent)
         if rec["alive"]
         and rec["target"]
         and not rec["stopped"]
         and rec.get("kind") in ("", "interactive")
     ]
-    self_session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
-    if self_session_id:
-        records = [rec for rec in records if rec["session_id"] != self_session_id]
+    records = [rec for rec in records if not is_self_session(rec)]
     return list(foreground_by_pane(records).values())
 
 
@@ -504,14 +595,25 @@ def new_match(before, after, needles):
     return found[-1]
 
 
-def broadcast_to_claude(text, records=None, confirm=(), delay=0.3, timeout=8.0,
-                        tail=40, dry_run=False):
-    """Type `text` into every live claude pane and submit it.
+def codex_pane_settings(text):
+    """Read the current footer or /status, never a prompt echo or historical turn."""
+    for line in reversed(text.splitlines()):
+        match = re.match(
+            r"^\s*(?:Model:\s*)?([\w./:-]+)\s+"
+            r"(none|minimal|low|medium|high|xhigh|max|ultra)\b\s*(?:[·│|]|$)",
+            line,
+        )
+        if match:
+            return match.group(1), match.group(2)
+    return None, None
 
-    C-l (chat:clearInput) first, because anything left in the input box would be
-    prefixed to the text, and a /command with something in front of it goes in as
-    an ordinary prompt. Escape would clear it too, but also cancels the turn in
-    flight. -l stops tmux reading the text as key names; the Enter follows
+
+def broadcast_to_agents(text, records=None, confirm=(), delay=0.3, timeout=8.0,
+                        tail=40, dry_run=False, expected_model=None, expected_effort=None):
+    """Type a slash command using each agent's composer keys and verify the reply.
+
+    Clear the composer line first, using Claude's C-l or Codex's C-e/C-u.
+    -l stops tmux reading the text as key names; the Enter follows
     separately, `delay` later, once the TUI has the whole line.
 
     `confirm` holds lowercased substrings of the expected reply, short enough to
@@ -536,7 +638,12 @@ def broadcast_to_claude(text, records=None, confirm=(), delay=0.3, timeout=8.0,
             continue
         before = pane_tail(pane, tail) or "" if confirm else ""
         try:
-            tmux("send-keys", "-t", pane, "C-l")
+            if not is_live_agent(rec["pid"], rec["agent"], rec.get("proc_start")):
+                results.append({"rec": rec, "status": "gone", "detail": "Agent process exited or changed"})
+                continue
+            # Claude binds C-l to clearInput; Codex uses C-l for screen redraw.
+            clear_keys = ("C-e", "C-u") if rec["agent"] == "codex" else ("C-l",)
+            tmux("send-keys", "-t", pane, *clear_keys)
             tmux("send-keys", "-t", pane, "-l", text)
             time.sleep(delay)
             tmux("send-keys", "-t", pane, "Enter")
@@ -557,6 +664,21 @@ def broadcast_to_claude(text, records=None, confirm=(), delay=0.3, timeout=8.0,
             after = pane_tail(pane, tail)
             if after is None:
                 result["status"] = "gone"
+                continue
+            if result["rec"]["agent"] == "codex":
+                refusal = new_match(before, after, (
+                    "unknown model", "invalid model", "not available", "not supported",
+                    "unknown reasoning", "invalid reasoning", "invalid effort", "unknown effort",
+                ))
+                if refusal:
+                    result.update(status="refused", detail=refusal)
+                    continue
+                model, effort = codex_pane_settings(after)
+                if model == expected_model and (not expected_effort or effort == expected_effort):
+                    result.update(status="confirmed", detail=f"{model} {effort}")
+                    continue
+                # Merely echoing '/model NAME' is not an acknowledgement.
+                waiting.append((result, pane, before))
                 continue
             line = new_match(before, after, confirm)
             if line:
@@ -591,9 +713,9 @@ def report_broadcast(results, refuse_marker, timeout, recheck):
     for result in results:
         rec = result["rec"]
         status, detail = result["status"], result["detail"]
-        if status == "confirmed" and refuse_marker in detail.lower():
+        if status == "refused" or (status == "confirmed" and refuse_marker in detail.lower()):
             status, refused = "refused", refused + 1
-        elif status == "failed":
+        elif status in ("failed", "gone"):
             failures += 1
         elif status == "unconfirmed":
             unconfirmed += 1
@@ -610,7 +732,7 @@ def report_broadcast(results, refuse_marker, timeout, recheck):
             f"{c['GREY']} a busy session holds the text in its queue until the current"
             f" turn ends, so check those with {recheck}, or raise --timeout.{c['RESET']}"
         )
-    return 1 if failures or refused else 0
+    return 1 if failures or refused or unconfirmed else 0
 
 
 # The palette jc uses, so the two tools look like they come from the same box.
@@ -676,7 +798,10 @@ def _list_summary(records, c):
 
 
 def cmd_list(args):
-    records = collect(include_stale=args.all)
+    records = collect(include_stale=args.all, agent=args.agent)
+    if args.json:
+        print(json.dumps(records, indent=2, ensure_ascii=False))
+        return 0
     if not records:
         print(f"{palette(sys.stderr)['RED']}No running agent sessions found."
               f"{palette(sys.stderr)['RESET']}", file=sys.stderr)
@@ -684,9 +809,6 @@ def cmd_list(args):
     if args.ids_only:
         for rec in records:
             print(rec["session_id"])
-        return 0
-    if args.json:
-        print(json.dumps(records, indent=2, ensure_ascii=False))
         return 0
 
     c = palette()
@@ -727,7 +849,12 @@ def cmd_list(args):
 
 def cmd_save(args):
     c, e = palette(), palette(sys.stderr)
-    records = collect()
+    records = collect(agent=args.agent)
+    for rec in records:
+        if rec["agent"] == "codex" and rec["target"] and not rec["stopped"]:
+            model, effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
+            if model:
+                rec.update(model=model, effort=effort)
     if not records:
         print(f"{e['RED']}No running agent sessions, snapshot not written.{e['RESET']}", file=sys.stderr)
         return 1
@@ -748,23 +875,26 @@ def cmd_restore(args):
     c, e = palette(), palette(sys.stderr)
     try:
         snapshot = json.loads(Path(args.file).read_text())
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         print(f"{e['RED']}Cannot read snapshot {args.file}{e['RESET']}: {exc}", file=sys.stderr)
         return 1
     records = snapshot.get("sessions", [])
+    if args.agent != "all":
+        records = [r for r in records if r.get("agent", "claude") == args.agent]
     if not records:
         print(f"{e['RED']}Snapshot holds no sessions.{e['RESET']}", file=sys.stderr)
         return 1
     print(f"{c['GREY']}Snapshot taken {snapshot.get('saved_at', 'unknown')}{c['RESET']},"
           f" {c['BOLD']}{len(records)}{c['RESET']} session(s)")
 
-    live_ids = {rec["session_id"] for rec in collect()}
+    live_ids = {(rec["agent"], rec["session_id"]) for rec in collect(agent=args.agent)}
     existing_sessions = set()
     try:
         existing_sessions = set(tmux("list-sessions", "-F", "#{session_name}").split())
     except (OSError, subprocess.CalledProcessError):
         pass
 
+    failures = 0
     for rec in records:
         session_id = rec["session_id"]
         agent = rec.get("agent", "claude")
@@ -773,7 +903,7 @@ def cmd_restore(args):
         window_name = rec["window_name"] or agent
         label = f"{tmux_session}:{window_name} [{agent} {session_id}]"
 
-        if session_id in live_ids:
+        if (agent, session_id) in live_ids:
             print(f"{c['GREY']}Skipped, already running{c['RESET']}: {label}")
             continue
         if agent not in RESUME_COMMANDS:
@@ -787,7 +917,7 @@ def cmd_restore(args):
             print(f"{c['LIGHTYELLOW']}Skipped, directory is gone{c['RESET']} {cwd}: {label}")
             continue
 
-        command = f"cd {shell_quote(cwd)} && {resume_command(agent, session_id)}"
+        command = f"cd {shell_quote(cwd)} && {resume_record(rec)}"
         if args.dry_run:
             print(f"{c['GREY']}[dry-run]{c['RESET']} {c['CYAN']}{tmux_session} / {window_name}{c['RESET']}: {c['GREY']}{command}{c['RESET']}")
             continue
@@ -804,12 +934,15 @@ def cmd_restore(args):
                     "new-session", "-d", "-s", tmux_session, "-n", window_name, "-c", cwd, *fmt
                 )
                 existing_sessions.add(tmux_session)
-            tmux("send-keys", "-t", target, command, "Enter")
+            tmux("send-keys", "-t", target, "-l", command)
+            tmux("send-keys", "-t", target, "Enter")
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"{e['RED']}Failed{e['RESET']}: {label}: {exc}", file=sys.stderr)
+            failures += 1
             continue
+        live_ids.add((agent, session_id))
         print(f"{c['GREEN']}Restored{c['RESET']} {c['CYAN']}{target}{c['RESET']}: {label}")
-    return 0
+    return 1 if failures else 0
 
 
 def wait_for_exit(pid, timeout):
@@ -856,26 +989,16 @@ def select_records(records, selectors):
             errors.append(f"{want!r} hosts {len(matches)} sessions: {shown}")
             continue
         rec = matches[0]
-        if rec["session_id"] not in seen:
-            seen.add(rec["session_id"])
+        key = (rec["agent"], rec["session_id"])
+        if key not in seen:
+            seen.add(key)
             selected.append(rec)
     return selected, errors
 
 
 def cmd_refresh(args):
-    """Restart every live session in place so it re-reads ~/.claude/.credentials.json.
-
-    `claude auth login` in one pane updates the credentials file on disk, but every
-    other already-running process keeps whatever it read at startup; only a restart
-    picks up the new login. This kills each one and relaunches it with --resume in
-    the same pane, so the conversation carries over and only the auth is fresh.
-    """
+    """Restart selected interactive sessions to reload credentials and config."""
     c, e = palette(), palette(sys.stderr)
-    records = [
-        rec
-        for rec in collect()
-        if rec["alive"] and rec["target"] and rec.get("kind") in ("", "interactive")
-    ]
     # Restarting everything is the destructive end of this command, so it has to
     # be asked for by name. It used to be what no arguments meant, which was
     # safe enough while that was the only thing refresh could do - but now that
@@ -888,6 +1011,11 @@ def cmd_refresh(args):
     # Commas as well as spaces, so a list pasted from anywhere splits the same way
     selectors = [part for item in args.sessions for part in item.split(",") if part]
     sweeping = "all" in selectors
+    records = [
+        rec for rec in collect(agent=args.agent if sweeping else "all")
+        if rec["alive"] and rec["target"] and not rec["stopped"]
+        and rec.get("kind") in ("", "interactive")
+    ]
 
     if sweeping:
         if args.agent != "all":
@@ -903,13 +1031,10 @@ def cmd_refresh(args):
             print(f"{e['GREY']}Run `jcl list` to see what is available.{e['RESET']}", file=sys.stderr)
             return 1
 
-    # Refuse to kill the session this command is itself running inside of unless
-    # told otherwise: CLAUDE_CODE_SESSION_ID is only set when invoked from a
-    # Claude Code Bash tool call, so a plain terminal never trips this.
-    self_session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
-    if self_session_id:
+    # Both Claude and Codex expose their calling session id to shell tools.
+    if any(is_self_session(rec) for rec in records):
         before = len(records)
-        records = [rec for rec in records if rec["session_id"] != self_session_id]
+        records = [rec for rec in records if not is_self_session(rec)]
         if len(records) < before:
             # Naming it explicitly and then being told it was "skipped" reads as
             # if the selector failed, so say which of the two happened.
@@ -934,8 +1059,12 @@ def cmd_refresh(args):
 
     failures = 0
     for rec in records:
-        pid, target = rec["pid"], rec["target"]
-        command = f"cd {shell_quote(rec['cwd'])} && {resume_command(rec['agent'], rec['session_id'])}"
+        pid, target = rec["pid"], rec["pane_id"] or rec["target"]
+        if rec["agent"] == "codex":
+            model, effort = codex_pane_settings(pane_tail(target) or "")
+            if model:
+                rec.update(model=model, effort=effort)
+        command = f"cd {shell_quote(rec['cwd'])} && {resume_record(rec)}"
         label = f"{target} [{rec['agent']} {rec['session_id']}]"
         if args.dry_run:
             keys = QUIT_KEYS.get(rec["agent"])
@@ -943,6 +1072,11 @@ def cmd_refresh(args):
             print(f"{c['GREY']}[dry-run]{c['RESET']} {how} "
                   f"{c['GREY']}(fallback: SIGTERM/SIGKILL {pid}){c['RESET']}, then "
                   f"{c['CYAN']}{target}{c['RESET']}: {c['GREY']}{command}{c['RESET']}")
+            continue
+
+        if not is_live_agent(pid, rec["agent"], rec.get("proc_start")):
+            print(f"{e['RED']}Agent process changed; not restarting {label}{e['RESET']}", file=sys.stderr)
+            failures += 1
             continue
 
         # Prefer the agent's own quit keystroke over a signal: it exits through
@@ -981,10 +1115,14 @@ def cmd_refresh(args):
                 os.kill(pid, signal.SIGKILL)
             except OSError:
                 pass
-            wait_for_exit(pid, 5)
+            if not wait_for_exit(pid, 5):
+                print(f"{e['RED']}Agent still running; not typing a resume command into {label}{e['RESET']}", file=sys.stderr)
+                failures += 1
+                continue
 
         try:
-            tmux("send-keys", "-t", target, command, "Enter")
+            tmux("send-keys", "-t", target, "-l", command)
+            tmux("send-keys", "-t", target, "Enter")
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"{e['RED']}Failed to relaunch {label}{e['RESET']}: {exc}", file=sys.stderr)
             failures += 1
@@ -993,12 +1131,6 @@ def cmd_refresh(args):
 
     return 1 if failures else 0
 
-
-# Effort claude and codex do not spell the same way. claude has a separate
-# /effort; codex folds it into /model's second positional and has no standalone
-# command, so a codex pane is always given this level rather than carrying the
-# extra machinery to read its current model back off the status bar.
-CODEX_EFFORT = "max"
 
 # The two agents share no model names at all: opus[1m] means nothing to codex,
 # gpt-5.6-sol means nothing to claude. So a name is routed by what it looks like
@@ -1014,16 +1146,15 @@ def agent_for_model(name):
 
 # What each slash command needs in order to be sent and judged. Kept in one
 # place so the single-purpose subcommands and `set` cannot drift apart.
-def _model_spec(value, agent="claude"):
+def _model_spec(value, agent="claude", effort=None):
     if agent == "codex":
         return {
-            "command": f"/model {value} {CODEX_EFFORT}",
-            # codex answers in whatever language it is configured for - the reply
-            # here comes back in Chinese - so the only language-independent thing
-            # to look for is the model name it echoes back.
+            "command": f"/model {value}" + (f" {effort}" if effort else ""),
             "confirm": (value.lower(),),
-            "refuse": "\0",  # never matches: codex has no known refusal wording
+            "refuse": "\0",
             "recheck": "/model",
+            "expected_model": value,
+            "expected_effort": effort,
         }
     return {
         "command": f"/model {value}",
@@ -1046,10 +1177,10 @@ def _effort_spec(value):
     }
 
 
-def panes_to_type_into(c, e):
+def panes_to_type_into(c, e, agent="all"):
     """The panes a slash command can be typed into, or [] with the reason printed."""
-    records = typeable_panes()
-    if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+    records = typeable_panes(agent=agent)
+    if any(os.environ.get(k) for k in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID")):
         print(f"{c['GREY']}Leaving out the session this command is running in.{c['RESET']}")
     if not records:
         print(f"{e['RED']}No live agent panes to type into.{e['RESET']}", file=sys.stderr)
@@ -1062,85 +1193,87 @@ def send_to_panes(spec, records, args, c):
     tag = "".join(f" {agent_colour(a, c)}{a}{c['RESET']}" for a in agents)
     print(f"Sending {c['CYAN']}{spec['command']}{c['RESET']} to "
           f"{c['BOLD']}{len(records)}{c['RESET']}{tag} pane(s):")
-    results = broadcast_to_claude(
+    results = broadcast_to_agents(
         spec["command"],
         records=records,
         confirm=() if args.no_verify else spec["confirm"],
         delay=args.delay,
         timeout=args.timeout,
         dry_run=args.dry_run,
+        expected_model=spec.get("expected_model"),
+        expected_effort=spec.get("expected_effort"),
     )
     return report_broadcast(results, spec["refuse"], args.timeout, spec["recheck"])
 
 
 def send_by_agent(records, args, c, e, model=None, effort=None):
-    """Type the right command into each pane for whichever agent runs it.
-
-    claude takes /model and /effort as two commands; codex has only /model, with
-    the effort as its second word. The same request therefore becomes a
-    different number of commands per agent, so panes are grouped by agent before
-    anything is typed. Effort alone cannot be expressed on codex - its /model
-    wants the model name too - so those panes are reported as skipped instead of
-    guessed at from whatever the status bar happens to show.
-    """
+    """Route model names and honor effort without changing another agent's model."""
     by_agent = {}
     for rec in records:
         by_agent.setdefault(rec["agent"], []).append(rec)
 
     rc = 0
     models = [model] if isinstance(model, str) else list(model or [])
-    wanted = {agent_for_model(m): m for m in models}
-    if models:
-        for agent, group in sorted(by_agent.items()):
-            name = wanted.get(agent)
-            if name is None:
-                others = ", ".join(sorted(wanted.values()))
-                print(f"{c['GREY']}Skipping {len(group)} {agent} pane(s): "
-                      f"{others} is not a {agent} model name.{c['RESET']}")
-                continue
-            rc |= send_to_panes(_model_spec(name, agent), group, args, c)
-    if effort:
-        for agent, group in sorted(by_agent.items()):
-            if agent == "claude":
+    wanted = {}
+    for name in models:
+        agent = args.agent if args.agent != "all" else agent_for_model(name)
+        if agent in wanted:
+            print(f"{e['RED']}Multiple models for {agent}; specify one per agent.{e['RESET']}", file=sys.stderr)
+            return 1
+        wanted[agent] = name
+    sent = False
+    for agent, group in sorted(by_agent.items()):
+        name = wanted.get(agent)
+        if models and name is None and not effort:
+            print(f"{c['GREY']}Skipping {len(group)} {agent} pane(s): no {agent} model requested.{c['RESET']}")
+            continue
+        if agent == "claude":
+            if name:
+                rc |= send_to_panes(_model_spec(name), group, args, c)
+                sent = True
+            if effort:
                 rc |= send_to_panes(_effort_spec(effort), group, args, c)
-            elif agent not in wanted:
-                print(f"{c['GREY']}Skipping {len(group)} {agent} pane(s): it sets"
-                      f" effort through /model, so a model is needed too -"
-                      f" `jcl set --model <name> --effort {effort}`.{c['RESET']}")
-            else:
-                print(f"{c['GREY']}{len(group)} {agent} pane(s) already got effort"
-                      f" {CODEX_EFFORT} with the model above.{c['RESET']}")
-    return rc
+                sent = True
+            continue
+        for rec in group:
+            current_model, current_effort = codex_pane_settings(
+                pane_tail(rec["pane_id"] or rec["target"]) or ""
+            )
+            selected_model = name or current_model
+            if not selected_model:
+                print(f"{e['RED']}{rec['target']}: cannot read the current Codex model; "
+                      "use `set --agent codex --model NAME --effort LEVEL`."
+                      f"{e['RESET']}", file=sys.stderr)
+                rc = 1
+                continue
+            # No historical/global-config fallback: /model can change the live
+            # session without updating its last-turn database metadata.
+            selected_effort = effort or current_effort
+            rc |= send_to_panes(_model_spec(selected_model, agent, selected_effort), [rec], args, c)
+            sent = True
+    return rc if sent else 1
 
 
 def cmd_set_effort(args):
-    """Set the effort level of every live claude session without restarting it.
-
-    Sessions start at settings.json's effortLevel, so raising them all otherwise
-    means typing /effort into each pane. claude saves a level the organisation
-    allows as a default (xhigh here) and calls anything above it "(this session
-    only)", which is why max has to be re-sent to every new session.
-    """
+    """Set effort on the selected agent panes without restarting them."""
     c, e = palette(), palette(sys.stderr)
-    records = panes_to_type_into(c, e)
+    records = panes_to_type_into(c, e, args.agent)
     if not records:
         return 1
     return send_by_agent(records, args, c, e, effort=args.level)
 
 
 def cmd_set_model(args):
-    """Set the model of every live claude session without restarting it.
-
-    Managed settings pin the model here, so every session starts on the pinned
-    one and going through `refresh` puts it straight back - typing /model is the
-    only way to move a running session off it. claude says so itself: "saved as
-    your default for new sessions" comes with the pin winning on the next start.
-    """
+    """Set models on matching panes, retaining the visible Codex effort."""
     c, e = palette(), palette(sys.stderr)
-    records = panes_to_type_into(c, e)
+    records = panes_to_type_into(c, e, args.agent)
     if not records:
         return 1
-    return send_by_agent(records, args, c, e, model=args.model)
+    model = args.model or ([] if args.agent == "codex" else ["opus"])
+    if not model:
+        print("Specify a Codex model name.", file=sys.stderr)
+        return 1
+    return send_by_agent(records, args, c, e, model=model)
 
 
 def cmd_set(args):
@@ -1154,7 +1287,7 @@ def cmd_set(args):
     if not args.model and not args.effort:
         print(f"{e['RED']}Give --model, --effort, or both.{e['RESET']}", file=sys.stderr)
         return 1
-    records = panes_to_type_into(c, e)
+    records = panes_to_type_into(c, e, args.agent)
     if not records:
         return 1
     # Model first: claude treats an effort above the org default as "this
@@ -1183,6 +1316,11 @@ def cmd_patch_resurrect(args):
         for r in collect()
         if r["target"] and r.get("kind") in ("", "interactive")
     ]
+    for rec in records:
+        if rec["agent"] == "codex" and not rec["stopped"]:
+            model, effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
+            if model:
+                rec.update(model=model, effort=effort)
     by_pane = foreground_by_pane(records)
 
     record_types = ("pane", "window", "state", "grouped_session")
@@ -1200,10 +1338,9 @@ def cmd_patch_resurrect(args):
                 # tmux may report a stale "/path (deleted)"; use the cwd the agent recorded
                 if rec["cwd"]:
                     fields[7] = ":" + rec["cwd"].replace(" ", "\\ ")
-                # Only the resume command, none of the flags the pane was started
-                # with: they are rarely wanted on restore and codex takes its session
-                # id as a positional argument, where replaying them is unsafe
-                fields[10] = ":" + resume_command(rec.get("agent", "claude"), rec["session_id"])
+                # Preserve known model/effort settings, not arbitrary launch
+                # arguments (which may contain prompts or credentials).
+                fields[10] = ":" + resume_record(rec)
                 patched.append(f"{rec['tmux_session']}:{rec['window_index']}.{rec['pane_index']}")
                 line = "\t".join(fields)
         out.append(line)
@@ -1843,7 +1980,13 @@ def shell_quote(text):
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def main():
+def command_word(value):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/\[\]-]*", value):
+        raise argparse.ArgumentTypeError("expected one model/effort name without spaces or control characters")
+    return value
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Bring the Claude Code and Codex sessions running in tmux back after a reboot."
     )
@@ -1857,18 +2000,21 @@ def main():
     )
     p_list.add_argument("--json", action="store_true", help="Emit JSON")
     p_list.add_argument("--ids-only", action="store_true", help="Print session ids only")
+    p_list.add_argument("--agent", choices=["claude", "codex", "all"], default="all")
     p_list.set_defaults(func=cmd_list)
 
     p_save = sub.add_parser(
         "save", help="Snapshot the running sessions to a file before a reboot"
     )
     p_save.add_argument("-o", "--output", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
+    p_save.add_argument("--agent", choices=["claude", "codex", "all"], default="all")
     p_save.set_defaults(func=cmd_save)
 
     p_restore = sub.add_parser(
         "restore", help="Reopen snapshotted sessions that are no longer running"
     )
     p_restore.add_argument("-f", "--file", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
+    p_restore.add_argument("--agent", choices=["claude", "codex", "all"], default="all")
     p_restore.add_argument(
         "-n", "--dry-run", action="store_true", help="Print the commands instead of running them"
     )
@@ -1878,11 +2024,12 @@ def main():
         "refresh",
         help="Restart the named sessions in place to pick up a new login",
         description=(
-            "Kill the named interactive sessions and relaunch each with --resume"
-            " in the same tmux pane, so they survive a `claude auth login` /"
-            " `claude auth logout` done in one other pane without losing history."
-            " At least one SESSION must be named; pass `all` to take every live"
-            " one. Run list first, or pass -n, to see what would be restarted."
+            "Restart named interactive sessions in their tmux panes using"
+            " `claude --resume ID` or `codex resume ID`, retaining history."
+            " This reloads login, MCP, and configuration changes. Pass `all"
+            " --agent codex` for all Codex panes; `all` alone keeps the Claude"
+            " default. The calling agent and suspended sessions are excluded."
+            " Run list first, or pass -n to preview."
         ),
     )
     p_refresh.add_argument(
@@ -1894,7 +2041,7 @@ def main():
     )
     p_refresh.add_argument(
         "--agent", choices=["claude", "codex", "all"], default="claude",
-        help="Restrict to one agent kind, when no SESSION is named (default: claude)",
+        help="Restrict an `all` sweep (default: claude); an explicit pane selects either agent",
     )
     p_refresh.add_argument(
         "--timeout", type=float, default=15.0,
@@ -1908,19 +2055,18 @@ def main():
 
     p_effort = sub.add_parser(
         "set-effort",
-        help="Type /effort <level> into every live claude pane",
+        help="Set reasoning effort on Claude and Codex panes",
         description=(
-            "Send claude's /effort to every live claude session in tmux, so they"
-            " all move off the level in settings.json without a restart. max only"
-            " ever reaches the sessions running now, claude refuses to save it as"
-            " the default. Each input box is cleared first (C-l), so an unsent"
-            " draft there is lost. Codex has no such command and is skipped."
-            " Pass -n to see which panes would be typed into."
+            "Send /effort LEVEL to Claude and /model CURRENT_MODEL LEVEL to Codex."
+            " Codex's current model is read from its visible footer; when unavailable,"
+            " use `set --agent codex --model NAME --effort LEVEL`. Input drafts are"
+            " cleared. The calling agent and suspended sessions are excluded."
+            " Pass -n to preview."
         ),
     )
     p_effort.add_argument(
-        "level", nargs="?", default="max",
-        help="Effort level to set, anything /effort itself accepts (default: max)",
+        "level", nargs="?", default="max", type=command_word,
+        help="Agent-supported effort level (default: max); use --agent to target one agent",
     )
     p_effort.add_argument(
         "--delay", type=float, default=0.3,
@@ -1928,7 +2074,7 @@ def main():
     )
     p_effort.add_argument(
         "--timeout", type=float, default=8.0,
-        help="Seconds to wait for claude's reply; a busy pane only answers once"
+        help="Seconds to wait for the agent's reply; a busy pane only answers once"
              " its turn ends (default: 8)",
     )
     p_effort.add_argument(
@@ -1941,16 +2087,12 @@ def main():
 
     p_model = sub.add_parser(
         "set-model",
-        help="Type /model <name> into every live claude pane",
+        help="Set models on Claude and Codex panes",
         description=(
-            "Send claude's /model to every live claude session in tmux, so they"
-            " all move off the model in managed settings without a restart. The"
-            " pin wins again on the next start, which is exactly what refresh"
-            " does, so run this after a refresh and not before. Any alias /model"
-            " itself accepts works: opus, sonnet, opusplan, opus[1m], or a full"
-            " model id. Each input box is cleared first (C-l), so an unsent draft"
-            " there is lost. Codex has no such command and is skipped."
-            " Pass -n to see which panes would be typed into."
+            "Route model names to the matching agent, or choose --agent explicitly"
+            " for custom model names. Codex retains its visible effort level."
+            " Input drafts are cleared; the calling agent and suspended sessions"
+            " are excluded. Pass -n to preview."
         ),
     )
     # Deliberately not a choices= list, here or on --effort/level: what claude
@@ -1958,8 +2100,8 @@ def main():
     # reject a value that is perfectly valid. Anything claude does not know comes
     # back from the pane as refused, which is a better place to find out.
     p_model.add_argument(
-        "model", nargs="*", default=["opus"], metavar="MODEL",
-        help="Model alias or id to set (default: opus)",
+        "model", nargs="*", type=command_word, metavar="MODEL",
+        help="One model per agent; default opus for Claude, explicit name required for --agent codex",
     )
     p_model.add_argument(
         "--delay", type=float, default=0.3,
@@ -1967,7 +2109,7 @@ def main():
     )
     p_model.add_argument(
         "--timeout", type=float, default=8.0,
-        help="Seconds to wait for claude's reply; a busy pane only answers once"
+        help="Seconds to wait for the agent's reply; a busy pane only answers once"
              " its turn ends (default: 8)",
     )
     p_model.add_argument(
@@ -1980,26 +2122,24 @@ def main():
 
     p_set = sub.add_parser(
         "set",
-        help="Set model and/or effort on every live claude pane in one pass",
+        help="Set model and/or effort on Claude and Codex panes in one pass",
         description=(
-            "Send /model and /effort to every live claude session in tmux,"
-            " taking the pane list once instead of twice. Running set-model and"
-            " set-effort back to back scans tmux and /proc for each, and that"
-            " scan is where the time goes - the typing itself is cheap. At"
-            " least one of --model/--effort must be given. Each input box is"
-            " cleared first (C-l), so an unsent draft there is lost. Codex has"
-            " neither command and is skipped. Pass -n to see the panes only."
+            "Discover panes once and send the agent-specific commands. Claude gets"
+            " /model and /effort; Codex gets /model NAME EFFORT. At least one of"
+            " --model/--effort is required. Repeat --model for mixed-agent updates,"
+            " or use --agent codex for Codex only. Input drafts are cleared."
+            " Pass -n to preview."
         ),
     )
     p_set.add_argument(
-        "--model", action="append", metavar="MODEL",
+        "--model", action="append", type=command_word, metavar="MODEL",
         help="Model name, anything /model itself accepts. Repeat to cover both"
              " agents (e.g. --model opus[1m] --model gpt-5.6-terra); each name"
              " goes only to the agent it belongs to.",
     )
     p_set.add_argument(
-        "--effort",
-        help="Effort level, anything /effort itself accepts (e.g. max)",
+        "--effort", type=command_word,
+        help="Agent-supported effort level (e.g. high, xhigh, max)",
     )
     p_set.add_argument(
         "--delay", type=float, default=0.3,
@@ -2007,7 +2147,7 @@ def main():
     )
     p_set.add_argument(
         "--timeout", type=float, default=8.0,
-        help="Seconds to wait for claude's reply, per command (default: 8)",
+        help="Seconds to wait for the agent's reply, per command (default: 8)",
     )
     p_set.add_argument(
         "--no-verify", action="store_true", help="Send without reading the panes back"
@@ -2016,6 +2156,10 @@ def main():
         "-n", "--dry-run", action="store_true", help="List the panes, type nothing"
     )
     p_set.set_defaults(func=cmd_set)
+
+    for p in (p_effort, p_model, p_set):
+        p.add_argument("--agent", choices=["claude", "codex", "all"], default="all",
+                       help="Target agent kind (default: all; model names auto-route)")
 
     p_patch = sub.add_parser(
         "patch-resurrect",
@@ -2041,7 +2185,7 @@ def main():
 
     p_save_auth = sub.add_parser(
         "save-auth",
-        help="Merge the MCP OAuth tokens into the backup (re-run freely, they rotate)",
+        help="Back up Claude MCP OAuth (also used by Codex's shared-header helper)",
         description=(
             "Copy the mcpOAuth block out of ~/.claude/.credentials.json so that logging"
             " out, or switching Anthropic accounts, does not cost one interactive browser"
@@ -2071,7 +2215,7 @@ def main():
 
     p_restore_auth = sub.add_parser(
         "restore-auth",
-        help="Merge saved MCP OAuth tokens back after a login",
+        help="Restore Claude MCP OAuth (also used by Codex's shared-header helper)",
         description=(
             "Put the tokens saved by save-auth back into ~/.claude/.credentials.json."
             " Only entries that are missing or have an empty token are filled; --force"
@@ -2121,7 +2265,7 @@ def main():
     )
     p_fill_auth.set_defaults(func=cmd_fill_auth)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.command:
         args = parser.parse_args(["list"])
     return args.func(args)

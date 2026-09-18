@@ -62,7 +62,7 @@ fHost=            # where ja itself started: "<sess:win.pane>" if launched
                   # and frozen — does not track tty changes after launch.
 fTargetPaneId=    # tmux pane_id (eg. "%47") — the STABLE identity ja binds
                   # to. Resolved once in resolveTarget from fTmuxTarget (the
-                  # -t value or auto-detected pane), then used for every tmux
+                  # PANE argument or auto-detected pane), then used for every tmux
                   # op (capture-pane / send-keys / display-message), every
                   # runtime file name (lock/log/state), and all lookups.
                   # A pane_id never changes while the pane lives and is never
@@ -126,11 +126,15 @@ RESET='\033[0m'
 
 usage() {
     cat << _EOF
-Usage: $SCRIPT_NAME [-t session[:window[.pane]]] [OPTIONS]
+Usage: $SCRIPT_NAME [OPTIONS] [PANE]
 
 Auto-approve confirmation prompts for Claude Code and Codex CLI running in a
 tmux pane. Monitors the pane screen and sends the affirmative option when a
 known permission prompt is detected.
+
+PANE is a pane id (%47) or session[:window[.pane]]; omit it to auto-detect
+the pane running an AI. Every mode that acts on a pane (--log, --stop,
+--restart, plain monitoring) takes it the same way.
 
 $SCRIPT_NAME binds to the target pane's tmux pane_id (e.g. %47), not its
 index, so it keeps monitoring across pane moves/relinks and exits only when
@@ -140,9 +144,6 @@ the bare shell) and resumes automatically when an AI returns.
 
 Options:
     -h, --help       Show this help message
-    -t, --target TARGET
-                     Tmux target pane: a pane id (%47) or session[:window
-                     [.pane]] (default: auto-detect the pane running an AI)
     -w, --wait SEC   Wait before approving (default: 0, approve immediately)
     -l, --list       List detected AI panes and exit
     -v, --verbose    Print debug info to stderr (detector matches, send-keys
@@ -155,19 +156,19 @@ Options:
 
 Daemon control (operate on already-running daemons):
     -S, --stop       Stop the daemon monitoring the target pane (default: the
-                     current pane; pass -t to stop a specific one). Cleans
+                     current pane; name a PANE to stop a specific one). Cleans
                      up stale lockfiles automatically.
     -R, --restart    Stop the daemon for the target pane (if any) and launch
                      a fresh background daemon for it. Handy after upgrading
                      $SCRIPT_NAME. Carries over -w/-v if given; otherwise uses
-                     defaults. (default target: current pane; pass -t for one)
+                     defaults. (default target: current pane; or name a PANE)
     -A, --all        Launch a background daemon for EVERY tmux pane currently
                      running a known AI, skipping panes already monitored.
     -s, --status     Show all running daemons (summary row + detail block
                      each). Inside tmux, the daemon for the current pane is
                      marked with '*' in the index column.
     -L, --log        Tail -F the daemon's log file (default: current pane;
-                     pass -t for a specific one). Ctrl+C to exit.
+                     or name a PANE). Ctrl+C to exit.
     --log-full       Like --log, but print the full log first, then follow.
                      Useful for catching up on a long-running daemon.
 
@@ -177,8 +178,9 @@ Supports:
 
 Examples:
     $SCRIPT_NAME                   # auto-detect, run in foreground
-    $SCRIPT_NAME -t main:0.1       # target specific pane (by index)
-    $SCRIPT_NAME -t %47            # target specific pane (by pane id)
+    $SCRIPT_NAME main:0.1          # target specific pane (by index)
+    $SCRIPT_NAME %47               # target specific pane (by pane id)
+    $SCRIPT_NAME -L 3:12.1         # follow that pane's daemon log
     $SCRIPT_NAME -w 3              # wait 3s before each approval (Ctrl+C to abort)
     $SCRIPT_NAME -s                # see what daemons are running
     $SCRIPT_NAME -L                # follow current pane's daemon log
@@ -199,8 +201,8 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
 
-    local SHORTOPTS="ht:w:lvDsSLRA"
-    local LONGOPTS="help,target:,wait:,list,verbose,daemon,stop,restart,all,status,log,log-full"
+    local SHORTOPTS="hw:lvDsSLRA"
+    local LONGOPTS="help,wait:,list,verbose,daemon,stop,restart,all,status,log,log-full"
 
     local PARSED
     if ! PARSED=$("$GETOPT_BIN" --options="$SHORTOPTS" --longoptions="$LONGOPTS" --name "$SCRIPT_NAME" -- "$@"); then
@@ -215,10 +217,6 @@ parseOptions() {
         case "$1" in
             -h|--help)
                 usage
-                ;;
-            -t|--target)
-                fTmuxTarget="$2"
-                shift 2
                 ;;
             -w|--wait)
                 fApproveDelay="$2"
@@ -271,6 +269,25 @@ parseOptions() {
                 ;;
         esac
     done
+
+    # The pane is the only object ja acts on, so it is the positional argument
+    # rather than a flag: `ja --log 3:12.1` reads the way people write it, and
+    # every mode that takes a target (--log, --stop, --restart, plain monitor)
+    # gets it from the same place.
+    #
+    # A daemon child is told its pane through the environment instead. It has a
+    # pane_id resolved already, and passing it on the command line would collide
+    # with whatever the user typed - two positionals, which is an error below.
+    if [ -n "$JA_BOUND_PANE" ]; then
+        fTmuxTarget="$JA_BOUND_PANE"
+        return
+    fi
+    if [ $# -gt 1 ]; then
+        echo -e "${RED}Error: one pane at a time; got: $*${RESET}" >&2
+        echo "Use $SCRIPT_NAME -h for help." >&2
+        exit 1
+    fi
+    [ -n "$1" ] && fTmuxTarget="$1"
 }
 
 # Path helpers — single source of truth for ja's runtime files.
@@ -750,14 +767,14 @@ autoDetectTarget() {
 
     if [ "$count" -eq 0 ]; then
         echo -e "${RED}Error: No pane running $(_aiNamesPretty) found${RESET}" >&2
-        echo -e "${GREY}Start an AI tool in a tmux pane first, or use -t to specify a target.${RESET}" >&2
-        echo -e "${GREY}If the tool runs inside another process (e.g. bash), use -t to specify the pane manually.${RESET}" >&2
+        echo -e "${GREY}Start an AI tool in a tmux pane first, or name the pane as an argument.${RESET}" >&2
+        echo -e "${GREY}If the tool runs inside another process (e.g. bash), name the pane as an argument.${RESET}" >&2
         exit 1
     elif [ "$count" -eq 1 ]; then
         local pane_pid target paneid cmd
         IFS='|' read -r pane_pid target paneid cmd <<<"${panes[0]}"
         echo -e "${GREEN}Auto-detected:${RESET} ${CYAN}$cmd${RESET} at ${BLUE}$target${RESET} ${GREY}($paneid)${RESET}"
-        echo -e "${GREY}\nIf a session is missing, use -t to specify it manually.${RESET}"
+        echo -e "${GREY}\nIf a session is missing, name the pane as an argument.${RESET}"
         fTmuxTarget="$target"
         fTargetPaneId="$paneid"
         fAiName="$cmd"
@@ -767,7 +784,7 @@ autoDetectTarget() {
         echo ""
         _renderAiTable "${panes[@]}"
         echo ""
-        echo -e "${GREY}(If a session is missing, use -t to specify it manually.)${RESET}"
+        echo -e "${GREY}(If a session is missing, name the pane as an argument.)${RESET}"
         echo ""
         local _pid
         while true; do
@@ -1178,7 +1195,6 @@ mainLoop() {
     # (▶ → · ─) measure as 1 column each — matching their rendered width.
     local _line1Plain _line2Plain _daemonNotePlain=""
     local _targetLabel=$(_targetLabel)
-    echo
     if [ -n "$fAiName" ]; then
         _line1Plain="▶ ${SCRIPT_NAME} AUTO-APPROVE · ${fAiName} → ${_targetLabel}"
     else
@@ -1195,10 +1211,9 @@ mainLoop() {
     # use for similar two-line banners.
     _ruleW=$((_ruleW + 4))
 
-    # No leading blank line — the banner is the very first thing in the
-    # log file and a leading blank reads as "ja --log silently ate a
-    # line" when the user runs it. Trailing blank below stays (it
-    # visually separates the banner from the run-time events).
+    # No blank line on either side of the banner. The rule under it is
+    # already the separator from the run-time events, and in `ja --log`
+    # every blank reads as "the tail silently ate a line".
     if [ -n "$fAiName" ]; then
         echo -e "${MAGENTA}▶ ${SCRIPT_NAME} AUTO-APPROVE${RESET} ${GREY}·${RESET} ${CYAN}${fAiName}${RESET} ${GREY}→${RESET} ${BLUE}${_targetLabel}${RESET}"
     else
@@ -1208,7 +1223,6 @@ mainLoop() {
     [ -n "$fDaemon" ] && _daemonNote=" ${GREY}·${RESET} ${MAGENTA}daemon${RESET}"
     echo -e "  ${GREY}poll${RESET} ${fPollInterval}s ${GREY}·${RESET} ${GREY}delay${RESET} ${fApproveDelay}s${_daemonNote} ${GREY}·${RESET} ${GREY}Ctrl+C to stop${RESET}"
     echo -e "${GREY}$(_hr "$_ruleW")${RESET}"
-    echo ""
 
     while true; do
         local content
@@ -1560,7 +1574,7 @@ handleListMode() {
 #      whether that's an error or a "list-all" fallback).
 #
 # Echoes the resolved pane_id on stdout. Returns 0 if one was found,
-# 1 otherwise (outside tmux without -t, or -t names a dead pane).
+# 1 otherwise (outside tmux with no PANE, or PANE names a dead pane).
 _resolveTargetForTaskMode() {
     if [ -n "$fTmuxTarget" ]; then
         local pid
@@ -1658,8 +1672,8 @@ handleStopRequest() {
                 "$(_boxRow note "pane gone — its daemon already exited" "${GREY}pane gone — its daemon already exited${RESET}")"
             return 0
         fi
-        echo -e "${RED}Error: ${SCRIPT_NAME} --stop without -t requires running inside tmux${RESET}" >&2
-        echo -e "${GREY}Pass an explicit target: ${SCRIPT_NAME} --stop -t <pane-id|session:window.pane>${RESET}" >&2
+        echo -e "${RED}Error: ${SCRIPT_NAME} --stop without a PANE requires running inside tmux${RESET}" >&2
+        echo -e "${GREY}Name the pane: ${SCRIPT_NAME} --stop <pane-id|session:window.pane>${RESET}" >&2
         return 1
     fi
     local label=$(_targetLabel "$target")
@@ -1733,7 +1747,7 @@ handleStopRequest() {
 
 # Restart the daemon for a target pane: stop the existing one (if any),
 # then launch a fresh background daemon for the same pane. Sugar for
-# `${SCRIPT_NAME} --stop -t X && ${SCRIPT_NAME} -D -t X` — handy after
+# `${SCRIPT_NAME} --stop X && ${SCRIPT_NAME} -D X` — handy after
 # upgrading ${SCRIPT_NAME} (so a long-running daemon picks up new code).
 # Carries over -w/-v if they were passed; otherwise uses defaults.
 handleRestartRequest() {
@@ -1742,8 +1756,8 @@ handleRestartRequest() {
         if [ -n "$fTmuxTarget" ]; then
             echo -e "${RED}Error: ${SCRIPT_NAME} --restart: target '${fTmuxTarget}' not found${RESET}" >&2
         else
-            echo -e "${RED}Error: ${SCRIPT_NAME} --restart without -t requires running inside tmux${RESET}" >&2
-            echo -e "${GREY}Pass an explicit target: ${SCRIPT_NAME} --restart -t <pane-id|session:window.pane>${RESET}" >&2
+            echo -e "${RED}Error: ${SCRIPT_NAME} --restart without a PANE requires running inside tmux${RESET}" >&2
+            echo -e "${GREY}Name the pane: ${SCRIPT_NAME} --restart <pane-id|session:window.pane>${RESET}" >&2
         fi
         return 1
     fi
@@ -1767,7 +1781,7 @@ handleRestartRequest() {
     # (title "daemon restarted" + the prior pid). Carry over -w/-v when set.
     local self
     self=$(command -v "$0" 2>/dev/null) || self="$0"
-    local args=(--daemon -t "$target")
+    local args=(--daemon "$target")
     [ "$fApproveDelay" != "0" ] && args+=(-w "$fApproveDelay")
     [ -n "$fVerbose" ] && args+=(-v)
     export JA_RESTARTED_FROM="${oldpid:-none}"
@@ -1808,7 +1822,7 @@ handleStartAll() {
             existing=$((existing + 1))
         else
             # Self-daemonizing launch; suppress its own box (we print a line).
-            "$self" --daemon -t "$paneid" "${extra[@]}" >/dev/null 2>&1
+            "$self" --daemon "$paneid" "${extra[@]}" >/dev/null 2>&1
             newpid=$(cat "$(_lockFilePath "$paneid")" 2>/dev/null)
             echo -e "  ${GREEN}▶${RESET} ${GREEN}started${RESET} ${BLUE}${loc} (${paneid})${RESET} ${GREY}·${RESET} ${CYAN}${cmd}${RESET} ${GREY}·${RESET} pid ${CYAN}${newpid:-?}${RESET}"
             started=$((started + 1))
@@ -2142,8 +2156,8 @@ handleLogRequest() {
             echo -e "${RED}Error: ${SCRIPT_NAME} ${_flag}: target '${fTmuxTarget}' not found${RESET}" >&2
             return 1
         fi
-        echo -e "${RED}Error: ${SCRIPT_NAME} ${_flag} without -t requires running inside tmux${RESET}" >&2
-        echo -e "${GREY}Pass an explicit target: ${SCRIPT_NAME} ${_flag} -t <pane-id|session:window.pane>${RESET}" >&2
+        echo -e "${RED}Error: ${SCRIPT_NAME} ${_flag} without a PANE requires running inside tmux${RESET}" >&2
+        echo -e "${GREY}Name the pane: ${SCRIPT_NAME} ${_flag} <pane-id|session:window.pane>${RESET}" >&2
         return 1
     fi
     local label=$(_targetLabel "$target")
@@ -2174,7 +2188,7 @@ handleLogRequest() {
             "○ ${SCRIPT_NAME} no daemon" \
             "${LIGHTYELLOW}○${RESET} ${SCRIPT_NAME} ${GREY}no daemon${RESET}" \
             "$(_boxRow pane  "$label"               "${BLUE}${label}${RESET}")" \
-            "$(_boxRow start "${SCRIPT_NAME} -D -t ${target}" "${LIGHTYELLOW}${SCRIPT_NAME} -D -t ${target}${RESET}")"
+            "$(_boxRow start "${SCRIPT_NAME} -D ${target}" "${LIGHTYELLOW}${SCRIPT_NAME} -D ${target}${RESET}")"
         return 1
     fi
 
@@ -2182,7 +2196,7 @@ handleLogRequest() {
     # _cleanup removes the lockfile and state file on daemon shutdown
     # but intentionally preserves the log. A present log file therefore
     # doesn't prove there's a live daemon. Without this check,
-    # `ja -L -t <stale>` silently tails a frozen file, which reads as a
+    # `ja -L <stale>` silently tails a frozen file, which reads as a
     # hang.
     #
     # Behavior: warn loudly to stderr (so it doesn't pollute the tailed
@@ -2204,7 +2218,7 @@ handleLogRequest() {
             echo -e "  ${GREY}(state file gone — no last-event info)${RESET}" >&2
         fi
         echo -e "  ${GREY}log:${RESET} ${logfile}" >&2
-        echo -e "  ${GREY}restart with:${RESET} ${CYAN}${SCRIPT_NAME} -D -t ${target}${RESET}" >&2
+        echo -e "  ${GREY}restart with:${RESET} ${CYAN}${SCRIPT_NAME} -D ${target}${RESET}" >&2
         echo >&2
     fi
 
@@ -2388,15 +2402,17 @@ daemonize() {
     local self
     self=$(command -v "$0" 2>/dev/null) || self="$0"
 
-    # Launch detached. Append `-t "$fTargetPaneId"` so the child binds the
-    # already-resolved pane_id and never re-runs the interactive picker
-    # (the last -t on the line wins if the user also passed one).
+    # Launch detached. JA_BOUND_PANE carries the already-resolved pane_id so the
+    # child never re-runs the interactive picker. It goes through the environment
+    # rather than the command line because the pane is a positional argument now:
+    # appending one would sit next to whatever the user typed and be rejected as
+    # two panes.
     if command -v setsid &>/dev/null; then
-        ( JA_DAEMONIZED=1 setsid "$self" "$@" -t "$fTargetPaneId" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
+        ( JA_DAEMONIZED=1 JA_BOUND_PANE="$fTargetPaneId" setsid "$self" "$@" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
     else
         # No setsid (rare): still background + disown. ja works, but it
         # keeps the launching pane's ctty, so `--status` shows "attached".
-        ( JA_DAEMONIZED=1 "$self" "$@" -t "$fTargetPaneId" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
+        ( JA_DAEMONIZED=1 JA_BOUND_PANE="$fTargetPaneId" "$self" "$@" </dev/null >"$logfile" 2>&1 & disown ) &>/dev/null
     fi
 
     # Wait briefly for the child to claim its lockfile so we can report its

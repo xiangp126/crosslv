@@ -15,6 +15,7 @@ fTKFontConfigDir=$fMainDir/assets/fontconfig
 fTKClangdConfig=$fMainDir/assets/clangd/config.yaml
 fTKtemplateDir=$fMainDir/template
 fTKToolsDir=$fMainDir/nv-tools
+fTKSharedSkills=$fMainDir/assets/skills
 fDownloads=$HOME/Downloads
 fJCPath=$fMainDir/$SCRIPT_NAME
 fFirstTimeFile=$fMainDir/".has_been_invoked"
@@ -28,13 +29,15 @@ fTKClaudeDir=$fMainDir/assets/claude
 fTKClaudeCodeSettings=$fTKClaudeDir/settings.json
 fTKClaudeCodeLocalSettings=$fTKClaudeDir/settings.local.json
 fTKClaudeCodeMd=$fTKClaudeDir/CLAUDE.md
-fTKClaudeCodeSkills=$fTKClaudeDir/skills
+fTKClaudeCodeSkills=$fTKSharedSkills
 fTKClaudeDesktopConfig=$fTKClaudeDir/claude_desktop_config.json
 fTKClaudeMcpJson=$fTKClaudeDir/.mcp.json
 # Codex
 fTKCodexDir=$fMainDir/assets/codex
 fTKCodexConfig=$fTKCodexDir/config.toml
 fTKCodexAgents=$fTKCodexDir/AGENTS.md
+fTKCodexBin=$fTKCodexDir/bin
+fTKCodexSkills=$fTKSharedSkills
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -2155,6 +2158,51 @@ linkFile() {
     fi
 }
 
+# linkDirectory: Creates a symbolic link for a directory while preserving an
+# existing real directory in the environment backup area.
+#
+# Usage: linkDirectory <source_dir> <destination_parent> [new_link_name]
+# Returns: 0 linked, 1 already linked, 2 missing source, 3 failed.
+linkDirectory() {
+    local src="$1"
+    local linkPath="$2"
+    local newLinkName="${3:-}"
+    local linkName=${newLinkName:-$(basename "$src")}
+    local dst="$linkPath/$linkName"
+
+    if [ ! -d "$src" ]; then
+        echo -e "${RED}Error: $src does not exist or is not a directory${RESET}"
+        return 2
+    fi
+    [ ! -d "$linkPath" ] && mkdir -p "$linkPath"
+
+    if [ -L "$dst" ] && [ "$(readlink -f "$dst")" = "$(readlink -f "$src")" ]; then
+        echo -e "${GREEN}✔${GREY} Directory link ${BLUE}${linkName}${GREY} is already up to date.${RESET}"
+        return 1
+    fi
+
+    if [ -e "$dst" ] || [ -L "$dst" ]; then
+        local backup="$fBackupDir/${linkName}.dir.bak"
+        [ ! -d "$fBackupDir" ] && mkdir -p "$fBackupDir"
+        if [ -e "$backup" ] || [ -L "$backup" ]; then
+            backup="${backup}.$(date +%Y%m%d_%H%M%S)"
+        fi
+        echo -e "${CYAN}Warning: $dst already exists, moving it to $backup${RESET}"
+        if ! mv "$dst" "$backup"; then
+            echo -e "${RED}Error: Failed to back up $dst${RESET}"
+            return 3
+        fi
+    fi
+
+    if ln -s "$src" "$dst"; then
+        echo -e "${GREEN}✔${GREY} Linked ${BLUE}${dst}${GREY} -> ${CYAN}${src}${RESET}"
+        return 0
+    fi
+
+    echo -e "${RED}Error: Failed to link $dst${RESET}"
+    return 3
+}
+
 # syncFile: Syncs a file into a destination directory using rsync.
 #
 # Creates the destination directory if needed. Skips files that are already
@@ -2707,8 +2755,14 @@ backupClaudeCodeSettings() {
     _trackSyncResult $? processedCount failedCount
     syncFile "$srcDir/CLAUDE.md"           "$fTKClaudeDir"
     _trackSyncResult $? processedCount failedCount
-    syncDir  "$srcDir/skills"              "$fTKClaudeDir"
-    _trackSyncResult $? processedCount failedCount
+    # Skills are edited in place through the shared canonical tree. Copying an
+    # installed link back into the repository would recreate two sources.
+    if "$fTKToolsDir/jskill" check --source-only > /dev/null; then
+        processedCount=$((processedCount + 1))
+    else
+        echo -e "${RED}Error: Shared skill source validation failed${RESET}"
+        failedCount=$((failedCount + 1))
+    fi
 
     if [ $failedCount -gt 0 ]; then
         return 1
@@ -2732,7 +2786,7 @@ restoreClaudeCodeSettings() {
     _trackSyncResult $? processedCount failedCount
     syncFile "$fTKClaudeCodeMd"            "$dstDir"
     _trackSyncResult $? processedCount failedCount
-    syncDir  "$fTKClaudeCodeSkills"        "$dstDir"
+    linkDirectory "$fTKClaudeCodeSkills"   "$dstDir" "skills"
     _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then
@@ -2830,14 +2884,31 @@ backupCodexSettings() {
 restoreCodexSettings() {
     echo -e "${COLOR}Restoring Codex settings${RESET}"
     local dstDir=$(getCodexDir)
+    local userSkillsDir="$HOME/.agents/skills"
     local processedCount=0 failedCount=0
 
     [ ! -d "$dstDir" ] && mkdir -p "$dstDir"
 
-    syncFile "$fTKCodexConfig" "$dstDir"
+    # Codex protects config.toml as mode 0600. If the symlink target is broader
+    # (for example after a fresh git checkout), Codex may replace the symlink
+    # while tightening permissions. Set the target mode before linking so the
+    # link survives Codex startup and config writes.
+    chmod 600 "$fTKCodexConfig"
+
+    linkFile "$fTKCodexConfig" "$dstDir"
     _trackSyncResult $? processedCount failedCount
-    syncFile "$fTKCodexAgents" "$dstDir"
+    linkFile "$fTKCodexAgents" "$dstDir"
     _trackSyncResult $? processedCount failedCount
+    linkDirectory "$fTKCodexBin" "$dstDir" "bin"
+    _trackSyncResult $? processedCount failedCount
+
+    [ ! -d "$userSkillsDir" ] && mkdir -p "$userSkillsDir"
+    local skillDir=
+    for skillDir in "$fTKCodexSkills"/*; do
+        [ -f "$skillDir/SKILL.md" ] || continue
+        linkDirectory "$skillDir" "$userSkillsDir"
+        _trackSyncResult $? processedCount failedCount
+    done
 
     if [ $failedCount -gt 0 ]; then
         return 1

@@ -16,6 +16,8 @@
 | Debug      | Bash Script | [jrun](#jrun)               | Command Runner by sending commands to a tmux pane running an SSH session                             |
 | Debug      | Bash Script | [jroute](#jroute)           | Simple script to switch the default route between available gateways                                 |
 | Debug      | Bash Script | [jt](#jt)                   | Log file viewer with syntax highlighting                                                             |
+| Agents     | Python Script | [jcl](#jcl)               | List, save, restore, refresh, and configure Claude Code and Codex sessions in tmux |
+| Agents     | Python Script | [jskill](#jskill)         | Maintain one skill source shared by Claude Code and Codex |
 | Debug      | Python Script | [gdb_tools](#gdb_tools)     | Python tools for visualizing data structures in memory while debugging with GDB                      |
 | VM         | Bash Script | [backup_vms](#backup_vms)   | Backup vms and config files                                                                         |
 | VM         | Bash Script | [delete_vms](#delete_vms)   | Delete VMs or restore VMs from backups |
@@ -25,6 +27,74 @@
 | Tool               | Description                                                                                         |
 |:------------------:|:--------------------------------------------------------------------------------------------------|
 | [completion](#completion) | Bash completion scripts for all the above tools                                             |
+
+<a id="jcl"></a>
+#### [jcl](./nv-tools/jcl)
+
+Manage local Claude Code and Codex interactive sessions without losing their conversation IDs:
+
+```bash
+jcl list                                  # both agents
+jcl list --agent codex                     # Codex only; --json for scripting
+jcl save                                  # snapshot both agents
+jcl restore --agent codex --dry-run        # preview Codex recovery from the snapshot
+jcl restore --agent codex
+jcl refresh all --agent codex --dry-run    # preview restart in the same tmux panes
+jcl refresh all --agent codex
+jcl refresh 3:11.1                         # one exact pane, either agent
+jcl set --agent codex --model gpt-6-astra --effort high
+jcl set-effort xhigh --agent codex          # retain each pane's current model
+jcl set-model opus gpt-6-astra              # route one model to each agent
+```
+
+`list`, `save`, `restore`, and `set*` default to both agents. For compatibility,
+`refresh all` defaults to Claude; use `--agent codex` or `--agent all` explicitly.
+The default snapshot remains `~/.claude/tmux-snapshot.json`; use `-o` on save and
+`-f` on restore for another file. Existing Claude-only snapshots remain readable.
+
+Codex discovery supports open rollout files and thread-writer locks, with optional
+read-only state DB metadata (including a custom `sqlite_home`). Headless execs and
+subagents are excluded. This targets local TUIs; remote/shared app-server browsing
+is not a local interactive session. Codex snapshots retain known model/effort and
+custom home settings. `patch-resurrect` adds the proper resume command for either
+agent to tmux-resurrect layouts.
+
+`set*` sends slash commands to the TUI and clears the current input line. Codex
+effort-only changes require its model/effort footer to be visible; otherwise use
+`set --agent codex --model NAME --effort LEVEL`. Unknown/refused commands and
+unconfirmed changes return nonzero. `--no-verify` reports only that keys were sent.
+The calling agent and suspended sessions are excluded from typing and refresh.
+
+`save-auth`, `restore-auth`, and `fill-auth` continue managing Claude MCP OAuth.
+With `assets/codex/bin/claude-mcp-headers`, Codex shares that credential source;
+these commands do not copy rotating refresh tokens into a separate Codex store. The
+helper discovers authenticated `nvidia-*` credentials dynamically and accepts one only
+when its name maps exactly to `https://maas.prd.astra.nvidia.com/maas/<name>/mcp`.
+`claude-mcp-headers --list` prints eligible server names without exposing tokens.
+
+Tests: `python3 -B -m unittest discover -s tests -p 'test_*.py' -v`.
+
+<a id="jskill"></a>
+#### [jskill](./nv-tools/jskill)
+
+Claude Code and Codex share one canonical tree at `assets/skills`. Claude loads one tree link at
+`~/.claude/skills`; Codex receives one link per shared skill under `~/.agents/skills`, preserving
+independently installed Codex skills.
+
+```bash
+jskill list
+jskill path noga-lock
+jskill add my-skill --description "What it does and when an agent should use it"
+jskill add my-host-skill --description "..." --host-adapters
+jskill sync --dry-run
+jskill sync
+jskill check
+```
+
+Both agents are instructed by their global files to invoke `skill-maintainer` for any add or
+modify request. Shared workflow belongs in `SKILL.md`; genuine runtime-only tool syntax belongs
+in `references/hosts/claude.md` or `references/hosts/codex.md`. `jskill sync` refuses to overwrite
+unknown directories or links unless `--backup-conflicts` is explicitly requested.
 
 <a id="jc"></a>
 #### [jc](./jc)

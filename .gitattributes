@@ -2,3 +2,7 @@ assets/xray/sing-box-config.jsonc filter=secrets
 assets/xray/sing-box-config-autossh.jsonc filter=secrets
 assets/xray/sing-box-config-sslh.jsonc filter=secrets
 assets/wireguard/sing-box-config.jsonc filter=secrets
+
+# Codex rewrites this file itself and appends a [projects."<path>"] trust entry for every
+# directory you open; those leak the local layout. clean.sh strips them.
+assets/codex/config.toml filter=codexcfg

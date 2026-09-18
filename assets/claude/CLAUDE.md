@@ -3,6 +3,20 @@
 Facts that hold in every session. Anything procedural lives in a skill (listed at the bottom) —
 invoke it when the task matches; don't reconstruct the procedure from memory.
 
+## Shared skills (Claude Code + Codex)
+
+- Claude Code and Codex load the **same physical skills** from
+  `~/myGit/crosslv/assets/skills`. `~/.claude/skills` is a tree link; shared entries under
+  `~/.agents/skills` are per-skill links so unrelated Codex skills are preserved.
+- When asked to add, modify, synchronize, or repair a skill, invoke skill `skill-maintainer` and
+  edit the canonical path returned by `jskill path <name>`. Never create separate Claude and
+  Codex copies.
+- Put common behavior in `SKILL.md` and shared resources. Put only genuine runtime differences
+  in `references/hosts/claude.md` and `references/hosts/codex.md`; when those files exist, read
+  the adapter for the current agent before invoking tools.
+- Finish skill changes with `jskill sync` and `jskill check`. A running client may need a new
+  session to refresh discovery or changed frontmatter metadata.
+
 ## Shell
 
 - `jk` is an alias for `jmake` (`$HOME/.usr/bin/jmake`). Use `jmake` directly — shell aliases
@@ -19,6 +33,25 @@ invoke it when the task matches; don't reconstruct the procedure from memory.
   `fwresetfunc`, which stops/starts the driver and re-scans PCI around the reset. Every test run
   gets its own reset. It is device-level and does not reboot the host. → skill
   `fw-build-burn-utopx`
+
+## Repos — which clone, decided by the kind of work
+
+Two clone pairs exist, and mixing them up wrecks someone's tree. Pick by what the work *is*,
+never by which one happens to be checked out already:
+
+| Kind of work | FW source | Test-tool source |
+|---|---|---|
+| **Task / feature** — a feature you own, a gerrit change you drive | `/auto/fwgwork1/$USER/golan_fw` | `/auto/fwgwork1/$USER/utopx` |
+| **Regression / bug investigation** — Redmine ticket, CI or DoA failure, MARS session | `/auto/fwgwork1/$USER/golan_fw2` | `/auto/fwgwork1/$USER/utopx2` |
+
+A repro pins repos to an old regression commit and may `git stash -u` whatever it finds; feature
+work carries long-lived branches and worktrees. **Never run a repro in the main clone, and never
+start feature work in a `*2` clone.**
+
+Then give each task its **own worktree** off the right clone — never work in the clone's own
+checkout, which is usually on someone else's branch. `jmake` detects the repo type from the path,
+so a path segment must start with `golan` / `nicx` / `utopx`. → skills `fw-build-burn-utopx` §1.0,
+`regression-repro`
 
 ## Tooling
 
@@ -84,18 +117,21 @@ it; run them after any change.
 
 | skill | covers |
 |---|---|
-| `utopx-traffic-forensics` | a utopx run's traffic failed: rebuild the WQE/packet from `utopx_dump`, read the CQE checker verdict, dump the STE the packet hit, walk the whole HW steering chain (`ste_chain.py`, hwtrace) |
 | `fw-build-burn-utopx` | build FW from golan_fw, burn it to a local card, run utopx against it; even/odd version gate, jmake worktree path rules, OFED↔udriver hand-over, failure signatures |
-| `gerrit-change` | commit message format, cherry-picks, Change-Id rules |
-| `gerrit-stack` | pushing dependent commits, RELATED_CHANGES / IGNORE topics |
+| `steering-capture` | capture steering state from a **live** utopx run: freeze with `--wait_on_err`, dump one entry with `stedmp.sh`, or take the whole chain with `--hwtrace`. Also the `--wait_cycle` pause and the segfault-dump trick |
+| `gerrit-change` | getting a change onto gerrit: commit message format, cherry-picks, Change-Id rules, **and pushing a dependent stack** (RELATED_CHANGES / IGNORE topics) |
 | `utopx-ci-rerun` | re-triggering utopx / golan_fw CI, concurrency and vote preconditions |
 | `ci-forensics` | red build → session_id → MARS archive → the raw failure log |
-| `regression-repro` | reproducing a regression locally ("regression repro template") |
+| `fsearch-failures` | the regression failure DB: how often / since when / which commit — attribution. New path + Py3.8 since 2026-09, three silent traps |
+| `regression-repro` | a bug ticket end to end: reproduce locally ("regression repro template") → root-cause in FW/utopx source → **verify the fix on the box** → `FINDINGS_<ticket>.md`. Also fires on "find the root cause", "investigate this ticket", "propose/verify a fix" |
+| `feature-delivery` | a **feature** end to end (the mirror of `regression-repro`): survey both repos' change stacks, find the on/off gates that keep the path dark, per-task worktrees, the daily-wiped reg-box env, and the verdict "did the new code path execute" instead of `TEST PASSED`. Fires on "take over this feature", "how far is X", "why is this change stuck" |
+| `task-tracking-doc` | a task that spans sessions or touches several commits/branches/tickets/boxes: build `TRACKING.md` and keep it current — update contract, evidence rows with a control, overturned conclusions struck through not deleted. **Reach for it at the START of such a task** |
 | `noga-lock` | querying, locking, waiting for lab servers |
 | `nic-livefish-recovery` | un-bricking a NIC that vanished from PCI; the mlxconfig rule |
 | `bluefield-fwconfig` | mlxconfig read-back traps on any BlueField DPU, ARM-liveness check |
 | `aipim-cli-env` | the ai-pim CLI container, Confluence write path |
 | `regression-report-mail` | nightly UtopX / NICX regression + coverage mails: subjects, senders, branch-pointer table, Outlook MCP limits |
+| `skill-maintainer` | add or modify the canonical skills shared with Codex; link repair and validation |
 
 Full prose for anything above was split out of this file on 2026-08-13; the pre-split version is
 at `~/.claude/backups/CLAUDE.md.pre-skill-split.20260813-190042`.
