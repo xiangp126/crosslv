@@ -61,7 +61,7 @@
   "sandbox": {
     "enabled": false
   },
-  "effortLevel": "xhigh",
+  "effortLevel": "max",
   "tui": "default",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark-ansi",

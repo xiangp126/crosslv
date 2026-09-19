@@ -24,13 +24,20 @@ def credential(name, token, expires=FUTURE_MS, url=None):
 
 
 class HeaderHelperTests(unittest.TestCase):
-    def run_helper(self, entries, *args):
+    def run_helper(self, entries, *args, claude_script=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".credentials.json").write_text(
                 json.dumps({"mcpOAuth": entries}), encoding="utf-8"
             )
             env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root)}
+            if claude_script is not None:
+                bin_dir = root / "bin"
+                bin_dir.mkdir()
+                claude = bin_dir / "claude"
+                claude.write_text(claude_script, encoding="utf-8")
+                claude.chmod(0o755)
+                env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
             return subprocess.run(
                 [str(HELPER), *args], env=env, capture_output=True, text=True, timeout=10
             )
@@ -95,6 +102,115 @@ class HeaderHelperTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.splitlines(), ["nvidia-alpha", "nvidia-zeta"])
         self.assertNotIn("secret", proc.stdout + proc.stderr)
+
+    def test_expired_token_is_synchronously_refreshed_before_return(self):
+        refresher = r'''#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["CLAUDE_CONFIG_DIR"]) / ".credentials.json"
+data = json.loads(path.read_text())
+for entry in data["mcpOAuth"].values():
+    entry["accessToken"] = "fresh-" + entry["serverName"]
+    entry["expiresAt"] = 4_102_444_800_000
+tmp = path.with_suffix(".tmp")
+tmp.write_text(json.dumps(data))
+tmp.replace(path)
+'''
+        proc = self.run_helper(
+            {"old": credential("nvidia-gerrit", "stale-secret", expires=1)},
+            "nvidia-gerrit",
+            claude_script=refresher,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            json.loads(proc.stdout),
+            {"Authorization": "Bearer fresh-nvidia-gerrit"},
+        )
+        self.assertNotIn("stale-secret", proc.stdout + proc.stderr)
+
+    def test_refresh_failure_never_returns_stale_token(self):
+        proc = self.run_helper(
+            {"old": credential("nvidia-gerrit", "stale-secret", expires=1)},
+            "nvidia-gerrit",
+            claude_script="#!/bin/sh\nexit 9\n",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("silent refresh failed", proc.stderr)
+        self.assertNotIn("stale-secret", proc.stdout + proc.stderr)
+
+    def test_valid_token_does_not_invoke_claude(self):
+        proc = self.run_helper(
+            {"valid": credential("nvidia-gerrit", "valid-token")},
+            "nvidia-gerrit",
+            claude_script="#!/bin/sh\nexit 99\n",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout), {"Authorization": "Bearer valid-token"})
+
+    def test_concurrent_servers_share_one_synchronous_refresh(self):
+        refresher = r'''#!/usr/bin/env python3
+import json
+import os
+import time
+from pathlib import Path
+
+count = Path(os.environ["REFRESH_COUNT"])
+with count.open("a") as handle:
+    handle.write("refresh\n")
+time.sleep(0.25)
+path = Path(os.environ["CLAUDE_CONFIG_DIR"]) / ".credentials.json"
+data = json.loads(path.read_text())
+for entry in data["mcpOAuth"].values():
+    entry["accessToken"] = "fresh-" + entry["serverName"]
+    entry["expiresAt"] = 4_102_444_800_000
+tmp = path.with_suffix(".tmp")
+tmp.write_text(json.dumps(data))
+tmp.replace(path)
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entries = {
+                "gerrit": credential("nvidia-gerrit", "stale-gerrit", expires=1),
+                "glean": credential("nvidia-glean", "stale-glean", expires=1),
+            }
+            (root / ".credentials.json").write_text(
+                json.dumps({"mcpOAuth": entries}), encoding="utf-8"
+            )
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            claude = bin_dir / "claude"
+            claude.write_text(refresher, encoding="utf-8")
+            claude.chmod(0o755)
+            count = root / "refresh-count"
+            env = {
+                **os.environ,
+                "CLAUDE_CONFIG_DIR": str(root),
+                "REFRESH_COUNT": str(count),
+                "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+            }
+            processes = [
+                subprocess.Popen(
+                    [str(HELPER), server],
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                for server in ("nvidia-gerrit", "nvidia-glean")
+            ]
+            results = [process.communicate(timeout=10) for process in processes]
+            returncodes = [process.returncode for process in processes]
+            count_lines = count.read_text().splitlines()
+            headers = [json.loads(stdout)["Authorization"] for stdout, _ in results]
+
+        self.assertEqual(returncodes, [0, 0], results)
+        self.assertEqual(count_lines, ["refresh"])
+        self.assertEqual(
+            sorted(headers),
+            ["Bearer fresh-nvidia-gerrit", "Bearer fresh-nvidia-glean"],
+        )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,13 @@ and emits the current access-token header. Claude Code remains the credential ow
 refresh, avoiding two clients rotating copies of one refresh token. Inspect eligible names with
 `claude-mcp-headers --list`; it does not print token values.
 
+Refresh is on demand, not periodic. If a credential has 15 minutes or less remaining, the first
+helper invocation takes a cross-process lock and waits for `claude mcp list`; concurrent MCP
+connections wait for that same refresh, re-read the credential file, and return only after the
+new expiry is verified. A refresh failure returns no stale token. Codex sets
+`mcp_optional_startup_grace_ms = 0`, so a new session waits for each server's configured startup
+timeout instead of freezing the initial tool catalogue after the default one-second grace.
+
 To adopt another server, authenticate it in Claude Code first, then add this shape and restart
 Codex:
 

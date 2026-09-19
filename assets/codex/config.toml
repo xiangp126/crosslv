@@ -1,10 +1,11 @@
 model = "gpt-5.6-sol"
 model_context_window = 1000000
 service_tier = "fast"
-model_reasoning_effort = "xhigh"
+model_reasoning_effort = "max"
 check_for_update_on_startup = false
 sandbox_mode = "danger-full-access"
 sqlite_home = "/var/tmp/pexiang-codex-sqlite"
+mcp_optional_startup_grace_ms = 0
 
 [mcp_servers.nvidia-redmine]
 url = "https://maas.prd.astra.nvidia.com/maas/redmine/mcp"
@@ -212,7 +213,7 @@ approval_mode = "approve"
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4
-gpt-6-astra = 3
+gpt-6-astra = 4
 
 [marketplaces.openai-bundled]
 source_type = "local"
@@ -220,3 +221,4 @@ source = "/labhome/pexiang/.codex/.tmp/bundled-marketplaces/openai-bundled"
 
 [plugins."visualize@openai-bundled"]
 enabled = true
+

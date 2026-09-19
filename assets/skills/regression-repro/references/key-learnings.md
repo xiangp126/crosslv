@@ -165,7 +165,7 @@
   rshim tricks (`/dev/rshim0/boot` BFB push, `rshim0/console`, DROP_MODE) do not exist on BF4;
   management moved to the DPU-BMC on the 1GbE OOB (`<box>-bf4-oob`). ARM-only reset: Redfish
   `POST {"ResetType":"ArmReset"}` to `https://<dpu-bmc>/redfish/v1/Chassis/BlueField_0/Actions/Oem/
-  NvidiaChassis.Reset` (QA-standard creds admin/Nvidia_12345!), or `gpioset gpiochip0 56=0` → `=1`
+  NvidiaChassis.Reset` (authenticate with the QA-standard BMC credentials — get them from the team password store), or `gpioset gpiochip0 56=0` → `=1`
   on the BMC shell; console = SOL via the DPU-BMC (`obmc-console-client` / `ipmitool -C 17 -I
   lanplus ... sol activate`). To fix a HOST-side wedge (flint D-state) prefer **host warm reboot**
   (card keeps aux power, ARM unaffected); FW pivot via the regression fwreset.py, not power cuts.
@@ -200,12 +200,19 @@
   cannot verify FS5/PQC encrypted flash — its scary message is a tool limitation, not corruption.
 - **BF4 boxes that hosted QS/PLDM firmware-update testing can be left triple-broken** (seen on
   m-fwreg-017, 2026-07-10):
-  1. **ARM `ubuntu` password changed** — utopx HARDCODES Bronco ARM creds (`ArmAgentApiOS.cpp:9`:
-     `ubuntu` / `Nvidia_12345!`; non-Bronco = `3tango`); symptom = ArmAgent scp fails 60 attempts.
-     Fix: `root:3tango` usually still works → `echo 'ubuntu:Nvidia_12345!' | chpasswd` on the ARM.
-  2. **DPU-BMC stuck in OpenBMC first-login state** — Redfish returns 403 for `admin:0penBmc`
-     (401 for everything else). Fix: `PATCH /redfish/v1/AccountService/Accounts/admin
-     {"Password":"Nvidia_12345!"}` with `-u admin:0penBmc`, then full Redfish access. BMC name:
+  1. **ARM `ubuntu` password changed** — utopx HARDCODES the Bronco ARM credentials in
+     `src/arm_agent_api/ArmAgentApiOS.cpp` (`GetArmUserName()` / `GetArmPassword()`, a
+     `IsBronco(device) ? ... : ...` pair — Bronco and non-Bronco differ). Symptom = ArmAgent scp
+     fails 60 attempts. Fix: the `root` account usually still works → `echo 'ubuntu:<password>'
+     | chpasswd` on the ARM, restoring what utopx expects.
+     Values: see `lab-credentials.md` in this directory (local, gitignored — copy
+     `lab-credentials.md.example` if you do not have it); the source file above is authoritative.
+  2. **DPU-BMC stuck in OpenBMC first-login state** — Redfish returns 403 for
+     `admin:0penBmc` (OpenBMC's upstream factory default, not a secret) and 401 for everything
+     else. **403-not-401 is the tell**: the password is right, a first-login password change is
+     simply pending. Fix: `PATCH /redfish/v1/AccountService/Accounts/admin
+     {"Password":"<the value utopx expects — see ArmAgentApiOS.cpp>"}` with
+     `-u admin:0penBmc`, then full Redfish access. BMC name:
      `<box>-bf4-bmc` (separate from `-bf4-oob` = ARM). Manager id e.g. `BlueField_BMC_0`;
      `GracefulRestart` may not really reboot — use `ForceRestart` and CONFIRM port 443 drops.
   3. **Flash semaphore held PERMANENTLY by the running QS FW** (stuck PLDM/MCC session inside

@@ -13,3 +13,4 @@ __pycache__/
 assets/sing-box/secrets.conf
 assets/xray/secrets.conf
 assets/wireguard/secrets.conf
+assets/skills/regression-repro/references/lab-credentials.md

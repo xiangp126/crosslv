@@ -71,6 +71,11 @@ these commands do not copy rotating refresh tokens into a separate Codex store. 
 helper discovers authenticated `nvidia-*` credentials dynamically and accepts one only
 when its name maps exactly to `https://maas.prd.astra.nvidia.com/maas/<name>/mcp`.
 `claude-mcp-headers --list` prints eligible server names without exposing tokens.
+When a token has 15 minutes or less remaining, one helper process takes a lock and waits for
+`claude mcp list` to refresh all credentials; concurrent MCP startups reuse the refreshed file.
+The helper verifies the new expiry and never returns an expired token. Codex waits for this
+on-demand refresh before finalizing its initial MCP tool catalogue; no periodic service or copied
+refresh token is involved.
 
 Tests: `python3 -B -m unittest discover -s tests -p 'test_*.py' -v`.
 

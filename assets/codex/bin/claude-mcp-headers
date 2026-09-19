@@ -2,18 +2,12 @@
 set -euo pipefail
 
 mode="${1:-}"
-if [[ "$mode" == "--refresh" ]]; then
-    claude_dir="${CLAUDE_CONFIG_DIR:-${HOME:?}/.claude}"
-    refresh_lock="$claude_dir/.codex-mcp-refresh.lock"
-    exec 9>"$refresh_lock"
-    flock -n 9 || exit 0
-    timeout 55s claude mcp list >/dev/null 2>&1 || true
-    exit 0
-fi
-
 claude_dir="${CLAUDE_CONFIG_DIR:-${HOME:?}/.claude}"
 credentials_file="$claude_dir/.credentials.json"
 refresh_margin_ms=900000
+refresh_lock="$claude_dir/.codex-mcp-refresh.lock"
+refresh_lock_wait_sec=65
+refresh_command_timeout_sec=55
 
 if [[ "$mode" == "--list" ]]; then
     jq -er '
@@ -59,17 +53,58 @@ credential_filter='
       end
 '
 
-now_ms=$(date +%s%3N)
-expires_at=$(jq -er --arg server "$server_name" --arg url "$expected_url" \
-    "$credential_filter | .expiresAt" "$credentials_file")
-if [[ ! "$expires_at" =~ ^[0-9]+$ ]]; then
-    echo "invalid expiresAt for MCP server: $server_name" >&2
-    exit 2
-fi
+credential_expiry() {
+    jq -er --arg server "$server_name" --arg url "$expected_url" \
+        "$credential_filter | .expiresAt" "$credentials_file"
+}
 
-if (( expires_at <= now_ms + refresh_margin_ms )); then
-    setsid -f "$0" --refresh </dev/null >/dev/null 2>&1 || true
-fi
+validate_expiry() {
+    local value="$1"
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        echo "invalid expiresAt for MCP server: $server_name" >&2
+        return 1
+    fi
+}
+
+ensure_fresh_credential() {
+    local now_ms expires_at refresh_output
+
+    now_ms=$(date +%s%3N)
+    expires_at=$(credential_expiry)
+    validate_expiry "$expires_at"
+    (( expires_at > now_ms + refresh_margin_ms )) && return 0
+
+    # Every configured MCP starts concurrently. One process refreshes all Claude
+    # MCP credentials; the rest wait, re-read the file, and reuse that result.
+    # This must be synchronous: Codex retries a rejected helper header only once
+    # and only when the helper returns a different value.
+    exec 9>"$refresh_lock"
+    if ! flock -w "$refresh_lock_wait_sec" 9; then
+        echo "timed out waiting for Claude MCP credential refresh" >&2
+        return 1
+    fi
+
+    now_ms=$(date +%s%3N)
+    expires_at=$(credential_expiry)
+    validate_expiry "$expires_at"
+    (( expires_at > now_ms + refresh_margin_ms )) && return 0
+
+    if ! refresh_output=$(timeout "${refresh_command_timeout_sec}s" claude mcp list 2>&1); then
+        echo "Claude MCP silent refresh failed; no stale token was returned" >&2
+        printf '%s\n' "$refresh_output" | tail -n 20 >&2
+        return 1
+    fi
+
+    now_ms=$(date +%s%3N)
+    expires_at=$(credential_expiry)
+    validate_expiry "$expires_at"
+    if (( expires_at <= now_ms + refresh_margin_ms )); then
+        echo "Claude MCP silent refresh did not produce a fresh credential for $server_name" >&2
+        return 1
+    fi
+}
+
+ensure_fresh_credential
 
 jq -ce --arg server "$server_name" --arg url "$expected_url" \
     "$credential_filter | {Authorization: (\"Bearer \" + .accessToken)}" \

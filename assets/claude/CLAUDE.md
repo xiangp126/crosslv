@@ -68,6 +68,15 @@ so a path segment must start with `golan` / `nicx` / `utopx`. → skills `fw-bui
   PAT (`https://oauth2:<token>@…`).
 - Credentials live in files, never in docs/memory/commit messages: `~/.jenkins_env`,
   `~/.confluence_env` (both mode 600, on NFS home).
+- **MCP servers**: after adding one, run **`jcl save-auth`** — it merges the new token into
+  `~/.claude/mcp-oauth-backup.json`, and a server missing from there needs a fresh browser
+  authorization after any `claude auth logout`. The merge only ever adds, so re-running is
+  harmless. A new server under `/maas/auth/azure` (gerrit, glean, jenkins, redmine,
+  confluence) can borrow a live token with `jcl fill-auth` and skip the browser entirely;
+  the `/v2/auth/<svc>` ones (outlook, nvbugs, teams) are separate authorization domains and
+  must be authorized by hand from `/mcp`. `jcl restore-auth` stays manual — only you know a
+  logout happened, and a failing MCP call is far more often an expired token (renews itself)
+  or a wrong scope (restore cannot help) than a wiped credentials file.
 
 ## Hard rules
 
