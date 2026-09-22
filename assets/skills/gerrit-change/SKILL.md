@@ -175,6 +175,10 @@ nothing needs rebuilding, and gerrit confirms with `no files changed, message up
 
 ## Two mechanical traps, one full build cycle each
 
+- **Cherry-picked someone else's change to test it, and it is broken?** Do not edit it, and do
+  not leave the fix in the working tree — stack a `[Local-Only]` commit on top, so their next
+  patchset is a rebase instead of an archaeology session. Shape and message: skill
+  `feature-delivery` Phase 3b.
 - **Never `git add -A` while resolving a cherry-pick conflict.** It silently sweeps in
   submodule pointer changes and untracked build artifacts. `git checkout -B <branch> <base>`
   does *not* move submodule working trees, so they show as modified and get committed at the

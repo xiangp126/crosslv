@@ -59,6 +59,10 @@ jmake --reg-malloc <machine>         # = malloc <machine> -t 8
 jmake --reg-extend                   # = extend_my_alloc
 #   INTERACTIVE when you hold >1 box: it lists them and reads a number from stdin —
 #   non-interactive shells get EOFError. Pipe the selection: `echo <n> | jmake --reg-extend`.
+#   *** Run `jmake --reg-mine` FIRST and read <n> off that list. *** The order is not the order
+#   you locked them in, and `echo 1` silently extends whichever box happens to be listed first —
+#   which also RESETS that box's end time to NOW+3h, shortening it if it had longer to run.
+#   Seen 2026-09-21: meant to extend l-fwreg-217 (40 min left), `echo 1` hit l-fwreg-146 instead.
 #   Semantics: extend = NOW+3h (replaces the old end time; can even SHORTEN a fresh 8h lease).
 #   Verify what you actually have with `jmake --reg-mine` (TIME LEFT column is unambiguous;
 #   raw Noga lock_time_out timestamps are in the Noga DB timezone — trust TIME LEFT, not tz math).

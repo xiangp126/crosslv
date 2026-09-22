@@ -225,6 +225,168 @@
 
 ---
 
+## Evidence discipline — the two ways a root cause goes wrong (#5285522, 2026-09-17..21)
+
+Both failures below happened in **one** investigation, days apart, and have the same shape:
+**a fact about the code was turned into a claim about runtime without checking runtime.**
+
+- **Reading code cannot tell you whether a behaviour is a bug or by design.** The FW refused a
+  query; the refusal path visibly ignored `cap_type` while a neighbouring file dispatched on it.
+  That asymmetry was called a defect. It was not — the HLD says a satellite PF starts
+  least-privileged, so refusing before delegation is correct. **Four days of FW patches, all
+  rejected.** The tell: the whole analysis read source and never read the HLD/Arch doc.
+  ⇒ **Before claiming "FW is wrong", find the design document, or ask the architect.**
+- **A parameter existing in a signature is not evidence it is used that way.** `check_query_hca_cap_opmode(gvmi, uid, input_gvmi, …)` has two gvmi params, so the conclusion
+  was "some privileged function must be querying the sat-PF". The log said
+  `other_function : 0x0` — the sat-PF was querying **itself**. A comparison table was written
+  out for a command shape that never occurred.
+  ⇒ **For any "who did what, when" claim, grep the log first.** One `grep` beats an hour of
+  plausible inference.
+
+**The same failure mode applies to the rules themselves, not just to code.** On #5285522 the
+agent declared "I violated the worktree rule" from memory of a CLAUDE.md sentence, and even told
+a peer so. The actual text in `regression-repro/SKILL.md` reads *"go in the repro clone on a
+**named private branch**, or in a worktree"* — a private branch is the FIRST option, and that is
+exactly what had been done. The CLAUDE.md sentence being recalled sits under "Repos — which clone,
+decided by the kind of work" and governs **feature** work; the repro procedure is owned by this
+skill. Corroborating evidence was sitting in plain sight: the repro clone already held six
+`fix_<ticket>_*` private branches from earlier tickets in the same series.
+
+⇒ **Before citing a rule — especially before telling someone else they broke one — open the file
+and quote it.** A misremembered rule costs more than a missing one: it propagates as false
+correction, and here it was about to be written into a report for the team lead.
+
+**The positive counterpart, and it is the cheapest move in the whole ticket:** the question
+"is this a bug or by design?" was settled by **one email to the architect** — sent 15:05,
+answered 17:20 the same day, with a quotable verdict that closed the FW side permanently and
+also ruled out loosening FW to accommodate the tool. Escalate architecture questions early;
+they do not get cheaper by reading more code.
+
+## A dirty source tree will lie to you
+
+- **A rejected patch left in the working tree becomes "the code" days later.** On day 5 the FW
+  source was read to answer a question and the answer came back *already patched* — by a
+  REJECTED change from day 2 that had never been reverted. The explanation being written was
+  about to be based on the agent's own edit.
+  ⇒ **`git status` / `git diff --stat` before reading source for analysis**, not just before
+  building. When a patch is rejected: save it as `REJECTED_<what>.patch`, `git checkout --` the
+  files **the same day**, and rename any file still called `FIX_*`.
+- **Stripped binaries defeat `strings` / `nm` / `grep`.** Verifying "did my change get into this
+  `.exe`" that way returns nothing — and a control test on an identifier that *is* present also
+  returns nothing, so the method cannot even be sanity-checked. Use mtime + build log + a
+  runtime probe instead.
+- **NFS caches between the dev box and the reg box.** After `cp` on the dev box the reg box can
+  read a **stale** binary while `md5sum` on each host separately looks fine. This produced a
+  false "the fix does not work". ⇒ **Take the md5 on the reg box, the machine that will execute
+  it**, and delete old artifacts before rebuilding.
+
+## `utopx.exe` is a shell — the code you changed lives in `libhca.so`
+
+**Checking the md5 of `utopx.exe` does NOT tell you which version of the logic you are running.**
+From `build.ninja`:
+
+```text
+build .../utopx.exe: CXX_EXECUTABLE_LINKER__utopx.2eexe_ CMakeFiles/utopx.exe.dir/src/main.cpp.o
+    ... artifacts/lib/.../libhca.so
+```
+
+The executable links `main.cpp.o` plus shared libraries. `VHCA.cpp`, `HcaCaps.cpp`,
+`CmdSetHcaCap.cpp` — everything you normally patch — compile into **`libhca.so`**. Change any of
+them and `utopx.exe` stays **byte-identical**.
+
+Measured on #5285522 (2026-09-21), two builds whose `VHCA.cpp.o` differed
+(`af040c05` vs `2099b706`, and different file sizes) produced the **same** `utopx.exe`
+(`aab2879f`) — while `libhca.so` correctly differed. Two hours went into chasing a
+"deterministic build is broken / NFS is lying" ghost that was neither.
+
+- **Archive and diff `libhca.so`, not `utopx.exe`.** An archived `.exe` alone does not pin a
+  version and cannot be used to re-run an old build later.
+- A header-only change (adding a declaration) *can* move `utopx.exe`, because units compiled
+  directly into the exe include that header — so the exe md5 changing sometimes, and not others,
+  is itself misleading. Do not infer anything from it.
+- Running via `cd <worktree> && ./utopx.exe` picks up that worktree's `libhca.so`, so an
+  in-place run is correctly paired. It is the **archived copies** that silently decouple.
+- To prove a change reached the binary, go to the object/library level:
+  `nm -CD libhca.so | grep <symbol>`, or `objdump -dr <file>.o` and read the relocation targets
+  (a `callq` in a `.o` is an unrelocated `e8 00 00 00 00` placeholder — the symbol name is only
+  in the reloc entry, never in the disassembly).
+
+**Generalisation: "same md5" is an ambiguous signal, not a verdict.** It can mean "my change did
+not take", or "the two versions really are equivalent", or "I hashed a file that does not carry
+the change". Resolve it one level down — object files and libraries — before theorising about the
+build system.
+
+## Before you commit a verified fix — close the chain
+
+`git status` showing **`MM`** means staged and working-tree contents differ. On #5285522 the
+index still held a **14-line debug probe** that the working tree no longer had; a plain
+`git commit` would have pushed it to Gerrit.
+
+Four checks, all cheap, run **before** `git commit`:
+
+| Check | Why |
+|---|---|
+| `git status --short` — no `MM`, and `git diff --cached` has no probe marker | the probe is the thing that escapes |
+| source mtime **<** build-completion time from the build log | proves the binary came from this source |
+| `git diff HEAD` == the `.patch` file you verified (diff the `+`/`-` lines) | proves you push what you tested |
+| verification log contains **zero** probe output | proves the verified run used the clean binary |
+
+The third one matters most: the skill rule is *whatever expression you verified is what you
+push*. The chain that earns a "verified" claim is **source → binary → run → commit**, and each
+link needs its own evidence.
+
+## A constant in your test conf can lock out half the state space
+
+The strongest form of "we ran it thousands of times and never saw it": the dedicated validation
+environment for a feature had **300 rounds x 4 seeds, zero hits** — while the nightly regression
+hit the same bug 4-6 times a day on the *same chip*.
+
+The difference was one conf. The dedicated env ran only `scenario_dpa_emu.conf`, which always
+performs the delegation step; that kept one precondition permanently satisfied, so the code path
+for "delegation has NOT happened" was structurally unreachable there. The env validated *"is the
+feature correct when it is enabled"* and never *"does the feature misbehave when it is not"*.
+
+- **More rounds and more seeds cannot fix this.** If a precondition is constant in the conf, the
+  other half of the state space has probability zero, not low probability.
+- **When a feature has an enable/delegate/provision step, the negative case is a separate test
+  matrix axis**, not a seed outcome. Ask explicitly: which conf exercises the state *before* the
+  step?
+- Related: on #5285522 the thing that DID vary per run was `num_sat_pf`, randomly generated by
+  `.Gen()` under a `[0-1]` constraint — so the nightly hit it ~half the time while the dedicated
+  env never did. **Pinning the seed is what turned a 50%% flake into a 3/3 reproduction**; without
+  a pinned seed this bug is not reproducible on demand.
+
+## When a peer or another session hands you an analysis, verify before adopting
+
+On #5285522 four separate analyses arrived (three from another agent, one peer review of the fix).
+Each had a correct core and incorrect details, and the details were the kind that silently mislead:
+
+- a function name that **does not exist** (`is_esw_gvmi_dpu_pf` vs the real
+  `is_esw_gvmi_dpu_sat_pf` — the real one is much narrower: vport type must be exactly
+  `VPORT_TYPE_DPU_SAT_PF`)
+- line numbers off by 300-1200 lines, because the author read a different baseline
+- an identifier (`GVMI=0x7` vs `0x5`) that differs per run and per environment
+- a claim of "zero hits on platform X" that a direct query contradicted (there was one)
+
+**Adopt the mechanism, re-derive the specifics against your own tree and your own logs.** Record
+which claims you verified and which you took on trust — and when a number came from someone
+else's baseline, say so instead of quoting it as yours. The mirror of this: when a peer reviews
+YOUR fix and the static reading says it is broken, check the runtime evidence before conceding —
+on #5285522 a peer's static analysis of `RunSanityCheck` looked airtight, but the call happens
+*later in bring-up* than the code it worried about, and the measured run showed zero fatals.
+
+## Environment traps seen on BF-3 sat-PF boxes
+
+- **`/dev/rshim*` disappears after `clear_nv_data` + reburn + `--fw-reset`**, while
+  `systemctl status rshim` still reports `active` and `tmfifo_net0` is UP. Symptom:
+  `Rshim is not enabled!`. Fix: `systemctl restart rshim`. Make it a step in the per-run
+  reset script, not something rediscovered each time.
+- **Check the box-specific `topology_<mode>.xml` BEFORE grabbing a machine.** A box was locked,
+  then found to have no `topology_eth_arm_agent.xml`, then released — §3b-bis warns about exactly
+  this. Verify topology first, lock second.
+
+---
+
 ## Appendix — Worked example: Redmine #5090131 (BRONCO / BF4)
 
 Input (the only thing the session was given):

@@ -21,7 +21,23 @@ in already detects a bare path and makes it clickable, so `` `/auto/.../file.log
 openable as-is. Wrapping it — `[`path`](file://path)` or `[`path`](./path)` — *removes* that: the
 click now targets the link syntax instead of the path, and fails with "file not found". Verified on
 #5285522 by trying `file://`, relative and protocol-less forms; all three were worse than doing
-nothing. (The MARS `view_log` URL is the one real link in the report, because it is `https://`.)
+nothing.
+
+**`http(s)` resources: the opposite rule — always the FULL bare URL, never a markdown label.**
+Gerrit, Jenkins, Redmine and the MARS `view_log` are real links, and Peter reads them to click
+through *and* to see which change/session it is at a glance. Writing
+`[1508807](https://git-nbu.nvidia.com/r/c/fw_ver/utopx/+/1508807)` hides the URL behind a label
+and renders as just `1508807` — the reader cannot tell the repo, the branch, or the host. Write
+`https://git-nbu.nvidia.com/r/c/fw_ver/utopx/+/1508807` bare. **This holds inside table cells
+too**, even when the URL is long (a MARS `view_log` with its full query string is still written
+out in full). Corrected on #5285522, 2026-09-21.
+
+So the two rules are mirror images, and mixing them up is the common error:
+
+| Kind | Form | Why |
+|---|---|---|
+| local path | `` `/auto/.../file.log` `` — bare backticks | terminal already makes it clickable; a markdown link breaks that |
+| `http(s)` URL | `https://…` — bare, full | a markdown label hides which change/session it points at |
 
 **Fence every code block with the right language** — this report is read in a browser, and a
 mislabelled block is harder to read than an unlabelled one:

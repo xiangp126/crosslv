@@ -144,14 +144,14 @@ alias cdP='__cd $HOME/Public'
 # NV specific 2
 alias mss='sudo mst status -v'
 alias cdm='__cd /auto/fwgwork1/$USER/mLX/'
-alias cdw='__cd /auto/fwgwork1/$USER/golan_fw'
+alias cdW='__cd /auto/fwgwork1/$USER/golan_fw'
 alias cdB='__cd /auto/fwgwork1/$USER/bugZilla/'
 alias cdL='__cd /auto/fwgwork1/$USER/bugZilla/'
 alias cdN='__cd /auto/fwgwork1/$USER/nicx'
 alias cdS='__cd /auto/fwgwork1/pexiang/steering_ul'
 alias cdU='__cd /auto/fwgwork1/pexiang/utopx'
 for i in {2..3}; do
-    alias "cdw$i=__cd /auto/fwgwork1/$USER/golan_fw$i"
+    alias "cdW$i=__cd /auto/fwgwork1/$USER/golan_fw$i"
     alias "cdU$i=__cd /auto/fwgwork1/pexiang/utopx$i"
 done
 

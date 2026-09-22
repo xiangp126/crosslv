@@ -160,6 +160,27 @@ rounds of rewriting correct code.
 Whatever expression you verified on the box is what you push. A cleaner or more general form is a
 **new, unverified change** that needs its own run; "strictly better" reasoning is not evidence.
 
+### Code shape is not runtime evidence — grep the log
+
+Two root-cause claims on #5285522 were wrong the same way: a fact about the source ("this switch
+ignores `cap_type`", "this signature takes an `input_gvmi`, so someone else must be querying")
+was stated as a fact about the run. The log said otherwise both times.
+
+- **"Is this a bug or by design?" cannot be answered by reading code** — find the HLD, or ask
+  the architect. On #5285522 one email to the architect was sent 15:05 and answered 17:20,
+  closing the FW side after four days of rejected FW patches.
+- **Any "who did what, when" claim → grep the log first.**
+
+### `git status` before you read source, and again before you commit
+
+- **Reading:** a REJECTED patch left in the tree becomes "the code" days later. Revert rejected
+  patches the same day (save as `REJECTED_*.patch` first; rename anything still called `FIX_*`).
+- **Committing:** `MM` means staged ≠ working tree. On #5285522 the index still carried a
+  14-line debug probe the working tree had dropped — a plain `git commit` would have pushed it.
+  Close the chain **source → binary → run → commit**: no probe in `git diff --cached`, source
+  mtime < build time, `git diff HEAD` == the verified `.patch`, zero probe output in the
+  verification log. Details in `references/key-learnings.md`.
+
 ## NEVER touch `l-fwminireg-*` — they are dedicated CI machines
 
 Hard rule, no exceptions: do not lock, ssh-run, burn, mlxconfig, fw-reset, or in any way use an

@@ -97,8 +97,15 @@ _code_pick_in_dir() {
         done <<< "$listing"
         return 2
     fi
+    _code_fzf_pick "$listing" "$dir/"
+}
+
+# Helper function: let the user pick from a newline-separated candidate list.
+# Prints the chosen path(s), one per line. Exit: 0 chose, 1 escaped.
+_code_fzf_pick() {
+    local listing="$1" prompt="${2:-}" selected
     selected=$(printf '%s\n' "$listing" | FZF_DEFAULT_OPTS="" fzf \
-        --prompt="☞ " \
+        --prompt="☞ ${prompt}" \
         --layout=reverse \
         --inline-info \
         --multi \
@@ -109,6 +116,41 @@ _code_pick_in_dir() {
     [[ -z "$selected" ]] && return 1
     printf '%s' "$selected"
     return 0
+}
+
+# Helper function: a path that resolves nowhere is often just a bare file name
+# lifted out of a compiler error or a log line - `hca_cap.c:3701` says nothing
+# about which directory it lives in. Search the tree for it rather than refusing.
+#
+# One exact basename match is opened outright; several go to the picker, since
+# guessing between same-named files is exactly the mistake that is hard to
+# notice afterwards. Falling back to a substring match catches a half-remembered
+# name, and that result always goes to the picker however few it finds.
+# Prints the resolved path. Exit: 0 resolved, 1 user escaped, 2 nothing found.
+_code_find_by_name() {
+    local want="$1" listing hits
+    # Separate statement on purpose: `local a=$1 b=${a...}` would expand $a
+    # before the assignment to it takes effect, leaving base empty.
+    local base="${want##*/}"
+    if command -v rg > /dev/null 2>&1; then
+        listing=$(command rg --files --color=never 2>/dev/null)
+    else
+        listing=$(command find . -type f 2>/dev/null)
+    fi
+    [[ -z "$listing" ]] && return 2
+
+    hits=$(printf '%s\n' "$listing" | grep -F -- "/$base" | grep -E "/${base//./\\.}\$")
+    [[ -z "$hits" ]] && hits=$(printf '%s\n' "$listing" | grep -F -- "$base")
+    [[ -z "$hits" ]] && return 2
+
+    if [[ $(printf '%s\n' "$hits" | wc -l) -eq 1 && "$hits" == */"$base" ]]; then
+        printf '%s' "$hits"
+        return 0
+    fi
+    if ! command -v fzf > /dev/null 2>&1 || [ ! -t 2 ]; then
+        return 2
+    fi
+    _code_fzf_pick "$hits" "$base "
 }
 
 # Helper function: paths pasted straight out of `git diff` / `git show` carry
@@ -302,7 +344,21 @@ _code_parse_options() {
         elif [[ -e "$path" ]]; then
             notfile+=("$path")
         else
-            missing+=("$path")
+            # Nothing resolved it. Before refusing, try the tree: a bare name
+            # copied out of a compiler error carries no directory at all.
+            picked=$(_code_find_by_name "$path")
+            case $? in
+                0)
+                    [[ -n "$note" ]] && echo -e "$note" >&2
+                    while IFS= read -r line; do
+                        [[ -z "$line" ]] && continue
+                        echo -e "${LIGHTYELLOW}Found${RESET} $line" >&2
+                        resolved+=("$line$pos")
+                    done <<< "$picked"
+                    ;;
+                1) ;;  # escaped the picker on purpose: open nothing, say nothing
+                *) missing+=("$path") ;;
+            esac
         fi
     done
     # Every bad path is reported before giving up, so a command naming several of

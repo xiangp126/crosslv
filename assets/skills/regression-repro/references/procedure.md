@@ -745,6 +745,22 @@ Steps (in order):
    `ip link show tmfifo_net0` for ARM UP (BF/DPU only).
 7. **Print the next step** — output the `per_run_reset.sh` command so the user can paste it.
 
+> **Every check must be machine-checkable. A `note` telling the human what to look for is not a
+> check.** Counting is the usual way this goes wrong: `lsmod | grep -c udriver` answers "is a
+> module loaded", never "is it the *right build*", so it prints a reassuring `1` for a driver
+> that cannot run your test at all.
+>
+> Real case (2026-09-19, PSF): the box came with udriver `3.07`, which predates the
+> `udriver_dma_map_v2` API the feature under test calls. The script printed
+> `loaded modules matching udriver: 1` and a `note: must be the 2026-08-25+ build` — green by
+> count, with the actual requirement sitting in a comment nobody machine-checks. Had the script
+> been trusted, every run would have died inside an ioctl for a symbol the driver does not have.
+>
+> Rule: for each dependency the test needs, assert the **property**, not the presence —
+> `grep -c <the symbol you call> <the header>` / compare a recorded commit hash
+> (`/bin/udriver_commit_hash`) / `flint q` the version. Anything you were tempted to write as a
+> `note` is a check you have not written yet.
+
 One script per box (topology file, entry_points, expected PCI bus differ per machine).
 
 ### `tools/per_run_reset.sh` — run **on the reg box**, once per repro attempt
@@ -801,6 +817,60 @@ Report each factor separately in the output, and distinguish `RUN VOID` / `NOT R
 > reason (see below). Four independent reasons the run proved nothing, and a single-signal
 > verdict masked all four.
 
+> **Trap — `grep -c` plus `|| echo 0` silently corrupts every count it guards.** `grep -c`
+> already prints `0` when nothing matches **and** exits 1, so the usual defensive idiom
+> `N=$(grep -c PATTERN "$LOG" || echo 0)` appends a *second* line: `N` becomes `"0\n0"`, which is
+> not equal to `"0"`. Every `[ "$N" = 0 ]` downstream then takes the **else** branch.
+>
+> Real case (2026-09-19, PSF): the run-script's two feature-fingerprint counters were written
+> this way, so a run whose fingerprints were genuinely 0 printed `NEW PATH EXERCISED` — the
+> verdict failed **towards good news**, which is the direction you never get to catch by reading
+> the output. Use `|| true`, and sanity-check a counter by feeding it a pattern you know is absent.
+
+> **Trap — a hung process and a healthy one look identical on every error counter.** `FATAL == 0`
+> does not mean "running fine"; it equally means "stopped producing output ten minutes ago". A
+> verdict built only from error counts will read a deadlock as the **best** run you have had.
+>
+> Real case (2026-09-19, PSF): an experimental change made the tool block inside an uninterruptible
+> driver ioctl. It ran 10 minutes with `FATAL = 0` — against ~1 minute and `FATAL = 3` for the
+> previous build — and was briefly recorded as "hypothesis confirmed". It had executed **zero**
+> operations: log 44 KB instead of ~500 KB, `LOG_OP` count 0, and the giveaway — **`pgrep` itself
+> timed out**, because walking `/proc` blocks on a `D`-state process. Only a power-cycle cleared it.
+>
+> Rule: pair every error counter with a **progress** counter (operations logged, iterations
+> reached, log bytes growing). Declare nothing from the absence of errors alone. And when a
+> process-listing command hangs, that is evidence, not a flaky box.
+
+> **Trap — "that failure is just the environment" is a hypothesis, and it needs a control like
+> any other.** Calling something noise is the one conclusion nobody asks you to defend, so it
+> never gets tested — and it quietly poisons every experiment that follows, because you start
+> attributing its appearances and disappearances to whatever you changed.
+>
+> Real case (2026-09-19, PSF): the tool intermittently stalled on one ICMD. Treated as flaky
+> hardware for an afternoon, it produced **two wrong attributions in a row** — first blamed on
+> leftover state from the previous run, then on an experimental code change (the same binary was
+> later shown to both pass and hang). Only then came the obvious question: the card had *only*
+> ever run firmware with the feature enabled, so "environment" had never actually been observed.
+> The control — same `.mlx`, same tool, same seed, INI with the feature gate **off** — is what
+> separates "our bug" from "this box", and it cost one burn.
+>
+> Rule: before spending a second run on "is it flaky", spend it on **a build where the feature
+> cannot be involved**. And when you write the env script, give it a `--no-<feature>` switch so
+> that control is one flag away, not a manual detour.
+
+> **Trap — a recovery script that dies on the very state it exists to recover.** After the hang
+> above, `env_rebuild` hung too: its idle guard ran `pgrep`, `pgrep` walks `/proc`, and `/proc`
+> stalls on the D-state process left behind. The tool you reach for when the box is wedged must
+> assume the box is wedged: `timeout` every probe, and treat the timeout as a *diagnosis*
+> ("something is blocking /proc — power-cycle") rather than letting it hang.
+
+> **Trap — a measurement script's first numbers may describe the script, not the system.** The
+> harness written to measure that hang rate reported `OK=0 HUNG=1 OTHER=5`: five rounds said
+> "box did not come back", while the box was in fact up and reachable — its post-power-cycle
+> wait was simply too short. Had those been read as data, the conclusion would have been a
+> catastrophically unstable machine. Sanity-check a new measurement against one hand-run case
+> before believing any rate it reports.
+
 > **Trap — an env-setup side effect can perfectly mimic the bug's signature.** In #5138907 the
 > signature was "PCI address changed". The address *did* change (81→83) — but because
 > `mlxconfig` had enabled the emulated PCIe switch, which inserts bridges at 81/82 and moves the
@@ -812,6 +882,14 @@ Report each factor separately in the output, and distinguish `RUN VOID` / `NOT R
 - `chmod +x tools/env_rebuild_<box>.sh tools/per_run_reset.sh` immediately after writing.
 - Both scripts: color-coded output (`hdr`/`step`/`ok`/`warn`/`err`/`note` helpers), `set -u`, and
   early-exit on every failure.
+- **Bypassing a step is not running it — and it leaves that path unverified forever.** If the
+  script's burn path is broken and you burn by hand instead, the run is fine but the *script*
+  never got tested; its `!!! UNVERIFIED !!!` banner must stay, and the bypass belongs in the
+  ledger. (2026-09-19, PSF: `env_rebuild` was only ever run in verify-only mode — burn,
+  power-cycle and driver install were all done by hand, so the `--burn` path still has zero
+  coverage beyond the one bug that forced the bypass.) Corollary: **re-run `env_rebuild` after
+  anything that resets the box**, including your own power-cycles; doing the equivalent by hand
+  each time is how a step silently stops being part of the procedure.
 - **Writing them is not verifying them.** The first pair written to this spec had correct
   structure — multi-factor verdict, before/after PCI snapshot + diff, pre-fix-binary guard, hard
   baseline gate — and still carried a `REPRO SUCCESS` that was the false positive dissected

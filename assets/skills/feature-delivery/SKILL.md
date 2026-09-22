@@ -111,6 +111,38 @@ State plainly in the ledger **which gates are open right now**, because:
 > about the feature. Do not plan lab time around a feature whose gates are still closed; plan the
 > gate merge first.
 
+## Phase 3b — Testing someone else's change: never edit it in place
+
+Cherry-picking a colleague's change to test it, then finding it does not compile or does not
+run, is the normal case — not the exception. **Fix it in a separate `[Local-Only]` commit
+stacked on top, never by editing the cherry-picked commit or leaving changes in the working
+tree.** You are not the owner; they upload new patchsets while you test, and the moment they
+do, an edited tree cannot tell you what was theirs and what was yours.
+
+With the fixes stacked, adopting a new patchset is: reset to it, re-apply the stack, and drop
+whatever hunks the new patchset made unnecessary. With them smeared into the working tree, it
+is an archaeology session.
+
+```
+[Local-Only] Lab config: force <gate> on          <- survives; it is how the lab runs
+[Local-Only] Make <change> build and run          <- dies when the owner fixes these
+<their patchset, byte-for-byte as fetched>
+<base>
+```
+
+**Split by lifetime, not by topic.** Workarounds for their defects and your own lab
+configuration disappear on completely different schedules; one commit each. On PSF the config
+commit had to survive every rebase (upstream pins the gate to 0, so without it every run tests
+the old path), while the workaround commit is pure debt.
+
+**Write the message so the next rebase is mechanical**: one entry per hunk, each naming the
+upstream defect it works around and quoting the failure verbatim. That message is what lets
+you walk a new patchset hunk by hunk and delete exactly the ones that are now fixed — and it
+is the report you owe the owner anyway, already written.
+
+The same discipline applies to the FW side, where it is absolute: never modify `golan_fw`
+carries at all — keep them byte-identical to the gerrit patchset and report defects instead.
+
 ## Phase 4 — Build, lab environment, and the run verdict
 
 Workspace — feature work uses the **primary** clones (`golan_fw`, `utopx`); `*2` is the repro
@@ -147,8 +179,11 @@ The verdict — `TEST PASSED` answers "did the tool survive", not "was the featu
 the run script count the feature's own fingerprints and report them as first-class factors:
 
 ```bash
-F_HITS=$(grep -c "<capability field>"      "$LOG" || echo 0)   # e.g. icm_mng_global
-F_PATH=$(grep -c "<new enum / new op_mod>" "$LOG" || echo 0)   # e.g. PROVIDE_PAGES_RANGE
+# `|| true`, NOT `|| echo 0`: grep -c already prints 0 on no match and exits 1, so `|| echo 0`
+# appends a SECOND line, the value becomes "0\n0", every `= 0` test below takes the else branch,
+# and the verdict flips to NEW PATH EXERCISED on a run that entered nothing.
+F_HITS=$(grep -c "<capability field>"      "$LOG" || true)   # e.g. icm_mng_global
+F_PATH=$(grep -c "<new enum / new op_mod>" "$LOG" || true)   # e.g. PROVIDE_PAGES_RANGE
 ```
 
 | Outcome | Meaning |
@@ -159,6 +194,11 @@ F_PATH=$(grep -c "<new enum / new op_mod>" "$LOG" || echo 0)   # e.g. PROVIDE_PA
 
 Pick fingerprints from the code you wrote (capability field, new opcode/`op_mod`, a log line only
 the new branch emits) — never from the feature's name.
+
+**Count progress too, not just errors.** A tool hung inside a driver ioctl reports zero errors
+forever, so `FATAL == 0` plus a long runtime reads as the best run you have had. Add a counter
+that only moves when work happens (operations logged, iterations reached) and require it to be
+non-zero before believing any verdict — skill `regression-repro` Phase 9b has the full case.
 
 ## Phase 5 — Review
 

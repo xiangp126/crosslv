@@ -151,6 +151,31 @@ def check_numbering(lines, out):
     return nums
 
 
+def check_entry_gaps(lines, out):
+    """Problem entries ("### #N", section 7 of the skill) must have no gaps.
+
+    An append-only ledger never loses an entry, so a missing number means one was
+    overwritten by an edit. Real case (PSF, 2026-09-21): #13 was silently clobbered while
+    #14 was being inserted; the only visible symptom was that the entry COUNT did not grow,
+    which is exactly what a human skims past.
+    """
+    seen = {}
+    for n, ln in enumerate(lines, 1):
+        m = re.match(r'^#{2,4}\s+#(\d+)\b', ln)
+        if m:
+            seen.setdefault(int(m.group(1)), n)
+    if len(seen) < 2:
+        return
+    lo, hi = min(seen), max(seen)
+    missing = [i for i in range(lo, hi + 1) if i not in seen]
+    for i in missing:
+        after = max((k for k in seen if k < i), default=lo)
+        out.append(('gap', seen[after],
+                    'problem entry #%d is missing (#%d..#%d present) — an append-only '
+                    'ledger does not lose entries; it was probably overwritten by an edit'
+                    % (i, lo, hi)))
+
+
 def check_xrefs(lines, nums, out):
     known = set(nums)
     # a bare "§4" should match "4.16" style children too
@@ -242,6 +267,7 @@ def main():
     check_staleness(a.path, lines, out, a.stale_days)
     check_inflight(lines, out, a.inflight_days, dt.date.today())
     nums = check_numbering(lines, out)
+    check_entry_gaps(lines, out)
     check_xrefs(lines, nums, out)
     check_controls(lines, out)
 
@@ -251,9 +277,9 @@ def main():
         print('OK: no findings')
         return 0
     hard = [o for o in out if o[0] != 'control']
-    order = ['table', 'stale', 'inflight', 'number', 'xref', 'control']
+    order = ['table', 'stale', 'inflight', 'number', 'gap', 'xref', 'control']
     label = {'table': '表格列数不齐', 'stale': '文档陈旧', 'inflight': '在途滞留',
-             'number': '编号重复', 'xref': '断链',
+             'number': '编号重复', 'gap': '条目编号缺口(疑似被覆盖)', 'xref': '断链',
              'control': '结论缺对照 [提示,不计入失败]'}
     for kind in order:
         rows = [o for o in out if o[0] == kind]
