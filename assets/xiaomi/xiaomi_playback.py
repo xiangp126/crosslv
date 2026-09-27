@@ -594,7 +594,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   /* Fill the whole viewport: applied to the player frame .stage → single view (#vid/#live) and split view (#grid) both fill */
   .stage.full{position:fixed;inset:0;z-index:80;background:#000;max-width:none;aspect-ratio:auto;border:0}
   body.gridfull{overflow:hidden}
-  .gridfullbtn{position:absolute;top:8px;right:8px;z-index:9;cursor:pointer;user-select:none;color:#fff;
+  .gridfullbtn{position:absolute;top:8px;left:calc(50% - 8px);transform:translateX(-100%);z-index:9;cursor:pointer;user-select:none;color:#fff;
     background:rgba(10,12,15,.66);border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:15px;line-height:1}
   .gridfullbtn:hover{background:rgba(10,12,15,.92);border-color:#34424e}
   /* Maximize / exit button: appear when the frame is hovered (desktop) or the frame is tapped (touch — .tapped set by JS); both ⛶ and ✕ */
