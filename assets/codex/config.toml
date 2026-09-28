@@ -1,4 +1,4 @@
-model = "gpt-5.6-sol"
+model = "gpt-6-sol"
 model_context_window = 1000000
 service_tier = "fast"
 model_reasoning_effort = "max"
@@ -210,6 +210,9 @@ approval_mode = "approve"
 
 [notice.model_migrations]
 "gpt-5.3-codex" = "gpt-5.4"
+
+[tui]
+screen_reader_detection_done = true
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4

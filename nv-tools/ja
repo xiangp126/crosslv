@@ -146,48 +146,46 @@ Options:
     -h, --help       Show this help message
     -w, --wait SEC   Wait before approving (default: 0, approve immediately)
     -l, --list       List detected AI panes and exit
-    -v, --verbose    Print debug info to stderr (detector matches, send-keys
-                     events, screen change outcomes)
-    -D, --daemon     Run as a background daemon: $SCRIPT_NAME self-detaches
-                     (new session, own log file) and returns the prompt.
-                     Use '$SCRIPT_NAME -L' to follow its log, '$SCRIPT_NAME
-                     --stop' to stop it. (Persistence across AI restarts is
-                     the default in every mode, not specific to -D.)
+    -v, --verbose    Ask for more detail. While monitoring: debug output to
+                     stderr (detector matches, send-keys events, screen
+                     change outcomes). With --status: a per-daemon detail
+                     block instead of one row each.
+    -D, --daemon     Detach into the background and hand the prompt straight
+                     back. Follow it with '$SCRIPT_NAME --log', stop it with
+                     '$SCRIPT_NAME --stop'.
 
 Daemon control (operate on already-running daemons):
-    -S, --stop       Stop the daemon monitoring the target pane (default: the
+    --stop           Stop the daemon monitoring the target pane (default: the
                      current pane; name a PANE to stop a specific one). Cleans
                      up stale lockfiles automatically.
-    -R, --restart    Stop the daemon for the target pane (if any) and launch
+    --restart        Stop the daemon for the target pane (if any) and launch
                      a fresh background daemon for it. Handy after upgrading
                      $SCRIPT_NAME. Carries over -w/-v if given; otherwise uses
                      defaults. (default target: current pane; or name a PANE)
-    -A, --all        Launch a background daemon for EVERY tmux pane currently
+    --all            Launch a background daemon for EVERY tmux pane currently
                      running a known AI, skipping panes already monitored.
-    -s, --status     Show all running daemons (summary row + detail block
+    --status         Show all running daemons (summary row + detail block
                      each). Inside tmux, the daemon for the current pane is
                      marked with '*' in the index column.
-    -L, --log        Tail -F the daemon's log file (default: current pane;
-                     or name a PANE). Ctrl+C to exit.
+    --log            Follow the daemon's log from its last 15 lines
+                     (default: current pane; or name a PANE). Says so when
+                     earlier history is hidden. Ctrl+C to exit.
     --log-full       Like --log, but print the full log first, then follow.
                      Useful for catching up on a long-running daemon.
 
 Supports:
     Claude Code      Numbered options (1. Yes / 2. No) — sends the number
     Codex CLI        Numbered options (1. Yes, proceed) — sends the number
+    Cursor menus     Unnumbered lists picked with arrow keys (the workspace
+                     trust prompt) — moves the cursor onto the affirmative
+                     option, verifies it landed, then confirms. Skipped with
+                     a warning when no single option is affirmative.
 
-Examples:
-    $SCRIPT_NAME                   # auto-detect, run in foreground
-    $SCRIPT_NAME main:0.1          # target specific pane (by index)
-    $SCRIPT_NAME %47               # target specific pane (by pane id)
-    $SCRIPT_NAME -L 3:12.1         # follow that pane's daemon log
-    $SCRIPT_NAME -w 3              # wait 3s before each approval (Ctrl+C to abort)
-    $SCRIPT_NAME -s                # see what daemons are running
-    $SCRIPT_NAME -L                # follow current pane's daemon log
-    $SCRIPT_NAME -A                # launch a daemon for every running AI pane
+Example:
+    $SCRIPT_NAME --daemon 3:12.1   # watch that pane in the background
 
 Stop:
-    Press Ctrl+C, run $SCRIPT_NAME -S, or: pkill -f '$SCRIPT_NAME'
+    Press Ctrl+C, run $SCRIPT_NAME --stop, or: pkill -f '$SCRIPT_NAME'
 
 _EOF
     exit 0
@@ -201,7 +199,7 @@ parseOptions() {
         GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
     fi
 
-    local SHORTOPTS="hw:lvDsSLRA"
+    local SHORTOPTS="hw:lvD"
     local LONGOPTS="help,wait:,list,verbose,daemon,stop,restart,all,status,log,log-full"
 
     local PARSED
@@ -234,23 +232,23 @@ parseOptions() {
                 fDaemon=1
                 shift
                 ;;
-            -S|--stop)
+            --stop)
                 fStop=1
                 shift
                 ;;
-            -R|--restart)
+            --restart)
                 fRestart=1
                 shift
                 ;;
-            -A|--all)
+            --all)
                 fAll=1
                 shift
                 ;;
-            -s|--status)
+            --status)
                 fStatus=1
                 shift
                 ;;
-            -L|--log)
+            --log)
                 fLog=1
                 shift
                 ;;
@@ -399,7 +397,7 @@ _drawBox() {
 #     "approved_count":   <int>,
 #     "paused":           <true|false>,
 #     "last_event_ts":    <unix seconds>,
-#     "last_event_type":  "<start|approve|paused|resumed|dropped|plan_review|moved>",
+#     "last_event_type":  "<start|approve|menu_approve|menu_ambiguous|paused|resumed|dropped|plan_review|moved>",
 #     "log_file":         "<runtime_dir>/<sanitized>.log",
 #     "host":             "<sess:win.pane>" | "<tty>" | "",  # see fHost
 #     "target_pane_id":   "<%N>"                              # see fTargetPaneId
@@ -602,6 +600,9 @@ _hr() {
 # Usage: _renderAiTable "${panes[@]}"
 _renderAiTable() {
     local panes=("$@")
+    # Counted here, not by the caller: the caller would have to run
+    # _monitorPid a second time for every pane just to print a summary.
+    _aiTableMonitored=0
     local pid t paneid c
     local tool_width=4    # min "Tool"
     local target_width=6  # min "Target"
@@ -624,6 +625,7 @@ _renderAiTable() {
         IFS='|' read -r pid t paneid c <<<"$p"
         mon_pid=$(_monitorPid "$paneid")
         if [ -n "$mon_pid" ]; then
+            _aiTableMonitored=$((_aiTableMonitored + 1))
             # Two-tier location lookup:
             #   1. Try to map the monitor pid to a tmux target (best case;
             #      user can jump there with `tmux switch -t <addr>`).
@@ -651,6 +653,10 @@ _renderAiTable() {
             "$i" "$c" "$t" "$paneid" "$status"
         i=$((i + 1))
     done
+    # Same rule closes the table, so a summary printed underneath reads as
+    # something outside it rather than as one more row.
+    printf "${_gap_str}${GREY}%s %s  %s  %s  %s${RESET}\n" \
+        "$(_hr 3)" "$(_hr "$tool_width")" "$(_hr "$target_width")" "$(_hr "$pane_width")" "$(_hr 22)"
 }
 
 # Catalog accessors — every AI-detection / filtering / error path goes
@@ -946,6 +952,201 @@ isPlanReviewPrompt() {
     return 1
 }
 
+# Display width of a line's leading indent, in columns.
+#
+# ${#var} counts characters rather than bytes, so the naive measurement is
+# wrong here for a subtler reason: the cursor glyph IS a character, so
+# " ❯ No, exit" measures a one-space indent while its vertically aligned
+# sibling "   Yes, I trust this folder" measures three. Replacing the glyph
+# with a space first makes the two comparable — which is the whole point,
+# since that alignment is what tells a menu block apart from prose.
+_menuIndent() {
+    local l="${1//❯/ }"
+    l="${l//›/ }"
+    l="${l%%[! ]*}"
+    printf '%s' "${#l}"
+}
+
+# Detect an UNNUMBERED cursor menu. Three outcomes:
+#   exit 0 + <n>  a menu with exactly one affirmative option; <n> is how far
+#                 the cursor must move (negative = up, 0 = already there)
+#   exit 2 + "?"  a menu, but zero or several affirmative options — the
+#                 caller must warn and leave it alone
+#   exit 1 + ""   not one of these; fall through to the other detectors
+#
+# Why this is separate from detectPromptOption: that detector's structural
+# gate hard-codes "[0-9]+\." into both anchors, because a numbered option
+# line is its whole definition of a menu. Claude Code's workspace-trust
+# prompt carries no numbers at all —
+#
+#     ❯ No, exit
+#       Yes, I trust this folder
+#
+# — so it is invisible to that detector, and a pane stuck on it waits
+# forever while --status cheerfully reports "active, 0 approved". That is
+# not hypothetical: pane %67 sat on this prompt from 2026-09-09 to 09-25.
+#
+# THE ORDER OF THE GATES IS THE DESIGN. Measured across the eight live AI
+# panes on this host: seven of the eight NON-menu screens carry a line
+# beginning with ❯, because that glyph is claude's own input-box prompt and
+# echoed history lines start with it too. "Has a cursor glyph" therefore
+# carries no signal at all and must never gate first — doing so would put
+# every ordinary conversation screen into the matching path, one bad filter
+# away from typing keys into someone's input box. The single feature that
+# appeared on the menu screen and on no other was the UI footer, so that
+# goes first and drops seven of eight before any other work happens.
+#
+# Depending on that footer is a deliberate exception to the phrase-
+# independence documented above detectPromptOption. That detector can stay
+# purely structural because the numbering hands it a strong anchor; this one
+# has no equivalent. The footer is UI chrome rather than question wording,
+# so it outlives individual rewordings — and when it does change, this
+# detector simply stops matching: back to today's behaviour (stuck, with a
+# visible warning), never to pressing keys on a normal screen.
+detectCursorMenuOption() {
+    local tail="$1"
+
+    # Gate 1 — the UI footer. Highest-signal test, so it runs first and
+    # returns fastest on the overwhelmingly common "nothing here" case.
+    grep -qiE 'Enter to confirm|Esc to cancel' <<<"$tail" || return 1
+
+    # Gate 2 — hands any NUMBERED menu back to detectPromptOption rather
+    # than racing it. Bailing on the whole screen (not just skipping that
+    # line) is deliberate: detectPromptOption applies a three-tier
+    # preference — permanent > session > plain — that this function does
+    # not reimplement, and half-handling such a screen would lose it.
+    grep -qE '^[[:space:]]*[❯›][[:space:]]*[0-9]+\.' <<<"$tail" && return 1
+
+    local cursorNo
+    cursorNo=$(grep -nE '^[[:space:]]*[❯›]' <<<"$tail" | head -1 | cut -d: -f1)
+    [ -n "$cursorNo" ] || return 1
+
+    # Read the tail into an array once. No mapfile: ja supports bash 3.2
+    # (macOS), same reason _renderStatusTable uses tr instead of ${..^^}.
+    local -a L=()
+    local line
+    while IFS= read -r line; do L+=("$line"); done <<<"$tail"
+
+    # Gate 3 — the contiguous run of lines sharing the cursor line's text
+    # column. Menu options are vertically aligned; the input box and prose
+    # are not. A blank line or a change of indent ends the block.
+    local baseIndent lo hi i
+    baseIndent=$(_menuIndent "${L[$((cursorNo - 1))]}")
+    lo=$cursorNo; hi=$cursorNo
+    for ((i = cursorNo - 1; i >= 1; i--)); do
+        line="${L[$((i - 1))]}"
+        [ -n "${line//[[:space:]]/}" ] || break
+        [ "$(_menuIndent "$line")" = "$baseIndent" ] || break
+        lo=$i
+    done
+    for ((i = cursorNo + 1; i <= ${#L[@]}; i++)); do
+        line="${L[$((i - 1))]}"
+        [ -n "${line//[[:space:]]/}" ] || break
+        [ "$(_menuIndent "$line")" = "$baseIndent" ] || break
+        hi=$i
+    done
+    [ $((hi - lo)) -ge 1 ] || return 1
+
+    # Gate 4 — exactly one affirmative option. Same word list Stage B of
+    # detectPromptOption uses (kept in sync by being the only copy that
+    # matters: adding a word there is the documented maintenance knob).
+    #
+    # Requiring EXACTLY one is the safety net that makes a generic cursor-
+    # menu driver acceptable at all. "❯ Cancel / Delete everything" is
+    # structurally identical to the trust prompt, and nothing but the words
+    # distinguishes them; with zero or several candidates ja must not guess,
+    # so it declines and the caller warns instead.
+    local affirmRe='(Yes|Allow|Accept|Approve|Proceed|Confirm|Continue)'
+    local block hits target curIdx
+    block=$(printf '%s\n' "${L[@]:$((lo - 1)):$((hi - lo + 1))}")
+    hits=$(grep -cE "$affirmRe" <<<"$block")
+    # Exit 2 + "?" rather than a plain 1: this IS a menu, we just cannot tell
+    # which option is the answer. The caller warns instead of falling through
+    # silently — silence on a blocked pane is the failure this whole detector
+    # exists to end.
+    if [ "$hits" != "1" ]; then
+        echo '?'
+        return 2
+    fi
+
+    target=$(grep -nE "$affirmRe" <<<"$block" | head -1 | cut -d: -f1)
+    curIdx=$((cursorNo - lo + 1))
+    echo $((target - curIdx))
+    return 0
+}
+
+# The workspace path out of the trust prompt, for the audit trail. A log line
+# saying only "auto-confirmed a menu" is worthless the day you need to know
+# which directory ja vouched for on your behalf. The path sits on the first
+# non-blank line after the "Accessing workspace:" label, not on the next line
+# — there is a blank between them.
+_menuWorkspace() {
+    awk '/Accessing workspace:/ {f=1; next}
+         f && NF {gsub(/^[ \t]+|[ \t]+$/, ""); print; exit}' <<<"$1"
+}
+
+# Answer an unnumbered cursor menu: move the cursor <steps> rows, verify it
+# landed on the affirmative option, and only then confirm.
+#
+# Movement and confirmation are separate sends, and that is the single most
+# important property of this function. The trust prompt opens with the cursor
+# on "No, exit", so a confirm aimed at the wrong row does not just pick the
+# wrong answer — it terminates claude and drops the pane back to a bare
+# shell, losing whatever that session was in the middle of. Moving first and
+# re-capturing turns a miscount into a harmless no-op that the next poll
+# retries; sending "Down Enter" in one call would make it unrecoverable.
+#
+# The verification reuses detectCursorMenuOption itself: after the move it
+# must report 0 (cursor already on the affirmative option). Re-deriving the
+# answer from the new screen, rather than trusting our own arithmetic, is the
+# same idiom the numbered path uses when it re-runs the detector to decide
+# whether a keystroke was dropped.
+approveCursorMenu() {
+    local steps="$1"
+    local key=Down count="$steps"
+    if [ "$steps" -lt 0 ]; then key=Up; count=$((0 - steps)); fi
+
+    applyApproveDelay
+
+    # Fingerprint before moving, so we can wait for the redraw afterwards.
+    local beforeFp
+    beforeFp=$(echo "$(tmux capture-pane -t "$fTargetPaneId" -p 2>/dev/null)" | tail -20 | _hash)
+
+    local i
+    for ((i = 0; i < count; i++)); do
+        _dbg "send-keys $key ($((i + 1))/$count)"
+        tmux send-keys -t "$fTargetPaneId" "$key"
+    done
+
+    # Give the TUI a frame to repaint before reading it back. Capturing
+    # immediately returns the PRE-move screen, and the check below then
+    # rejects a move that in fact worked — observed on %67, where the first
+    # attempt warned "cursor did not reach" and the very next poll, 0.3s
+    # later, found the cursor already sitting on the right option.
+    if [ "$count" -gt 0 ]; then
+        waitForScreenChange "$beforeFp" 2000 >/dev/null
+    fi
+
+    # Re-derive the answer from the repainted screen. Note what is NOT
+    # logged on failure: the row offset. It describes what this reading saw,
+    # not what happened — a stale frame and a dropped keystroke both surface
+    # as "still needs to move", so reporting the number invites the wrong
+    # conclusion. The menu carries no numbers either, leaving the reader
+    # nothing on screen to match it against.
+    local after recheck
+    after=$(echo "$(tmux capture-pane -t "$fTargetPaneId" -p 2>/dev/null)" | tail -20)
+    recheck=$(detectCursorMenuOption "$after")
+    if [ "$recheck" != "0" ]; then
+        _log "${RED}⚠ Cursor did not move onto the affirmative option${RESET} — ${LIGHTYELLOW}not confirming${RESET}."
+        _writeState dropped
+        return 1
+    fi
+
+    _dbg "send-keys Enter (cursor verified on the affirmative option)"
+    tmux send-keys -t "$fTargetPaneId" Enter
+    return 0
+}
+
 detectPromptOption() {
     local tail="$1"
 
@@ -1106,6 +1307,9 @@ detectPromptOption() {
 #     isPlanReviewPrompt ──► yes → log WARN, mark fp handled, skip
 #         │ no
 #         ▼
+#     detectCursorMenuOption ──► exit 2 → log WARN (ambiguous), skip
+#         │ exit 1                exit 0 → move cursor, verify, Enter
+#         ▼
 #     detectPromptOption
 #         │
 #         │ Stage A: structural gate (cursor + ≥2 numbered options)
@@ -1159,6 +1363,10 @@ mainLoop() {
     # prompt is gone from the screen). Reset on daemon resume so a
     # plan-review that was on screen when we paused gets re-announced.
     local lastPlanReviewLogged=""
+    # Same latch idea for the unnumbered-menu warning: the prompt stays on
+    # screen while the user arrows through it, and every keypress changes the
+    # fingerprint, so fingerprint dedup would re-fire the WARN per keystroke.
+    local lastMenuLogged=""
 
     # Daemon-mode pause flag (global so --status / _writeState can read it).
     # Set when the pane is currently running something we don't monitor
@@ -1303,6 +1511,7 @@ mainLoop() {
             fAiName="$currentAi"
             lastHandledFp=""
             lastPlanReviewLogged=""
+            lastMenuLogged=""
             fPaused=""
             _writeState resumed
         fi
@@ -1345,6 +1554,39 @@ mainLoop() {
             # next plan-review event. Cheap unconditional assignment;
             # most iterations this is already empty.
             lastPlanReviewLogged=""
+        fi
+
+        # Unnumbered cursor menu — Claude Code's workspace-trust prompt and
+        # anything shaped like it. Sits between the plan-review guard and
+        # detectPromptOption. The two detectors are structurally exclusive
+        # (this one hands any numbered screen straight back), but ordering it
+        # first keeps that contract enforced rather than merely assumed.
+        local _menuStep _menuRc
+        _menuStep=$(detectCursorMenuOption "$tail"); _menuRc=$?
+        if [ "$_menuRc" = "2" ]; then
+            if [ -z "$lastMenuLogged" ]; then
+                _log "${LIGHTYELLOW}⚠ Cursor menu detected${RESET} — no single affirmative option, ${LIGHTYELLOW}NOT answering${RESET}. Choose manually."
+                _dbgBlock "tail content (menu fed to detectCursorMenuOption):" <<<"$tail"
+                _writeState menu_ambiguous
+                lastMenuLogged=1
+            fi
+            sleep "$fPollInterval"
+            continue
+        fi
+        lastMenuLogged=""
+        if [ "$_menuRc" = "0" ]; then
+            local _ws
+            _ws=$(_menuWorkspace "$tail")
+            _dbgBlock "tail content (menu fed to detectCursorMenuOption):" <<<"$tail"
+            if approveCursorMenu "$_menuStep"; then
+                fApprovedCount=$((fApprovedCount + 1))
+                _log "${GREEN}✔ Auto-confirmed${RESET} cursor menu${_ws:+ for ${BLUE}$_ws${RESET}} [#$fApprovedCount]"
+                _writeState menu_approve
+            fi
+            # Fingerprint the screen we acted on either way, so a menu that
+            # survives the attempt is not re-tried on every single poll.
+            lastHandledFp="$fingerprint"
+            continue
         fi
 
         # Detect a permission prompt (Claude Code or Codex CLI — same
@@ -1555,11 +1797,22 @@ handleListMode() {
         return 0
     fi
 
-    echo ""
-    echo -e "${LIGHTYELLOW}AI sessions on tmux server (${#_panes[@]})${RESET}"
-    echo ""
     _renderAiTable "${_panes[@]}"
-    echo ""
+
+    # Summary under the table, matching --status and jcl. The count is a
+    # conclusion drawn from the rows, so above them it read as a title for
+    # something not yet shown. No trailing blank line either — the shell
+    # prompt closes the output.
+    local _byTool
+    _byTool=$(printf '%s\n' "${_panes[@]}" | cut -d'|' -f4 | sort | uniq -c \
+              | awk '{printf "%s%s %s", sep, $1, $2; sep=", "}')
+    local _idle=$(( ${#_panes[@]} - _aiTableMonitored ))
+    printf "${BOLD}%s${RESET} AI session(s) ${GREY}·${RESET} %s" "${#_panes[@]}" "$_byTool"
+    # Only the states that occur, same rule --status follows: "0 idle" on a
+    # fully monitored server is noise.
+    [ "$_aiTableMonitored" -gt 0 ] && printf " ${GREY}·${RESET} ${LIGHTYELLOW}%s monitored${RESET}" "$_aiTableMonitored"
+    [ "$_idle" -gt 0 ] && printf " ${GREY}·${RESET} ${GREEN}%s idle${RESET}" "$_idle"
+    printf "\n"
 }
 
 # Shared target resolution for --stop / --status / --log. Returns a
@@ -1984,11 +2237,107 @@ _renderInstanceBlock() {
 # are ordered by window.pane. A plain heading summarizes total instances and
 # distinct sessions. Always shows every instance, no -t / --all branching.
 # If the caller is inside tmux, the row for the caller's pane is marked `*`.
+# One line per daemon - what `--status` shows by default. Deliberately shaped
+# like jcl's listing (bold header, rule, rows, rule, summary) so the two tools
+# read the same way; the detailed per-instance blocks are behind --verbose now.
+#
+# Takes the caller's pane_id followed by the pre-sorted "\t"-joined entries.
+_renderStatusTable() {
+    local current="$1"; shift
+    local line pfx sdisp win pane f
+    local tpid ai pid st appr ev evts loc mark
+    local -a c1=() c2=() c3=() c4=() c5=() c6=() c7=() cst=()
+    for line in "$@"; do
+        IFS=$'\t' read -r pfx sdisp win pane f <<<"$line"
+        tpid=$(_readStateField "$f" target_pane_id)
+        loc=$(_liveLocation "$tpid")
+        [ -z "$loc" ] && loc=$(_readStateField "$f" target)
+        # '*' marks the caller's own pane, matched by pane_id so it survives moves
+        mark=""; [ -n "$current" ] && [ "$tpid" = "$current" ] && mark="*"
+        ai=$(_readStateField "$f" ai)
+        pid=$(_readStateField "$f" pid)
+        st=$(_instanceState "$f")
+        appr=$(_readStateField "$f" approved_count)
+        # A paused instance records the AI it is *waiting* for as a phrase
+        # ("claude or codex"); in a column that is just noise, and it would set
+        # the width for every row. Only a settled name is worth showing.
+        case "$ai" in *" "*) ai="-" ;; esac
+        evts=$(_readStateField "$f" last_event_ts)
+        ev=$(_readStateField "$f" last_event_type)
+        # Short stamp here; --verbose keeps the full date via _fmtEventTime
+        [ -n "$evts" ] && ev="${ev:-?} $(date -d "@$evts" '+%m-%d %H:%M' 2>/dev/null \
+                                        || date -r "$evts" '+%m-%d %H:%M' 2>/dev/null)"
+        c1+=("${loc}${mark}"); c2+=("${tpid:--}"); c3+=("${ai:-?}")
+        c4+=("${pid:--}");     c5+=("$st");        c6+=("${appr:-0}")
+        c7+=("${ev:--}");      cst+=("$st")
+    done
+
+    local h1=TARGET h2=PANE h3=AI h4=PID h5=STATE h6=APPROVED h7="LAST EVENT"
+    local w1=${#h1} w2=${#h2} w3=${#h3} w4=${#h4} w5=${#h5} w6=${#h6} w7=${#h7} i
+    for ((i = 0; i < ${#c1[@]}; i++)); do
+        [ ${#c1[i]} -gt "$w1" ] && w1=${#c1[i]}
+        [ ${#c2[i]} -gt "$w2" ] && w2=${#c2[i]}
+        [ ${#c3[i]} -gt "$w3" ] && w3=${#c3[i]}
+        [ ${#c4[i]} -gt "$w4" ] && w4=${#c4[i]}
+        [ ${#c5[i]} -gt "$w5" ] && w5=${#c5[i]}
+        [ ${#c6[i]} -gt "$w6" ] && w6=${#c6[i]}
+        [ ${#c7[i]} -gt "$w7" ] && w7=${#c7[i]}
+    done
+
+    # Widths come from the plain text; colour is wrapped on afterwards, or the
+    # escape codes would count as visible characters and break the columns.
+    local rule
+    rule="$(_hr $w1)  $(_hr $w2)  $(_hr $w3)  $(_hr $w4)  $(_hr $w5)  $(_hr $w6)  $(_hr $w7)"
+    printf "${BOLD}%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s${RESET}\n" \
+        "$w1" "$h1" "$w2" "$h2" "$w3" "$h3" "$w4" "$h4" "$w5" "$h5" "$w6" "$h6" "$w7" "$h7"
+    printf "${GREY}%s${RESET}\n" "$rule"
+    local aiC stC
+    for ((i = 0; i < ${#c1[@]}; i++)); do
+        case "${c3[i]}" in claude) aiC="$MAGENTA" ;; codex) aiC="$BLUE" ;; *) aiC="$GREY" ;; esac
+        case "${cst[i]}" in
+            active) stC="$GREEN" ;;
+            paused) stC="$LIGHTYELLOW" ;;
+            dead)   stC="$RED" ;;
+            *)      stC="$GREY" ;;
+        esac
+        printf "${CYAN}%-*s${RESET}  ${GREY}%-*s${RESET}  ${aiC}%-*s${RESET}  ${GREY}%-*s${RESET}  ${stC}%-*s${RESET}  %-*s  ${GREY}%-*s${RESET}\n" \
+            "$w1" "${c1[i]}" "$w2" "${c2[i]}" "$w3" "${c3[i]}" "$w4" "${c4[i]}" \
+            "$w5" "${c5[i]}" "$w6" "${c6[i]}" "$w7" "${c7[i]}"
+    done
+    printf "${GREY}%s${RESET}\n" "$rule"
+}
+
 handleStatusRequest() {
     # Before counting anything, drop the entries no daemon and no pane is left
     # for, so the totals below describe what is actually running.
     local pruned=$(_pruneDeadStates)
     local files=( "$(_runtimeDir)"/*.state.json )
+
+    # A named PANE narrows the listing to that one daemon. Every other mode that
+    # takes a PANE acts on it, so silently listing all of them here would be the
+    # same trap `--log <pane>` used to be: the argument accepted and ignored.
+    local want_pane=""
+    if [ -n "$fTmuxTarget" ]; then
+        want_pane=$(tmux display-message -t "$fTmuxTarget" -p '#{pane_id}' 2>/dev/null)
+        if [ -z "$want_pane" ]; then
+            echo -e "${RED}Error: ${SCRIPT_NAME} --status: pane '${fTmuxTarget}' not found${RESET}" >&2
+            return 1
+        fi
+        local kept=() _sf
+        for _sf in "${files[@]}"; do
+            [ -e "$_sf" ] || continue
+            [ "$(_readStateField "$_sf" target_pane_id)" = "$want_pane" ] && kept+=("$_sf")
+        done
+        if [ ${#kept[@]} -eq 0 ]; then
+            local _lbl; _lbl=$(_targetLabel "$want_pane")
+            _drawBox \
+                "○ ${SCRIPT_NAME} no daemon for ${_lbl}" \
+                "${LIGHTYELLOW}○${RESET} ${SCRIPT_NAME} ${GREY}no daemon for${RESET} ${BLUE}${_lbl}${RESET}" \
+                "$(_boxRow start "${SCRIPT_NAME} -D ${fTmuxTarget}" "${LIGHTYELLOW}${SCRIPT_NAME} -D ${fTmuxTarget}${RESET}")"
+            return 1
+        fi
+        files=( "${kept[@]}" )
+    fi
     # Glob with no match expands to a literal that doesn't exist — guard.
     if [ ! -e "${files[0]}" ]; then
         # Empty-state box — ○ (open circle) + yellow mirrors the `-l`
@@ -2076,6 +2425,13 @@ handleStatusRequest() {
     local _labW=12 _valW=19 _lab2W=12
     local _sepW=$(( 5 + _labW + 1 + _valW + 1 + _lab2W + 1 + _valW ))
 
+    # Default is the one-line-per-daemon table; the grouped detail blocks below
+    # are what --verbose asks for. A dozen daemons render as ~40 lines there,
+    # which is past the point where the figures scroll off before you read them.
+    if [ -z "$fVerbose" ]; then
+        _renderStatusTable "$current_pane_id" "${sorted[@]}"
+    else
+
     # Render — a session header before each group, then its instances with a
     # global continuous "[N]" index ("[N*]" marks the caller's current pane,
     # matched by pane_id so it follows the pane across moves).
@@ -2109,6 +2465,7 @@ handleStatusRequest() {
         _renderInstanceBlock "$f" "$index_label"
         i=$((i + 1))
     done
+    fi
 
     # Summary — a plain line (no rule, no box) with the totals and the state
     # breakdown. Printed last, not first: with a screenful of instances the
@@ -2119,6 +2476,19 @@ handleStatusRequest() {
     local instNoun="INSTANCES"; [ "$N" -eq 1 ] && instNoun="INSTANCE"
     local sessNoun="SESSIONS";  [ "$M" -eq 1 ] && sessNoun="SESSION"
     # Tool name as a bold uppercase title (tr, not ${..^^}, for bash 3.2/macOS).
+    if [ -z "$fVerbose" ]; then
+        # Lower case and without the tool name, matching jcl's summary line
+        local _dn="daemon(s)"
+        printf "${BOLD}%s${RESET} %s ${GREY}·${RESET} %s ${GREY}session(s)${RESET}" "$N" "$_dn" "$M"
+        [ "$nActive" -gt 0 ] && printf " ${GREY}·${RESET} ${GREEN}%s active${RESET}" "$nActive"
+        [ "$nPaused" -gt 0 ] && printf " ${GREY}·${RESET} ${LIGHTYELLOW}%s paused${RESET}" "$nPaused"
+        [ "$nDead"   -gt 0 ] && printf " ${GREY}·${RESET} ${RED}%s dead${RESET}" "$nDead"
+        printf "\n"
+        if [ "$pruned" -gt 0 ]; then
+            printf "${GREY}cleaned %s stale instance(s) — dead daemons whose pane is gone${RESET}\n" "$pruned"
+        fi
+        return 0
+    fi
     local _disp; _disp=$(printf '%s' "$SCRIPT_NAME" | tr '[:lower:]' '[:upper:]')
     printf "${BOLD}${CYAN}%s${RESET} ${GREY}·${RESET} ${CYAN}%s${RESET} ${GREY}%s · ${RESET}${CYAN}%s${RESET} ${GREY}%s${RESET}" \
         "$_disp" "$N" "$instNoun" "$M" "$sessNoun"
@@ -2137,7 +2507,7 @@ handleStatusRequest() {
 # log rotation (or daemon restart writing a new file) is handled.
 #
 # Mode arg controls the starting point:
-#   • "tail" (default) — last 15 lines, then follow. Maps to --log / -L.
+#   • "tail" (default) — last 15 lines, then follow. Maps to --log.
 #                        15 (vs tail's default of 10) gives enough context
 #                        to see the most recent ✔ Approved / ⚠ events
 #                        without scrolling.
@@ -2196,7 +2566,7 @@ handleLogRequest() {
     # _cleanup removes the lockfile and state file on daemon shutdown
     # but intentionally preserves the log. A present log file therefore
     # doesn't prove there's a live daemon. Without this check,
-    # `ja -L <stale>` silently tails a frozen file, which reads as a
+    # `ja --log <stale>` silently tails a frozen file, which reads as a
     # hang.
     #
     # Behavior: warn loudly to stderr (so it doesn't pollute the tailed
@@ -2222,12 +2592,38 @@ handleLogRequest() {
         echo >&2
     fi
 
-    # exec replaces our shell with tail so Ctrl+C goes straight to tail
-    # without an intermediate process layer.
+    # Daemons started before the banner's leading blank was removed still carry
+    # it as the first byte of their log file. Dropping it on the way out fixes
+    # the display for every one of them without rewriting a single file - the
+    # recorded history stays exactly as it is.
+    #
+    # sed -u keeps the stream unbuffered, so `tail -F` still paints new events
+    # as they land rather than in block-sized bursts. The pipeline replaces the
+    # previous `exec tail`: Ctrl+C goes to the whole foreground process group,
+    # so both tail and sed still take it.
+    # Named rather than written twice: the notice below has to quote the same
+    # number tail actually uses, and two literals drift apart eventually.
+    local _tailLines=15
+
     if [ "$mode" = "full" ]; then
-        exec tail -F -n +1 "$logfile"
+        tail -F -n +1 "$logfile" | sed -u '1{/^$/d}'
     else
-        exec tail -F -n 15 "$logfile"
+        # Say when history exists above the window. Without this a short log
+        # and a truncated one look identical, and there is no way to tell
+        # whether what you are reading is all of it — half of the logs on this
+        # host fit inside 15 lines, so "--log and --log-full printed the same
+        # thing" is a routine and otherwise unexplainable observation. Only
+        # fires when something is genuinely hidden, so short logs stay clean.
+        # stderr, like the stale-daemon warning above, keeps the tailed stream
+        # free of anything that is not log content.
+        local _total _hidden
+        _total=$(wc -l < "$logfile" 2>/dev/null) || _total=0
+        _hidden=$((_total - _tailLines))
+        if [ "$_hidden" -gt 0 ]; then
+            echo -e "${GREY}(earlier ${_hidden} line(s) not shown —" \
+                    "${CYAN}${SCRIPT_NAME} --log-full ${target}${RESET}${GREY})${RESET}" >&2
+        fi
+        tail -F -n "$_tailLines" "$logfile" | sed -u '1{/^$/d}'
     fi
 }
 
@@ -2359,7 +2755,7 @@ setupCleanupTrap() {
 # Self-daemonize when --daemon/-D is given. Re-exec ourselves as a detached
 # background process: a new session (setsid, which releases the controlling
 # tty so closing the launching pane/terminal won't SIGHUP us), stdio
-# redirected to our own logfile (so `ja -L` finds it with no external
+# redirected to our own logfile (so `ja --log` finds it with no external
 # redirection), and disowned. The foreground parent prints a one-line
 # status and returns the shell prompt.
 #

@@ -287,10 +287,9 @@ WireGuard Options (server-side only — run on the WireGuard server host):
 Claude Options:
     --claude                        Install or upgrade Claude Code (CLI)
     --claude-remove                 Remove Claude Code
-    --claude-backup                 Back up Claude Code CLI settings and skills
-                                    (settings.json, settings.local.json, CLAUDE.md,
-                                     skills/ -- mirrored, local deletions propagate)
-    --claude-restore                Restore Claude Code CLI settings and skills
+    --claude-restore                Link tracked Claude Code settings and skills
+                                    into place (settings.json, settings.local.json,
+                                     CLAUDE.md, skills/)
     --claude-link-mcp               Symlink tracked .mcp.json into current directory
     --claude-desktop-backup         Back up macOS Claude Desktop config
                                     (claude_desktop_config.json)
@@ -299,9 +298,8 @@ Claude Options:
 Codex Options:
     --codex                         Install or upgrade Codex (CLI)
     --codex-remove                  Remove Codex
-    --codex-backup                  Back up Codex CLI settings
+    --codex-restore                 Link tracked Codex settings into place
                                     (config.toml, AGENTS.md)
-    --codex-restore                 Restore Codex CLI settings
 
 Gemini Options:
     --gemini                        Install or upgrade Gemini (CLI)
@@ -330,8 +328,8 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-1080,rtsp-stream:,\
           rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,claude-remove,\
-          claude-backup,claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
-          codex,codex-remove,codex-backup,codex-restore,\
+          claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
+          codex,codex-remove,codex-restore,\
           gemini,gemini-remove,cursor-backup,cursor-restore,\
           singbox,link-xray,link-xray-autossh,link-xray-sslh,link-wg,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
@@ -1231,10 +1229,6 @@ while true; do
             shift
             exit 0
             ;;
-        --claude-backup)
-            fClaudeAction="backup"
-            shift
-            ;;
         --claude-restore)
             fClaudeAction="restore"
             shift
@@ -1260,10 +1254,6 @@ while true; do
             removeCodex
             shift
             exit 0
-            ;;
-        --codex-backup)
-            fCodexAction="backup"
-            shift
             ;;
         --codex-restore)
             fCodexAction="restore"
@@ -2739,40 +2729,6 @@ getClaudeDesktopConfigDir() {
     esac
 }
 
-backupClaudeCodeSettings() {
-    echo -e "${COLOR}Backing up Claude Code settings${RESET}"
-    local srcDir=$(getClaudeCodeDir)
-    local processedCount=0 failedCount=0
-
-    if [ ! -d "$srcDir" ]; then
-        echo -e "${LIGHTYELLOW}Warning: $srcDir not found, nothing to back up.${RESET}"
-        return 0
-    fi
-
-    syncFile "$srcDir/settings.json"       "$fTKClaudeDir"
-    _trackSyncResult $? processedCount failedCount
-    syncFile "$srcDir/settings.local.json" "$fTKClaudeDir"
-    _trackSyncResult $? processedCount failedCount
-    syncFile "$srcDir/CLAUDE.md"           "$fTKClaudeDir"
-    _trackSyncResult $? processedCount failedCount
-    # Skills are edited in place through the shared canonical tree. Copying an
-    # installed link back into the repository would recreate two sources.
-    if "$fTKToolsDir/jskill" check --source-only > /dev/null; then
-        processedCount=$((processedCount + 1))
-    else
-        echo -e "${RED}Error: Shared skill source validation failed${RESET}"
-        failedCount=$((failedCount + 1))
-    fi
-
-    if [ $failedCount -gt 0 ]; then
-        return 1
-    fi
-    if [ $processedCount -eq 0 ]; then
-        echo -e "${RED}Error: No Claude Code settings files were backed up${RESET}"
-        return 1
-    fi
-}
-
 restoreClaudeCodeSettings() {
     echo -e "${COLOR}Restoring Claude Code settings${RESET}"
     local dstDir=$(getClaudeCodeDir)
@@ -2780,11 +2736,18 @@ restoreClaudeCodeSettings() {
 
     [ ! -d "$dstDir" ] && mkdir -p "$dstDir"
 
-    syncFile "$fTKClaudeCodeSettings"      "$dstDir"
+    # Link, never copy. A copy leaves the machine with its own private
+    # settings.json that silently stops tracking the repository -- exactly the
+    # drift syncFile warns about, just entering through the restore door
+    # instead. linkFile also moves an existing regular file into $fBackupDir
+    # first, so a config that Claude replaced on disk is preserved rather than
+    # clobbered. Codex has done it this way for a while; this side had not
+    # caught up.
+    linkFile "$fTKClaudeCodeSettings"      "$dstDir"
     _trackSyncResult $? processedCount failedCount
-    syncFile "$fTKClaudeCodeLocalSettings" "$dstDir"
+    linkFile "$fTKClaudeCodeLocalSettings" "$dstDir"
     _trackSyncResult $? processedCount failedCount
-    syncFile "$fTKClaudeCodeMd"            "$dstDir"
+    linkFile "$fTKClaudeCodeMd"            "$dstDir"
     _trackSyncResult $? processedCount failedCount
     linkDirectory "$fTKClaudeCodeSkills"   "$dstDir" "skills"
     _trackSyncResult $? processedCount failedCount
@@ -2853,30 +2816,6 @@ restoreClaudeDesktopSettings() {
     fi
     if [ $processedCount -eq 0 ]; then
         echo -e "${RED}Error: No Claude Desktop settings files were restored${RESET}"
-        return 1
-    fi
-}
-
-backupCodexSettings() {
-    echo -e "${COLOR}Backing up Codex settings${RESET}"
-    local srcDir=$(getCodexDir)
-    local processedCount=0 failedCount=0
-
-    if [ ! -d "$srcDir" ]; then
-        echo -e "${LIGHTYELLOW}Warning: $srcDir not found, nothing to back up.${RESET}"
-        return 0
-    fi
-
-    syncFile "$srcDir/config.toml" "$fTKCodexDir"
-    _trackSyncResult $? processedCount failedCount
-    syncFile "$srcDir/AGENTS.md" "$fTKCodexDir"
-    _trackSyncResult $? processedCount failedCount
-
-    if [ $failedCount -gt 0 ]; then
-        return 1
-    fi
-    if [ $processedCount -eq 0 ]; then
-        echo -e "${RED}Error: No Codex settings files were backed up${RESET}"
         return 1
     fi
 }
@@ -7288,7 +7227,6 @@ doEarlyExitJobs() {
         restore) restoreCursorSettings; exit $? ;;
     esac
     case "$fClaudeAction" in
-        backup)  backupClaudeCodeSettings;  exit $? ;;
         restore) restoreClaudeCodeSettings; exit $? ;;
     esac
     case "$fClaudeDesktopAction" in
@@ -7296,7 +7234,6 @@ doEarlyExitJobs() {
         restore) restoreClaudeDesktopSettings; exit $? ;;
     esac
     case "$fCodexAction" in
-        backup)  backupCodexSettings;  exit $? ;;
         restore) restoreCodexSettings; exit $? ;;
     esac
     [ -n "$fDisplayMode" ]         && { switchDisplayMode "$fDisplayMode"; exit 0; }

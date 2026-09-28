@@ -17,22 +17,46 @@ fi
 # Remote apps launch commands through non-interactive SSH. Expose the
 # user-local and NVM tools they need, then skip interactive shell setup.
 if [ -z "$PS1" ]; then
-    export NVM_DIR="$HOME/.nvm"
+    # node/codex are installed on m-fwdev-167 only, so this is gated on the
+    # host the same way the ai-pim block at the bottom is. On a lab box there
+    # is no ~/.nvm, and the glob below would expand to a literal unmatched
+    # path on every single non-interactive shell for nothing.
+    if [[ $(hostname -s) == m-fwdev-167 ]]; then
+        export NVM_DIR="$HOME/.nvm"
 
-    if [ -s "$NVM_DIR/nvm.sh" ]; then
-        source "$NVM_DIR/nvm.sh" >/dev/null
-        nvm use default --silent >/dev/null 2>&1
+        # Derive NVM_BIN by hand instead of sourcing nvm.sh. Sourcing it and running
+        # `nvm use default` walks the whole NVM tree (1.7 GB / ~6000 files here), which is
+        # ruinous when $HOME is on NFS: measured 52.7 s for the source ALONE on l-fwreg-217
+        # (2026-09-22), with user+sys at 0.4 s - pure I/O wait. This branch runs on every
+        # NON-INTERACTIVE shell, so that made every `ssh <labbox> '<cmd>'` time out before
+        # the command even started, and took the env_rebuild/per_run automation down with
+        # it. Reading one directory gives the same NVM_BIN in milliseconds. (The host gate
+        # above now keeps this off lab boxes entirely, but the rule stands for 167 too:
+        # never source nvm.sh from here.)
+        for _nvm_bin in "$NVM_DIR"/versions/node/v*/bin; do
+            if [ -x "$_nvm_bin/node" ]; then
+                export NVM_BIN="$_nvm_bin"
+                export PATH="$_nvm_bin:$PATH"
+            fi
+        done
+        unset _nvm_bin
+
+        # The desktop SSH bootstrap prepends CODEX_INSTALL_DIR to PATH. Point it
+        # at the active NVM default without changing interactive-shell behavior.
+        if [ -n "${NVM_BIN:-}" ] && [ -x "$NVM_BIN/codex" ]; then
+            export CODEX_INSTALL_DIR="$NVM_BIN"
+        fi
     fi
 
-    # The desktop SSH bootstrap prepends CODEX_INSTALL_DIR to PATH. Point it
-    # at the active NVM default without changing interactive-shell behavior.
-    if [ -n "${NVM_BIN:-}" ] && [ -x "$NVM_BIN/codex" ]; then
-        export CODEX_INSTALL_DIR="$NVM_BIN"
-    fi
-
-    # Keep user-local commands available to remote apps as well.
+    # Deliberately NOT gated on the host: myssh, jmake and the rest of
+    # ~/.usr/bin are exactly what the lab-box automation invokes over ssh, and
+    # $HOME is the same NFS tree on every machine.
     export PATH="$HOME/.usr/bin:$HOME/.local/bin:$PATH"
 
+    # Every non-interactive shell stops here, on every host. Falling through
+    # would run several hundred lines of interactive setup - prompt, aliases,
+    # completions - for each `ssh <box> '<cmd>'`, which is the same class of
+    # cost the NVM note above is about.
     return
 fi
 

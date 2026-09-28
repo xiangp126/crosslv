@@ -162,16 +162,65 @@ gerrit query:  branch:<target> AND change:<Change-Id>
 
 Hit → mint a fresh one (`NEWCID="I$(git rev-parse HEAD)"`). No hit → reuse.
 
-### Always add the footer
+### Always add the footer — it is mandatory, not a nicety
 
 ```
 (cherry picked from commit <full 40-char sha>)
 ```
 
+Peter, 2026-09-22: *"when doing cherry pick, the new commit description must contain sth.
+like `(cherry picked from commit a3f49e70bd1ceb20d602726fd9bbfe971e1cc1e0)`"*. Every
+cherry-picked commit carries it. No exceptions.
+
 The Change-Id says *which change* but not *which patchset* was taken; the 40-char SHA removes
 that ambiguity — it matters the moment a change is re-pushed with real content differences
 between patchsets. Adding a footer afterwards is a message-only amend: the tree is unchanged,
 nothing needs rebuilding, and gerrit confirms with `no files changed, message updated`.
+
+**Let git write it — `-x` exists for exactly this:**
+
+```bash
+git cherry-pick -x <sha>          # appends the footer automatically, full 40-char sha
+```
+
+Use `-x` whenever the message needs no other change. The one case where you cannot is **ours**:
+propagating to a sibling branch reuses the *same* Change-Id, so the message has to be rebuilt
+(strip the picked commit's `Change-Id:` and any older `(cherry picked from …)` line, append the
+reused `Change-Id:` and a fresh footer). That is the `cherry-pick -n` + hand-assembled message
+path. It works, but the footer is now something *you* wrote, so it is something you can forget.
+
+**Which SHA goes in the footer:** the commit you actually picked from. If the source change is
+already merged, that is its SHA on the target branch (see the section above on taking the source
+from the branch it merged into). If it is still open — propagating ahead of the master merge —
+it is the local SHA you picked, and gerrit may later rebase that change to a new patchset with a
+different SHA. That is fine and expected: the footer records *what was taken*, not what the
+source change looks like today.
+
+**Verify before pushing, every branch, one line:**
+
+```bash
+git log -1 --format=%B <branch> | grep -c '^(cherry picked from commit [0-9a-f]\{40\})$'
+```
+
+`1` = good. `0` = the footer is missing or malformed (short SHA, wrong wording, trailing text).
+Put this next to the build check in a propagation script — a missing footer is invisible in the
+diff and only surfaces in review, after all three branches are already pushed.
+
+**And check the message is byte-identical to the source, not that it is well-formatted.** A
+cherry-pick reproduces; it does not re-edit. Strip the `Change-Id:` line and the footer from
+both and compare:
+
+```bash
+strip() { git log -1 --format=%B "$1" | sed '/^Change-Id: /d;/^(cherry picked from commit /d'; }
+diff <(strip <source-sha>) <(strip <branch>)      # must be empty
+```
+
+⚠ **Do not gate a cherry-pick on line length.** A propagation script on 2026-09-23 carried a
+"no line over 72 chars" check and aborted the whole run on the *source commit's own title*
+(`Title: [Test Bug] <Hotplug> Modify host-awareness only on hotplug devices`, 73 chars) — a
+commit already merged to master with a green CI. The 72-column rule is for a message you are
+**writing**; on a pick, re-wrapping the title would make the branches disagree with master,
+which is worse than a long line.
 
 ## Two mechanical traps, one full build cycle each
 
@@ -196,6 +245,156 @@ is baseline drift between the two branches and must be preserved as-is.
 
 **Zero conflicts does not mean it compiles.** A rename landed upstream will apply cleanly and
 then fail to build. Build the stack top before pushing.
+
+## Propagating one fix to several branches — one track at a time
+
+A fix that lands on one branch usually has to reach the others. Do **one branch end to end,
+then the next**. Five steps per track, and you do not start the next track until the current
+one has been pushed:
+
+```
+checkout → cherry-pick → build → verify the build is clean → push → next track
+```
+
+**Never restructure this into "pick all, then build all, then push all".** Three reasons:
+
+- A broken pick on track 1 must stop the run. If the three picks are done up front, the second
+  and third are built on an assumption that already failed.
+- Each track has its own baseline. A conflict or a build break is track-specific, and you want
+  it surfaced against the track that caused it, not mixed into a batch result.
+- Peter's rule, stated directly: *"你还是要挨个 checkout，然后 cherry pick，build，确认 build
+  成功再 push，然后下一个"*.
+
+If you script it, make failure of any step abort the **whole** run — a script that calls the
+per-track function three times in a row without chaining will happily keep going after the
+first one fails. That mistake was made on BF10 (2026-09-22).
+
+**Conflicts get fixed, not reported.** A conflict is an expected part of a pick; resolve it
+(by path — see the `git add -A` trap above), keeping baseline drift as-is. Only stop and ask
+when the resolution would change the change's own semantics.
+
+### The per-track gate
+
+Check all of these before the build, and treat any failure as a stop:
+
+| Check | Why |
+|---|---|
+| new-line `md5sum` of the pick == the source's | proves the content arrived intact, independent of line numbers |
+| submodule pointer changes == 0 | `checkout -B` leaves submodule working trees behind; they get committed at the wrong revision and the build error then appears *inside* the submodule |
+| commits between upstream and HEAD == 1 | catches a stale branch or a double pick |
+| exactly one `Change-Id:` line | `Reviewed By:` makes the commit-msg hook regenerate one; commit with `--no-verify` |
+| no line in the message over 72 chars | gerrit rejects it |
+
+Then build, and gate the push on **all** of: `rc == 0`, zero `error:` lines, zero
+`undefined reference`, at least one `BUILD SUCCESS`. jmake prints `BUILD SUCCESS` and exits 0
+even when a sub-stage died, so one signal is not enough.
+
+### Three traps that only bite when you script this
+
+All three are documented elsewhere in these skills, and all three were still hit on BF10
+(2026-09-22) — then the third one was hit *again* on 2026-09-23 in a different disguise, by a
+script whose author had read this very table. The first track failed with
+`hca_fwv_shared/autogen/PacketFields.cpp: error: 'hca_fwv_ib_pkt_hdr_boeth' was not declared` —
+which reads exactly like "the baseline is broken" and is not.
+
+| Trap | How it shows up | Fix |
+|---|---|---|
+| `grep` without `-a` | jmake logs contain binary bytes, so grep reports `Binary file matches` and counts are unreliable — a run was scored `error:=48` while the log tail said `BUILD SUCCESS` and the recorded time (1m43s) contradicted the log's own `total build time 11:00` | every grep over a build log takes `-a` |
+| `jmake -o` instead of `-c -o` | `autogen/` is gitignored, so **`checkout -B` leaves the previous branch's generated sources in place**; the stale `.cpp` meets the new submodule headers | clean-build after any base change |
+| not scrubbing the base per track | `git submodule status` shows `+` entries — `checkout -B` does not move submodule working trees | the exact sequence below; anything less leaves stale generated headers |
+
+Cleaning by hand after that failure removed **52** generated files before all three submodules
+came back in sync. Budget for it: a clean build per track is ~8-10 min, so a three-track
+propagation is roughly 30 minutes of build time.
+
+**The scrub, verbatim — copy it, do not paraphrase it:**
+
+```bash
+git -C "$W" submodule update --init --recursive --force
+for d in hca_fwv_shared steering_ul hca_fw_core_platform; do
+    [ -d "$W/$d" ] && git -C "$W/$d" clean -fdxq          # note: -C into the submodule
+done
+( cd "$W" && git clean -fdxq -- 'src/cmdif/include/autogen' 'autogen' )
+[ "$(git -C "$W" submodule status --recursive | grep -c '^[+-]')" -eq 0 ] || exit 1
+```
+
+⚠ **`git clean -fdx -- hca_fwv_shared/` does NOT clean that submodule.** `git clean` will not
+descend into a nested repository when you merely name its path; you have to run it *inside*,
+with `git -C <submodule>`. Written the wrong way on 2026-09-23, this left the previous branch's
+`hca_fwv_shared/autogen/enum2str/GlobalEnum2Str.h` in place against the new submodule's types
+and produced **504** `... has not been declared` errors — again reading like a broken baseline.
+Note the failure mode of the wrong form is *silence*: the command succeeds, cleans nothing, and
+the damage only appears eight minutes later in the compiler.
+
+Also note the whitelist: the autogen paths are named explicitly rather than cleaning the repo
+root, because the working tree may hold other people's artifacts (`genid_dump`, `nvmf_dump`) that
+a blanket `git clean -fdx` would take out.
+
+### You do not need a worktree per branch
+
+`git push` does not need a checkout — the branch only has to exist in `.git`:
+
+```bash
+git push origin fix_5273244_emuhost_ES:refs/for/FUR_2026_Jan_VR_Fractal_ES_from_48_0386
+```
+
+So one borrowed working tree can serve every track in turn, and can be discarded afterwards;
+the private branches survive it. Only the **build** needs a working tree. Do not stand up a
+long-lived worktree per branch for propagation work — Peter removed all of them on 2026-09-18
+with *"删了就删了呗"*.
+
+### Naming the private branch — the track must be readable off the name
+
+```
+fix_<ticket>_<topic>_<track>          fix_5273244_emuhost_ES
+                                      fix_5273244_emuhost_June
+                                      fix_5273244_emuhost_master
+xcheck_<ticket>_<what>                a branch for investigating, not for pushing
+```
+
+`<track>` is **copied out of the target branch name** — take the one token that identifies it
+and nothing else:
+
+| target branch | `<track>` |
+|---|---|
+| `master` | `master` |
+| `FUR_2026_Jan_VR_Fractal_ES_from_48_0386` | `ES` |
+| `FUR_2026_June_PRDMA_CSP_main_from_48_1642` | `June` |
+| `FUR_2026_Sep_PRDMA_CSP_08_from_48_6132` | `Sep` |
+
+Do **not** invent your own abbreviation. `prop-bf10-csp` / `prop-bf10-csp08` were used on
+2026-09-22 and are exactly the failure mode: `csp` vs `csp08` needs a mapping table kept in
+someone's head, and that table breaks the day a third CSP branch is cut. The token above is
+already on screen — it sits in the `refs/for/<target>` you are about to type.
+
+⚠ **The token is not guaranteed unique — check before you use it.** This rule was written on
+2026-09-22 with `June` as the example; on 2026-09-23 `ls-remote` returned **two** June branches:
+
+```
+FUR_2026_June_PRDMA_CSP_main_from_48_1642    active
+FUR_2026_June_PRDMA_CSP_main_from_48_6132    frozen, tip stopped 09-09
+```
+
+What separates them is the trailing baseline `48_<NNNN>`. So: **list the branches first, and
+only then pick the token.** One command, and it doubles as the branch-name check:
+
+```bash
+git ls-remote --heads origin | grep -oE 'FUR_[A-Za-z0-9_]+'
+```
+
+If the month token is ambiguous, append the baseline (`June1642`). If one of the two is frozen,
+say so in the ledger rather than silently ignoring it — "which branches does this fix belong on"
+is a separate question from "what do I call the branch", and a frozen branch usually answers
+itself (check whether the recent fixes are on it: a branch that is missing the last two is not
+being maintained).
+
+Equally, do not name the branch after the *shape of the fix*
+(`5285522_macro_shape`, `5285522_satpf_macro_guard`). Peter, 2026-09-22: those say which
+variant you tried, never which branch it lands on, and the landing branch is the thing you
+need when there are four of them in flight. Variants are what `git log` and gerrit patchsets
+are for; if two candidate approaches really must coexist, they go in `<topic>`, with
+`<track>` still last.
+
 
 ## Pushing a stack of dependent changes
 

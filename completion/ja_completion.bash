@@ -19,7 +19,7 @@ _ja_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    short_opts="-h -w -l -v -D -s -S -L -R -A"
+    short_opts="-h -w -l -v -D"
     long_opts="--help --wait --list --verbose --daemon \
                --stop --restart --all --status --log --log-full"
 

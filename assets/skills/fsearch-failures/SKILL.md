@@ -124,12 +124,15 @@ before believing any "starts at".
   preparation / pre / post steps, cloud sessions (PXE, NICX), MNG, and minireg/DoA/SF
   (those only from 2026-07-02 onward).
 - **Does not record**: CI build / packaging failures. Anything dying in setup/init before
-  a case starts may never reach it.
+  a case starts may never reach it. **Nor any coverage data** — an empty fsearch result says
+  nothing about whether a feature ran. Functional coverage lives in a separate SQLite DB;
+  see skill `regression-report-mail`.
 - Fsearch2 renamed `UTOPX_TAG` → `TEST_TAG` and **removed the `FATAL` column**.
   TMV is native now — the old `--tmv` flag is gone.
 
 ## Related
 
+- Functional coverage counters (a different DB entirely): skill `regression-report-mail`.
 - One specific red build → its raw log: skill `ci-forensics`.
 - Reproducing the failure locally: skill `regression-repro`.
 - Filing it: skill `utopx-regression-ticket`.

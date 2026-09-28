@@ -117,12 +117,24 @@ of a missed update, not an opinion.
 - **Three independent status axes — do not mix them.**
   Progress `✅ 🟡 🔵 ⬜` (`⬜` = not applicable, which is *not* the same as "missed").
   Risk and disproof `⚠ 🔴 ❌`. Importance `★` x1–7.
+- **`🔴` marks the one thing currently blocking you, and at most one row may carry it.**
+  It belongs to the risk axis, not progress: the question it answers is "where does this stop
+  today", which in a long task is the single thing a reader wants first. Reserve it — a table
+  with three red rows tells you nothing. Use a visually loud marker here and not an arrow or
+  a bullet: `⬅` and friends render in the body text colour and vanish in a wall of rows,
+  which is exactly when it matters. When the blocker moves, the old row changes to whatever
+  it actually became (`✅` fixed, `⚠` reassigned to another team, `⬜` overtaken) — never
+  leave two.
 - **Append, never delete.** `~~strikethrough~~` means void-but-retained and is strictly
   distinct from deletion. **Results are not greyed out** — a merged change or a passing run
   is an outcome, not a retraction. When voiding something, always write three things: which
   part still holds, why it went wrong, and the criterion to use next time.
-- **Numbering only grows.** Insert as `1.5`, `4.16`, `7bis`, `7ter` so that an old
+- **Numbering only grows.** Insert as `1.5`, `4.16`, `7a`, `7b` so that an old
   cross-reference like `见 §4.19` never silently points somewhere else.
+  **Use digits and plain letters — never latin ordinals (`bis`, `ter`, `quater`).** They read
+  as noise to anyone who has not met the convention, and the first question every reader asks
+  is "what does bis mean". `§7a` needs no explanation. The lint still accepts the latin forms
+  so existing documents keep validating; do not write new ones.
 - **A `§` reference into another document must name that document.** `见 §12.10` reads as
   "section 12.10 of this file"; write `` 见 `handoff.md` §12.10 `` instead. The lint flags
   bare `§` references that match no local section — that check found nine of them in the

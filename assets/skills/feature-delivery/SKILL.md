@@ -143,6 +143,45 @@ is the report you owe the owner anyway, already written.
 The same discipline applies to the FW side, where it is absolute: never modify `golan_fw`
 carries at all — keep them byte-identical to the gerrit patchset and report defects instead.
 
+### The base is frozen too — never advance it on your own initiative
+
+The same reasoning that stops you editing their commit also stops you moving the ground under
+it. **Do not sync a test worktree to the latest master unless the task owner asks for it.**
+
+A test worktree is a measuring instrument. Everything in it other than the change under test is
+a control that has to stay fixed, and `origin/master` is not a safe place to stand: it carries
+everybody's newest, least-exercised code. Pull in 44 commits of other people's work and any new
+failure has two possible authors, with no cheap way to tell them apart — and if one of those
+commits is broken, you burn lab hours on somebody else's bug while the feature you were sent to
+test sits untested.
+
+Sync only when there is a reason and the owner agrees: the change no longer applies, a fix you
+actually need has landed, or you were told to. When you do, say what moved and how far.
+
+Freezing the base costs nothing. The change under test was written against some base; testing it
+there is the point. "The base is old" is an observation, not a defect.
+
+- **Before resetting anything, save the stack**: `git branch -f <topic>-carries-<date> HEAD`.
+  Carries are cheap to keep and expensive to reconstruct.
+- **A carry is not obsolete until the owner uploads a patchset that removes its need.** Check
+  the patchset number before assuming anything was fixed upstream — if the newest patchset is
+  the one you already had, every carry still applies and goes straight back on.
+- After any base change, `git submodule update --init --recursive`. Pins move with the base,
+  and a mixed tree fails in ways that look like a broken baseline.
+
+⚠ **In a worktree, `FETCH_HEAD` is not shared.** Worktrees share objects and branches, but each
+has its own git dir, so `<main>/.git/FETCH_HEAD` and
+`<main>/.git/worktrees/<wt>/FETCH_HEAD` are different files. Fetching a change in the main
+clone and then `cherry-pick FETCH_HEAD` inside the worktree silently picks whatever that
+worktree fetched last — which can be master itself. Fetch in the worktree you are about to
+cherry-pick in, and verify before picking:
+
+```bash
+git -C $WT fetch origin refs/changes/<nn>/<change>/<ps>
+git -C $WT log -1 --format='%h %s' FETCH_HEAD    # must be the change's subject
+git -C $WT cherry-pick FETCH_HEAD
+```
+
 ## Phase 4 — Build, lab environment, and the run verdict
 
 Workspace — feature work uses the **primary** clones (`golan_fw`, `utopx`); `*2` is the repro

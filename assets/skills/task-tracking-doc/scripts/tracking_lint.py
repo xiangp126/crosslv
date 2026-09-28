@@ -28,16 +28,22 @@ def is_legend(line):
     return sum(1 for m in ALL_MARKS if m in line) >= 3
 DATE_RE = re.compile(r'(20\d{2})-(\d{2})-(\d{2})')
 LASTUPD_RE = re.compile(r'Last updated[:：]\s*\*{0,2}\s*(20\d{2}-\d{2}-\d{2})')
-# "见 §4.19" / "见 §16.4c" / "详见 §7bis"
-XREF_RE = re.compile(r'§\s*([0-9]+(?:\.[0-9A-Za-z]+)*(?:bis|ter|quater|quinquies|sexies|septies|octies)?)')
+# "见 §4.19" / "见 §16.4c" / "详见 §7a".  The latin forms (7bis/7ter) are LEGACY: still
+# accepted so older documents keep validating, but SKILL.md tells you to write 7a/7b instead.
+# ORDER MATTERS: the latin words must come BEFORE the bare [a-z] in the alternation.  With
+# [a-z] first, "§7ter" matched as "7t" -- [a-z] eats the "t", the trailing optional group
+# then matches empty and the whole regex succeeds, so nothing ever backtracks.  That reported
+# three real sections as broken cross-references on 2026-09-22.
+XREF_RE = re.compile(r'§\s*([0-9]+(?:bis|ter|quater|quinquies|sexies|septies|octies|[a-z])?(?:\.[0-9A-Za-z]+)*)')
 HEADING_RE = re.compile(r'^(#{1,6})\s+(.*)$')
-# leading number of a heading: "## 4.16 ..." / "#### 1.6.3 ..." / "## 7bis ..."
-# A real section number is 1-2 digits, optionally multi-level or a latin ordinal.
+# leading number of a heading: "## 4.16 ..." / "#### 1.6.3 ..." / "## 7a ..."
+# A real section number is 1-2 digits, optionally multi-level or letter-suffixed.
 # 3+ bare digits are dates (0827) or machine numbers (171), not section numbers.
 HEADNUM_RE = re.compile(
     r'^\s*(?:[★⚠✅❌🔴🟡🔵⬜️\s]*)'
     r'([0-9]{1,2}(?:\.[0-9A-Za-z]+)+'          # 1.5 / 4.16 / 1.6.3
-    r'|[0-9]{1,2}(?:bis|ter|quater|quinquies|sexies|septies|octies)'  # 7bis
+    r'|[0-9]{1,2}(?:bis|ter|quater|quinquies|sexies|septies|octies)'  # 7bis (legacy, do not write)
+    r'|[0-9]{1,2}[a-z](?:\.[0-9A-Za-z]+)*\.?'  # 7a / 7a.3 — the form to use
     r'|[0-9]{1,2}\.'                            # "3." with the dot
     r')')
 

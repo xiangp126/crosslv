@@ -342,6 +342,74 @@ traffic failed".
 - Per-key levels live in the `<keys>` block of the xml conf; `conf_keys.xml` lists all 69 keys.
   **List them before guessing** which one prints what you want.
 
+## 7e. Reading the firmware's own logs with `fwtrace`
+
+`FW_LOG(LOG_MOD_<CLASS>, LOG_<LEVEL>, ...)` calls are **not** compiled out of a release image —
+`include/debug.h:169` expands them to a runtime `fprintf_trc<N>()`. `fwtrace` pulls them off a
+running card, so "which of these N branches did the firmware take" costs one capture instead of
+a print + build + burn cycle (~30 min). Verified on CX8 / `l-fwreg-217`, 2026-09-23.
+
+Procedure (from [FW Trace Overview](https://nvidia.atlassian.net/wiki/spaces/FW/pages/2830113267)):
+
+```bash
+# 0) strings db from the SAME build as the image on the card, staged on LOCAL disk
+scp <wt>/gilboa_fw_strings.db <box>:/tmp/
+
+# 1) open the back door — THE FW TRACER IS OFF BY DEFAULT
+sudo mcra /dev/mst/mt4131_pciconf0 0x3ffffffc 0x80000000
+
+# 2) stream, from a writable local directory
+cd /tmp && sudo fwtrace -d /dev/mst/mt4131_pciconf0 -s -i all \
+     --tracer_mode FIFO -f /tmp/gilboa_fw_strings.db \
+     --level 0 --mask 0x2000
+```
+
+Output looks like this — irisc id, then the decoded string with its values:
+
+```
+034938233585     I1              static_config = 0x0
+034938233928     I1              toc.init = 0x0 toc.flr_state = 0x0
+034938…          I5              init_teardown_hca_gvmix, gvmi = 0x0002 hca_gvmix_state = 9, page_type=0
+```
+
+### The five things that each cost one failed attempt
+
+- **The tracer is disabled by default.** Without `mcra <dev> 0x3ffffffc 0x80000000` you get a
+  perfectly healthy-looking stream carrying nothing but `Stamping the FW log buffer` heartbeats.
+  *"On NICs, the FW tracer is disabled by default and must be explicitly enabled."*
+- **Use `-i all`. Do not guess the irisc from the source directory.** Code under
+  `src/iron/core_iron_common/` does **not** imply `-i iron`: the events came out of `I1`, `I5`,
+  `I8`. Guessing `-i iron` returns an empty capture that looks like "the log never fired".
+- **`--mask` takes a bitmap, `--level` takes a number.** `-m ICM_ACCESS` and `-l DEBUG` are
+  rejected (`invalid literal for int() with base 10: 'DEBUG'`). Module bits are in
+  `include/debug.h` — `LOG_MOD_ICM_ACCESS = 1<<13 = 0x2000`; levels are
+  `LOG_DEBUG=0, LOG_INFO=1, LOG_WARNING=2, LOG_ERROR=3`. A narrow mask also keeps the reorder
+  buffer from overflowing (`Reorder buffer holds too much events (MAX=256): 257`).
+- **`cd` to local disk first.** FIFO mode writes `./fifodump` in the *current directory*; from
+  an ssh session that is the NFS home, and `sudo` there hits root_squash:
+  `FATAL failed to open dump file: ./fifodump ... Permission denied`.
+- **Do not let anything FW-reset the card while tracing.** A reset re-scans PCI and the capture
+  dies with `Failed to write GW CTRL ... crspace addr=0x56f40`. Reset and bind *first*, then
+  start the trace, then run the test with its reset disabled (`per_run_psf.sh --no-reset`).
+
+`--tracer_mode MEM` is what the wiki shows, but it needs an ib device
+(`Can't find ib device attached to the given mst device`) — unavailable when `mlx5_core` is
+blacklisted and the functions are bound to udriver. **FIFO** works there.
+
+### Worked example: using it to settle a branch question
+
+`read_gvmi_initializing_status()` (`iron_init_seg_handler.c:217`) has eight early returns, any
+of which sets the init-seg `initializing` bit. Two `FW_LOG` lines already in that function
+eliminated most of them in a single capture:
+
+```
+static_config = 0x0                    -> not condition 1
+toc.init = 0x0 toc.flr_state = 0x0     -> not conditions 3 or 5
+```
+
+which left `is_gps_init_in_progress()` as the only candidate that could still be true. No FW
+change, no reburn.
+
 ## 8. Failure signatures → cause
 
 | Signature | Cause / fix |

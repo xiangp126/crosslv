@@ -192,6 +192,52 @@ seconds-to-expiry.
 - **Release locks you are no longer using** — holding several boxes "just in case" blocks other
   teams.
 
+## Extending is the default — do not ask
+
+**When a lease is running out, extend it. Do not stop to ask.** The only thing that overrides
+this is an explicit instruction to release that machine.
+
+Extending is cheap and reversible. Losing a box is neither: `mars_reg` grabs it within minutes
+and **re-provisions it**, so the burned FW, the installed udriver and the driver bindings are all
+gone and cost ~15 min to rebuild — plus however long the next free window is. Interrupting the
+user to approve a renewal trades a certain cost for no benefit.
+
+### When to extend — the timing matters more than you would expect
+
+`jmake --reg-extend` sets the end time to **NOW+3h**. It *replaces*, it does not add. So:
+
+| TIME LEFT | do |
+|---|---|
+| **> 3h** | **do NOT extend** — it would SHORTEN the lease |
+| < 3h | extend; this is the only window where it is a net gain |
+| < 1h | extend now, and verify the read-back before starting anything long |
+
+Read TIME LEFT from `jmake --reg-mine` — that column is unambiguous, unlike raw
+`lock_time_out` timestamps. Check the clock with `date` rather than doing it in your head;
+mental arithmetic on lease deadlines has produced a 23-minute error before.
+
+### Two renewal paths, different semantics — do not mix them up
+
+| path | effect | shows in `--reg-mine` |
+|---|---|---|
+| `jmake --reg-extend` | end time := **NOW+3h** (can shorten) | yes |
+| `noga_manage.py -l -t host -n $HOST -L 8` | lease := **NOW+8h** | **no** — sqme filters on `HCA_FW_ALLOCATION_POOL_HOST` |
+
+For a box you took with `jmake --reg-malloc`, stay on `--reg-extend`: it is the same
+bookkeeping you allocated through. Whether a direct Noga re-lock on a malloc-pool host is
+equivalent or creates a second, differently-tracked hold has **not been verified** — do not
+assume it, and do not reach for the 8h path just because the number is bigger.
+
+### This is reactive, not scheduled
+
+Nothing needs to watch the clock. TIME LEFT goes past your eyes on its own — every
+`jmake --reg-mine`, every allocation banner. **The whole rule is: when you notice it is
+running low, extend it instead of mentioning it.** Do not arm a daemon, do not compute when
+to come back, do not report a number and wait.
+
+(An unattended multi-hour hold with nobody at the keyboard is a different problem — that is
+the watchdog section below.)
+
 ## "Don't release it" means you must RENEW it
 
 A NOGA lease is not a hold — it is a countdown. When it lapses, `mars_reg` takes the box

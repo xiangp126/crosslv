@@ -22,6 +22,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -759,6 +760,20 @@ def agent_colour(agent, c):
     return c["MAGENTA"] if agent == "claude" else c["BLUE"]
 
 
+def _dwidth(text):
+    """Columns the text occupies on screen, not characters it is made of.
+
+    A CJK name such as "PSF 全局 ICM 管理功能" is 15 characters but 21 columns
+    wide, so padding it with len() leaves every later column short by one per
+    wide character and that row alone drifts right.
+    """
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+
+
+def _dljust(text, width):
+    return text + " " * max(0, width - _dwidth(text))
+
+
 def _cell_colour(idx, value, rec, c):
     # A record only --all keeps is greyed out whole: it describes a process that
     # has already exited, and none of the per-column meanings apply to it.
@@ -827,17 +842,17 @@ def cmd_list(args):
     ]
     # Widths come from the plain text; colour is wrapped on afterwards, or the
     # escape codes would be counted as visible characters and break the columns.
-    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+    widths = [max(_dwidth(h), *(_dwidth(r[i]) for r in rows)) for i, h in enumerate(headers)]
     # The same rule closes the table below, so the summary reads as something
     # outside it rather than as one more record
     rule = c["GREY"] + "  ".join("-" * w for w in widths) + c["RESET"]
-    print(c["BOLD"] + "  ".join(h.ljust(w) for h, w in zip(headers, widths)) + c["RESET"])
+    print(c["BOLD"] + "  ".join(_dljust(h, w) for h, w in zip(headers, widths)) + c["RESET"])
     print(rule)
     for row, rec in zip(rows, records):
         cells = []
         for i, (cell, w) in enumerate(zip(row, widths)):
             colour = _cell_colour(i, cell, rec, c)
-            padded = cell.ljust(w)
+            padded = _dljust(cell, w)
             # No reset without a colour to reset: NAME is left deliberately
             # plain, and a bare reset there is just noise in the output.
             cells.append(colour + padded + c["RESET"] if colour else padded)

@@ -2,8 +2,12 @@
 name: ci-forensics
 description: >-
   Trace a red CI job or bare verdict to its original MARS failure log, including Jenkins build
-  discovery, session archives, bot mail, and environment-versus-defect attribution. Use when a CI
-  build is red, a report only says "Failed: N", or the user asks which case failed and why.
+  discovery, session archives, bot mail, and environment-versus-defect attribution. Also covers
+  counting occurrences inside a session archive — why the two op-count greps disagree by orders of
+  magnitude, why one failure yields six grep hits, identifying a function by TYPE, and checking
+  the denominator before believing a zero. Use when
+  a CI build is red, a report only says "Failed: N", the user asks which case failed and why, or
+  you need to count how many times something happened in a regression log.
 ---
 
 # Test & CI failure forensics
@@ -106,6 +110,45 @@ Each `log.txt` holds the raw `UFATAL` / `Field mismatch: expected=X Actual=Y` /
 
 Where to get a session_id if you don't have one: `--session_id N` in the upstream log,
 `Amonitor.php?session_id=N`, or the table in the email report.
+
+### Counting things in that log — four ways to get it wrong
+
+Once you are grepping the archive to answer "how often did X happen", these bite:
+
+1. **`LOG_OP : <OP>` and `Executing operation <OP>` are different counts — sometimes by
+   three orders of magnitude.** Measured on one BF-4 session:
+
+   | op | `LOG_OP :` | `Executing operation` |
+   |---|---|---|
+   | `QUERY_EMULATED_FUNCTIONS_INFO` | 5 | 5 |
+   | `QUERY_EMULATED_RESOURCES_INFO` | 47 | 15 |
+   | `QUERY_HCA_CAP` | 14045 | 31 |
+   | `MANAGE_PAGES` | 7506 | 20 |
+
+   `LOG_OP` comes from one common sink (`UtopxOp.cpp:707`) and catches everything;
+   `Executing operation` is printed by several executers (`CmdExecuter.cpp`,
+   `ParallelDBExecuter.cpp`, `UtopxOpWrapper.cpp`) and only on some paths. Which one equals
+   "how many really ran" is **not settled** — so count both, put both in the report, and say
+   which one you mean. Never quote a single number as "the" op count.
+2. **One failure produces many lines.** A single command failure shows up as the CMDIF
+   syndrome summary, the `*_out` field dump, the `Status for command:` block, the
+   `ContextChecker` FATAL and the `UtopxFatalHandler` re-report. Measured: syndrome `0xac5816`
+   gave **6** raw grep hits for **1** event; `0x3590f5` gave 8 raw hits / 4 FATAL lines.
+   The FATAL lines come in pairs (checker + handler). So `grep -c <signature>` overcounts —
+   filter to `FATAL.*<signature>` and expect two lines per event.
+3. **Identify a function by `TYPE=`, not by GVMI or BDF.** The log prints
+   `VHCA=0x..:GVMI=0x..:TYPE=ECPF|PF|VF`. On Socket-Direct setups the *same* GVMI carries both
+   an ECPF and a PF VHCA, and the "function N of the BDF" convention differs between setups —
+   so a GVMI or a trailing `.2` proves nothing on its own.
+4. **Establish the denominator before reading a zero.** Before concluding "that capability bit
+   is 0", count how many times the block containing it was dumped at all. A field that was never
+   printed and a field printed as 0 look identical to grep. One BF-3 session showed 35 object
+   creations with *zero* capability dumps — using it as a control would have inverted the
+   conclusion.
+
+`-B<N>` / `-A<N>` context grepping is not attribution: the surrounding lines belong to other
+threads. To attribute an event, match the thread id (`(EXE:0:16:45)`) and timestamp, or walk
+back to the nearest line that carries the same thread id.
 
 ## Phase 3 — the bot mails, which carry things the console does not
 
