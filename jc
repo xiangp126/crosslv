@@ -51,6 +51,7 @@ fCursorAction=
 fClaudeAction=
 fClaudeDesktopAction=
 fClaudeLinkMcpJson=
+fGitFilters=
 fCodexAction=
 # VNC server
 fVncAbbrePort=9
@@ -168,6 +169,8 @@ Common Options:
     -d, --debug                     Enable debug mode
     --check-tls                     Check TLS connection
     --link-clang-format             Link clang-format to current path
+    --git-filters                   Install this repo's git filter drivers
+                                    (secrets, codexcfg) into .git/config
     --auto-remove                   Remove unused packages
     --update                        Update all packages
     --upgrade                       Upgrade all packages
@@ -327,7 +330,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-1080,rtsp-stream:,\
-          rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,claude,claude-remove,\
+          rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,git-filters,claude,claude-remove,\
           claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
           codex,codex-remove,codex-restore,\
           gemini,gemini-remove,cursor-backup,cursor-restore,\
@@ -1151,6 +1154,10 @@ while true; do
         --swap)
             fSwapReq=true
             shift 2
+            ;;
+        --git-filters)
+            fGitFilters=1
+            shift
             ;;
         --link-clang-format)
             # $1 is '--link-clang-format'.
@@ -7218,8 +7225,75 @@ launchSingbox() {
     done
 }
 
+# Install the filter drivers that .gitattributes refers to.
+#
+# .gitattributes is tracked; the drivers it names are not -- they live in
+# .git/config, which git never clones. A fresh clone therefore carries the
+# attributes without the drivers, and that combination fails in two very
+# different ways:
+#
+#   filter=secrets   git does NOT complain about a driver it cannot find. It
+#                    passes the content straight through, so editing one of the
+#                    sing-box configs and committing writes the REAL keys into
+#                    the history of a public GitHub remote. `required = true`
+#                    cannot save you: it is a property of the driver nobody
+#                    looked up. Verified by experiment, not assumed.
+#   filter=codexcfg  checkout dies with "smudge filter codexcfg failed". On
+#                    2026-09-28 that happened mid-rebase: it deleted four files
+#                    and left ~/.codex/config.toml a dangling symlink.
+#
+# The loud one is the harmless one. Run this right after cloning, before
+# touching anything under assets/xray, assets/wireguard or assets/codex.
+setupGitFilters() {
+    echo -e "${COLOR}Installing git filter drivers${RESET}"
+    local repoRoot
+    repoRoot=$(git rev-parse --show-toplevel 2>/dev/null) || {
+        echo -e "${RED}Error: not inside a git repository${RESET}"
+        return 1
+    }
+
+    # smudge for codexcfg is the identity: clean strips Codex's local
+    # [projects."<path>"] trust entries on the way in, and nothing needs
+    # rewriting on the way out. Leaving it undefined while required=true is
+    # exactly what broke the rebase -- git calls smudge, finds no command, and
+    # required turns "nothing to do" into a fatal error.
+    git -C "$repoRoot" config filter.secrets.clean    './assets/sing-box/clean.sh %f'
+    git -C "$repoRoot" config filter.secrets.smudge   './assets/sing-box/smudge.sh %f'
+    git -C "$repoRoot" config filter.secrets.required  true
+    git -C "$repoRoot" config filter.codexcfg.clean   'python3 assets/codex/strip-projects.py'
+    git -C "$repoRoot" config filter.codexcfg.smudge   cat
+    git -C "$repoRoot" config filter.codexcfg.required true
+
+    local name missing=0
+    for name in secrets codexcfg; do
+        local clean smudge
+        clean=$(git -C "$repoRoot" config --get "filter.$name.clean")
+        smudge=$(git -C "$repoRoot" config --get "filter.$name.smudge")
+        if [ -n "$clean" ] && [ -n "$smudge" ]; then
+            echo -e "  ${GREEN}✔${RESET} filter.$name ${GREY}(clean + smudge + required)${RESET}"
+        else
+            echo -e "  ${RED}✗${RESET} filter.$name incomplete"
+            missing=$((missing + 1))
+        fi
+    done
+
+    # Both scripts must be executable or the driver fails at the worst moment:
+    # mid-commit for clean, mid-checkout for smudge.
+    local script
+    for script in assets/sing-box/clean.sh assets/sing-box/smudge.sh assets/codex/strip-projects.py; do
+        if [ ! -x "$repoRoot/$script" ]; then
+            echo -e "  ${LIGHTYELLOW}!${RESET} $script is not executable"
+            missing=$((missing + 1))
+        fi
+    done
+
+    [ "$missing" -gt 0 ] && return 1
+    return 0
+}
+
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
+    [ -n "$fGitFilters" ]         && { setupGitFilters; exit $?; }
     [ -n "$fClaudeLinkMcpJson" ]   && { linkClaudeMcpJson; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     case "$fCursorAction" in

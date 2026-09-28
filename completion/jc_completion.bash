@@ -87,7 +87,7 @@ _jc_complete() {
 
     # Define command options
     opts="-h -n -d -f"
-    long_opts="--help --no-tools --debug --clangd --link-clang-format --nvm --wireshark \
+    long_opts="--help --no-tools --debug --clangd --git-filters --link-clang-format --nvm --wireshark \
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
