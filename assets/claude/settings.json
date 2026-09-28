@@ -1,7 +1,8 @@
 {
   "env": {
     "USE_BUILTIN_RIPGREP": "0",
-    "DISABLE_AUTOUPDATER": "1"
+    "DISABLE_AUTOUPDATER": "1",
+    "NODE_EXTRA_CA_CERTS": "/labhome/pexiang/.orion_ca.pem"
   },
   "permissions": {
     "allow": [
