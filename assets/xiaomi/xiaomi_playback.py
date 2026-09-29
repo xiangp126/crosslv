@@ -992,7 +992,7 @@ async function selectDay(d, targetSec, play){
   if(segs.length){
     if(targetSec === 'latest'){              // first load: locate to the end of the latest segment
       const i = segs.length - 1;
-      loadSegment(i, Math.max(0, segs[i].s1 - segs[i].s0 - 2), !!play);
+      loadSegment(i, Math.max(0, segs[i].s1 - segs[i].s0 - (segs[i].live ? PB_LIVE_LAG : 2)), !!play);   // an in-progress clip's reported end is "now"; back off to the written edge instead of seeking past it
     } else if(targetSec != null && isFinite(targetSec)){
       const b = bestSegForSec(targetSec);    // align to the closest point to the target moment
       loadSegment(b.idx, b.offset, !!play);
@@ -1053,17 +1053,19 @@ function loadSegment(idx, offsetSec, autoplay){
   if(idx < 0 || idx >= segs.length) return;
   if(gridMode && !livePreload) setGrid(false);   // any playback action exits the live split (but the startup background preload must leave the grid intact)
   curIdx = idx; const s = segs[idx];
+  stageMsg('');
   $('liveTag').style.display = s.live ? 'block' : 'none';
   const gen = ++_lsGen, target = Math.max(0, offsetSec);
   const wantPlay = autoplay && !liveMode && !gridMode && !pbGrid;   // under live/split, do not let the background hidden single-stream recording autoplay
   let tries = 0, done = false;
-  const seekNow = () => { if(vid.readyState >= 1){ try{ vid.currentTime = target; }catch(e){} } };   // a seek only takes effect once metadata is parsed
+  const tgt = () => (isFinite(vid.duration) && vid.duration > 0) ? Math.min(target, vid.duration - 0.5) : target;   // an in-progress clip only holds what has been written — clamp to it instead of re-seeking past the end for the whole ~60s cap
+  const seekNow = () => { if(vid.readyState >= 1){ try{ vid.currentTime = tgt(); }catch(e){} } };   // a seek only takes effect once metadata is parsed
   const onMeta = () => { vid.removeEventListener('loadedmetadata', onMeta); if(gen === _lsGen) seekNow(); };   // metadata arrived → seek at once (don't wait for the next 600ms tick); self-removes so a superseded load can't re-seek the new file
   const finish = () => { if(done) return; done = true; if(wantPlay) vid.play().catch(()=>{}); updateHead(); };
   // POLL-RETRY until the seek actually LANDS, then play. A cold fMP4 (moov duration=0) CLAMPS the first seek to the clip END until the file warms — re-seek every 600ms until it sticks (same as the split path gridSeekAll; single-view was MISSING this, so "picked 21:43 stuck at 21:50" = seek clamped to the segment end, never corrected). Repeated paused re-seeks + preload warm the fMP4 so it lands; play only after it lands.
   const trySeek = () => {
     if(done || gen !== _lsGen || curIdx !== idx) return;                                        // superseded by a newer load
-    if(vid.readyState >= 1 && Math.abs(vid.currentTime - target) <= 1.5){ finish(); return; }   // LANDED on target
+    if(vid.readyState >= 1 && Math.abs(vid.currentTime - tgt()) <= 1.5){ finish(); return; }    // LANDED on target
     if(tries++ >= 100){ seekNow(); finish(); return; }                                          // ~60s upper bound; release (play from wherever) rather than hang on a broken clip
     seekNow();
     setTimeout(trySeek, 600);
@@ -1192,10 +1194,20 @@ function updateHead(){
 vid.addEventListener('timeupdate', updateHead);
 
 // ---- When one segment finishes, automatically continue to the next (continuous playback) ----
+function stageMsg(text){ if(!pbGrid && !gridMode) showCellMsg($('vid').parentElement, text); }   // single-view placeholder (same style as a split cell's)
+vid.addEventListener('playing', () => stageMsg(''));
 vid.addEventListener('ended', () => {
   if(gridMode || pbGrid) return;   // in split mode, do not continue after the background single-stream recording ends (otherwise it would exit the split via loadSegment)
   if(curIdx >= 0 && curIdx + 1 < segs.length){
     loadSegment(curIdx + 1, 0, true);
+    return;
+  }
+  // LIVE EDGE — the last clip is still RECORDING and we have played everything written so far. A media element only sees the bytes that existed when it opened the URL, so re-open the same growing file to creep forward with the camera; say why it paused meanwhile.
+  const s = curIdx >= 0 ? segs[curIdx] : null;
+  if(s && s.live){
+    const i = curIdx, at = Math.max(0, vid.currentTime - 0.5);
+    stageMsg('● 录制中 · 已是最新画面');
+    setTimeout(() => { if(curIdx === i && !liveMode && !gridMode && !pbGrid && segs[i] && segs[i].live) loadSegment(i, at, true); }, PB_LIVE_RETRY);
   }
 });
 
@@ -1246,6 +1258,7 @@ function ensureCellCams(){   // keep the existing per-cell cameras, pad/truncate
 }
 function applyMode(time, n){   // time: live/play; n: split count 1/2/4/6
   n = n || 1;
+  showCellMsg($('vid').parentElement, '');   // drop any single-view placeholder before switching — it lives on .stage, which the split grid shares
   const m = (n > 1) ? (time === 'live' ? 'livegrid' : 'pbgrid') : (time === 'live' ? 'live' : 'play');
   const sameGrid = (m === currentMode()) && n > 1;   // same kind of grid but split count/cameras changed → needs rebuild (setMode's same-mode dedup would skip it)
   splitN = n; ensureCellCams();
@@ -1733,7 +1746,14 @@ async function pbFetchDay(date){      // concurrently pull each cell's segments 
 }
 async function pbRefetchSegs(){       // periodic rescan while in playback split: picks up a freshly-FINALIZED clip (live → completed) so cells PARKED on an in-progress recording auto-resume.
   if(!pbGrid) return;
-  if(!pbCams().some(c => { const v = pbVids[c.key]; return v && (v._gapHold || !v._seg); })) return;   // ONLY rescan when a cell is actually waiting on a clip to finalize. Otherwise skip: each rescan = 5 camera-dir scans (2 over remote CIFS) on the weak router, which competes with the 4K /video streaming and stalls cold-loads (playback "stuck loading"). No one waiting → nothing to pick up → don't hammer the server.
+  // ONLY rescan when a cell is actually waiting on a clip to finalize. Otherwise skip: each rescan = 5 camera-dir scans (2 over remote CIFS) on the weak router, which competes with the 4K /video streaming and stalls cold-loads (playback "stuck loading"). No one waiting → nothing to pick up → don't hammer the server.
+  // A cell sitting at its clip's TAIL with no COMPLETED next clip counts as waiting too — it is blocked on the currently-RECORDING clip. Without this the REFERENCE cell froze forever at the last finalized clip's end (it never sets _gapHold: the maintenance loop skips the master), so the rescan never ran and the clip finalizing behind it was never picked up. Restricted to the CURRENT day, where a clip can still finalize — on a past day the tail is terminal and must not trigger an endless rescan.
+  const nowRel = dayStart ? (Date.now() - dayStart) / 1000 : -1, today = nowRel >= 0 && nowRel <= DAY;
+  if(!pbCams().some(c => {
+    const v = pbVids[c.key]; if(!v) return false;
+    if(v._gapHold || !v._seg) return true;
+    return today && !v._settling && pbNextDone(c.key, v._idx) < 0 && (v.ended || v.currentTime >= (v._seg.s1 - v._seg.s0) - 5);
+  })) return;
   const gen = pbGridGen;
   await pbFetchDay(dateStr);
   if(gen !== pbGridGen || !pbGrid) return;
@@ -1744,28 +1764,33 @@ async function pbRefetchSegs(){       // periodic rescan while in playback split
 
 function pbSeek(v, t){ v._progT = Date.now(); try{ v.currentTime = Math.max(0, t); }catch(_){} }   // programmatic positioning: record the timestamp; distinguish user drags from seeking via a time window (one seek may fire seeking multiple times)
 
-function pbBest(key, sec){            // the COMPLETED segment of this cell closest to sec (seconds of the day). Live (in-progress) clips are skipped: their fMP4 has no finalized moov/index → can't seek to a target moment → endless "Loading…". They become seekable once the camera finalizes the clip (the periodic refetch picks it up).
+// LIVE (in-progress) clips ARE playable. The camera writes its `sidx` INCREMENTALLY while recording — measured on a real in-progress clip: 6 indexed fragments = 36.36s, indexed bytes + header 6,422,733 vs file size 6,422,789 (56 B apart), and ffprobe's duration grew 103.03s → 109.09s in 6s of wall clock. A deep seek into it (95s of a 103s clip) decodes a frame in 0.8s, and WebKit reports duration + seekable=[0,duration] for it. The earlier "in-progress fMP4 can't be seeked, so skip it" rule was verified against an ffmpeg `empty_moov` mock that had NO sidx at all — that mock, not the camera, was unseekable.
+// What IS true: only data already written is reachable, and the server reports a live clip's end as `now`. So stay PB_LIVE_LAG behind that reported edge — the last few seconds may not be flushed/indexed yet.
+const PB_LIVE_LAG = 8;
+function pbEdge(s){ return s.live ? Math.max(s.s0, s.s1 - PB_LIVE_LAG) : s.s1; }   // last REACHABLE moment of a segment
+function pbBest(key, sec){            // the segment of this cell closest to sec (seconds of the day), in-progress clips included (clamped to their written edge)
   const arr = pbSegs[key] || [];
-  for(let i=0;i<arr.length;i++) if(!arr[i].live && sec>=arr[i].s0 && sec<arr[i].s1) return {idx:i, offset:sec-arr[i].s0};
+  for(let i=0;i<arr.length;i++){ const s=arr[i], e=pbEdge(s); if(sec>=s.s0 && sec<e) return {idx:i, offset:sec-s.s0}; }
   let best=-1, bd=Infinity, bo=0;
-  for(let i=0;i<arr.length;i++){ const s=arr[i]; if(s.live) continue; let d,o;
-    if(sec<s.s0){d=s.s0-sec;o=0;} else {d=sec-s.s1;o=Math.max(0,s.s1-s.s0-1);}
+  for(let i=0;i<arr.length;i++){ const s=arr[i], e=pbEdge(s); let d,o;
+    if(e<=s.s0) continue;                                          // a live clip with nothing reachable yet (just rolled over)
+    if(sec<s.s0){d=s.s0-sec;o=0;} else {d=sec-e;o=Math.max(0,e-s.s0-1);}
     if(d<bd){bd=d;best=i;bo=o;} }
   return best<0 ? null : {idx:best, offset:bo};
 }
-function pbCovers(key, sec){          // does this cell have a COMPLETED (seekable) recording covering `sec`? (live/in-progress clips don't count — see pbBest)
+function pbCovers(key, sec){          // does this cell have footage REACHABLE at `sec`? (an in-progress clip counts up to its written edge)
   const arr = pbSegs[key] || [];
-  for(const s of arr) if(!s.live && sec >= s.s0 && sec < s.s1) return true;
+  for(const s of arr) if(sec >= s.s0 && sec < pbEdge(s)) return true;
   return false;
 }
-function pbLiveCovers(key, sec){      // is `sec` inside this cell's currently-RECORDING clip? (used only to label the hold as "录制中" vs a plain gap)
+function pbLiveCovers(key, sec){      // is `sec` inside this cell's currently-RECORDING clip? (labels the hold as "录制中" vs a plain gap, and marks the not-yet-written tail)
   const arr = pbSegs[key] || [];
   for(const s of arr) if(s.live && sec >= s.s0 && sec < s.s1) return true;
   return false;
 }
-function pbNextDone(key, i){          // index of the next COMPLETED clip after i (skips live/in-progress clips), or -1
+function pbNextDone(key, i){          // index of the next clip with something reachable after i, or -1
   const arr = pbSegs[key] || [];
-  for(let j=(i|0)+1;j<arr.length;j++) if(!arr[j].live) return j;
+  for(let j=(i|0)+1;j<arr.length;j++) if(pbEdge(arr[j]) > arr[j].s0) return j;
   return -1;
 }
 function pbHoldMsg(key, sec){ return pbLiveCovers(key, sec) ? '录制中…' : 'No recording'; }
@@ -1779,13 +1804,14 @@ function pbLoadCell(key, sec, autoplay){
   v._idx = b.idx; v._seg = arr[b.idx]; v._settling = true;   // being positioned → watchdog/maintenance leave it alone until it lands
   const seg = arr[b.idx];
   let tries = 0, done = false;
-  const seekNow = () => { if(v.readyState >= 1) pbSeek(v, b.offset); };
+  const tgt = () => (isFinite(v.duration) && v.duration > 0) ? Math.min(b.offset, v.duration - 0.5) : b.offset;   // clamp to what an in-progress clip actually holds (see gridSeekAll)
+  const seekNow = () => { if(v.readyState >= 1) pbSeek(v, tgt()); };
   const onMeta = () => { v.removeEventListener('loadedmetadata', onMeta); seekNow(); };
   const finish = () => { if(done) return; done = true; v._settling = false; if(autoplay) v.play().catch(()=>{}); };
   const trySeek = () => {   // POLL-RETRY until the seek LANDS (same as gridSeekAll). A cold fMP4 (moov duration=0) clamps the first seek to the clip END; the old 3-try re-assert wasn't enough for a cold 4K MASTER — which the maintenance loop can't correct (it skips the master) → the reload/reassign could stick at the clip end.
     if(done) return;
     if(pbVids[key] !== v || v._seg !== seg){ v._settling = false; done = true; return; }   // torn down / reassigned under us
-    if(v.readyState >= 1 && Math.abs(v.currentTime - b.offset) <= 1.5){ finish(); return; }  // LANDED
+    if(v.readyState >= 1 && Math.abs(v.currentTime - tgt()) <= 1.5){ finish(); return; }     // LANDED
     if(tries++ >= 100){ seekNow(); finish(); return; }                                       // ~60s upper bound; release rather than hang
     seekNow();
     setTimeout(trySeek, 600);
@@ -1809,22 +1835,24 @@ function gridSeekAll(sec, play){
     const b = pbBest(c.key, sec);
     if(!b){ v.removeAttribute('src'); v.load(); v._seg = null; v._idx = -1; v._settling = false; v._gapHold = true; showCellMsg(v.parentElement, pbHoldMsg(c.key, sec)); return; }   // no COMPLETED clip at this moment (real gap, or only an in-progress recording) → park + hold; the maintenance resumes it once a completed clip covers the master moment
     showCellMsg(v.parentElement, '');
-    const sameLoaded = (b.idx === v._idx && v.readyState >= 1);   // already on this clip and loaded → cheap in-file seek (no reload), e.g. ±10s within the same clip
+    const wantSrc = '/video?cam=' + encodeURIComponent(v._id) + '&file=' + encodeURIComponent(arr[b.idx].file);
+    const sameLoaded = (v.readyState >= 1 && !!v.src && v.src.indexOf(wantSrc) >= 0);   // already on this exact clip and loaded → cheap in-file seek (no reload), e.g. ±10s within the same clip. Compare the SOURCE URL, not the segment index: after a DAY change index 0 is a different file, so an index compare said "same" and left the previous day's video playing while _seg claimed the new day's clip.
     v._idx = b.idx; v._seg = arr[b.idx]; v._settling = true;
     pending++; let tries = 0, done = false;
     const finish = () => { if(done) return; done = true; v.removeEventListener('loadedmetadata', onMeta); v._settling = false; if(--pending <= 0) startAll(); };
-    const seekNow = () => { if(v.readyState >= 1) pbSeek(v, b.offset); };   // a seek only takes effect once metadata is parsed (duration known); before that currentTime won't move at all
+    const tgt = () => (isFinite(v.duration) && v.duration > 0) ? Math.min(b.offset, v.duration - 0.5) : b.offset;   // an IN-PROGRESS clip only holds what has been written; aiming past that would re-seek for the full ~60s cap and strand the cell in _settling. duration = exactly what is reachable → clamp to it.
+    const seekNow = () => { if(v.readyState >= 1) pbSeek(v, tgt()); };   // a seek only takes effect once metadata is parsed (duration known); before that currentTime won't move at all
     const onMeta = () => seekNow();   // metadata arrived → seek AT ONCE (don't wait for the next 600ms tick)
     // POLL-RETRY until the seek actually LANDS. A cold fMP4 (moov duration=0) ignores/clamps a seek until the file's metadata is parsed; re-seek until it sticks. The cap is GENEROUS (~36s): a 4K clip's metadata can take 10s+ to parse (4-way decode contention / slow remote cifs), and the OLD 12s cap expired EXACTLY as metadata arrived — releasing the cell at the clip START, so "picked 13:38" played from the clip head 13:36 (the reported regression). Now we wait for it to truly land before playing.
     const trySeek = () => {
       if(done) return;
       if(pbVids[c.key] !== v || v._seg !== arr[b.idx]){ finish(); return; }                   // reassigned / torn down
-      if(v.readyState >= 1 && Math.abs(v.currentTime - b.offset) <= 1.5){ finish(); return; }  // LANDED on target
+      if(v.readyState >= 1 && Math.abs(v.currentTime - tgt()) <= 1.5){ finish(); return; }     // LANDED on target
       if(tries++ >= 100){ seekNow(); finish(); return; }                                       // ~60s last resort: one final seek, then release (never hang forever on a broken clip). This is only an UPPER BOUND — a normal clip lands within a second of loadedmetadata and finishes immediately; the cap just has to exceed the worst-case metadata-parse time so a slow 4K clip isn't released at the clip head before its seek can land.
       seekNow();
       setTimeout(trySeek, 600);
     };
-    if(!sameLoaded){ v.src = '/video?cam=' + encodeURIComponent(v._id) + '&file=' + encodeURIComponent(arr[b.idx].file); v.addEventListener('loadedmetadata', onMeta); v.load(); }
+    if(!sameLoaded){ v.src = wantSrc; v.addEventListener('loadedmetadata', onMeta); v.load(); }
     trySeek();
   });
   if(pending === 0) updateHead();      // nothing playable
@@ -2097,6 +2125,7 @@ const PB_LOCK = 0.5;     // |drift| within this (s) = in sync → just match the
 const PB_NUDGE_MAX = 2.5;// |drift| within this = close it with a GENTLE playback-rate nudge (a hard seek alone can't: the master keeps advancing during the seek's landing latency)
 const PB_GAIN = 0.04;    // rate delta per second of drift — DELIBERATELY SMALL. Each camera's media clock differs from the master's by ~1%, so a non-master needs a steady ~0.99× to hold; the nudge settles there. (Old PB_GAIN=0.5/PB_CAP=1.0 slammed it down to ~0.5× — visible SLOW-MOTION stutter on the non-master cells.)
 const PB_CAP = 0.05;     // max ± rate delta from the master rate = ±5% (0.95–1.05×) — imperceptible, but enough to absorb the ~1.6% per-camera clock difference + slowly converge residual drift. Never a half-speed lurch.
+const PB_LIVE_RETRY = 10000;// at the live edge of an in-progress clip: how often to re-open it to pick up newly written video
 const PB_COLD_MS = 15000;// grace for a COLD load before the watchdog may reload it: a 4K-H265 clip reports buffered.end=0 from loadstart→canplay (~7s+, longer for the slow remote cams under 4-way contention). Reloading inside that window restarts the load from scratch so it never finishes — verified by killing the watchdog, after which stuck cells loaded. So leave the first load alone until it has buffered something OR this grace elapses (a real 404/decode error still trips the reload immediately via v.error).
 // real time = s0 + currentTime (1:1). A per-clip "slope" correction (real = s0 + currentTime*media-rate) was tried to remove the small ~1% per-camera drift, but it made the non-master cells stutter (constant lock↔nudge) and was reverted — a smooth view with a slow drift that recal/crossings reset beats a stuttering one.
 function pbReloadCell(key){   // hard-reset + reload one cell at the current sync moment (shared by the manual ↻ button and the auto watchdog)
@@ -2120,7 +2149,7 @@ function pbEnterSeg(v, file, seekTo, play, rate){   // load a freshly-crossed cl
 function pbWatchCell(v, key){   // black/stall self-heal: a cell that errored or has no advancing frame for ~3s is auto-reloaded (capped, so a genuinely missing file isn't reloaded forever)
   if(!v._wHook){ v._wHook = 1; v._loadT = Date.now(); v._hadData = false; v.addEventListener('loadstart', () => { v._loadT = Date.now(); v._hadData = false; }); }   // stamp every (re)load start + reset the "ever decoded a frame" flag → feed the cold-load grace + the decoder-queue wait below
   if(v.seeking || v._settling){ v._wMiss = 0; v._tMiss = 0; v._wT = v.currentTime; return; }       // mid-seek, or being positioned by gridSeekAll (_settling) → don't touch it
-  const arr = pbSegs[key] || [], nextI = pbNextDone(key, v._idx), hasNext = v._seg && nextI >= 0;   // next COMPLETED clip (skips a live/in-progress clip — can't roll into something not yet seekable)
+  const arr = pbSegs[key] || [], nextI = pbNextDone(key, v._idx), hasNext = v._seg && nextI >= 0;   // next clip that has something reachable
   const nextGap = hasNext ? (arr[nextI].s0 - v._seg.s1) : Infinity;    // seconds of recording gap between this clip's end and the next clip's start
   const mayRoll = hasNext && (key === pbMaster || nextGap <= 5);       // the master skips gaps (it drives the timeline); a NON-master must NOT roll across a gap — it would run ahead of the master. The maintenance parks it ("No recording") and resumes it once the master re-enters its coverage.
   const prog = v.currentTime - (v._wT == null ? v.currentTime : v._wT);   // forward progress since the last 500ms tick
@@ -2134,10 +2163,23 @@ function pbWatchCell(v, key){   // black/stall self-heal: a cell that errored or
       const ni = nextI; v._idx = ni; v._seg = arr[ni]; v._ocrOff = null; if(pbSyncMode === 'precise') v._recalPending = true;
       pbEnterSeg(v, arr[ni].file, 0, true, null);   // load next clip from 0 + play; "Loading…" + watchdog-skip until frames flow (no churn into "No video")
       console.log('[pb watchdog] cell' + key + ' end-of-clip → advance to next clip');
+      v._liveEdge = false;
     }
     return;
   }
   v._tMiss = 0;
+  // LIVE EDGE — the cell consumed everything written so far of a clip that is STILL RECORDING and there is no later clip yet. This is not a fault: it is "you are as close to now as the recording allows". Say so, and re-open the SAME growing file every PB_LIVE_RETRY so playback keeps creeping forward as the camera writes (a media element only ever sees the bytes that existed when it opened the URL, so following the live edge REQUIRES re-opening).
+  if(v._seg && v._seg.live && !hasNext && (v.ended || (stalled && isFinite(v.duration) && v.duration > 0 && v.currentTime >= v.duration - 1))){
+    v._wT = v.currentTime; v._liveEdge = true;
+    if(v.parentElement) showCellMsg(v.parentElement, '● 录制中 · 已是最新画面');
+    if(Date.now() - (v._liveRe || 0) >= PB_LIVE_RETRY){
+      v._liveRe = Date.now();
+      pbEnterSeg(v, v._seg.file, Math.max(0, v.currentTime - 0.5), true, null);
+      console.log('[pb watchdog] cell' + key + ' live edge → re-open the in-progress clip for newly written data');
+    }
+    return;
+  }
+  v._liveEdge = false;
   if(!pbSelfHeal){ if(v.readyState >= 2 && v.videoWidth > 0 && v.parentElement) showCellMsg(v.parentElement, ''); return; }   // self-heal disabled (user opt-out): ONLY clip-end roll-over (above) runs; never auto-reload. Just clear a stale message once a cell is actually playing.
   const bufEnd = v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0;
   if(bufEnd > 0) v._hadData = true;                    // has produced at least one decodable frame on this clip
