@@ -164,6 +164,7 @@ Daemon control (operate on already-running daemons):
                      defaults. (default target: current pane; or name a PANE)
     --all            Launch a background daemon for EVERY tmux pane currently
                      running a known AI, skipping panes already monitored.
+                     With --restart: restart every running daemon instead.
     --status         Show all running daemons (summary row + detail block
                      each). Inside tmux, the daemon for the current pane is
                      marked with '*' in the index column.
@@ -823,6 +824,31 @@ else
     _hash() { md5 -r | cut -c1-12; }
 fi
 
+# The part of a captured screen every detector looks at, read from stdin.
+#
+# Normally its last 20 lines: Claude Code and Codex draw their prompts at the
+# bottom, above the input box. But Codex draws some full-screen dialogs at the
+# TOP -- its folder-trust prompt ("1. Trust and continue") fills the first 11
+# rows of a 39-row pane and leaves the other 28 blank -- so the bottom 20 lines
+# hold nothing and the prompt went unseen (2026-09-29, pane 3:7.1). Only when
+# the bottom window is blank are the last 20 NON-blank lines used instead; a
+# Claude screen always has its input box at the bottom, so it never takes that
+# path and sees exactly what it saw before.
+#
+# Every fingerprint and every detector must go through here: the dedup compares
+# fingerprints taken at different call sites, and they only agree if each one
+# cut the screen the same way.
+_screenTail() {
+    local all last
+    all=$(cat)
+    last=$(echo "$all" | tail -20)
+    if [[ -z "${last//[[:space:]]/}" ]]; then
+        echo "$all" | grep -v '^[[:space:]]*$' | tail -20
+    else
+        echo "$last"
+    fi
+}
+
 # Debug logging — only emits when -v/--verbose was passed. Output goes to
 # stderr so it doesn't get tangled with the script's normal stdout (the
 # approval log lines, banner, etc.).
@@ -871,7 +897,7 @@ waitForScreenChange() {
         # A direct pipeline leaves trailing blank lines in and produces a
         # different hash, breaking the compare.
         post=$(tmux capture-pane -t "$fTargetPaneId" -p 2>/dev/null)
-        postTail=$(echo "$post" | tail -20)
+        postTail=$(echo "$post" | _screenTail)
         fp=$(echo "$postTail" | _hash)
         if [ "$fp" != "$oldFp" ]; then
             printf '%s' "$fp"
@@ -914,7 +940,9 @@ waitForScreenChange() {
 #
 # Stage B — "which option should we press?"
 #   Still filtered by an affirmative word list (Yes|Allow|Accept|
-#   Approve|Proceed|Confirm|Continue). That's the safety net: if a
+#   Approve|Proceed|Confirm|Continue|Trust). Trust is Codex's folder
+#   prompt, "1. Trust and continue" -- workspace trust is auto-confirmed
+#   by decision (2026-09-25), same as Claude Code's "Yes, I trust this folder". That's the safety net: if a
 #   future prompt is structurally a menu but has no affirmative option
 #   (e.g. a neutral "pick one of these files"), Stage B returns empty
 #   and the monitor does nothing instead of blindly pressing "1".
@@ -1056,7 +1084,7 @@ detectCursorMenuOption() {
     # structurally identical to the trust prompt, and nothing but the words
     # distinguishes them; with zero or several candidates ja must not guess,
     # so it declines and the caller warns instead.
-    local affirmRe='(Yes|Allow|Accept|Approve|Proceed|Confirm|Continue)'
+    local affirmRe='(Yes|Allow|Accept|Approve|Proceed|Confirm|Continue|Trust)'
     local block hits target curIdx
     block=$(printf '%s\n' "${L[@]:$((lo - 1)):$((hi - lo + 1))}")
     hits=$(grep -cE "$affirmRe" <<<"$block")
@@ -1110,7 +1138,7 @@ approveCursorMenu() {
 
     # Fingerprint before moving, so we can wait for the redraw afterwards.
     local beforeFp
-    beforeFp=$(echo "$(tmux capture-pane -t "$fTargetPaneId" -p 2>/dev/null)" | tail -20 | _hash)
+    beforeFp=$(echo "$(tmux capture-pane -t "$fTargetPaneId" -p 2>/dev/null)" | _screenTail | _hash)
 
     local i
     for ((i = 0; i < count; i++)); do
@@ -1134,7 +1162,7 @@ approveCursorMenu() {
     # conclusion. The menu carries no numbers either, leaving the reader
     # nothing on screen to match it against.
     local after recheck
-    after=$(echo "$(tmux capture-pane -t "$fTargetPaneId" -p 2>/dev/null)" | tail -20)
+    after=$(echo "$(tmux capture-pane -t "$fTargetPaneId" -p 2>/dev/null)" | _screenTail)
     recheck=$(detectCursorMenuOption "$after")
     if [ "$recheck" != "0" ]; then
         _log "${RED}⚠ Cursor did not move onto the affirmative option${RESET} — ${LIGHTYELLOW}not confirming${RESET}."
@@ -1245,7 +1273,7 @@ detectPromptOption() {
     # We walk tiers top-down and stop at the first hit, so for the
     # Claude settings prompt ("1. Yes" / "2. Yes, and allow ... for this
     # session" / "3. No") we correctly pick #2 rather than #1.
-    local affirmRe='(Yes|Allow|Accept|Approve|Proceed|Confirm|Continue)'
+    local affirmRe='(Yes|Allow|Accept|Approve|Proceed|Confirm|Continue|Trust)'
     # Option-line prefix: optional cursor (❯ ›) or scroll arrow (↑ ↓), so a
     # scrolled affirmative line is still matched by the tier picker.
     local optLineRe='^[[:space:]]*[❯›↑↓]?[[:space:]]*[0-9]+\.[[:space:]]+'
@@ -1517,7 +1545,7 @@ mainLoop() {
         fi
 
         local tail
-        tail=$(echo "$content" | tail -20)
+        tail=$(echo "$content" | _screenTail)
 
         # Fingerprint to avoid double-pressing
         local fingerprint
@@ -1681,9 +1709,10 @@ mainLoop() {
             local _maxRetries=5
             local _attempt=0
             local _postFp="$_preSendFp"
+            local _key="$promptOption"
             while true; do
-                _dbg "send-keys '$promptOption' (attempt $((_attempt + 1))/$_maxRetries)"
-                tmux send-keys -t "$fTargetPaneId" "$promptOption"
+                _dbg "send-keys '$_key' (attempt $((_attempt + 1))/$_maxRetries)"
+                tmux send-keys -t "$fTargetPaneId" "$_key"
                 _postFp=$(waitForScreenChange "$_preSendFp" 2000)
                 if [ "$_postFp" != "$_preSendFp" ]; then
                     _dbg "screen changed: $_preSendFp → $_postFp"
@@ -1700,7 +1729,7 @@ mainLoop() {
                 # in a different state and approving the wrong option.
                 local _verifyContent _verifyTail
                 _verifyContent=$(tmux capture-pane -t "$fTargetPaneId" -p 2>/dev/null)
-                _verifyTail=$(echo "$_verifyContent" | tail -20)
+                _verifyTail=$(echo "$_verifyContent" | _screenTail)
                 if [ -z "$(detectPromptOption "$_verifyTail")" ]; then
                     _dbg "prompt vanished from screen → treating as success (key likely took effect, hash diff was missed)"
                     _postFp=$(echo "$_verifyTail" | _hash)
@@ -1708,6 +1737,20 @@ mainLoop() {
                 fi
 
                 _dbg "prompt still on screen → key likely dropped, will retry"
+
+                # A digit that changes nothing while the cursor already sits on
+                # that very option means the menu does not take digits at all:
+                # Codex's folder-trust dialog ("1. Trust and continue", footer
+                # "enter continue") ignored five of them on 2026-09-29. Enter
+                # picks the highlighted option, which is the one we chose, so it
+                # lands where the digit would have. Switched only after the
+                # digit had its chance, and only while the cursor is on our
+                # option: an Enter sent where a digit had already worked would be
+                # typed into whatever screen came next.
+                if [ "$_key" != "Enter" ] && grep -qE "^[[:space:]]*[❯›][[:space:]]*${promptOption}\.[[:space:]]" <<<"$_verifyTail"; then
+                    _dbg "cursor already on option $promptOption and the digit did nothing → trying Enter"
+                    _key=Enter
+                fi
                 _attempt=$((_attempt + 1))
                 [ "$_attempt" -ge "$_maxRetries" ] && break
             done
@@ -1718,6 +1761,7 @@ mainLoop() {
                 fApprovedCount=$((fApprovedCount + 1))
                 local _retryNote=""
                 [ "$_attempt" -gt 0 ] && _retryNote=" (${LIGHTMAGENTA}retry $_attempt${RESET})"
+                [ "$_key" = "Enter" ] && _retryNote+=" ${GREY}via Enter${RESET}"
                 _log "${GREEN}✔ Approved${RESET} (option $promptOption)${_retryNote} [#$fApprovedCount]"
                 _writeState approve
             fi
@@ -1777,6 +1821,7 @@ mainLoop() {
 doEarlyExitJobs() {
     [ -n "$fList" ]    && { handleListMode;            exit 0;  }
     [ -n "$fStop" ]    && { handleStopRequest;         exit $?; }
+    [ -n "$fRestart" ] && [ -n "$fAll" ] && { handleRestartAll; exit $?; }
     [ -n "$fRestart" ] && { handleRestartRequest;      exit $?; }
     [ -n "$fAll" ]     && { handleStartAll;            exit $?; }
     [ -n "$fStatus" ]  && { handleStatusRequest;       exit $?; }
@@ -2046,6 +2091,72 @@ handleRestartRequest() {
 # matches `ja -l` exactly (including node-wrapped codex). Carries over -w/-v.
 # Output is a scannable per-pane list (▶ started / ● already running) plus a
 # summary — a list fits a multi-pane action better than one box per pane.
+# `--restart --all` -- every running daemon, stopped and relaunched in turn.
+#
+# What --restart does for one pane, done for each pane that has a live daemon,
+# active or paused alike: the usual reason to reach for it is an upgrade of ja
+# itself, and a paused daemon is running the old code just the same. Panes
+# without a daemon are left alone; starting those is what plain --all is for.
+#
+# Before this existed, `--restart --all` restarted only the current pane and
+# dropped --all without a word, because --restart is dispatched first. The
+# relaunch is a child, not the exec the one-pane restart hands over with --
+# exec would end the loop after the first pane.
+handleRestartAll() {
+    local f tpid targets=()
+    for f in "$(_runtimeDir)"/*.state.json; do
+        [ -e "$f" ] || continue
+        tpid=$(_readStateField "$f" target_pane_id)
+        [ -n "$tpid" ] && _monitorPid "$tpid" >/dev/null && targets+=("$tpid")
+    done
+    if [ ${#targets[@]} -eq 0 ]; then
+        echo -e "${LIGHTYELLOW}○${RESET} ${SCRIPT_NAME} ${GREY}no running daemon to restart${RESET}"
+        return 0
+    fi
+
+    local self extra=()
+    self=$(command -v "$0" 2>/dev/null) || self="$0"
+    [ "$fApproveDelay" != "0" ] && extra+=(-w "$fApproveDelay")
+    [ -n "$fVerbose" ] && extra+=(-v)
+
+    echo -e "${MAGENTA}▶${RESET} ${SCRIPT_NAME} ${CYAN}restarting all daemons${RESET} ${GREY}(${#targets[@]})${RESET}"
+    echo
+
+    # Everything but the new pid is known before anything restarts, so the
+    # column widths are taken up front and each row can still print the moment
+    # its pane is done.
+    local i locs=() olds=() wl=0 wp=0 wo=0
+    for i in "${!targets[@]}"; do
+        tpid=${targets[$i]}
+        locs[$i]=$(_liveLocation "$tpid"); [ -z "${locs[$i]}" ] && locs[$i]="$tpid"
+        olds[$i]=$(_monitorPid "$tpid" 2>/dev/null) || olds[$i]="?"
+        [ ${#locs[$i]} -gt "$wl" ] && wl=${#locs[$i]}
+        [ ${#tpid} -gt "$wp" ] && wp=${#tpid}
+        [ ${#olds[$i]} -gt "$wo" ] && wo=${#olds[$i]}
+    done
+
+    local newpid loc pane old restarted=0 failed=0
+    for i in "${!targets[@]}"; do
+        tpid=${targets[$i]}
+        printf -v loc '%-*s' "$wl" "${locs[$i]}"
+        printf -v pane '%-*s' "$((wp + 2))" "(${tpid})"
+        printf -v old '%*s' "$wo" "${olds[$i]}"
+        fTmuxTarget="$tpid"
+        handleStopRequest >/dev/null 2>&1
+        "$self" --daemon "$tpid" "${extra[@]}" >/dev/null 2>&1
+        if newpid=$(_monitorPid "$tpid" 2>/dev/null); then
+            echo -e "  ${GREEN}▶ restarted${RESET}  ${BLUE}${loc}${RESET} ${CYAN}${pane}${RESET}  ${GREY}pid ${old} →${RESET} ${CYAN}${newpid}${RESET}"
+            restarted=$((restarted + 1))
+        else
+            echo -e "  ${RED}✗ failed${RESET}     ${BLUE}${loc}${RESET} ${CYAN}${pane}${RESET}  ${GREY}pid ${old} → stopped, no new daemon came up${RESET}"
+            failed=$((failed + 1))
+        fi
+    done
+    echo
+    echo -e "${SCRIPT_NAME}: ${GREEN}${restarted} restarted${RESET}$([ "$failed" -gt 0 ] && echo -e "${GREY},${RESET} ${RED}${failed} failed${RESET}") ${GREY}·${RESET} ${GREY}see${RESET} ${CYAN}${SCRIPT_NAME} --status${RESET}"
+    [ "$failed" -eq 0 ]
+}
+
 handleStartAll() {
     local panes=() line
     while IFS= read -r line; do [ -n "$line" ] && panes+=("$line"); done < <(findAiPanes)
@@ -2082,7 +2193,7 @@ handleStartAll() {
         fi
     done
     echo
-    echo -e "${SCRIPT_NAME}: ${GREEN}${started} started${RESET}${GREY},${RESET} ${LIGHTYELLOW}${existing} already running${RESET} ${GREY}·${RESET} ${GREY}see${RESET} ${CYAN}${SCRIPT_NAME} -s${RESET}"
+    echo -e "${SCRIPT_NAME}: ${GREEN}${started} started${RESET}${GREY},${RESET} ${LIGHTYELLOW}${existing} already running${RESET} ${GREY}·${RESET} ${GREY}see${RESET} ${CYAN}${SCRIPT_NAME} --status${RESET}"
 }
 
 # Pretty-format a duration in seconds as "Xm Ys" or "Xh Ym Zs".

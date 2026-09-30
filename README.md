@@ -43,8 +43,8 @@ jcl refresh all --agent codex --dry-run    # preview restart in the same tmux pa
 jcl refresh all --agent codex
 jcl refresh 3:11.1                         # one exact pane, either agent
 jcl set --agent codex --model gpt-6-astra --effort high
-jcl set-effort xhigh --agent codex          # retain each pane's current model
-jcl set-model opus gpt-6-astra              # route one model to each agent
+jcl set --effort xhigh --agent codex        # retain each pane's current model
+jcl set --model opus --model gpt-6-astra    # route one model to each agent
 ```
 
 `list`, `save`, `restore`, and `set*` default to both agents. For compatibility,

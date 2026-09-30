@@ -82,7 +82,14 @@ _ja_complete() {
         COMPREPLY=( $(compgen -W "$(_ja_ai_panes id)" -- "$word") )
         return 0
     fi
-    COMPREPLY=( $(compgen -W "$(_ja_ai_panes)" -- "$word") )
+    # After --restart the next word is a PANE or --all (restart every daemon),
+    # so both are offered; once --all is there, no PANE may follow.
+    local extra=""
+    if [[ " $line " == *" --restart "* ]]; then
+        [[ " $line " == *" --all "* ]] && return 0
+        extra="--all"
+    fi
+    COMPREPLY=( $(compgen -W "$(_ja_ai_panes) $extra" -- "$word") )
     __ltrim_colon_completions "$word"
 }
 

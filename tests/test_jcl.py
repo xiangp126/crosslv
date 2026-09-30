@@ -147,7 +147,8 @@ class SessionTests(unittest.TestCase):
             self.assertIn("codex resume " + SID, out)
             rc, out = self.invoke(["restore", "-f", str(path), "--agent", "codex", "--dry-run"])
             self.assertNotIn("claude --resume", out)
-        self.assertTrue(all(c.args[0] == "list-sessions" for c in tmux.call_args_list))
+        # Reading tmux is fine (restore looks for the pane to reuse); changing it is not
+        self.assertTrue(all(c.args[0] in ("list-sessions", "list-panes") for c in tmux.call_args_list))
 
     def test_refresh_skips_self_and_uses_stable_pane(self):
         with patch.dict(os.environ, {"CODEX_THREAD_ID": SID}), \
@@ -210,11 +211,11 @@ class SessionTests(unittest.TestCase):
         self.assertEqual((rc, commands), (0, ["/model gpt-next low"]))
 
     def test_codex_effort_only_preserves_live_model(self):
-        rc, _, commands = self.set_commands(["set-effort", "xhigh", "--agent", "codex"])
+        rc, _, commands = self.set_commands(["set", "--effort", "xhigh", "--agent", "codex"])
         self.assertEqual((rc, commands), (0, ["/model gpt-current xhigh"]))
 
     def test_codex_model_only_preserves_effort(self):
-        rc, _, commands = self.set_commands(["set-model", "gpt-next", "--agent", "codex"])
+        rc, _, commands = self.set_commands(["set", "--model", "gpt-next", "--agent", "codex"])
         self.assertEqual((rc, commands), (0, ["/model gpt-next high"]))
 
     def test_mixed_agent_model_routing(self):
@@ -224,13 +225,20 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertCountEqual(commands, ["/model opus", "/effort high", "/model gpt-next high"])
 
+    def test_effort_follows_the_named_model(self):
+        recs = [record(), record("claude", "other")]
+        rc, _, commands = self.set_commands(["set", "--model", "opus", "--effort", "max"], recs)
+        self.assertEqual((rc, commands), (0, ["/model opus", "/effort max"]))  # codex untouched
+        rc, _, commands = self.set_commands(["set", "--effort", "max"], recs)
+        self.assertCountEqual(commands, ["/effort max", "/model gpt-current max"])  # sweep
+
     def test_effort_only_fails_without_live_model(self):
-        rc, out, commands = self.set_commands(["set-effort", "high", "--agent", "codex"], footer="busy")
+        rc, out, commands = self.set_commands(["set", "--effort", "high", "--agent", "codex"], footer="busy")
         self.assertEqual((rc, commands), (1, []))
         self.assertIn("cannot read the current Codex model", out)
 
     def test_custom_codex_model_explicit_agent(self):
-        rc, _, commands = self.set_commands(["set-model", "company-model", "--agent", "codex"])
+        rc, _, commands = self.set_commands(["set", "--model", "company-model", "--agent", "codex"])
         self.assertEqual((rc, commands), (0, ["/model company-model high"]))
 
     def broadcast_result(self, after):
@@ -302,6 +310,68 @@ class SessionTests(unittest.TestCase):
                 child.communicate(timeout=5)
 
 
+    def test_codex_desktop_threads_are_marked(self):
+        paths = [f"/custom/thread-writer-locks/{SID}.lock"]
+        with patch.object(jcl, "codex_thread_metadata", return_value={"source": "vscode"}):
+            self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex", "resume", SID])[0]["origin"], "desktop")
+        with patch.object(jcl, "codex_thread_metadata", return_value={"source": "cli"}):
+            self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex"])[0]["origin"], "terminal")
+            # Codex Desktop's single app-server hosts every thread it has open
+            hosted = jcl.codex_records(42, "/w", paths, ["codex", "-c", "a=1", "app-server", "--listen", "unix://"])
+            self.assertEqual(hosted[0]["origin"], "desktop")
+
+    def test_restore_reuses_the_idle_original_pane(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(jcl, "collect", return_value=[]), \
+             patch.object(jcl, "free_panes", return_value={"%99": "test:1.0"}), \
+             patch.object(jcl, "tmux", return_value="test") as tmux:
+            path = Path(tmp) / "sessions.json"
+            path.write_text(json.dumps({"sessions": [record(cwd=tmp)]}))
+            rc, out = self.invoke(["restore", "-f", str(path)])
+        self.assertEqual(rc, 0)
+        self.assertIn("Restored in place", out)
+        verbs = [c.args[0] for c in tmux.call_args_list]
+        self.assertNotIn("new-window", verbs)
+        self.assertNotIn("new-session", verbs)
+        self.assertTrue(any(c.args[:3] == ("send-keys", "-t", "%99") for c in tmux.call_args_list))
+
+    def test_restore_skips_desktop_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(jcl, "collect", return_value=[]), \
+             patch.object(jcl, "free_panes", return_value={"%99": "test:1.0"}), \
+             patch.object(jcl, "tmux", return_value="test") as tmux:
+            path = Path(tmp) / "sessions.json"
+            path.write_text(json.dumps({"sessions": [record(cwd=tmp, origin="desktop")]}))
+            rc, out = self.invoke(["restore", "-f", str(path)])
+        self.assertIn("Skipped, desktop session", out)
+        self.assertFalse(any(c.args[0] in ("send-keys", "new-window") for c in tmux.call_args_list))
+
+    def test_exit_session_quits_without_relaunching(self):
+        with patch.object(jcl, "collect", return_value=[record()]), \
+             patch.object(jcl, "is_live_agent", return_value=True), \
+             patch.object(jcl, "pane_tail", return_value=""), \
+             patch.object(jcl, "quit_agent", return_value=True) as quit_agent, \
+             patch.object(jcl, "tmux") as tmux:
+            rc, out = self.invoke(["exit-session", "test:1.0"])
+        self.assertEqual(rc, 0)
+        quit_agent.assert_called_once()
+        tmux.assert_not_called()  # nothing typed back into the pane
+        self.assertIn("Exited", out)
+        self.assertIn("codex resume " + SID, out)
+
+    def test_exit_session_needs_a_selector_and_spares_self_and_desktop(self):
+        rc, _ = self.invoke(["exit-session"])
+        self.assertEqual(rc, 1)
+        recs = [record(), record(sid="desk", pane="%98", target="test:1.1", origin="desktop")]
+        with patch.dict(os.environ, {"CODEX_THREAD_ID": SID}), \
+             patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "quit_agent") as quit_agent:
+            rc, out = self.invoke(["exit-session", "all", "--agent", "codex"])
+        self.assertEqual(rc, 1)
+        quit_agent.assert_not_called()
+        self.assertIn("Skipping the session", out)
+        self.assertIn("Skipping desktop session", out)
+
 class CompletionTests(unittest.TestCase):
     def test_agent_completion_for_set(self):
         command = "source completion/jcl_completion.bash\nCOMP_WORDS=(jcl set --agent co)\nCOMP_CWORD=3\n_jcl_complete\nprintf '%s\\n' \"${COMPREPLY[@]}\""
@@ -309,7 +379,7 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(proc.stdout.strip(), "codex")
 
     def test_agent_option_offered_on_each_session_command(self):
-        for cmd in ("list", "save", "restore", "set", "set-model", "set-effort"):
+        for cmd in ("list", "save", "restore", "refresh", "exit-session", "set"):
             script = f"source completion/jcl_completion.bash\nCOMP_WORDS=(jcl {cmd} --a)\nCOMP_CWORD=2\n_jcl_complete\nprintf '%s\\n' \"${{COMPREPLY[@]}}\""
             proc = subprocess.run(["bash", "-c", script], cwd=ROOT, text=True, capture_output=True, check=True)
             self.assertIn("--agent", proc.stdout.splitlines())

@@ -6,7 +6,7 @@ claude_dir="${CLAUDE_CONFIG_DIR:-${HOME:?}/.claude}"
 credentials_file="$claude_dir/.credentials.json"
 refresh_margin_ms=900000
 refresh_lock="$claude_dir/.codex-mcp-refresh.lock"
-refresh_lock_wait_sec=65
+refresh_log="$claude_dir/.codex-mcp-refresh.log"
 refresh_command_timeout_sec=55
 
 if [[ "$mode" == "--list" ]]; then
@@ -66,45 +66,48 @@ validate_expiry() {
     fi
 }
 
-ensure_fresh_credential() {
-    local now_ms expires_at refresh_output
-
-    now_ms=$(date +%s%3N)
-    expires_at=$(credential_expiry)
-    validate_expiry "$expires_at"
-    (( expires_at > now_ms + refresh_margin_ms )) && return 0
-
-    # Every configured MCP starts concurrently. One process refreshes all Claude
-    # MCP credentials; the rest wait, re-read the file, and reuse that result.
-    # This must be synchronous: Codex retries a rejected helper header only once
-    # and only when the helper returns a different value.
-    exec 9>"$refresh_lock"
-    if ! flock -w "$refresh_lock_wait_sec" 9; then
-        echo "timed out waiting for Claude MCP credential refresh" >&2
-        return 1
-    fi
-
-    now_ms=$(date +%s%3N)
-    expires_at=$(credential_expiry)
-    validate_expiry "$expires_at"
-    (( expires_at > now_ms + refresh_margin_ms )) && return 0
-
-    if ! refresh_output=$(timeout "${refresh_command_timeout_sec}s" claude mcp list 2>&1); then
-        echo "Claude MCP silent refresh failed; no stale token was returned" >&2
-        printf '%s\n' "$refresh_output" | tail -n 20 >&2
-        return 1
-    fi
-
-    now_ms=$(date +%s%3N)
-    expires_at=$(credential_expiry)
-    validate_expiry "$expires_at"
-    if (( expires_at <= now_ms + refresh_margin_ms )); then
-        echo "Claude MCP silent refresh did not produce a fresh credential for $server_name" >&2
-        return 1
-    fi
+# Refresh in the background and never make Codex wait for it.
+#
+# Codex gives this helper a hard-coded 10 seconds (not configurable as of
+# 0.157.1), while the refresh -- `claude mcp list` -- takes as long as the
+# slowest MCP server: 31 s on 2026-09-29, because nvidia-redmine's tool listing
+# was timing out. Refreshing synchronously therefore meant every helper call
+# timed out, the shared app-server never finished starting, and `codex` itself
+# refused to run ("Experimental feature discovery timed out").
+#
+# So the current token is always returned at once. Nearly always it is still
+# valid (the refresh starts 15 minutes before expiry) and nothing is lost. Only
+# a token that has already expired costs something: that server's first request
+# is rejected, and Codex retries just once, so it may stay unavailable for the
+# rest of that session. Codex starting is worth more than that one server.
+#
+# One refresh at a time: the lock is taken without waiting, so the concurrent
+# helper calls Codex makes at startup (one per MCP server) start one refresh
+# between them, not eight. setsid detaches it from Codex's process group and
+# its output goes to a log, so nothing keeps the helper's pipe open.
+refresh_in_background() {
+    # The log is opened only once the lock is held: the losers of the race
+    # would otherwise truncate it under the one refresh that is running.
+    # Start and end are stamped so the log can be read without guessing: a
+    # refresh cut off by timeout ends in "exit 124" instead of trailing off
+    # half-way through the server list.
+    setsid bash -c '
+        exec 9>"$1"
+        flock -n 9 || exit 0
+        exec >"$3" 2>&1
+        echo "$(date "+%F %T") refresh started (triggered by $4)"
+        timeout "$2" claude mcp list
+        rc=$?
+        echo "$(date "+%F %T") exit $rc"
+    ' _ "$refresh_lock" "${refresh_command_timeout_sec}s" "$refresh_log" "$server_name" \
+        </dev/null >/dev/null 2>&1 &
 }
 
-ensure_fresh_credential
+expires_at=$(credential_expiry)
+validate_expiry "$expires_at"
+if (( expires_at <= $(date +%s%3N) + refresh_margin_ms )); then
+    refresh_in_background
+fi
 
 jq -ce --arg server "$server_name" --arg url "$expected_url" \
     "$credential_filter | {Authorization: (\"Bearer \" + .accessToken)}" \

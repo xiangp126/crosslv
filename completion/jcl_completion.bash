@@ -169,7 +169,7 @@ _jcl_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore refresh set set-effort set-model patch-resurrect save-auth restore-auth fill-auth"
+    local commands="list save restore refresh exit-session set patch-resurrect save-auth restore-auth fill-auth"
     for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
         case "${COMP_WORDS[i]}" in
             --agent) agent="${COMP_WORDS[i+1]:-all}" ;;
@@ -180,7 +180,7 @@ _jcl_complete() {
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | refresh | set | set-effort | set-model | patch-resurrect | save-auth | restore-auth | fill-auth)
+            list | save | restore | refresh | exit-session | set | patch-resurrect | save-auth | restore-auth | fill-auth)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -221,9 +221,8 @@ _jcl_complete() {
         save) opts="-h --help --agent -o --output" ;;
         restore) opts="-h --help --agent -f --file -n --dry-run" ;;
         refresh) opts="-h --help --agent --timeout -n --dry-run" ;;
+        exit-session) opts="-h --help --agent --timeout -n --dry-run" ;;
         set) opts="-h --help --agent --model --effort --delay --timeout --no-verify -n --dry-run" ;;
-        set-effort) opts="-h --help --agent --delay --timeout --no-verify -n --dry-run" ;;
-        set-model) opts="-h --help --agent --delay --timeout --no-verify -n --dry-run" ;;
         patch-resurrect) opts="-h --help -n --dry-run -v --verbose" ;;
         save-auth) opts="-h --help -o --output --force -n --dry-run" ;;
         restore-auth) opts="-h --help -f --file --force --no-fill -n --dry-run" ;;
@@ -242,28 +241,12 @@ _jcl_complete() {
         return 0
     fi
 
-    # refresh takes any number of SESSION arguments
-    if [[ $cmd == refresh ]]; then
+    # refresh and exit-session take any number of SESSION arguments
+    if [[ $cmd == refresh || $cmd == exit-session ]]; then
         _jcl_complete_session "$agent"
         return 0
     fi
 
-    # Use the selected agent's effort catalogue.
-    if [[ $cmd == set-effort ]]; then
-        COMPREPLY=($(compgen -W "$(_jcl_effort_levels "$agent")" -- "$cur"))
-        return 0
-    fi
-
-    # set-model's positional is whatever /model itself accepts. Only the alias in
-    # daily use is offered, so TAB completes it outright instead of stopping at
-    # an ambiguous prefix; any other alias still works typed out in full, since
-    # the subcommand validates nothing (they change with each model release) and
-    # reports an unknown one back as refused. compgen -W does no pathname
-    # expansion, so the [1m] survives even with a file named opus1 in the way.
-    if [[ $cmd == set-model ]]; then
-        COMPREPLY=($(compgen -W "$(_jcl_model_names "$agent")" -- "$cur"))
-        return 0
-    fi
 
     # patch-resurrect takes a resurrect layout file; suggest the saved ones by
     # absolute path unless a path is already being typed out by hand

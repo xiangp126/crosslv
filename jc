@@ -398,10 +398,51 @@ checkNodeEnv() {
 # We must NOT kill the holder (it may be a live claude/codex session). We don't
 # need to: NFS only blocks unlink/rename of the open file itself, not of its
 # parent dir. So we move the whole orphan out of node_modules (a same-filesystem
-# rename, always allowed). npm then has nothing to trip over, and the stray .nfs
-# file disappears on its own once its holder eventually exits.
+# rename, always allowed). npm then has nothing to trip over.
+#
+# The trash is emptied by the NEXT install, not by itself: a .nfs file is only
+# reaped by the NFS client when the last process holding it closes it, and in
+# practice some never are, while the directory shells around them are never
+# reaped at all. By 2026-09-29 it held 739M: three ~250M claude binaries from
+# July and August that nothing had open any more.
 #
 # Usage: cleanupNpmStaging <scope>   e.g. cleanupNpmStaging @anthropic-ai
+# Remove whatever in the trash no process holds any more. Each entry is checked
+# with lsof first and skipped if anything still has a file in it open: that is a
+# live claude/codex session (or a long-lived codex app-server) still executing
+# the old binary, and deleting it from under the process is exactly what the
+# trash exists to avoid. Without lsof nothing is removed -- guessing is not
+# worth a crashed session.
+purgeNpmTrash() {
+    local trash="$1" entry sudo="" freed=0 kept=0 size
+    [ -d "$trash" ] || return 0
+    case "$trash" in */node_modules/.jc-nfs-trash) ;; *) return 0 ;; esac
+    command -v lsof &>/dev/null || return 0
+    [ -w "$trash" ] || sudo="sudo"
+
+    shopt -s nullglob dotglob
+    local entries=("$trash"/*)
+    shopt -u nullglob dotglob
+    for entry in "${entries[@]}"; do
+        [ -d "$entry" ] && [ ! -L "$entry" ] || continue
+        if [ -n "$(lsof -t +D "$entry" 2>/dev/null)" ]; then
+            kept=$((kept + 1))
+            continue
+        fi
+        size=$(du -sk "$entry" 2>/dev/null | cut -f1)
+        if $sudo rm -rf -- "$entry" 2>/dev/null && [ ! -e "$entry" ]; then
+            freed=$((freed + ${size:-0}))
+        else
+            kept=$((kept + 1))
+        fi
+    done
+    rmdir "$trash" 2>/dev/null
+    if [ "$freed" -gt 0 ] || [ "$kept" -gt 0 ]; then
+        echo -e "  ${GREY}npm trash: freed $((freed / 1024))M, ${kept} entr(ies) still in use kept${RESET}"
+    fi
+    return 0
+}
+
 cleanupNpmStaging() {
     local scope="$1" root scopeDir trash sudo d base
 
@@ -417,6 +458,8 @@ cleanupNpmStaging() {
         *) return 0 ;;
     esac
     [ -d "$root" ] || return 0
+
+    purgeNpmTrash "$root/.jc-nfs-trash"
 
     scopeDir="$root/$scope"
     [ -d "$scopeDir" ] || return 0
@@ -452,7 +495,7 @@ cleanupNpmStaging() {
         # A live process still holds a .nfs* file inside: move the parent aside.
         $sudo mkdir -p "$trash" 2>/dev/null
         if $sudo mv -- "$d" "$trash/${base}.$$" 2>/dev/null; then
-            echo -e "  ${GREY}Still in use; moved aside to ${trash} (clears itself later).${RESET}"
+            echo -e "  ${GREY}Still in use; moved aside to ${trash} (removed by a later install once nothing holds it).${RESET}"
         else
             echo -e "  ${RED}Could not clear ${base}; rerun with sudo.${RESET}" >&2
             return 1
@@ -511,6 +554,44 @@ installCodex() {
     echo -e "${GREEN}✔ Installed${RESET} ${GREY}v${ver:-unknown}${RESET}"
     echo -e "${GREEN}✔${RESET} ${GREY}Binary${RESET}: ${CYAN}${bin}${RESET}"
     echo -e "${GREEN}✔${RESET} ${GREY}Config${RESET}: ${CYAN}~/.codex${RESET}"
+    warnStaleCodexProcesses
+}
+
+# After an upgrade, name every codex process still executing the binary the
+# upgrade just replaced.
+#
+# npm swaps the files on disk; a running process keeps the old ones open (on NFS
+# as a .nfs* placeholder, which is why cleanupNpmStaging has to move the old tree
+# into .jc-nfs-trash instead of deleting it). That is harmless for a TUI that
+# exits soon, but not for the long-lived shared background server
+# (`codex app-server --listen`): on 2026-09-29 one started on 09-17 was still
+# serving a 09-14 binary, and codex 0.157.1 then refused to start with
+# "Cannot use the shared background server: Experimental feature discovery
+# timed out". Only reported, never killed: the same server hosts Codex Desktop's
+# open conversations, and interrupting those is the user's call.
+warnStaleCodexProcesses() {
+    [ -d /proc ] || return 0
+    local exe pid stale=()
+    for exe in /proc/[0-9]*/exe; do
+        pid=${exe#/proc/}; pid=${pid%/exe}
+        exe=$(readlink "$exe" 2>/dev/null) || continue
+        case "$exe" in
+            *@openai/codex*|*/.jc-nfs-trash/.codex-*) ;;
+            *) continue ;;
+        esac
+        case "$exe" in
+            *" (deleted)"|*/.jc-nfs-trash/*|*/.nfs[0-9a-f]*) stale+=("$pid") ;;
+        esac
+    done
+    [ ${#stale[@]} -gt 0 ] || return 0
+
+    echo -e "${LIGHTYELLOW}! ${#stale[@]} codex process(es) still run the replaced binary:${RESET}"
+    for pid in "${stale[@]}"; do
+        echo -e "  ${CYAN}${pid}${RESET}  ${GREY}since $(ps -o lstart= -p "$pid" 2>/dev/null | xargs)${RESET}  $(ps -o args= -p "$pid" 2>/dev/null | cut -c1-80)"
+    done
+    echo -e "  ${GREY}Restart them to pick up the new version: kill <pid>. A shared app-server${RESET}"
+    echo -e "  ${GREY}is respawned on the next connection, but killing it interrupts the${RESET}"
+    echo -e "  ${GREY}Codex Desktop conversations it is hosting.${RESET}"
 }
 
 removeClaude() {
