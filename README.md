@@ -66,16 +66,16 @@ unconfirmed changes return nonzero. `--no-verify` reports only that keys were se
 The calling agent and suspended sessions are excluded from typing and refresh.
 
 `save-auth`, `restore-auth`, and `fill-auth` continue managing Claude MCP OAuth.
-With `assets/codex/bin/claude-mcp-headers`, Codex shares that credential source;
-these commands do not copy rotating refresh tokens into a separate Codex store. The
-helper discovers authenticated `nvidia-*` credentials dynamically and accepts one only
-when its name maps exactly to `https://maas.prd.astra.nvidia.com/maas/<name>/mcp`.
-`claude-mcp-headers --list` prints eligible server names without exposing tokens.
-When a token has 15 minutes or less remaining, one helper process takes a lock and waits for
-`claude mcp list` to refresh all credentials; concurrent MCP startups reuse the refreshed file.
-The helper verifies the new expiry and never returns an expired token. Codex waits for this
-on-demand refresh before finalizing its initial MCP tool catalogue; no periodic service or copied
-refresh token is involved.
+Codex MCP server entries live in `~/.codex/config.toml`. The entries contain
+URLs and a header-helper command, never credentials.
+`assets/codex/bin/claude-mcp-headers` reads Claude's OAuth tokens or static HTTP
+headers at connection time and checks the exact server name and URL. NVIDIA MaaS
+servers get an additional URL-pattern check. `claude-mcp-headers --list` prints
+active HTTP server names without exposing tokens. OAuth refresh starts in the
+background when a token has 15 minutes or less remaining; an expired token can
+leave one server unavailable until Claude refreshes it and Codex starts a new
+session. These configured servers need no separate Codex authorization or copied
+refresh token.
 
 Tests: `python3 -B -m unittest discover -s tests -p 'test_*.py' -v`.
 

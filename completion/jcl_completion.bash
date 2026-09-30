@@ -98,7 +98,7 @@ _jcl_layout_files() {
 _jcl_effort_levels() {
     {
         if [[ ${1:-all} != codex ]]; then
-        claude --help 2>/dev/null \
+        _jcl_claude_help \
             | grep -A1 -- '--effort <level>' \
             | grep -oE '\(([a-z]+,[ ]*)+[a-z]+\)' \
             | tr -d '()' | tr ',' '\n' | tr -d ' '
@@ -108,6 +108,19 @@ _jcl_effort_levels() {
             _jcl_codex_catalog efforts
         fi
     } | awk 'NF && !seen[$0]++'
+}
+
+# `claude --help`, straight from the binary. In an interactive shell `claude` is
+# the bashrc wrapper, and until claude has run once in that shell its nvm bin is
+# not on PATH, so the wrapper sources nvm.sh and runs `nvm use default` first --
+# inside this $(...) subshell, where the activation is thrown away and paid
+# again on every TAB: 0.5 s typically, 4.8 s once, the home being on NFS.
+# type -P ignores functions; the glob finds the binary before nvm is activated.
+_jcl_claude_help() {
+    local bin
+    bin=$(type -P claude 2>/dev/null)
+    [[ -n $bin ]] || bin=$(ls -1d "${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin/claude 2>/dev/null | tail -1)
+    [[ -x $bin ]] && "$bin" --help 2>/dev/null
 }
 
 # Read Codex's local cache; TAB must not start an agent or a network request.
@@ -142,7 +155,7 @@ _jcl_model_names() {
     {
         if [[ ${1:-all} != codex ]]; then
         # claude: --help examples plus the configured model
-        claude --help 2>/dev/null \
+        _jcl_claude_help \
             | sed -n "/--model <model>/,/^\s*--[a-z]/p" \
             | grep -oE "'[A-Za-z0-9._-]+'" | tr -d "'"
         python3 -c '

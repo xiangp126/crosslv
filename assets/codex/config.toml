@@ -7,206 +7,106 @@ sandbox_mode = "danger-full-access"
 sqlite_home = "/var/tmp/pexiang-codex-sqlite"
 mcp_optional_startup_grace_ms = 0
 
-[mcp_servers.nvidia-redmine]
-url = "https://maas.prd.astra.nvidia.com/maas/redmine/mcp"
-http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-redmine"
+# HTTP MCP servers use Claude Code's credentials through claude-mcp-headers.
+
+[mcp_servers."nvidia-confluence"]
+url = "https://maas.prd.astra.nvidia.com/maas/confluence/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-confluence https://maas.prd.astra.nvidia.com/maas/confluence/mcp"
 startup_timeout_sec = 70
 
-[mcp_servers.nvidia-gerrit]
+[mcp_servers."nvidia-gerrit"]
 url = "https://maas.prd.astra.nvidia.com/maas/gerrit/mcp"
-http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-gerrit"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-gerrit https://maas.prd.astra.nvidia.com/maas/gerrit/mcp"
 startup_timeout_sec = 70
 
-[mcp_servers.nvidia-gerrit.tools.analyze_change_chunk]
+[mcp_servers."nvidia-gerrit".tools."analyze_change_chunk"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.fetch_gerrit_change]
+[mcp_servers."nvidia-gerrit".tools."fetch_gerrit_change"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.gerrit_health]
+[mcp_servers."nvidia-gerrit".tools."gerrit_health"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.get_change_diff]
+[mcp_servers."nvidia-gerrit".tools."get_change_diff"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.get_change_files]
+[mcp_servers."nvidia-gerrit".tools."get_change_files"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.get_change_with_files_and_comments]
+[mcp_servers."nvidia-gerrit".tools."get_change_messages"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.get_commit_message]
+[mcp_servers."nvidia-gerrit".tools."get_change_with_files_and_comments"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.get_file_diff]
+[mcp_servers."nvidia-gerrit".tools."get_commit_message"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.get_reviewers]
+[mcp_servers."nvidia-gerrit".tools."get_file_diff"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.list_patchsets]
+[mcp_servers."nvidia-gerrit".tools."get_reviewers"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-gerrit.tools.get_change_messages]
+[mcp_servers."nvidia-gerrit".tools."list_patchsets"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-glean]
+[mcp_servers."nvidia-glean"]
 url = "https://maas.prd.astra.nvidia.com/maas/glean/mcp"
-http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-glean"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-glean https://maas.prd.astra.nvidia.com/maas/glean/mcp"
 startup_timeout_sec = 70
 
-[mcp_servers.nvidia-glean.tools.glean_chat]
+[mcp_servers."nvidia-glean".tools."glean_chat"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-glean.tools.health_check]
+[mcp_servers."nvidia-glean".tools."glean_search"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-glean.tools.glean_search]
+[mcp_servers."nvidia-glean".tools."health_check"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-jenkins]
+[mcp_servers."nvidia-jenkins"]
 url = "https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
-http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-jenkins"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-jenkins https://maas.prd.astra.nvidia.com/maas/jenkins/mcp"
 startup_timeout_sec = 70
 
-[mcp_servers.nvidia-jenkins.tools.check_jenkins_connectivity]
+[mcp_servers."nvidia-jenkins".tools."analyze_failed_build"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-jenkins.tools.analyze_failed_build]
+[mcp_servers."nvidia-jenkins".tools."check_jenkins_connectivity"]
 approval_mode = "approve"
 
-# [mcp_servers.nvidia-jama-cache]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/jama_cache/mcp"
-
-# [mcp_servers.nvidia-colossus-mysql]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/colossus_mysql/mcp"
-
-# [mcp_servers.nvidia-gdrive]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/gdrive_v2/mcp"
-
-# [mcp_servers.nvidia-onedrive]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/onedrive/mcp"
-
-# [mcp_servers.nvidia-sharepoint]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/sharepoint/mcp"
-
-# [mcp_servers.nvidia-gitlab]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/gitlab/mcp"
-
-# [mcp_servers.nvidia-perforce]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/p4/mcp"
-
-# [mcp_servers.nvidia-nsight-cuda]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/nsight_cuda/mcp"
-
-# [mcp_servers.nvidia-pagerduty]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/pagerduty/mcp"
-
-# [mcp_servers.nvidia-ippsec-metrics]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/ippsec_metrics/mcp"
-
-# [mcp_servers.nvidia-nvks-prometheus]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/nvks_prometheus/mcp"
-
-# [mcp_servers.nvidia-armis]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/armis/mcp"
-
-# [mcp_servers.nvidia-sonarqube]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/sonarqube/mcp"
-
-# [mcp_servers.nvidia-testpilot]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/testpilot/mcp"
-
-# [mcp_servers.nvidia-cqa]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/cqa/mcp"
-
-# [mcp_servers.nvidia-swagger-schema]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/swagger_schema_retrieval/mcp"
-
-# [mcp_servers.nvidia-dlsim-assistant]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/dlsim_assistant_server/mcp"
-
-# [mcp_servers.nvidia-vlm-screen]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/vlm_screen_analysis/mcp"
-
-# [mcp_servers.nvidia-querysage]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/querysage/mcp"
-
-# [mcp_servers.nvidia-salesforce]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/salesforce/mcp"
-
-# [mcp_servers.nvidia-databricks]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/databricks/mcp"
-
-# [mcp_servers.nvidia-awx]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/awx_mcp_server/mcp"
-
-# [mcp_servers.nvidia-sqa-aipilot]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/sqa_aipilot/mcp"
-
-# [mcp_servers.nvidia-cmi]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/cmi/mcp"
-
-# [mcp_servers.nvidia-space]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/space/mcp"
-
-# [mcp_servers.nvidia-ironwise]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/ironwise/mcp"
-
-# [mcp_servers.nvidia-nvinfo]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/nvinfo/mcp"
-
-# [mcp_servers.nvidia-nvspecs]
-# type = "http"
-# url = "https://maas.prd.astra.nvidia.com/maas/nvspecs/mcp"
-
-[mcp_servers.nvidia-outlook]
-url = "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
-http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-outlook"
-startup_timeout_sec = 70
-
-[mcp_servers.nvidia-nvbugs]
+[mcp_servers."nvidia-nvbugs"]
 url = "https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
-http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-nvbugs"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-nvbugs https://maas.prd.astra.nvidia.com/maas/nvbugs/mcp"
 startup_timeout_sec = 70
 
-[mcp_servers.nvidia-nvbugs.tools.nvbugs_check_connection_v2]
+[mcp_servers."nvidia-nvbugs".tools."nvbugs_check_connection_v2"]
 approval_mode = "approve"
 
-[mcp_servers.nvidia-teams]
+[mcp_servers."nvidia-outlook"]
+url = "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-outlook https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
+startup_timeout_sec = 70
+
+[mcp_servers."nvidia-redmine"]
+url = "https://maas.prd.astra.nvidia.com/maas/redmine/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-redmine https://maas.prd.astra.nvidia.com/maas/redmine/mcp"
+startup_timeout_sec = 70
+
+[mcp_servers."nvidia-teams"]
 url = "https://maas.prd.astra.nvidia.com/maas/teams/mcp"
-http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-teams"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers nvidia-teams https://maas.prd.astra.nvidia.com/maas/teams/mcp"
 startup_timeout_sec = 70
 
-[mcp_servers.nvidia-teams.tools.teams_health_check]
+[mcp_servers."nvidia-teams".tools."teams_health_check"]
 approval_mode = "approve"
+
+[mcp_servers."Orion-MCP"]
+url = "https://mcp.yai.nvidia.com/orion/mcp"
+http_headers_helper = "/labhome/pexiang/.codex/bin/claude-mcp-headers Orion-MCP https://mcp.yai.nvidia.com/orion/mcp"
+startup_timeout_sec = 70
 
 [notice.model_migrations]
 "gpt-5.3-codex" = "gpt-5.4"

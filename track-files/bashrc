@@ -499,6 +499,23 @@ for _ai_cmd in "${_ai_nvm_tools[@]}"; do
             _ai_start_ja_if_needed $_ai_cmd
         fi
 
+        # codex only: run without the shared background server, the way
+        # claude always runs. Under the daemon the pane's own process holds no
+        # session files -- the daemon does -- so jcl could not tell which pane
+        # a session lived in, filed CLI sessions under the desktop app and left
+        # them out of its snapshots (2026-09-30). The daemon also refused to
+        # start the CLI whenever Codex Desktop had launched it, and upgraded
+        # itself four times in a day, 400M a copy, until the home filled up.
+        # Only the interactive TUI gets the flag: no subcommand, resume, fork.
+        if [[ $_ai_cmd == codex ]]; then
+            case \"\${_args[0]:-}\" in
+                agents|exec|review|login|logout|mcp|plugin|app-server|remote-control|\\
+                completion|update|doctor|sandbox|debug|apply|archive|delete|\\
+                migrate-rollouts|unarchive|cloud|exec-server|features|help) ;;
+                *) [[ \" \${_args[*]} \" == *\" --no-daemon \"* ]] || _args=(--no-daemon \"\${_args[@]}\") ;;
+            esac
+        fi
+
         command $_ai_cmd \"\${_args[@]}\"
     }"
 done

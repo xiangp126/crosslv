@@ -3,60 +3,122 @@ set -euo pipefail
 
 mode="${1:-}"
 claude_dir="${CLAUDE_CONFIG_DIR:-${HOME:?}/.claude}"
+claude_user_config="${CLAUDE_USER_CONFIG:-${HOME:?}/.claude.json}"
 credentials_file="$claude_dir/.credentials.json"
 refresh_margin_ms=900000
 refresh_lock="$claude_dir/.codex-mcp-refresh.lock"
 refresh_log="$claude_dir/.codex-mcp-refresh.log"
 refresh_command_timeout_sec=55
 
+if [[ "$mode" == "-h" || "$mode" == "--help" ]]; then
+    cat <<'EOF'
+Usage: claude-mcp-headers --list
+       claude-mcp-headers <server-name> [<server-url>]   (URL optional for nvidia-* only)
+
+Print the HTTP headers Codex should send to an MCP server, taken from Claude
+Code's own MCP configuration and OAuth credentials, so Codex reuses Claude's
+logins instead of keeping tokens of its own. Codex runs this as the
+http_headers_helper of each server in ~/.codex/config.toml; it does not add
+servers there. A server added in Claude needs its own entry in that file.
+
+  --list              HTTP MCP servers enabled in Claude (names only, no tokens)
+  <server-name> [url] That server's headers as JSON on stdout, given only when
+                      both name and URL match Claude's config. The URL can be
+                      left out for nvidia-* servers, whose MaaS URL is derived
+                      from the name; any other server (Orion-MCP) needs it, e.g.
+                      claude-mcp-headers Orion-MCP "$(jq -r '.mcpServers["Orion-MCP"].url' ~/.claude.json)"
+                      The output is a live credential: never paste it anywhere.
+  -h, --help          Show this help
+
+A token with 15 minutes or less left is refreshed in the background
+(claude mcp list); the run is logged to ~/.claude/.codex-mcp-refresh.log.
+EOF
+    exit 0
+fi
+
 if [[ "$mode" == "--list" ]]; then
-    jq -er '
-        [
-            .mcpOAuth
-            | to_entries[]
-            | .value
-            | select((.serverName // "") | test("^nvidia-[a-z0-9][a-z0-9-]*$"))
-            | . as $entry
-            | ($entry.serverName | sub("^nvidia-"; "")) as $service
-            | select($entry.serverUrl == ("https://maas.prd.astra.nvidia.com/maas/" + $service + "/mcp"))
-            | select(($entry.accessToken // "") != "")
-            | $entry.serverName
-        ]
-        | unique
-        | .[]
-    ' "$credentials_file"
+    jq -r '
+        .mcpServers | to_entries[]
+        | select(.value.type == "http" and .value.disabled != true)
+        | .key
+    ' "$claude_user_config" | sort
     exit 0
 fi
 
 server_name="$mode"
-if [[ ! "$server_name" =~ ^nvidia-([a-z0-9][a-z0-9-]*)$ ]]; then
-    echo "unsupported MCP server name: $server_name" >&2
+expected_url="${2:-}"
+if [[ -z "$server_name" || "$server_name" == *$'\n'* ]]; then
+    echo "invalid MCP server name" >&2
     exit 2
 fi
-service_name="${BASH_REMATCH[1]}"
-expected_url="https://maas.prd.astra.nvidia.com/maas/${service_name}/mcp"
+if [[ "$server_name" =~ ^nvidia-([a-z0-9][a-z0-9-]*)$ ]]; then
+    service_name="${BASH_REMATCH[1]}"
+    maas_url="https://maas.prd.astra.nvidia.com/maas/${service_name}/mcp"
+    # Old Codex entries pass only the name. New generated entries also pass
+    # the URL, so a later Claude URL change cannot redirect a stale config.
+    [[ -n "$expected_url" ]] || expected_url="$maas_url"
+    if [[ "$expected_url" != "$maas_url" ]]; then
+        echo "unexpected NVIDIA MaaS URL for $server_name" >&2
+        exit 2
+    fi
+elif [[ -z "$expected_url" ]]; then
+    echo "MCP server URL is required for $server_name" >&2
+    exit 2
+fi
 
-# Claude can retain an old entry after a server configuration changes. Select
-# the freshest usable entry whose name and URL agree; never export a token from
-# a similarly named or non-MaaS endpoint.
+# One jq run decides everything, reading both files at once. The checks were
+# five separate jq processes (~40 ms each), and Codex calls this for every
+# MCP server at startup: 226 ms a call, ~1 s for nine, against ~80 ms before
+# the checks were added.
+#
+#   ABSENT              server not active in Claude, or its URL differs
+#   STATIC <json>       Claude supplies a static header (Orion-MCP does); kept
+#                       in Claude's mode-600 config, never copied into Codex TOML
+#   ANON                no OAuth entry matches: an anonymous server is valid too
+#   OAUTH <exp> <json>  the freshest entry whose name AND url match -- Claude
+#                       can keep an old entry after a server changes, and a
+#                       token must never go to a similarly named endpoint
 # shellcheck disable=SC2016  # jq variables, intentionally not shell-expanded
-credential_filter='
-    [
-        .mcpOAuth
-        | to_entries[]
-        | .value
-        | select(.serverName == $server and .serverUrl == $url)
-        | select((.accessToken // "") != "")
-    ]
-    | if length == 0 then error("no matching authenticated Claude MCP credential")
-      else max_by(.expiresAt // 0)
+decision_filter='
+    ($cfg[0].mcpServers[$server] // null) as $srv
+    | if $srv == null or $srv.type != "http" or $srv.disabled == true or $srv.url != $url
+      then "ABSENT"
+      else
+        ($srv.headers // {}) as $h
+        | if ($h | type) != "object" or ([$h[] | type] | any(. != "string"))
+          then error("invalid Claude MCP headers")
+          elif ($h | length) > 0 then "STATIC\t" + ($h | tojson)
+          else
+            [ (($cred[0] // {}).mcpOAuth // {}) | to_entries[] | .value
+              | select(.serverName == $server and .serverUrl == $url)
+              | select((.accessToken // "") != "") ]
+            | if length == 0 then "ANON"
+              else max_by(.expiresAt // 0)
+                   | "OAUTH\t" + (.expiresAt | tostring) + "\t"
+                     + ({Authorization: ("Bearer " + .accessToken)} | tojson)
+              end
+          end
       end
 '
 
-credential_expiry() {
-    jq -er --arg server "$server_name" --arg url "$expected_url" \
-        "$credential_filter | .expiresAt" "$credentials_file"
+absent() {
+    echo "MCP server is absent or its URL changed in Claude: $server_name" >&2
+    exit 2
 }
+[[ -f "$claude_user_config" ]] || absent
+cred_source=/dev/null
+[[ -f "$credentials_file" ]] && cred_source="$credentials_file"
+decision=$(jq -nr --arg server "$server_name" --arg url "$expected_url" \
+    --slurpfile cfg "$claude_user_config" --slurpfile cred "$cred_source" \
+    "$decision_filter")
+IFS=$'\t' read -r kind expires_at header <<<"$decision"
+case "$kind" in
+    ABSENT) absent ;;
+    STATIC) printf '%s\n' "$expires_at"; exit 0 ;;   # 2nd field holds the header JSON
+    ANON)   printf '{}\n'; exit 0 ;;
+    OAUTH)  ;;
+    *)      echo "unexpected helper state for $server_name: $kind" >&2; exit 1 ;;
+esac
 
 validate_expiry() {
     local value="$1"
@@ -103,12 +165,9 @@ refresh_in_background() {
         </dev/null >/dev/null 2>&1 &
 }
 
-expires_at=$(credential_expiry)
 validate_expiry "$expires_at"
 if (( expires_at <= $(date +%s%3N) + refresh_margin_ms )); then
     refresh_in_background
 fi
 
-jq -ce --arg server "$server_name" --arg url "$expected_url" \
-    "$credential_filter | {Authorization: (\"Bearer \" + .accessToken)}" \
-    "$credentials_file"
+printf '%s\n' "$header"

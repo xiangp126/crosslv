@@ -314,11 +314,18 @@ class SessionTests(unittest.TestCase):
         paths = [f"/custom/thread-writer-locks/{SID}.lock"]
         with patch.object(jcl, "codex_thread_metadata", return_value={"source": "vscode"}):
             self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex", "resume", SID])[0]["origin"], "desktop")
+        server = ["codex", "-c", "a=1", "app-server", "--listen", "unix://"]
         with patch.object(jcl, "codex_thread_metadata", return_value={"source": "cli"}):
             self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex"])[0]["origin"], "terminal")
-            # Codex Desktop's single app-server hosts every thread it has open
-            hosted = jcl.codex_records(42, "/w", paths, ["codex", "-c", "a=1", "app-server", "--listen", "unix://"])
-            self.assertEqual(hosted[0]["origin"], "desktop")
+            # The shared daemon hosts CLI threads too; the thread's source decides
+            self.assertEqual(jcl.codex_records(42, "/w", paths, server)[0]["origin"], "terminal")
+        with patch.object(jcl, "codex_thread_metadata", return_value={"source": "vscode"}):
+            self.assertEqual(jcl.codex_records(42, "/w", paths, server)[0]["origin"], "desktop")
+        # Never had a message (no state row, no rollout): nothing to resume
+        with patch.object(jcl, "codex_thread_metadata", return_value={}), \
+             patch.object(jcl, "codex_rollout_source", return_value=None):
+            self.assertEqual(jcl.codex_records(42, "/w", paths, server)[0]["origin"], "desktop")
+            self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex"])[0]["origin"], "terminal")
 
     def test_restore_reuses_the_idle_original_pane(self):
         with tempfile.TemporaryDirectory() as tmp, \
@@ -371,6 +378,29 @@ class SessionTests(unittest.TestCase):
         quit_agent.assert_not_called()
         self.assertIn("Skipping the session", out)
         self.assertIn("Skipping desktop session", out)
+
+    def test_claude_sessions_come_from_files_before_the_cli(self):
+        rec = {"pid": 7, "sessionId": "abc", "cwd": "/w", "name": "n", "kind": "interactive"}
+        with patch.object(jcl, "sessions_from_files", return_value=[rec]), \
+             patch.object(jcl, "sessions_from_cli") as cli, \
+             patch.object(jcl, "codex_sessions", return_value=[]), \
+             patch.object(jcl, "pane_lookup", return_value={}), \
+             patch.object(jcl, "is_live_agent", return_value=True), \
+             patch.object(jcl, "proc_environ", return_value={}), \
+             patch.object(jcl, "proc_state", return_value="S"):
+            self.assertEqual([r["session_id"] for r in jcl.collect()], ["abc"])
+            cli.assert_not_called()  # starting the client is what made jcl slow
+        # Files that yield no usable record (format changed, or none there):
+        # the supported CLI answers instead
+        with patch.object(jcl, "sessions_from_files", return_value=[{"unexpected": 1}]), \
+             patch.object(jcl, "sessions_from_cli", return_value=[rec]) as cli, \
+             patch.object(jcl, "codex_sessions", return_value=[]), \
+             patch.object(jcl, "pane_lookup", return_value={}), \
+             patch.object(jcl, "is_live_agent", return_value=True), \
+             patch.object(jcl, "proc_environ", return_value={}), \
+             patch.object(jcl, "proc_state", return_value="S"):
+            self.assertEqual([r["session_id"] for r in jcl.collect()], ["abc"])
+            cli.assert_called_once()
 
 class CompletionTests(unittest.TestCase):
     def test_agent_completion_for_set(self):

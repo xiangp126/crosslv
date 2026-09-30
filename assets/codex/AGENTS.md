@@ -41,8 +41,9 @@ Facts that hold in every session live here. Procedures live in the corresponding
 - ai-pim CLIs (`confluence-cli`, `jira-cli`, `glean-cli`, `nvbugs-cli`, `redmine-cli`,
   `slack-cli`, and the rest) are interactive bash functions on `m-fwdev-167`. From Codex, use
   the explicit `docker exec ... pim <cli>` form documented by skill `aipim-cli-env`.
-- The active Codex MCP set is maintained in `~/.codex/config.toml`. MCP tools can be deferred;
-  use tool search before concluding that a configured tool is unavailable.
+- The active Codex MCP set is maintained in `~/.codex/config.toml` and can reuse Claude Code's
+  credentials through `claude-mcp-headers`. MCP tools can be deferred; use tool search before
+  concluding that a configured tool is unavailable. See skill `aipim-cli-env`.
 - Confluence prose discovery uses Glean MCP. Exact page metadata uses `confluence-cli` reads.
   Codex page writes use `~/myGit/crosslv/assets/aipim/confluence-update` because the CLI write
   commands require an interactive TTY. See skills `managing-confluence` and `aipim-cli-env`.

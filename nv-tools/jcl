@@ -221,7 +221,10 @@ def proc_state(pid):
 
 
 def sessions_from_cli():
-    """`claude agents --json` is the supported scripting interface; needs no TTY."""
+    """`claude agents --json`: the supported interface, used when the files fail.
+
+    Needs no TTY, but starts the whole client -- see collect for what that costs.
+    """
     try:
         proc = subprocess.run(
             ["claude", "agents", "--json"], capture_output=True, text=True, timeout=60
@@ -239,7 +242,7 @@ def sessions_from_cli():
 
 
 def sessions_from_files():
-    """Fallback for claude versions without `agents --json`: read the state files."""
+    """Claude Code's own per-process state files: the fast path (see collect)."""
     out = []
     for path in sorted(SESSION_DIR.glob("*.json")):
         try:
@@ -383,7 +386,11 @@ def codex_records(pid, cwd, targets, argv):
     for session_id, evidence in sessions.items():
         meta = (codex_thread_metadata(session_id, databases)
                 or codex_thread_metadata(session_id, codex_state_databases(evidence["home"])))
-        source = meta.get("source") or codex_rollout_source(evidence["home"], session_id) or "cli"
+        # A thread with neither a state row nor a rollout has never had a
+        # message: nothing to resume, so under an app-server it is filed with
+        # the desktop (never saved) rather than guessed to be a CLI session.
+        source = (meta.get("source") or codex_rollout_source(evidence["home"], session_id)
+                  or ("vscode" if desktop_host else "cli"))
         # Only two kinds of thread are sessions a person talks to: a terminal's
         # (cli/tui) and Codex Desktop's (vscode). Everything else -- exec runs,
         # sub-agents (a JSON object) -- belongs to something else and is skipped.
@@ -399,7 +406,11 @@ def codex_records(pid, cwd, targets, argv):
             # A Codex Desktop thread resumed in a terminal: the pane is ours,
             # the thread is shared, and the desktop takes its write lock the
             # moment the terminal lets go.
-            "origin": "desktop" if desktop_host or source in CODEX_DESKTOP_SOURCES else "terminal",
+            # Judged by the thread's own source, not by which process hosts it:
+            # a CLI session under the shared daemon is hosted by the same
+            # app-server as the desktop's, and was filed as desktop -- then left
+            # out of every snapshot (2026-09-30, pane 3:7.1).
+            "origin": "desktop" if source in CODEX_DESKTOP_SOURCES else "terminal",
             "cwd": meta.get("cwd") or cwd,
             "name": meta.get("name") or meta.get("title") or "",
             "model": meta.get("model") or "",
@@ -556,9 +567,18 @@ def collect(include_stale=False, agent="all"):
     panes = pane_lookup()
     raw = []
     if agent in ("all", "claude"):
-        raw = sessions_from_cli()
-        if raw is None:
-            raw = sessions_from_files()
+        # The session files first, the CLI only if they yield nothing usable.
+        # `claude agents --json` is the supported interface, but it starts the
+        # whole Claude client just to print this list: ~0.5 s warm, and 15.9 s
+        # on a cold page cache, the client living on the NFS home -- nine
+        # tenths of what `jcl` spent. The files carry the same records
+        # (compared field by field on 2026-10-01: 8 of 8, no field differing)
+        # and read in 3 ms; jcl already depends on them for `entrypoint`. A
+        # record without sessionId/pid means the format moved on -- then the
+        # CLI answers instead.
+        raw = [d for d in sessions_from_files() if d.get("sessionId") and d.get("pid")]
+        if not raw:
+            raw = sessions_from_cli() or []
     for data in raw:
         data.setdefault("agent", "claude")
     if agent in ("all", "codex"):
@@ -998,8 +1018,8 @@ def cmd_save(args):
     hosted = [rec for rec in records if rec.get("origin") == "desktop" and not rec["target"]]
     records = [rec for rec in records if rec not in hosted]
     if hosted:
-        print(f"{c['GREY']}Not saved, hosted by a desktop app: "
-              + ", ".join(rec["name"] or rec["session_id"] for rec in hosted) + f"{c['RESET']}")
+        names = ", ".join(rec["name"] or rec["session_id"][:8] for rec in hosted)
+        print(f"{c['GREY']}Not saved, {len(hosted)} desktop session(s): {names}{c['RESET']}")
     for rec in records:
         if rec["agent"] == "codex" and rec["target"] and not rec["stopped"]:
             model, effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
@@ -1438,8 +1458,16 @@ def cmd_exit_session(args):
         print(f"{c['GREEN']}Exited{c['RESET']} {label}")
         print(f"  {c['GREY']}resume: {command}{c['RESET']}")
 
-    if exited:
-        print(f"{c['GREY']}`jcl restore` resumes them in their own panes, if they were in the last `jcl save`.{c['RESET']}")
+    if exited or failures:
+        # A summary line in the shape the other commands end with, set off by a
+        # blank line so it does not read as part of the last session's block
+        parts = [f"{c['BOLD']}{exited}{c['RESET']} exited"]
+        if failures:
+            parts.append(f"{e['RED']}{failures} failed{e['RESET']}")
+        if exited:
+            parts.append(f"{c['CYAN']}jcl restore{c['RESET']} {c['GREY']}brings them back in place, if the last jcl save has them{c['RESET']}")
+        print()
+        print(f" {c['GREY']}·{c['RESET']} ".join(parts))
     return 1 if failures else 0
 
 # The two agents share no model names at all: opus[1m] means nothing to codex,
