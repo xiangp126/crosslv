@@ -432,6 +432,15 @@ _ai_start_ja_if_needed() {
 #                                     logout, apply (codex)
 # Returns 0 (start ja) otherwise: bare REPL, a one-shot prompt, --continue,
 # --resume, etc. Arg-only — no tmux/env side effects (that's _ai_start_ja).
+#
+# Decided by the shape of the first argument, not by a list of subcommands to
+# skip: that list fell behind both tools (codex delete, archive, queue ...;
+# claude rm, logs, stop ...), so `codex delete <id>` set out to start ja and
+# printed its "already running" box (2026-10-03). The TUI is: no argument,
+# options first, or a prompt; plus the subcommands that open a session --
+# codex resume / fork, claude attach, and claude agents (its session view).
+# Any other lone lowercase word is a subcommand that runs and exits. The cost:
+# a one-word prompt (`codex hello`) starts without ja.
 _ai_wants_ja() {
     local _a
     for _a in "$@"; do
@@ -440,10 +449,9 @@ _ai_wants_ja() {
         esac
     done
     case "${1:-}" in
-        mcp|doctor|update|install|migrate-installer|config|setup-token|completion|exec|login|logout|apply)
-            return 1 ;;
+        ''|-*|resume|fork|attach|agents) return 0 ;;
     esac
-    return 0
+    [[ ! $1 =~ ^[a-z][a-z0-9-]*$ ]]
 }
 
 # Per-AI wrapper. Runs every invocation (no unset -f) — overhead is one
@@ -475,14 +483,20 @@ for _ai_cmd in "${_ai_nvm_tools[@]}"; do
         done
 
         # NVM activation. Idempotent — skip if the AI's binary is already
-        # findable. If not, source nvm.sh directly (rather than calling the
-        # lazy 'nvm' stub, which can silently misbehave under exec bash /
-        # subshells where NVM_BIN was unset). nvm use default then puts
-        # the right node version's bin on PATH.
+        # findable. If not, put the bin of the newest node install that has it
+        # on PATH, read straight off the directory as the non-interactive block
+        # at the top does. This used to source nvm.sh and run nvm use default:
+        # 0.3 s, and nvm walks up from the cwd looking for a package.json, so
+        # it asked for /labhome/package.json and /labhome/node_modules -- autofs
+        # lookups of keys that do not exist, ~7 s each whenever autofs has
+        # forgotten the miss (2026-10-03). The lazy nvm stub still loads nvm
+        # for anyone who types nvm.
         if [[ -z \"\$(type -P $_ai_cmd)\" ]]; then
-            [ -s \"\$NVM_DIR/nvm.sh\" ] && source \"\$NVM_DIR/nvm.sh\" >/dev/null
-            # --silent skips nvm_print_npm_version, which can hang on \`npm --version\`
-            nvm use default --silent >/dev/null 2>&1
+            local _nvm_bin _found=
+            for _nvm_bin in \"\$NVM_DIR\"/versions/node/v*/bin; do
+                [ -x \"\$_nvm_bin/$_ai_cmd\" ] && _found=\$_nvm_bin
+            done
+            [ -n \"\$_found\" ] && export NVM_BIN=\$_found PATH=\"\$_found:\$PATH\"
         fi
         # Refresh Cursor/VS Code IPC socket so that Claude Code's IDE
         # extension shows \"Connected\" inside tmux. Linux-only — on macOS
@@ -506,14 +520,30 @@ for _ai_cmd in "${_ai_nvm_tools[@]}"; do
         # them out of its snapshots (2026-09-30). The daemon also refused to
         # start the CLI whenever Codex Desktop had launched it, and upgraded
         # itself four times in a day, 400M a copy, until the home filled up.
-        # Only the interactive TUI gets the flag: no subcommand, resume, fork.
+        # Every invocation gets the flag: codex takes it ahead of any
+        # subcommand (each one in 0.157.1 checked), so no list of subcommands
+        # is kept here to fall behind -- the one that was had missed queue.
         if [[ $_ai_cmd == codex ]]; then
-            case \"\${_args[0]:-}\" in
-                agents|exec|review|login|logout|mcp|plugin|app-server|remote-control|\\
-                completion|update|doctor|sandbox|debug|apply|archive|delete|\\
-                migrate-rollouts|unarchive|cloud|exec-server|features|help) ;;
-                *) [[ \" \${_args[*]} \" == *\" --no-daemon \"* ]] || _args=(--no-daemon \"\${_args[@]}\") ;;
-            esac
+            [[ \" \${_args[*]} \" == *\" --no-daemon \"* ]] || _args=(--no-daemon \"\${_args[@]}\")
+
+            # Start the native program the npm package carries, not its node
+            # launcher. bin/codex is codex.js, and every start of it walks up
+            # from the package looking for a pnpm install, which asks for
+            # /labhome/node_modules: an autofs lookup of a key that does not
+            # exist, ~7 s whenever autofs has forgotten the miss (2026-10-03).
+            # claude's package installs its program as bin/claude.exe and has
+            # no such step. The two variables are what codex.js passes on; where
+            # the program is not found (a new package layout) the launcher runs.
+            local _root _native
+            _root=\$(readlink -f \"\$(type -P codex)\")
+            _root=\${_root%/bin/*}
+            for _native in \"\$_root\"/node_modules/@openai/codex-*/vendor/*/bin/codex \\
+                           \"\$_root\"/vendor/*/bin/codex; do
+                if [[ -x \$_native ]]; then
+                    CODEX_MANAGED_BY_NPM=1 CODEX_MANAGED_PACKAGE_ROOT=\"\$_root\" \"\$_native\" \"\${_args[@]}\"
+                    return
+                fi
+            done
         fi
 
         command $_ai_cmd \"\${_args[@]}\"

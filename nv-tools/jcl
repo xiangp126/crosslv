@@ -26,6 +26,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
@@ -265,8 +266,8 @@ def codex_thread_metadata(session_id, databases):
                 conn.row_factory = sqlite3.Row
                 columns = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
                 wanted = [c for c in ("id", "cwd", "name", "title", "model",
-                          "reasoning_effort", "source", "thread_source", "agent_path",
-                          "created_at", "created_at_ms") if c in columns]
+                          "reasoning_effort", "source", "originator", "thread_source",
+                          "agent_path", "created_at", "created_at_ms") if c in columns]
                 if "id" not in wanted:
                     continue
                 row = conn.execute(
@@ -285,10 +286,19 @@ def codex_thread_metadata(session_id, databases):
 # What Codex Desktop records as a thread's source. It reports itself as the
 # VS Code integration; listed on its own so a new desktop value is one edit.
 CODEX_DESKTOP_SOURCES = ("vscode",)
+# But the source is the creating server's word, and the shared app-server
+# daemon stamps `vscode` on a terminal's threads as well. `originator` names the
+# client that asked for the thread, so a terminal one overrules the source.
+CODEX_TERMINAL_ORIGINATORS = ("codex-tui", "codex_cli_rs")
 
 
-def codex_rollout_source(home, session_id):
-    """The `source` a rollout recorded about itself in its first line.
+def codex_rollout_path(home, session_id):
+    """The thread's rollout file, or None: codex writes none before the first message."""
+    return next(Path(home, "sessions").glob(f"*/*/*/rollout-*-{session_id}.jsonl"), None)
+
+
+def codex_rollout_meta(home, session_id):
+    """What a rollout recorded about itself in its first line, or {}.
 
     Read from the rollout rather than a state DB: the DB lives wherever
     sqlite_home points (here /var/tmp/pexiang-codex-sqlite, not ~/.codex), and
@@ -296,15 +306,15 @@ def codex_rollout_source(home, session_id):
     terminal codex that resumed a Codex Desktop thread holds none of them, so the
     thread's `vscode` source went unseen and it was treated as a CLI session.
     """
-    for path in Path(home, "sessions").glob(f"*/*/*/rollout-*-{session_id}.jsonl"):
-        try:
-            with open(path, encoding="utf-8") as fh:
-                meta = json.loads(fh.readline())
-        except (OSError, ValueError):
-            continue
-        if meta.get("type") == "session_meta":
-            return meta.get("payload", {}).get("source")
-    return None
+    path = codex_rollout_path(home, session_id)
+    if path is None:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            meta = json.loads(fh.readline())
+    except (OSError, ValueError):
+        return {}
+    return (meta.get("payload") or {}) if meta.get("type") == "session_meta" else {}
 
 
 def codex_state_databases(home):
@@ -389,8 +399,14 @@ def codex_records(pid, cwd, targets, argv):
         # A thread with neither a state row nor a rollout has never had a
         # message: nothing to resume, so under an app-server it is filed with
         # the desktop (never saved) rather than guessed to be a CLI session.
-        source = (meta.get("source") or codex_rollout_source(evidence["home"], session_id)
+        # Rows written before the originator column existed leave it NULL.
+        rollout = ({} if meta.get("source") and meta.get("originator")
+                   else codex_rollout_meta(evidence["home"], session_id))
+        source = (meta.get("source") or rollout.get("source")
                   or ("vscode" if desktop_host else "cli"))
+        desktop = (source in CODEX_DESKTOP_SOURCES and
+                   (meta.get("originator") or rollout.get("originator"))
+                   not in CODEX_TERMINAL_ORIGINATORS)
         # Only two kinds of thread are sessions a person talks to: a terminal's
         # (cli/tui) and Codex Desktop's (vscode). Everything else -- exec runs,
         # sub-agents (a JSON object) -- belongs to something else and is skipped.
@@ -409,8 +425,10 @@ def codex_records(pid, cwd, targets, argv):
             # Judged by the thread's own source, not by which process hosts it:
             # a CLI session under the shared daemon is hosted by the same
             # app-server as the desktop's, and was filed as desktop -- then left
-            # out of every snapshot (2026-09-30, pane 3:7.1).
-            "origin": "desktop" if source in CODEX_DESKTOP_SOURCES else "terminal",
+            # out of every snapshot (2026-09-30, pane 3:7.1). The same daemon
+            # also wrote `vscode` into a terminal thread it created, which was
+            # then skipped by refresh as well (2026-10-01, pane 3:9.1).
+            "origin": "desktop" if desktop else "terminal",
             "cwd": meta.get("cwd") or cwd,
             "name": meta.get("name") or meta.get("title") or "",
             "model": meta.get("model") or "",
@@ -604,6 +622,7 @@ def collect(include_stale=False, agent="all"):
                 "name": data.get("name") or "",
                 "kind": data.get("kind") or "",
                 "status": data.get("status") or "",
+                "status_at": data.get("statusUpdatedAt"),
                 "started_at": data.get("startedAt"),
                 "pid": pid,
                 "proc_start": data.get("procStart") or (proc_start_marker(pid) if alive else None),
@@ -915,20 +934,22 @@ def _dljust(text, width):
 
 
 
-def _cell_colour(idx, value, rec, c):
+def _cell_colour(column, value, rec, c):
     # A record only --all keeps is greyed out whole: it describes a process that
     # has already exited, and none of the per-column meanings apply to it.
     if not rec.get("alive"):
         return c["GREY"]
-    if idx == 0:  # TMUX target - the handle every other command takes
+    if column == "TMUX":  # the handle every other command takes
         return c["GREY"] if value == "-" else c["CYAN"]
-    if idx == 2:  # AGENT
+    if column == "AGENT":
         return c["MAGENTA"] if value.startswith("claude") else c["BLUE"]
-    if idx == 4:  # NAME - left plain so it stands out against the rest
+    if column == "STATE":  # the two worth a look: a turn running, a question open
+        return {"busy": c["GREEN"], "waiting": c["LIGHTYELLOW"]}.get(value, c["GREY"])
+    if column == "NAME":  # left plain so it stands out against the rest
         return c["GREY"] if value == "-" else ""
-    if idx == 5:  # CWD
+    if column == "CWD":
         return c["BLUE"]
-    return c["GREY"]  # WINDOW, PID, SESSION ID
+    return c["GREY"]  # WINDOW, PID, ACTIVE, MODEL, EFFORT, SESSION ID
 
 
 def _list_summary(records, c):
@@ -958,6 +979,176 @@ def _list_summary(records, c):
     return "  ·  ".join(parts)
 
 
+# STATE / ACTIVE / MODEL are read for the table alone. collect() leaves them
+# out on purpose: refresh, save and the completion (which parses `list --json`)
+# never show them, and should not pay for reading transcript tails.
+
+def jsonl_tail(path, needles, limit=8 << 20, chunk=1 << 18):
+    """Entries of a JSONL file, newest first, from lines holding one of `needles`.
+
+    Reads backwards, at most `limit` bytes: transcripts run past 160 MB here,
+    and what the table wants sits in the last few entries. A line without a
+    needle is skipped before it is parsed.
+    """
+    try:
+        fh = open(path, "rb")
+    except OSError:
+        return
+    with fh:
+        end = pos = fh.seek(0, os.SEEK_END)
+        carry = b""
+        while pos > 0 and end - pos < limit:
+            step = min(chunk, pos)
+            pos -= step
+            fh.seek(pos)
+            lines = (fh.read(step) + carry).split(b"\n")
+            # Short of the file's start, the first piece is the end of a line
+            # that begins in the chunk before
+            carry = lines.pop(0) if pos else b""
+            for raw in reversed(lines):
+                if any(needle in raw for needle in needles):
+                    try:
+                        yield json.loads(raw)
+                    except ValueError:
+                        continue
+
+
+def proc_started_at(pid):
+    """When the process started, in epoch seconds; None without /proc."""
+    try:
+        ticks = int(proc_start_marker(pid)) if HAS_PROC else None
+        btime = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                     if line.startswith("btime "))
+        return btime + ticks / os.sysconf("SC_CLK_TCK")
+    except (TypeError, ValueError, OSError, StopIteration):
+        return None
+
+
+def claude_switch(entry):
+    """(model id, effort) a /model or /effort reply in the transcript set, each or None.
+
+    /model answers with a display name - "Set model to `Opus 5.5` and saved ...",
+    "Kept model as Opus 5 (1M context)" - while replies carry the id
+    (claude-opus-5-5), so the name is turned into the id's form; the line may
+    end "with `max` effort". /effort answers "Set effort level to max (this
+    session only)". Any other reply (a refused model, say) sets nothing.
+    """
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else entry.get("content")
+    if (entry.get("type") not in ("user", "system") or not isinstance(content, str)
+            or not content.startswith("<local-command-stdout>")):
+        return None, None
+    first = re.sub(r"\x1b\[[0-9;]*m", "", content[len("<local-command-stdout>"):]).split("\n")[0]
+    model = re.match(r"(?:Set model to|Kept model as) `?([A-Za-z]+) (\d+(?:\.\d+)*)", first)
+    effort = (re.match(r"Set effort level to `?(\w+)", first)
+              or (model and re.search(r" with `?(\w+)`? effort", first)))
+    return (f"claude-{model[1].lower()}-{model[2].replace('.', '-')}" if model else None,
+            effort[1] if effort else None)
+
+
+def claude_settings(rec):
+    """(model, effort) the session runs with, either "" if the transcript lacks it.
+
+    The session file names neither. The transcript records both on every reply,
+    and again in what /model and /effort answered; the newest of each is the
+    one in use. Replies alone lagged: five panes `jcl set` had just moved to
+    claude-opus-5-5 still read claude-opus-5, their last reply being days older
+    than the switch (2026-10-02). Sub-agent replies (sidechain) and the
+    client's own synthetic messages are passed over.
+    """
+    projects = CLAUDE_DIR / "projects"
+    path = projects / re.sub(r"[^A-Za-z0-9]", "-", rec["cwd"]) / f"{rec['session_id']}.jsonl"
+    if not path.is_file():
+        # The directory is named after where the session began; a resume from
+        # somewhere else leaves the cwd pointing elsewhere
+        path = next(projects.glob(f"*/{rec['session_id']}.jsonl"), None)
+    model = effort = ""
+    for entry in jsonl_tail(path, (b'"assistant"', b"<local-command-stdout>")) if path else ():
+        if entry.get("type") != "assistant":
+            found = claude_switch(entry)
+        elif entry.get("isSidechain") or (entry.get("message") or {}).get("model") in (None, "", "<synthetic>"):
+            continue
+        else:
+            found = (entry["message"]["model"], entry.get("effort"))
+        model, effort = model or found[0] or "", effort or found[1] or ""
+        if model and effort:
+            break
+    return model, effort
+
+
+def codex_turn(rec):
+    """("busy" | "idle" | "-", epoch seconds) for a codex thread, from its rollout.
+
+    Codex logs task_started, then task_complete or turn_aborted, around every
+    turn; the newest of them says whether one is running, and when the thread
+    was last active. A turn started before this process was is one a kill cut
+    off, and the thread has been resumed since: nothing is running it.
+    """
+    path = codex_rollout_path(rec.get("agent_home") or CODEX_DIR, rec["session_id"])
+    if path is None:  # never had a message
+        return "idle", None
+    events = ("task_started", "task_complete", "turn_aborted")
+    for entry in jsonl_tail(path, tuple(f'"{e}"'.encode() for e in events)):
+        kind = (entry.get("payload") or {}).get("type")
+        if entry.get("type") != "event_msg" or kind not in events:
+            continue
+        try:
+            at = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00")).timestamp()
+        except (KeyError, AttributeError, ValueError):
+            at = None
+        started = proc_started_at(rec["pid"])
+        if kind == "task_started" and not (at and started and at < started):
+            return "busy", at
+        return "idle", at
+    # No turn event within reach: an older rollout format, or one turn that has
+    # written more than the read limit. Say nothing rather than guess.
+    try:
+        return "-", path.stat().st_mtime
+    except OSError:
+        return "-", None
+
+
+def _ago(at):
+    """Coarse on purpose: one unit is all a column scanned by eye needs."""
+    if not at:
+        return "-"
+    secs = max(0, time.time() - at)
+    if secs < 60:
+        return "now"
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if secs >= size:
+            return f"{int(secs // size)}{unit} ago"
+
+
+def session_activity(rec):
+    """The STATE, ACTIVE, MODEL and EFFORT cells of one list row.
+
+    Claude reports its own state (idle / busy / waiting) in the session file,
+    with the time it last changed; codex states nothing, so its rollout is read.
+    ACTIVE is when the session last did something: "now" while a turn runs.
+    """
+    if rec["agent"] == "codex" and rec.get("alive"):
+        state, at = codex_turn(rec)
+    else:
+        state = (rec.get("status") or "-") if rec.get("alive") else "exited"
+        at = (rec.get("status_at") or 0) / 1000
+    if rec.get("stopped"):  # Ctrl-Z: whatever it was doing has stopped with it
+        state = "stopped"
+    if rec["agent"] == "claude":
+        model, effort = claude_settings(rec)
+    else:
+        model, effort = rec.get("model") or "", rec.get("effort") or ""
+        if rec.get("target") and not rec.get("stopped"):
+            # The footer is what the TUI runs right now, the source save and
+            # refresh read too; the state row is what the thread last recorded,
+            # and a thread with no message yet has none. The footer says
+            # "GPT-6-Sol" where the rows say "gpt-6-sol".
+            live_model, live_effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
+            if live_model:
+                model, effort = live_model.lower(), live_effort or effort
+    return state, "now" if state == "busy" else _ago(at), model or "-", effort or "-"
+
+
 def cmd_list(args):
     records = collect(include_stale=args.all, agent=args.agent)
     if args.json:
@@ -973,13 +1164,20 @@ def cmd_list(args):
         return 0
 
     c = palette()
-    headers = ("TMUX", "WINDOW", "AGENT", "PID", "NAME", "CWD", "SESSION ID")
+    # Sessions in a pane first; the rest -- Claude/Codex Desktop's, which no
+    # other command touches, and any that lost their pane -- below a rule of
+    # their own, under the same header so every column still lines up.
+    paned = [rec for rec in records if rec["target"]]
+    records = paned + [rec for rec in records if not rec["target"]]
+    headers = ("TMUX", "WINDOW", "AGENT", "PID", "STATE", "ACTIVE", "MODEL",
+               "EFFORT", "NAME", "CWD", "SESSION ID")
     rows = [
         (
             rec["target"] or "-",
             rec["window_name"] or "-",
             rec["agent"],
             str(rec["pid"]),
+            *session_activity(rec),
             rec["name"] or "-",
             rec["cwd"],
             rec["session_id"],
@@ -994,10 +1192,12 @@ def cmd_list(args):
     rule = c["GREY"] + "  ".join("-" * w for w in widths) + c["RESET"]
     print(c["BOLD"] + "  ".join(_dljust(h, w) for h, w in zip(headers, widths)) + c["RESET"])
     print(rule)
-    for row, rec in zip(rows, records):
+    for n, (row, rec) in enumerate(zip(rows, records)):
+        if n == len(paned) and n:
+            print(rule)
         cells = []
-        for i, (cell, w) in enumerate(zip(row, widths)):
-            colour = _cell_colour(i, cell, rec, c)
+        for column, cell, w in zip(headers, row, widths):
+            colour = _cell_colour(column, cell, rec, c)
             padded = _dljust(cell, w)
             # No reset without a colour to reset: NAME is left deliberately
             # plain, and a bare reset there is just noise in the output.
@@ -1245,46 +1445,53 @@ def pick_live_sessions(args, c, e, verb, own_hint):
     # safe enough while that was the only thing refresh could do - but now that
     # sessions can be named, forgetting to name one would quietly sweep them all.
     if not args.sessions:
-        print(f"{e['RED']}Name at least one SESSION, or `all` for every one.{e['RESET']}", file=sys.stderr)
+        print(f"{e['RED']}Name at least one SESSION, or `all` / `claude` / `codex` for every one.{e['RESET']}", file=sys.stderr)
         print(f"{e['GREY']}Run `jcl list` to see what is available.{e['RESET']}", file=sys.stderr)
         return None
 
     # Commas as well as spaces, so a list pasted from anywhere splits the same way
     selectors = [part for item in args.sessions for part in item.split(",") if part]
-    sweeping = "all" in selectors
+    # `claude` / `codex` sweep one agent; `all` sweeps whatever --agent says.
+    # None of the three can be mistaken for a pane: a pane is only ever named
+    # in full, session:window.pane, never by a bare word. They mix with panes:
+    # `codex 0:6.2` is every codex session plus that one.
+    sweep = {s for s in selectors if s in ("claude", "codex")}
+    if "all" in selectors:
+        sweep |= {"claude", "codex"} if args.agent == "all" else {args.agent}
+    targets = [s for s in selectors if s not in ("all", "claude", "codex")]
+    only = next(iter(sweep)) if len(sweep) == 1 and not targets else "all"
     records = [
-        rec for rec in collect(agent=args.agent if sweeping else "all")
+        rec for rec in collect(agent=only)
         if rec["alive"] and rec["target"] and not rec["stopped"]
         and rec.get("kind") in ("", "interactive")
     ]
 
-    if sweeping:
-        if args.agent != "all":
-            records = [rec for rec in records if rec["agent"] == args.agent]
-    else:
+    chosen = [rec for rec in records if rec["agent"] in sweep]
+    if targets:
         # Naming a session says exactly which one is meant, so --agent (which
         # defaults to claude) must not quietly drop it; the filter is there to
-        # narrow the sweep, and there is no sweep once a selector is given.
-        records, errors = select_records(records, selectors)
+        # narrow a sweep, not to veto a pane named outright.
+        picked, errors = select_records(records, targets)
         if errors:
             for line in errors:
                 print(f"{e['RED']}{line}{e['RESET']}", file=sys.stderr)
             print(f"{e['GREY']}Run `jcl list` to see what is available.{e['RESET']}", file=sys.stderr)
             return None
+        chosen += [rec for rec in picked if rec not in chosen]
+    records = chosen
 
     # Both Claude and Codex expose their calling session id to shell tools.
-    if any(is_self_session(rec) for rec in records):
-        before = len(records)
+    mine = [rec for rec in records if is_self_session(rec)]
+    if mine:
         records = [rec for rec in records if not is_self_session(rec)]
-        if len(records) < before:
-            # Naming it explicitly and then being told it was "skipped" reads as
-            # if the selector failed, so say which of the two happened.
-            if not sweeping:
-                print(f"{c['LIGHTYELLOW']}That is the session this command runs in{c['RESET']};"
-                      f" {own_hint} instead.")
-            else:
-                print(f"{c['GREY']}Skipping the session this command is running in;"
-                      f" {own_hint}.{c['RESET']}")
+        # Naming it explicitly and then being told it was "skipped" reads as
+        # if the selector failed, so say which of the two happened.
+        if any(rec["target"] in targets for rec in mine):
+            print(f"{c['LIGHTYELLOW']}That is the session this command runs in{c['RESET']};"
+                  f" {own_hint} instead.")
+        else:
+            print(f"{c['GREY']}Skipping the session this command is running in;"
+                  f" {own_hint}.{c['RESET']}")
 
     # Quitting a desktop thread hands it to the desktop app, which then holds
     # the write lock, so neither a relaunch nor a later restore gets it back.
@@ -1292,7 +1499,7 @@ def pick_live_sessions(args, c, e, verb, own_hint):
     if desktop:
         records = [rec for rec in records if rec.get("origin") != "desktop"]
         shown = ", ".join(rec["target"] for rec in desktop)
-        if not sweeping:
+        if any(rec["target"] in targets for rec in desktop):
             print(f"{c['LIGHTYELLOW']}Desktop session, left alone{c['RESET']}: {shown}")
         else:
             print(f"{c['GREY']}Skipping desktop session(s): {shown}{c['RESET']}")
@@ -2315,7 +2522,17 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command")
 
     p_list = sub.add_parser(
-        "list", help="Show running sessions and the tmux pane each is in"
+        "list", help="Show running sessions and the tmux pane each is in",
+        description=(
+            "Show running sessions and the tmux pane each is in. STATE is idle,"
+            " busy or waiting (Claude reports it itself; for codex it comes from"
+            " the turn events in the rollout), stopped after Ctrl-Z, or exited"
+            " (--all). ACTIVE is when the session last did something, \"now\""
+            " while a turn runs. MODEL and EFFORT are what a codex pane's footer"
+            " shows (else the thread's last record); for Claude, what its latest"
+            " reply ran on, or a /model or /effort made since. Sessions without a"
+            " pane - Claude/Codex Desktop's - come last, below a rule."
+        ),
     )
     p_list.add_argument(
         "-a", "--all", action="store_true", help="Also show stale records of exited processes"
@@ -2348,18 +2565,19 @@ def main(argv=None):
         description=(
             "Restart named interactive sessions in their tmux panes using"
             " `claude --resume ID` or `codex resume ID`, retaining history."
-            " This reloads login, MCP, and configuration changes. Pass `all"
-            " --agent codex` for all Codex panes; `all` alone keeps the Claude"
-            " default. The calling agent and suspended sessions are excluded."
+            " This reloads login, MCP, and configuration changes. `codex` or"
+            " `claude` selects every pane of that agent; `all` follows --agent,"
+            " which defaults to Claude. The calling agent and suspended sessions are excluded."
             " Run list first, or pass -n to preview."
         ),
     )
     p_refresh.add_argument(
         "sessions", nargs="*", metavar="SESSION",
         help="Panes to restart, as tmux targets (0:6.2) - the first column of"
-             " `list`. Give several separated by spaces or commas, or `all` for"
-             " every live session. There is no default. Naming one overrides"
-             " --agent.",
+             " `list`. Give several separated by spaces or commas; `claude` or"
+             " `codex` for every live session of that agent, `all` for every one"
+             " (narrowed by --agent). There is no default. Naming a pane"
+             " overrides --agent.",
     )
     p_refresh.add_argument(
         "--agent", choices=["claude", "codex", "all"], default="claude",
@@ -2383,17 +2601,18 @@ def main(argv=None):
             " falling back to SIGTERM and then SIGKILL, and leave every pane at"
             " its shell prompt. Use it before `source ~/.bashrc` or anything else"
             " only a fresh shell picks up; `restore` then resumes each session in"
-            " the pane it came from. Pass `all --agent codex` for all Codex panes;"
-            " `all` alone keeps the Claude default. The calling agent and"
+            " the pane it came from. `codex` or `claude` selects every pane of"
+            " that agent; `all` follows --agent, which defaults to Claude. The calling agent and"
             " suspended sessions are excluded. Run list first, or pass -n to preview."
         ),
     )
     p_exit.add_argument(
         "sessions", nargs="*", metavar="SESSION",
         help="Panes to exit, as tmux targets (0:6.2) - the first column of"
-             " `list`. Give several separated by spaces or commas, or `all` for"
-             " every live session. There is no default. Naming one overrides"
-             " --agent.",
+             " `list`. Give several separated by spaces or commas; `claude` or"
+             " `codex` for every live session of that agent, `all` for every one"
+             " (narrowed by --agent). There is no default. Naming a pane"
+             " overrides --agent.",
     )
     p_exit.add_argument(
         "--agent", choices=["claude", "codex", "all"], default="claude",

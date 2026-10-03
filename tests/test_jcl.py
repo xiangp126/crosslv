@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -321,9 +322,21 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(jcl.codex_records(42, "/w", paths, server)[0]["origin"], "terminal")
         with patch.object(jcl, "codex_thread_metadata", return_value={"source": "vscode"}):
             self.assertEqual(jcl.codex_records(42, "/w", paths, server)[0]["origin"], "desktop")
+        # The daemon stamps `vscode` on threads a terminal asked it for; the
+        # originator still names the client, from the state row or the rollout
+        tui = {"source": "vscode", "originator": "codex-tui"}
+        with patch.object(jcl, "codex_thread_metadata", return_value=tui):
+            self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex"])[0]["origin"], "terminal")
+            self.assertEqual(jcl.codex_records(42, "/w", paths, server)[0]["origin"], "terminal")
+        with patch.object(jcl, "codex_thread_metadata", return_value={"source": "vscode"}), \
+             patch.object(jcl, "codex_rollout_meta", return_value=tui):
+            self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex"])[0]["origin"], "terminal")
+        app = {"source": "vscode", "originator": "Codex Desktop"}
+        with patch.object(jcl, "codex_thread_metadata", return_value=app):
+            self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex"])[0]["origin"], "desktop")
         # Never had a message (no state row, no rollout): nothing to resume
         with patch.object(jcl, "codex_thread_metadata", return_value={}), \
-             patch.object(jcl, "codex_rollout_source", return_value=None):
+             patch.object(jcl, "codex_rollout_meta", return_value={}):
             self.assertEqual(jcl.codex_records(42, "/w", paths, server)[0]["origin"], "desktop")
             self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex"])[0]["origin"], "terminal")
 
@@ -401,6 +414,134 @@ class SessionTests(unittest.TestCase):
              patch.object(jcl, "proc_state", return_value="S"):
             self.assertEqual([r["session_id"] for r in jcl.collect()], ["abc"])
             cli.assert_called_once()
+
+    def test_agent_keywords_select_sessions(self):
+        recs = [record(), record("claude", "c1", pane="%1", target="t:1.1"),
+                record("claude", "c2", pane="%2", target="t:1.2")]
+        def picked(*sessions, agent="claude"):
+            args = SimpleNamespace(sessions=list(sessions), agent=agent)
+            with patch.object(jcl, "collect", return_value=[dict(r) for r in recs]):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                    got = jcl.pick_live_sessions(args, jcl.palette(), jcl.palette(), "x", "y")
+            return sorted(r["session_id"] for r in got or [])
+        self.assertEqual(picked("codex"), [SID])
+        self.assertEqual(picked("claude"), ["c1", "c2"])
+        self.assertEqual(picked("codex", "t:1.1"), [SID, "c1"])   # keyword plus a pane
+        self.assertEqual(picked("all"), ["c1", "c2"])              # --agent defaults to claude
+        self.assertEqual(picked("all", agent="all"), [SID, "c1", "c2"])
+
+    def test_jsonl_tail_reads_newest_first_across_chunks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "t.jsonl"
+            # Entry 3 is far longer than a chunk: it has to be stitched across reads
+            entries = [{"n": i, "pad": "x" * (5000 if i == 3 else 300)} for i in range(8)]
+            path.write_text("".join(json.dumps(e) + "\n" for e in entries))
+            got = [e["n"] for e in jcl.jsonl_tail(path, (b'"n"',), chunk=256)]
+            self.assertEqual(got, list(range(7, -1, -1)))
+            # The read limit stops it short of the oldest entries
+            short = [e["n"] for e in jcl.jsonl_tail(path, (b'"n"',), limit=1024, chunk=256)]
+            self.assertEqual(short, [7, 6, 5])
+
+    def test_codex_turn_reads_the_newest_turn_event(self):
+        def event(kind, stamp):
+            return json.dumps({"timestamp": stamp, "type": "event_msg", "payload": {"type": kind}}) + "\n"
+        def at(stamp):
+            return jcl.datetime.fromisoformat(stamp + "+00:00").timestamp()
+        rec = record()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rollout.jsonl"
+            with patch.object(jcl, "codex_rollout_path", return_value=path), \
+                 patch.object(jcl, "proc_started_at", return_value=at("2026-10-01T00:00:00")):
+                path.write_text(event("task_started", "2026-10-01T01:00:00Z")
+                                + event("task_complete", "2026-10-01T01:05:00.123Z"))
+                self.assertEqual(jcl.codex_turn(rec), ("idle", at("2026-10-01T01:05:00.123")))
+                with path.open("a") as fh:
+                    fh.write(event("task_started", "2026-10-01T02:00:00Z"))
+                self.assertEqual(jcl.codex_turn(rec)[0], "busy")
+                with path.open("a") as fh:  # interrupted with Esc
+                    fh.write(event("turn_aborted", "2026-10-01T02:01:00Z"))
+                self.assertEqual(jcl.codex_turn(rec)[0], "idle")
+                # Started before this process was: killed mid-turn, resumed since
+                path.write_text(event("task_started", "2026-09-30T23:00:00Z"))
+                self.assertEqual(jcl.codex_turn(rec)[0], "idle")
+        with patch.object(jcl, "codex_rollout_path", return_value=None):
+            self.assertEqual(jcl.codex_turn(rec), ("idle", None))  # never had a message
+
+    def test_claude_settings_follow_the_latest_reply_or_switch(self):
+        def reply(model, effort=None, **extra):
+            return json.dumps({"type": "assistant", "message": {"model": model},
+                               "effort": effort, **extra}) + "\n"
+        def stdout(text):
+            return json.dumps({"type": "user", "message": {"role": "user",
+                               "content": f"<local-command-stdout>{text}</local-command-stdout>"}}) + "\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "projects" / "-w-my-repo"
+            project.mkdir(parents=True)
+            transcript = project / "abc.jsonl"
+            transcript.write_text(
+                reply("claude-opus-5", "xhigh") + reply("claude-opus-5-5", "max")
+                + reply("claude-haiku-4-5", "low", isSidechain=True)  # a sub-agent's reply
+                + reply("<synthetic>")
+                + json.dumps({"type": "ai-title"}) + "\n")
+            rec = record("claude", "abc", cwd="/w/my_repo", model="", effort="")
+
+            def settings(**changes):
+                return jcl.claude_settings(dict(rec, **changes))
+
+            def append(*lines):
+                with transcript.open("a") as fh:
+                    fh.write("".join(lines))
+
+            with patch.object(jcl, "CLAUDE_DIR", Path(tmp)):
+                self.assertEqual(settings(), ("claude-opus-5-5", "max"))
+                # Resumed from another directory: found by its id all the same
+                self.assertEqual(settings(cwd="/else"), ("claude-opus-5-5", "max"))
+                # Switched since the last reply: the switch is what it runs on,
+                # and the effort still comes from the reply before it
+                append(stdout("Set model to `Opus 5 (1M context)` and saved as your default"
+                              " for new sessions\x1b[2m\x1b[22m\n\x1b[2m     Managed settings"
+                              " pins \x1b[22m`Sonnet 5`\x1b[2m — that applies on restart"))
+                self.assertEqual(settings(), ("claude-opus-5", "max"))
+                append(stdout("Kept model as Fable 5.1"),
+                       stdout("Set effort level to xhigh (saved as your default for new sessions): Deep"))
+                self.assertEqual(settings(), ("claude-fable-5-1", "xhigh"))
+                append(stdout("Set model to `Opus 5.5` and saved as your default for new sessions"
+                              " with `medium` effort"))
+                self.assertEqual(settings(), ("claude-opus-5-5", "medium"))
+                append(stdout("Model 'nope' not found"))  # a refused model sets nothing
+                self.assertEqual(settings(), ("claude-opus-5-5", "medium"))
+                append(reply("claude-sonnet-5", "high"))
+                self.assertEqual(settings(), ("claude-sonnet-5", "high"))
+
+    def test_list_adds_columns_and_puts_paneless_sessions_below_a_rule(self):
+        now = jcl.time.time()
+        recs = [record("claude", "c1", status="waiting", status_at=(now - 7200) * 1000),
+                record("claude", "c2", target="test:1.1", stopped=True, status="busy",
+                       status_at=(now - 90) * 1000),
+                record(target="", pane="", origin="desktop"),
+                record(sid="cx", target="test:1.2", pane="%97")]
+        with patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")), \
+             patch.object(jcl, "codex_turn", return_value=("busy", now - 30)), \
+             patch.object(jcl, "pane_tail", return_value="› Ask\n  GPT-6-Sol xhigh · /w\n"):
+            rc, out = self.invoke(["list"])
+        self.assertEqual(rc, 0)
+        lines = out.splitlines()
+        self.assertEqual(lines[0].split(), ["TMUX", "WINDOW", "AGENT", "PID", "STATE", "ACTIVE",
+                                            "MODEL", "EFFORT", "NAME", "CWD", "SESSION", "ID"])
+        self.assertEqual(lines[2].split(), ["test:1.0", "agent", "claude", "12345", "waiting", "2h",
+                                            "ago", "claude-opus-5-5", "max", "example", "/tmp", "c1"])
+        self.assertEqual(lines[3].split()[4:9], ["stopped", "1m", "ago", "claude-opus-5-5", "max"])
+        # A codex pane reads its footer; one without a pane, the thread's record
+        self.assertEqual(lines[4].split()[:8], ["test:1.2", "agent", "codex", "12345",
+                                                "busy", "now", "gpt-6-sol", "xhigh"])
+        self.assertEqual(lines[5], lines[1])  # the rule between the two groups
+        self.assertEqual(lines[6].split()[:8], ["-", "agent", "codex", "12345",
+                                                "busy", "now", "gpt-test", "high"])
+        self.assertEqual(lines[7], lines[1])
+        self.assertIn("3 in tmux, 1 in desktop", lines[8])
+
 
 class CompletionTests(unittest.TestCase):
     def test_agent_completion_for_set(self):

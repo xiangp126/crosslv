@@ -15,7 +15,7 @@ if ! declare -F __ltrim_colon_completions &>/dev/null; then
     }
 fi
 
-# The tmux targets refresh can act on, plus the `all` keyword. Only targets are
+# The tmux targets refresh can act on, plus the `all` / `claude` / `codex` keywords. Only targets are
 # offered: they are what `list` shows in its first column and what refresh
 # accepts. A second python start-up costs ~4ms against the ~700ms `list` itself
 # takes to scan tmux and /proc, so parsing the json properly is effectively free,
@@ -31,12 +31,16 @@ except ValueError:
 if "all" in used:
     # all is the superset; nothing else on the line would add anything
     sys.exit(0)
+live = [rec for rec in records
+        if rec.get("alive") and rec.get("target") and not rec.get("stopped")
+        and rec.get("kind") in (None, "", "interactive")]
 print("all")
-for rec in records:
-    if not (rec.get("alive") and rec.get("target")) or rec.get("stopped"):
-        continue
-    if rec.get("kind") not in (None, "", "interactive"):
-        continue
+# One keyword per agent that actually has a live pane: `codex` with no codex
+# running would only lead to "No matching live sessions".
+for agent in sorted({rec.get("agent") for rec in live} - used):
+    if agent in ("claude", "codex"):
+        print(agent)
+for rec in live:
     if rec["target"] not in used:
         print(rec["target"])
 ' "$1" 2>/dev/null
