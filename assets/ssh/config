@@ -16,9 +16,6 @@ Host remotedev
     ConnectionAttempts 3
     ForwardX11 yes
     ForwardX11Trusted yes
-    ControlMaster auto
-    ControlPath ~/.ssh/sockets/%C
-    ControlPersist 600
 Host client3
     HostName client3
     User corsair
@@ -30,6 +27,3 @@ Host client3
     TCPKeepAlive yes
     ForwardX11 yes
     ForwardX11Trusted yes
-    ControlMaster auto
-    ControlPath ~/.ssh/sockets/%C
-    ControlPersist 600
