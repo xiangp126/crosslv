@@ -1,13 +1,14 @@
 # Page Lifecycle Workflow
 
-Use this workflow when the user needs to review, update, archive, restore, or otherwise manage existing Confluence content.
-
-## Typical flow
+Review, update, archive, restore, or otherwise manage existing Confluence content:
 
 1. Inspect the current page state
 2. Review labels, comments, and version history
 3. Update or annotate the page
 4. Archive or restore when needed
+
+`page update` below is TTY-gated from an agent; agents publish with
+`~/myGit/crosslv/assets/aipim/confluence-update` (see `../SKILL.md`).
 
 ## Inspect the current state
 

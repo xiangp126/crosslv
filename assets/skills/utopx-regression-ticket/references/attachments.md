@@ -1,14 +1,13 @@
 ## Attachments — upload as much as you can, this is not optional
 
-**Peter's rule (2026-09-15): attach as many supporting documents as possible.** A ticket with
-only a description forces the next reader to re-extract everything from the MARS tarball.
-Reference to copy: **[#5232246](https://redmine.mellanox.com/issues/5232246)** — 13 attachments,
-all the per-case artifacts of the failing node.
+Attach as many supporting files as possible, so the next reader does not have to re-extract
+everything from the MARS tarball. Template: **[#5232246](https://redmine.nvidia.com/issues/5232246)**
+— 13 attachments, all the per-case artifacts of the failing node.
 
 ### The MARS per-case artifact set
 
-The artifacts do **not** live under the failing `key_id` itself — that node usually only has
-`status.txt`, `log.txt` and one `.cap`. They sit in **sibling nodes** of the same case index:
+The failing `key_id` node itself usually holds only `status.txt`, `log.txt` and one `.cap`. The
+artifacts sit in **sibling nodes** of the same case index:
 
 ```
 0.15.1.1.1.8.1.6.<caseIdx>.2.1/   fw_reset.cap    + log.txt
@@ -23,8 +22,8 @@ The artifacts do **not** live under the failing `key_id` itself — that node us
 0.15.1.1.1.8.1.6.<caseIdx>.14.1/  oplist.cap
 ```
 
-⚠ **The `.cap` file is MARS metadata (XML), not the artifact.** The real content is the
-`log.txt` next to it. Upload the `log.txt`, renamed to the reference convention:
+**The `.cap` file is MARS metadata (XML), not the artifact.** The real content is the `log.txt`
+next to it. Upload that `log.txt`, renamed to the convention:
 
 ```
 <artifact>_<failing key_id>.log        e.g. query_mlxconfig_0.15.1.1.1.8.1.6.61.6.1.log

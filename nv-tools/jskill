@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Maintain the skill tree shared by Claude Code and Codex.
 
-The repository contains one canonical copy under assets/skills.  Claude Code
-loads that directory as a whole; Codex receives one link per skill so its other
-user-installed skills remain untouched.
+The repository contains one canonical copy under assets/skills.  Each client
+gets a skills directory of its own holding one link per shared skill, so both
+load exactly the same skills, while whatever a client writes there itself -
+Claude Code's synced account skills, a skill installed into Codex alone - stays
+out of the repository.
 """
 
 import argparse
@@ -43,6 +45,11 @@ def claude_skills_path():
 def codex_skills_path():
     agents_home = Path(os.environ.get("AGENTS_HOME", Path.home() / ".agents"))
     return agents_home.expanduser() / "skills"
+
+
+def installations():
+    """(client, skills directory) for each client the shared skills go to."""
+    return (("claude", claude_skills_path()), ("codex", codex_skills_path()))
 
 
 def legacy_skill_roots(root):
@@ -141,7 +148,30 @@ class Syncer:
             shutil.move(str(path), str(backup))
         return True
 
-    def ensure_link(self, source, destination, allow_whole_tree=False):
+    def ensure_directory(self, path, root):
+        """Make `path` a real directory; True if it is (or would be) new, None if blocked.
+
+        Claude Code used to get the whole canonical tree as a single link. But
+        a client writes into its skills directory too, and Claude Code put its
+        synced account skills there - which that link carried straight into the
+        repository (2026-10-06). So every client gets a directory of links, and
+        the old link is replaced by one.
+        """
+        if path.is_symlink():
+            if not self._remove_or_backup(path, known_link=managed_link(path, root)):
+                return None
+        elif path.is_dir():
+            return False
+        elif path.exists():
+            if not self._remove_or_backup(path):
+                return None
+        self.say("create directory", path)
+        if not self.dry_run:
+            path.mkdir(parents=True, exist_ok=True)
+        self.changed += 1
+        return True
+
+    def ensure_link(self, source, destination):
         source = Path(os.path.abspath(str(source)))
         destination = Path(destination)
 
@@ -150,9 +180,6 @@ class Syncer:
             if direct:
                 return
             known = managed_link(destination, canonical_root())
-            if allow_whole_tree:
-                known = known or same_resolved_path(destination, source)
-                known = known or raw_link_target(destination) in legacy_skill_roots(canonical_root())
             if not self._remove_or_backup(destination, known_link=known):
                 return
         elif destination.exists():
@@ -270,22 +297,23 @@ def legacy_reference_errors(root):
 
 
 def installation_errors(root):
+    """Every client must hold the same link for every shared skill, and no stale one."""
     errors = []
-    claude = claude_skills_path()
-    if not claude.is_symlink() or not same_resolved_path(claude, root):
-        errors.append("{} is not linked to {}".format(claude, root))
-
-    codex = codex_skills_path()
-    for skill in skill_dirs(root):
-        installed = codex / skill.name
-        if not installed.is_symlink() or not same_resolved_path(installed, skill):
-            errors.append("{} is not linked to {}".format(installed, skill))
-
-    if codex.is_dir():
-        names = {skill.name for skill in skill_dirs(root)}
-        for installed in codex.iterdir():
-            if installed.name not in names and managed_link(installed, root):
-                errors.append("{} is a stale managed link".format(installed))
+    skills = skill_dirs(root)
+    names = {skill.name for skill in skills}
+    for client, home in installations():
+        if home.is_symlink():
+            errors.append("{} is a link; {} needs a directory of per-skill links "
+                          "(run jskill sync)".format(home, client))
+            continue
+        for skill in skills:
+            installed = home / skill.name
+            if not installed.is_symlink() or not same_resolved_path(installed, skill):
+                errors.append("{} is not linked to {}".format(installed, skill))
+        if home.is_dir():
+            for installed in home.iterdir():
+                if installed.name not in names and managed_link(installed, root):
+                    errors.append("{} is a stale managed link".format(installed))
     return errors
 
 
@@ -317,22 +345,27 @@ def command_sync(args):
         return 1
 
     syncer = Syncer(args.dry_run, args.backup_conflicts, args.backup_dir)
-    syncer.ensure_link(root, claude_skills_path(), allow_whole_tree=True)
-
-    codex = codex_skills_path()
-    if not args.dry_run:
-        codex.mkdir(parents=True, exist_ok=True)
-    for skill in skill_dirs(root):
-        syncer.ensure_link(skill, codex / skill.name)
-
-    names = {skill.name for skill in skill_dirs(root)}
-    if codex.is_dir():
-        for installed in sorted(codex.iterdir(), key=lambda path: path.name):
-            if installed.name not in names and managed_link(installed, root):
-                syncer.say("remove stale link", installed)
-                if not args.dry_run:
-                    installed.unlink()
+    skills = skill_dirs(root)
+    names = {skill.name for skill in skills}
+    # The same links into both clients: one canonical set, shared as a whole
+    for _, home in installations():
+        fresh = syncer.ensure_directory(home, root)
+        if fresh is None:
+            continue
+        for skill in skills:
+            if fresh and args.dry_run:
+                # The directory exists only in the plan: nothing in it to compare
+                syncer.say("link", home / skill.name, skill)
                 syncer.changed += 1
+            else:
+                syncer.ensure_link(skill, home / skill.name)
+        if home.is_dir() and not home.is_symlink():
+            for installed in sorted(home.iterdir(), key=lambda path: path.name):
+                if installed.name not in names and managed_link(installed, root):
+                    syncer.say("remove stale link", installed)
+                    if not args.dry_run:
+                        installed.unlink()
+                    syncer.changed += 1
 
     if syncer.errors:
         print("sync incomplete: {} conflict(s)".format(len(syncer.errors)), file=sys.stderr)
@@ -343,44 +376,41 @@ def command_sync(args):
 
 def command_list(args):
     root = canonical_root()
-    codex = codex_skills_path()
+    clients = installations()
     rows = []
     for skill in skill_dirs(root):
-        installed = codex / skill.name
-        rows.append(
-            {
-                "name": skill.name,
-                "source": str(skill),
-                "codex": installed.is_symlink() and same_resolved_path(installed, skill),
-            }
-        )
+        row = {"name": skill.name, "source": str(skill)}
+        for client, home in clients:
+            installed = home / skill.name
+            row[client] = (not home.is_symlink() and installed.is_symlink()
+                           and same_resolved_path(installed, skill))
+        rows.append(row)
     if args.json:
         print(json.dumps(rows, indent=2))
-    else:
-        for row in rows:
-            print("{:<32} codex:{}".format(row["name"], "linked" if row["codex"] else "missing"))
-        claude = claude_skills_path()
-        state = "linked" if claude.is_symlink() and same_resolved_path(claude, root) else "missing"
-        shared_names = {row["name"] for row in rows}
-        independent = []
-        stale = []
-        if codex.is_dir():
-            for installed in sorted(codex.iterdir(), key=lambda path: path.name):
+        return 0
+
+    for row in rows:
+        state = "  ".join("{}:{}".format(client, "linked" if row[client] else "missing")
+                          for client, _ in clients)
+        print("{:<32} {}".format(row["name"], state))
+    shared_names = {row["name"] for row in rows}
+    print()
+    for client, home in clients:
+        label = client.capitalize()
+        independent, stale = [], []
+        if home.is_dir() and not home.is_symlink():
+            for installed in sorted(home.iterdir(), key=lambda path: path.name):
                 if installed.name in shared_names:
                     continue
-                if managed_link(installed, root):
-                    stale.append(installed.name)
-                else:
-                    independent.append(installed.name)
-        linked = sum(1 for row in rows if row["codex"])
-        print("\nClaude tree: {} ({})".format(state, claude))
-        print("Codex directory: {}".format(codex))
-        print("Codex shared: {}/{} linked".format(linked, len(rows)))
+                (stale if managed_link(installed, root) else independent).append(installed.name)
+        note = " (a link: run jskill sync)" if home.is_symlink() else ""
+        print("{} directory: {}{}".format(label, home, note))
+        print("{} shared: {}/{} linked".format(label, sum(1 for row in rows if row[client]), len(rows)))
         detail = " ({})".format(", ".join(independent)) if independent else ""
-        print("Codex independent: {} preserved{}".format(len(independent), detail))
+        print("{} independent: {} preserved{}".format(label, len(independent), detail))
         if stale:
-            print("Codex stale managed: {} ({})".format(len(stale), ", ".join(stale)))
-        print("Canonical: {}".format(root))
+            print("{} stale managed: {} ({})".format(label, len(stale), ", ".join(stale)))
+    print("Canonical: {}".format(root))
     return 0
 
 

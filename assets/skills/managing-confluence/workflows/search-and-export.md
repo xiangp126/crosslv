@@ -1,13 +1,12 @@
 # Search and Export Workflow
 
-Use this workflow when the user needs to locate Confluence content, inspect results, and export pages.
-
-## Typical flow
+Locate Confluence content, inspect results, and export pages:
 
 1. Start with text search
 2. Narrow with `--space`, `--label`, or `--cql`
-3. Review results in JSON when filtering is needed
-4. Export one or more pages
+3. Use `--json` when another tool needs to inspect, filter or rank results
+4. Export one or more pages; use `page export` when the requested output is HTML or another
+   file-oriented export
 
 ## Search by text
 
@@ -57,9 +56,3 @@ echo "$RESULTS" | jq -r '.data[] | "\(.id)|\(.title)"' | while IFS='|' read -r i
   confluence-cli page get "$id" > "$safe.md"
 done
 ```
-
-## Notes
-
-- Start broad, then narrow with `--space`, `--label`, or `--cql`
-- Use `--json` when another tool needs to inspect or rank results
-- Use `page export` when the requested output is HTML or another file-oriented export

@@ -62,9 +62,44 @@ class JskillTests(unittest.TestCase):
         self.assertTrue((skill / "SKILL.md").is_file())
         for legacy in jskill.legacy_skill_roots(self.root):
             self.assertFalse(legacy.exists())
-        self.assertEqual(self.claude.joinpath("skills").resolve(), self.root.resolve())
-        installed = self.home / ".agents" / "skills" / "new-skill"
-        self.assertEqual(installed.resolve(), skill.resolve())
+        # Both clients get the same per-skill link, in a directory of their own
+        for home in (self.claude / "skills", self.home / ".agents" / "skills"):
+            self.assertFalse(home.is_symlink())
+            self.assertEqual((home / "new-skill").resolve(), skill.resolve())
+        rc, output = self.invoke(["check"])
+        self.assertEqual(rc, 0, output)
+
+    def test_old_claude_tree_link_becomes_a_directory_of_links(self):
+        skill = self.make_skill()
+        claude = self.claude / "skills"
+        self.claude.mkdir(parents=True)
+        claude.symlink_to(self.root, target_is_directory=True)
+        rc, output = self.invoke(["check"])
+        self.assertEqual(rc, 1)
+        self.assertIn("needs a directory of per-skill links", output)
+        rc, output = self.invoke(["sync", "--dry-run"])
+        self.assertEqual(rc, 0, output)
+        self.assertTrue(claude.is_symlink())  # a dry run changes nothing
+        rc, output = self.invoke(["sync"])
+        self.assertEqual(rc, 0, output)
+        self.assertFalse(claude.is_symlink())
+        self.assertEqual(os.readlink(str(claude / "example")), str(skill))
+        rc, output = self.invoke(["check"])
+        self.assertEqual(rc, 0, output)
+
+    def test_what_a_client_writes_itself_stays_with_that_client(self):
+        self.make_skill()
+        rc, output = self.invoke(["sync"])
+        self.assertEqual(rc, 0, output)
+        # Claude Code keeps its synced account skills in its own skills directory
+        synced = self.claude / "skills" / "synced" / "org_user" / "pdf"
+        synced.mkdir(parents=True)
+        (synced / "SKILL.md").write_text("---\nname: pdf\ndescription: Synced.\n---\n")
+        rc, output = self.invoke(["sync"])
+        self.assertEqual(rc, 0, output)
+        self.assertTrue(synced.is_dir())
+        self.assertFalse((self.root / "synced").exists())
+        self.assertFalse((self.home / ".agents" / "skills" / "synced").exists())
         rc, output = self.invoke(["check"])
         self.assertEqual(rc, 0, output)
 
@@ -87,7 +122,7 @@ class JskillTests(unittest.TestCase):
         self.assertEqual(rc, 0, output)
         rc, output = self.invoke(["list"])
         self.assertEqual(rc, 0, output)
-        self.assertIn("Claude tree: linked", output)
+        self.assertIn("Claude shared: 1/1 linked", output)
         self.assertIn("Codex directory: {}".format(unrelated.parent), output)
         self.assertIn("Codex shared: 1/1 linked", output)
         self.assertIn("Codex independent: 1 preserved (other-source)", output)
@@ -126,7 +161,8 @@ class JskillTests(unittest.TestCase):
         installed.symlink_to(legacy_codex / "example", target_is_directory=True)
         rc, output = self.invoke(["sync"])
         self.assertEqual(rc, 0, output)
-        self.assertEqual(os.readlink(str(self.claude / "skills")), str(self.root))
+        self.assertFalse((self.claude / "skills").is_symlink())
+        self.assertEqual(os.readlink(str(self.claude / "skills" / "example")), str(skill))
         self.assertEqual(os.readlink(str(installed)), str(skill))
         self.assertFalse(legacy_claude.exists())
         self.assertFalse(legacy_codex.exists())

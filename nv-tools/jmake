@@ -57,6 +57,7 @@ fRegMine=
 fRegIdle=
 fRegExtend=
 fRegCancel=
+fRegWho=
 fFirmware=
 fIniFile=
 fBurnOfficial=
@@ -363,6 +364,7 @@ Regression Server Options:
         --reg-idle                  Show idle regression servers (midle)
         --reg-extend                Extend my regression-server allocation by 3h (extend_my_alloc)
         --reg-cancel                Cancel my regression-server allocations (scancelme)
+        --reg-who <server>          Show who holds a regression server and until when
 
 Supported Models:
     $GOLAN_MODELS
@@ -391,7 +393,7 @@ LONGOPTS="help,clean,debug,db,build,clean-db,git-clean,clean-submodule,jobs:,wor
 list,list-extended,link-db,link-clangd:,link-claude,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,continue,track,fetch,push,\
 rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mst-install,mst-start,\
 mst-stop,mst-restart,ofed-restart,ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:,mlx:,ini:,\
-reg-info,reg-malloc:,reg-mine,reg-idle,reg-extend,reg-cancel"
+reg-info,reg-malloc:,reg-mine,reg-idle,reg-extend,reg-cancel,reg-who:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -683,6 +685,10 @@ while true; do
         --reg-cancel)
             fRegCancel=true
             shift
+            ;;
+        --reg-who)
+            fRegWho="$2"
+            shift 2
             ;;
         --docker-group)
             fDockerGroup=true
@@ -2303,6 +2309,9 @@ runFwQuery() {
 # this file, not standalone executables. Non-interactive bash does not expand
 # aliases by default, so we must shopt + source before eval can resolve them.
 FWV_ALIAS_FILE="/mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias"
+# No alias covers "who holds box X" -- minfo/midle/sqme only list inventory,
+# idle and mine -- so --reg-who talks to the NOGA CLI directly.
+NOGA_CLI="/.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py"
 # NOTE: .fwvalias is sourced inline from main() (see maybeSourceFwvAlias).
 # We can't wrap that in a helper function: top-level `declare -A` in .fwvalias
 # becomes LOCAL when source runs inside a function, so the project_full_names
@@ -2435,6 +2444,59 @@ runRegCancel() {
     echo "$SEPARATOR"
 }
 
+runRegWho() {
+    [[ -z "$fRegWho" ]] && return
+    local server="$fRegWho"
+    echo "$SEPARATOR"
+    echo -e "$NOTATION ${CYAN}Querying who holds $server...${RESET}"
+    local cmd="python3 $NOGA_CLI -ql -t host -n $server"
+    echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+
+    local out
+    if ! out=$(eval "$cmd" 2>&1); then
+        echo -e "$NOTATION ${RED}Error: query failed for $server${RESET}"
+        echo "$out" | tail -3
+        exit 1
+    fi
+
+    local owner untilUtc
+    owner=$(echo "$out"    | sed -nE 's/^Status\.lock_owner = (.*)$/\1/p'    | head -1)
+    untilUtc=$(echo "$out" | sed -nE 's/^Status\.lock_time_out = (.*)$/\1/p' | head -1)
+
+    if [[ -z "$owner" ]]; then
+        echo -e "$NOTATION ${GREEN}✓ $server is free${RESET}" \
+                "${GREY}(jmake --reg-malloc $server to take it)${RESET}"
+        echo "$SEPARATOR"
+        return
+    fi
+
+    # lock_time_out is UTC "DD-MON-YY HH.MI.SS.ffffff AM/PM" -- NOT Israel time
+    # like malloc's "Resource locked by" line. Dots to colons, drop the
+    # microseconds, then let date convert to this machine's timezone.
+    local ts epoch left
+    ts=$(echo "$untilUtc" | sed -E 's/([0-9]{2})\.([0-9]{2})\.([0-9]{2})\.[0-9]+ (AM|PM)/\1:\2:\3 \4/')
+    epoch=$(date -d "$ts UTC" '+%s' 2>/dev/null)
+
+    echo -e "$NOTATION held by ${YELLOW}$owner${RESET}"
+    if [[ -z "$epoch" ]]; then
+        echo -e "$NOTATION ${GREY}(could not parse lock_time_out: $untilUtc)${RESET}"
+        echo "$SEPARATOR"
+        return
+    fi
+
+    left=$(( epoch - $(date '+%s') ))
+    echo -e "$NOTATION until ${CYAN}$(date -d "@$epoch" '+%Y-%m-%d %H:%M:%S %Z')${RESET}"
+    if [[ $left -gt 0 ]]; then
+        echo -e "$NOTATION time left ${CYAN}$(( left / 3600 ))h$(( left % 3600 / 60 ))m${RESET}"
+    else
+        # NOGA leaves lock_owner set after a lease lapses, so an expired lock
+        # looks exactly like a live one unless you compare against the clock.
+        echo -e "$NOTATION ${GREEN}✓ lease EXPIRED $(( -left / 3600 ))h$(( -left % 3600 / 60 ))m ago" \
+                "— the box is takeable${RESET}"
+    fi
+    echo "$SEPARATOR"
+}
+
 doEarlyExitJobs() {
     [ -n "$fDockerGroup" ]   && { runDockerGroup; exit 0; }
     [ -n "$fLinkWorkspace" ] && [ -z "$fGenerateCompileCmds" ] && { linkWorkspaceFiles; exit 0; }
@@ -2458,6 +2520,7 @@ doEarlyExitJobs() {
     [ -n "$fRegIdle" ]       && { runRegIdle; exit 0; }
     [ -n "$fRegExtend" ]     && { runRegExtend; exit 0; }
     [ -n "$fRegCancel" ]     && { runRegCancel; exit 0; }
+    [ -n "$fRegWho" ]        && { runRegWho; exit 0; }
 }
 
 main() {

@@ -5,17 +5,17 @@ description: Recover a ConnectX/BlueField NIC that vanished from PCI (Livefish f
 
 # Un-bricking a NIC that vanished from PCI (Livefish, fully remote)
 
-**Symptom**: `lspci -d 15b3:` returns 0, `/dev/mst` empty, and the PCIe **root port itself** is
+**Symptom**: `lspci -d 15b3:` returns 0, `/dev/mst` is empty, and the PCIe **root port itself** is
 gone from `lspci` (BIOS hides a port whose link never trained). Typical cause: an mlxconfig write
 the board cannot enumerate under. Neither `mlxfwreset` nor any power cycle recovers this — the
 card never gets far enough to answer.
 
 ## Use `relay_controller.py`, not `fishme.py`
 
-The Confluence pages (FW/2830883398, SW/2937307643) document `fishme.py`, which needs a
-USB-serial controller at `/dev/ttyUSB*` on a separate "livefish host". Most reg boxes have no
-such thing and Noga carries no livefish fields for them — **that path dead-ends.** The relay
-board is reachable over the network instead.
+The Confluence pages (FW/2830883398, SW/2937307643) document `fishme.py`, which needs a USB-serial
+controller at `/dev/ttyUSB*` on a separate "livefish host". Most reg boxes have no such thing and
+Noga carries no livefish fields for them — **that path dead-ends.** The relay board is reachable
+over the network instead:
 
 ```bash
 # Tool (clone once): ssh://<user>@git-nbu.nvidia.com:12023/hca_fw/hca_system_service
@@ -27,10 +27,10 @@ IPMI="ipmitool -I lanplus -H $BMC -U ADMIN -P ADMIN"
 
 ## STEP 0 — DO NOT SKIP: record GUID and MAC
 
-The recovery burn needs `-ignore_dev_data`, which does **not** write the device-data section:
-Base GUID and Base MAC come back as `N/A` and the card is unusable (utopx dies at
+The recovery burn needs `-ignore_dev_data`, which does **not** write the device-data section: Base
+GUID and Base MAC come back as `N/A` and the card is unusable (utopx dies at
 `DeviceInfo.cpp:37 "Unknown device"`). Record them for **every** card that will enter recovery —
-`-m enable` defaults to `-p all`, so that is all of them.
+`-m enable` defaults to `-p all`, so that is all of them:
 
 ```bash
 for D in /dev/mst/mt*_pciconf[0-9]; do
@@ -38,10 +38,16 @@ for D in /dev/mst/mt*_pciconf[0-9]; do
 done
 ```
 
-If the card is already dead and you never recorded this: **do NOT invent a GUID** — a made-up
-value can collide with another card in the lab. Get the original from lab inventory / VPD.
+Card already dead and nothing recorded: **do NOT invent a GUID** — a made-up value can collide
+with another card in the lab. Get the original from lab inventory / VPD.
 
 ## The recovery sequence
+
+Image: in livefish the device cannot report its PSID, so flint cannot pick an image out of an
+`.mfa2` archive — **a raw `.bin` is mandatory**. Pick it by PSID from the mapping file, never by
+guessing from the filename. Before erasing, run `flint ... -ocr hw query`: it prints flash
+type/size and `Flash0.WriteProtected`; issue `hw set Flash0.WriteProtected=Disabled` only if it
+actually reads enabled.
 
 ```bash
 python3 $R -s $LF -m status         # 2-port board; both OFF in normal operation
@@ -51,7 +57,6 @@ python3 $R -s $LF -m enable         # short the flash-presence pins
 $IPMI chassis power off; sleep 60; $IPMI chassis power on
 # Back up: lspci shows "ConnectX-9 Flash Recovery"; mst nodes become mt548_pciconf{0,1}
 
-# Pick the image by PSID from the mapping file — never guess from the filename.
 B=/mswg/release/BUILDS/fw-<devid>/fw-<devid>-rel-<ver>-build-001/etc/bin
 grep <PSID> $B/bin_files_list.csv          # -> PSID,part-number,filename,md5,path
 
@@ -63,9 +68,14 @@ python3 $R -s $LF -m disable
 $IPMI chassis power off; sleep 60; $IPMI chassis power on
 ```
 
+The burn rewrites the whole flash, **wiping the NV config with it** — exactly what you want when a
+bad mlxconfig is what broke the card.
+
 ## STEP N — the other half of STEP 0
 
-The card enumerates again but GUID/MAC are `N/A`. Write back the recorded values, per card:
+The card enumerates again but GUID/MAC are `N/A`. The mst nodes go back to `mt4133_pciconf*`, and
+**the pciconf↔BDF mapping may differ from before** — re-check with `mst status -v` before
+configuring or burning anything. Write back the recorded values, per card:
 
 ```bash
 flint -d /dev/mst/mt4133_pciconf0 -y --guid <GUID> --mac <MAC> sg
@@ -78,63 +88,50 @@ that Base GUID / Base MAC now read the recorded values.
 
 ## A recovered card is not yet a usable test environment
 
-Livefish only gets it enumerating. Three things still have to be restored, **in this order**:
+Livefish only gets it enumerating. Restore three things, **in this order**:
 
-1. **GUID/MAC** — step N above.
-2. **The FW build the environment actually expects.** Livefish forces a raw `.bin`, so you burn
-   whatever official release image matches the PSID. A verification environment usually wants the
-   internal build instead (`/mswg/projects/fw/fw_ver/mfa_dir/<ver>/*.mfa2`). The release image
-   lacks verification-only commands such as `GET_GVMI`, and utopx then dies at
-   `DeviceInfo.cpp:37 "Unknown device"` — `GetDevType()` returns `cmd_get_gvmi.device_id`, which
-   is 0 on a release image, so the switch falls through to `default`. **Same version string and
-   same PSID on both, so `flint q` cannot tell them apart.** Re-burn with the `.mfa2` once the
-   card enumerates normally (that path writes device data properly, unlike `-ignore_dev_data`).
+1. **GUID/MAC** — STEP N.
+2. **The FW build the environment actually expects.** Livefish forces a raw `.bin`, i.e. the
+   official release image matching the PSID; a verification environment usually wants the internal
+   build (`/mswg/projects/fw/fw_ver/mfa_dir/<ver>/*.mfa2`). The release image lacks
+   verification-only commands such as `GET_GVMI`, so utopx dies at
+   `DeviceInfo.cpp:37 "Unknown device"` (same signature as missing GUID/MAC): `GetDevType()`
+   returns `cmd_get_gvmi.device_id`, which is 0 on a release image, so the switch falls through to
+   `default`. **Same version string and same PSID on both — `flint q` cannot tell them apart.**
+   Re-burn with the `.mfa2` once the card enumerates normally (that path writes device data
+   properly, unlike `-ignore_dev_data`).
 3. **NV config** — erasing the flash returns the board to its factory personality (an `IB_2P`
-   board comes back as IB), so re-apply `LINK_TYPE` and friends.
+   board comes back as IB): re-apply `LINK_TYPE` and friends, under the rule below.
 
-**Burn FW first, set NV config second.** In the other order the new firmware's defaults overwrite
+**Burn FW first, set NV config second** — in the other order the new firmware's defaults overwrite
 what you just configured.
 
-## Mechanical notes
+Before a normal burn, bind one PF back to `mlx5_core`: from a udriver-only state flint warns
+`BME is not set, DMA access is not supported` and the burn takes minutes instead of seconds.
 
-- Bind one PF back to `mlx5_core` before a normal burn. From a udriver-only state flint warns
-  `BME is not set, DMA access is not supported` and the burn takes minutes instead of seconds.
-- After recovery the mst nodes go back to `mt4133_pciconf*`, and **the pciconf↔BDF mapping may
-  differ from before**. Always re-check with `mst status -v` before configuring or burning.
-- The burn rewrites the whole flash, **wiping the NV config with it** — exactly what you want
-  when a bad mlxconfig is what broke the card.
-- In livefish the device cannot report its PSID, so flint cannot pick an image out of an `.mfa2`
-  archive. **A raw `.bin` is mandatory.**
-- Run `flint ... -ocr hw query` first: it prints flash type/size and `Flash0.WriteProtected`.
-  Only issue `hw set Flash0.WriteProtected=Disabled` if it actually reads enabled.
-
-## The mlxconfig rule this exists to prevent
+## The mlxconfig rule: never bulk-apply a dump
 
 **Never bulk-transplant a whole mlxconfig dump onto another box.** Diff the two and set only the
-handful of parameters that bear on what you are chasing. Replaying a 457-parameter dump from a
-reference box in one `mlxconfig set`, followed by a cold boot, took out **three cards in one
-day**. Claude Code additionally blocks oversized calls through
-`~/myGit/crosslv/assets/claude/hooks/guard.py`; that hook does not intercept Codex, so Codex must
-enforce this rule before constructing any `mlxconfig set` command.
+handful of parameters that bear on what you are chasing.
 
-Be honest about what is and is not known here:
+- **At most 8 `PARAM=value` pairs in one `mlxconfig set`** — fewer is better. Apply a few
+  parameters at a time, read back Next Boot after each, and verify Current after the cold boot.
+- **Never feed `set` or `apply` from a file or dump**: no `-f`/`--file`, and no `$(cat …)` or
+  `` `cat …` `` building the parameter list.
+- Treat anything that re-lays the PCI/BAR map with extra care — `PF_LOG_BAR_SIZE`,
+  `NUM_PF_MSIX` / `NUM_VF_MSIX`, `MEMIC_BAR_SIZE`, `PF_BAR2_*`, `PCI_SWITCH_EMULATION_*`,
+  `*_EMULATION_ENABLE`.
+- **Stop at the first anomaly.** If after a cold boot the card is present but its FW has reverted,
+  or a value (e.g. `LINK_TYPE`) moved **in the Default column**, the device is already unwell — a
+  Default can only change if the running FW changed. Do not read it as "the config didn't take"
+  and push another burn + cold boot; that is what finishes a card off.
+- Enforcement: in Claude Code the PreToolUse hook `~/myGit/crosslv/assets/claude/hooks/guard.py`
+  denies any `mlxconfig ... set`/`apply` command carrying more than 8 `PARAM=value` pairs,
+  `-f`/`--file`, or a `$(cat …)`/`` `cat …` `` substitution. Codex has no such hook: check both
+  limits yourself before constructing any `mlxconfig set` command.
 
-- The two boards were **identical** (`900-9X91E-00EB-ST0_IB_2P_CORE_INT_DK_Ax`, same PSID), so
-  this was *not* an SKU mismatch — an earlier write-up of this incident claimed it was, wrongly.
-- The dump contained only 2 read-only parameters and neither was written, so that is not it.
-- **The actual mechanism was never established.** One untested theory is that a single `set`
-  transaction that large leaves the NV section inconsistent. Nobody should brick a fourth card
-  to find out.
-
-The empirical rule: apply a few parameters at a time, read back Next Boot after each, and verify
-Current after the cold boot. Treat anything that re-lays the PCI/BAR map with extra care —
-`PF_LOG_BAR_SIZE`, `NUM_PF_MSIX` / `NUM_VF_MSIX`, `MEMIC_BAR_SIZE`, `PF_BAR2_*`,
-`PCI_SWITCH_EMULATION_*`, `*_EMULATION_ENABLE`.
-
-**Stop at the first anomaly.** After one cold boot the card was still present but its FW had
-reverted and `LINK_TYPE` had moved **in the Default column** — a Default can only change if the
-running FW changed, i.e. the device was already unwell. Reading that as "the config didn't take"
-and pushing another burn + cold boot is what finished it off.
+An identical board and PSID on both sides does not make a bulk transplant safe, and skipping the
+read-only parameters does not either. The failure mechanism is unknown; do not experiment with it.
 
 ## Related
 

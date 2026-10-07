@@ -1,117 +1,117 @@
-# <任务名> — 任务追踪
+# <task name> — task tracking
 
-<一句话说清这个任务要干什么>。建于 <YYYY-MM-DD>,**持续更新**(就地更新本文,不另起新文件)。
-本文假设读者对该任务零上下文;<某类细节> 见同目录 `<子文档>.md`。
+<One sentence on what this task is for.> Created <YYYY-MM-DD>; **kept current** (updated in place, never start a new file).
+Assumes a reader with zero context on the task; <kind of detail> is in `<sub-document>.md` in the same directory.
 
 **Last updated: <YYYY-MM-DD>**
 
 ---
 
-## 状态看板
+## Status board
 
-> 全文索引。**必须一屏读完** —— 细节写进下面的正文区,不要往这张表里塞。
-> 每个 session 收场时回写这里,这是收场的最后一个动作。
+> Index of the whole file. **Must fit on one screen** — details go into the body below, never into this table.
+> Update it at the close of every session; that is the session's last action.
 
-| # | 里程碑 | 状态 | 时间 | 关键产物 / 当前卡点 |
+| # | Milestone | Status | Time | Key artifact / current blocker |
 |---|---|---|---|---|
-| S0 | 建本文档 | ✅ | <MM-DD HH:MM> | 本文件 |
-| S1 | <第一个里程碑> | 🔵 进行中 | <MM-DD> | <产物路径 / 在等什么> |
-| S2 | <...> | ⬜ 未开始 | — | — |
+| S0 | Create this document | ✅ | <MM-DD HH:MM> | this file |
+| S1 | <first milestone> | 🔵 in progress | <MM-DD> | <artifact path / what it is waiting for> |
+| S2 | <...> | 🔵 not started | — | — |
 
-**当前在途**:<一行话,说清此刻卡在哪、下一步是什么。被打断时这一行比补完整叙述重要。>
+**Currently in flight**: <one line: where it is stuck right now and what the next step is. When interrupted, this line matters more than a complete narrative.>
 
 ---
 
-## 达标定义
+## Definition of done
 
-<这个任务在什么条件下算完成。写成可判定的句子,不要写"做好"。>
+<Under what conditions this task counts as done. Write decidable sentences, not "do it well".>
 
-**已确认的关键决策**
+**Key decisions locked**
 
-1. <决策 + 谁拍的板 + 日期>
+1. <decision + who made the call + date>
 2. <...>
 
 ---
 
-## 常量
+## Constants
 
-| 项 | 值 |
+| Item | Value |
 |---|---|
-| repo | `<ssh://... 或本地路径>` |
-| <代码评审> web 前缀 | `<https://.../+/>`(change 号一律写成超链接) |
-| CI 作业 | `<https://.../job/<job>/>` |
-| worktree / 工作目录 | `<路径>` |
-| 机器 | `<主机名>`(<型号 / 用途>) |
-| 日志归档 | `<任务目录>/logs/` |
+| repo | `<ssh://... or local path>` |
+| <code review> web prefix | `<https://.../+/>` (always write a change as its bare full URL: prefix + change number) |
+| CI job | `<https://.../job/<job>/>` |
+| worktree / working directory | `<path>` |
+| machine | `<hostname>` (<model / purpose>) |
+| log archive | `<task dir>/logs/` |
 
 ---
 
-## ⚠ 更新纪律 —— 不要等人提醒
+## ⚠ Update discipline — do not wait to be reminded
 
-**更本文是动作的最后一步,不是事后补记。** 一个动作 = 执行 + 落账;
-**没落账的动作视为未完成**,不进入下一步。
+**Updating this file is the last step of every action, not a later catch-up.** An action = execute + record;
+**an unrecorded action counts as not done** — do not move to the next one.
 
-下列事件,**发生当刻立即更新,和执行同一批完成**,不要攒着、不要等被问:
+For the events below, **update the moment they happen, in the same batch as the action** — do not save them up, do not wait to be asked:
 
-| 事件 | 至少要落什么 |
+| Event | Minimum to record |
 |---|---|
-| 一条长命令 / build 结束 | SUCCESS/FAILED、耗时、`error:` 数、日志归档路径 |
-| push 完成 | change 号、新 patchset 号、服务器回的 `new:`/`updated:` |
-| CI 出结果 | build 号、挂在哪个 stage、下游作业号、**session id** |
-| merge / 交付落地 | 时间、**落地后的真实 SHA**(合入常被 rebase,与推上去的不同) |
-| 收到 / 清掉评审意见 | 谁提的、哪个文件哪行、怎么改的 |
-| 实验出结果 | 配置 / 种子 / **对照组** / VERDICT |
-| **任何判断被推翻** | 就地写「⚠ 更正」,**不要删旧结论** —— 留着才知道当初为何走错 |
-| session 被打断 | 当前在途项 + 下一步一句话 |
+| a long command / build finishes | SUCCESS/FAILED, elapsed time, `error:` count, archived log path |
+| push completed | change number, new patchset number, the server's `new:`/`updated:` echo |
+| CI verdict | build number, the stage it failed in, downstream job numbers, **session id** |
+| merge / delivery landed | time, **the real SHA after landing** (merges are often rebased, so it differs from what was pushed) |
+| review comment received / cleared | who raised it, which file and line, how it was fixed |
+| experiment result | config / seed / **control group** / VERDICT |
+| **any judgement overturned** | write "⚠ Correction" in place, **do not delete the old conclusion** — keeping it is how you know why it went wrong |
+| session interrupted | the in-flight item + one sentence on the next step |
 
-**配套两条**
+**Two companion rules**
 
-- **日志先落盘再说结论。** 归档有保留期(CI console 约 12 天、失败库约 8 天),
-  过期就永久没有了。抓到 `logs/`,把作业号与 session id 抠进本文。
-- **标识符写全,并注明是哪一种。** "推之前的本地 SHA" 和 "合入后分支内的 SHA" 常不同,
-  混用会导致查无此物。
+- **Archive the log before stating a conclusion.** The CI console (~12 days) and the failure DB (~8 days) expire, and once expired
+  they are gone for good (MARS session archives are kept for months). Capture into `logs/` and copy the job numbers and session id into this file.
+- **Write identifiers in full and say which kind they are.** The "local SHA before push" and the "SHA on the branch after merge" often differ;
+  mixing them up ends in "no such commit".
 
 ---
 
-## 书写约定
+## Writing conventions
 
-**排序**:每节内 **ACTIVE 的排最前**;已作废的收进折叠块,只存档不占视线。
+**Ordering**: within each section **ACTIVE items come first**; voided ones go into a fold — kept on file, out of sight.
 
-**灰化**:`~~删除线~~` = **作废但留档**,与"删除"严格区分。
-**成果不灰化** —— 已合入 / 已通过是结果,不是作废,留在表内标注即可。
+**Greying out**: `~~strikethrough~~` = **void but kept on file**, strictly distinct from deletion.
+**Results are not greyed out** — merged / passed is an outcome, not a retraction; just mark it in the table.
 
-**状态标记三条独立语义轴,不要混用**
+**Status markers: three independent axes — do not mix them**
 
-| 轴 | 标记与含义 |
+| Axis | Markers and meaning |
 |---|---|
-| 进度 | `✅` 完成 · `🟡` 部分完成 · `🔵` 在途/等外部 · `⬜` **不适用**(≠ 漏了) |
-| 风险与证伪 | `⚠` 警告/更正 · `🔴` 高危 · `❌` 否定/证伪 |
-| 重要度 | `★` × 1–7,越多越重要 |
+| Progress | `✅` done · `🟡` partly done · `🔵` in flight / waiting on others · `⬜` **not applicable** (≠ missed) |
+| Risk and disproof | `⚠` warning / correction · `🔴` the single current blocker (at most one row) · `❌` negated / disproved |
+| Importance | `★` × 1–7, more = more important |
 
-**编号只增不重排**:新增用插入式编号 `1.5` / `4.16` / `7a` / `7b`(不用拉丁序数),
-保证 `见 §4.19` 这类旧引用永不失效。
+**Numbering only grows, never renumbered**: insert as `1.5` / `4.16` / `7a` / `7b` (no latin ordinals),
+so an old reference like `see §<n>.<m>` never breaks.
 
-**引别的文档要带文件名**:`见 §12.10` 会被读成"本文 §12.10";
-跨文档一律写成 `` 见 `<文件名>.md` §12.10 ``。
+**Name the file when citing another document**: `see §<n>.<m>` reads as "§<n>.<m> of this file";
+across documents always write `` see `<file>.md` §<n>.<m> ``.
 
-**链接**:`http(s)` 外部资源(代码评审 / CI / 工单 / 日志系统)**一律写成完整可点链接,
-表格单元格里也是**;**本地文件路径用裸反引号**,不要包成 markdown 链接(包了反而点不开)。
+**Links**: `http(s)` external resources (code review / CI / tickets / log systems) are **always bare full URLs, never behind a markdown label,
+table cells included**; **local file paths go in bare backticks** — never wrapped in a markdown link (wrapped, they no longer open).
 
-**标题即结论句**:`## <编号> 【日期】<结论> —— <归属判决> ★`,不写"分析""调查"这种无信息标题。
+**Headings are conclusions**: `## <number> [<date>] <conclusion> — <attribution verdict> ★`; never contentless headings such as "Analysis" or "Investigation".
 
-**不信任本文档自身**:这里记的 patchset 号、分支 tip 都是**写入当刻的快照**,会过期。
-动手前必须重查线上系统。
+**Distrust this file itself**: patchset numbers and branch tips recorded here are **snapshots from the moment of writing** and go stale.
+Re-query the live system before acting.
 
 ---
 
-## 姊妹文档
+## Sibling documents
 
-| 文档 | 内容 | 何时看 |
+| Document | Content | When to read it |
 |---|---|---|
-| `<子文档>.md` | <内容> | <什么时候需要它> |
+| `<sub-document>.md` | <content> | <when it is needed> |
 
 ---
 
-<!-- ↓↓↓ 正文区:按需从 skill 的 templates/parts.md 取零件装配 ↓↓↓ -->
+<!-- ↓↓↓ Body: assemble parts from the skill's templates/parts.md as needed ↓↓↓ -->
 
-## 1. <第一个正文章节>
+## 1. <first body section>

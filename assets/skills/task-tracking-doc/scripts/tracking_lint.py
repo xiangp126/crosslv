@@ -5,6 +5,9 @@ Checks what an LLM does unreliably and a human does by hand:
 table column alignment, staleness, stalled in-flight rows, numbering reuse,
 broken section cross-references, and conclusions without a control row.
 
+Recognises the English markers of the current template and the Chinese markers
+of legacy ledgers (the latter written as unicode escapes below).
+
 Usage:
     tracking_lint.py <TRACKING.md>              full report
     tracking_lint.py <TRACKING.md> --summary    status board + in-flight rows only
@@ -21,14 +24,20 @@ import sys
 
 INFLIGHT = ('🔵', '🟡')
 ALL_MARKS = ('✅', '🟡', '🔵', '⬜', '❌', '🔴')
+# Status-board heading and the "currently in flight" line under it: the English
+# template's form first, then the legacy Chinese form of the same words.
+BOARD_HEADINGS = ('Status board', '\u72b6\u6001\u770b\u677f')
+INFLIGHT_LINE = ('**Currently in flight', '**\u5f53\u524d\u5728\u9014')
 
 
 def is_legend(line):
     """A legend row lists several markers at once; it is not data."""
     return sum(1 for m in ALL_MARKS if m in line) >= 3
 DATE_RE = re.compile(r'(20\d{2})-(\d{2})-(\d{2})')
-LASTUPD_RE = re.compile(r'Last updated[:：]\s*\*{0,2}\s*(20\d{2}-\d{2}-\d{2})')
-# "见 §4.19" / "见 §16.4c" / "详见 §7a".  The latin forms (7bis/7ter) are LEGACY: still
+# \uff1a is the full-width colon that legacy ledgers may use.
+LASTUPD_RE = re.compile(r'Last updated[:\uff1a]\s*\*{0,2}\s*(20\d{2}-\d{2}-\d{2})')
+# "see §4.19" / "see §16.4c" / "details in §7a" -- legacy ledgers write the "see" in Chinese;
+# only the § part is matched.  The latin forms (7bis/7ter) are LEGACY: still
 # accepted so older documents keep validating, but SKILL.md tells you to write 7a/7b instead.
 # ORDER MATTERS: the latin words must come BEFORE the bare [a-z] in the alternation.  With
 # [a-z] first, "§7ter" matched as "7t" -- [a-z] eats the "t", the trailing optional group
@@ -191,7 +200,7 @@ def check_xrefs(lines, nums, out):
         for i in range(1, len(parts) + 1):
             prefixes.add('.'.join(parts[:i]))
     for n, ln in enumerate(lines, 1):
-        # "见 db_cq.md §11" refers into another document — not our business
+        # "see db_cq.md §11" refers into another document — not our business
         if '.md' in ln:
             continue
         for ref in XREF_RE.findall(ln):
@@ -204,8 +213,11 @@ def check_xrefs(lines, nums, out):
 
 def check_controls(lines, out):
     """Tables that argue a verdict should carry a control row."""
-    trigger = re.compile(r'VERDICT|判据|证伪')
-    control = re.compile(r'对照|control|baseline')
+    # English markers plus the legacy Chinese ones: \u5224\u636e = "criterion",
+    # \u8bc1\u4f2a = "disproved", \u5bf9\u7167 = "control".  "Control:" is the label of
+    # the template's control row; a bare "Control" is too common inside identifiers.
+    trigger = re.compile(r'VERDICT|[Cc]riteri(?:on|a)|[Dd]isproved|\u5224\u636e|\u8bc1\u4f2a')
+    control = re.compile(r'\u5bf9\u7167|control|Control:|baseline')
     i = 0
     while i < len(lines):
         if lines[i].lstrip().startswith('|') and i + 1 < len(lines) and is_sep(lines[i + 1]):
@@ -227,28 +239,28 @@ def check_controls(lines, out):
 def print_summary(lines):
     board_start = None
     for n, ln in enumerate(lines):
-        if HEADING_RE.match(ln) and ('状态看板' in ln or 'Status board' in ln):
+        if HEADING_RE.match(ln) and any(h in ln for h in BOARD_HEADINGS):
             board_start = n
             break
     if board_start is not None:
-        print('=== 状态看板 ===')
+        print('=== Status board ===')
         for ln in lines[board_start:board_start + 40]:
-            if ln.lstrip().startswith('|') or ln.startswith('**当前在途'):
+            if ln.lstrip().startswith('|') or ln.startswith(INFLIGHT_LINE):
                 print('  ' + ln.rstrip())
             elif HEADING_RE.match(ln) and ln != lines[board_start]:
                 break
     else:
-        print('=== 状态看板 === (未找到 —— 骨架要求有这一节)')
+        print('=== Status board === (not found — the skeleton requires this section)')
     print()
-    print('=== 在途项 ===')
+    print('=== In-flight rows ===')
     hits = [(n, ln) for n, ln in enumerate(lines, 1)
             if any(k in ln for k in INFLIGHT) and not is_legend(ln)]
     if not hits:
-        print('  (无)')
+        print('  (none)')
     for n, ln in hits[:25]:
         print('  L%-5d %s' % (n, ln.strip()[:110]))
     if len(hits) > 25:
-        print('  ... 另有 %d 行' % (len(hits) - 25))
+        print('  ... %d more rows' % (len(hits) - 25))
 
 
 def main():
@@ -284,9 +296,11 @@ def main():
         return 0
     hard = [o for o in out if o[0] != 'control']
     order = ['table', 'stale', 'inflight', 'number', 'gap', 'xref', 'control']
-    label = {'table': '表格列数不齐', 'stale': '文档陈旧', 'inflight': '在途滞留',
-             'number': '编号重复', 'gap': '条目编号缺口(疑似被覆盖)', 'xref': '断链',
-             'control': '结论缺对照 [提示,不计入失败]'}
+    label = {'table': 'Table column mismatch', 'stale': 'Stale document',
+             'inflight': 'Stalled in-flight rows', 'number': 'Section number reused',
+             'gap': 'Problem-entry numbering gap (probably overwritten)',
+             'xref': 'Broken cross-reference',
+             'control': 'Conclusion without a control row [hint, not counted as failure]'}
     for kind in order:
         rows = [o for o in out if o[0] == kind]
         if not rows:
@@ -295,7 +309,7 @@ def main():
         for _, ln, msg in rows[:20]:
             print('  %s %s' % (('L%d' % ln) if ln else '   ', msg))
         if len(rows) > 20:
-            print('  ... 另有 %d 条' % (len(rows) - 20))
+            print('  ... %d more' % (len(rows) - 20))
     return 1 if hard else 0
 
 

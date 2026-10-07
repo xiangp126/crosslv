@@ -1,266 +1,264 @@
-# 零件库 — 按需装配到 TRACKING.md 的正文区
+# Parts library — assembled into the body of TRACKING.md
 
-骨架(`TRACKING.md`)是必填的;正文区从这里取零件。**零件可以中途加装** ——
-任务形态变了就装新零件,不要新建文件。
+The skeleton (`TRACKING.md`) is mandatory; the body is built from these parts. **Parts can be
+fitted mid-task**: when the shape of the work changes, fit a new part — never start a new file.
+Each part gives: when to fit it · its skeleton · a filled real sample where one exists. Copy
+skeletons and samples as they are.
 
-每个零件给三样:什么时候装 · 骨架 · 一行填好的真实样例。
+## A Main ledger table
 
----
+**Fit when**: N independently advancing objects (commits / tickets / experiments); one row each.
 
-## A 主表 / 流水账
-
-**什么时候装**:有 N 个可独立推进的对象(commit / 工单 / 实验)。一对象一行。
-
-状态列是**微型叙事** —— 用 `·` 把几十个事实串起来,允许很长。这是本零件的特点,不要拆表。
+The status column is a **micro-narrative**: chain dozens of facts with `·` (ticket numbers, PS,
+SHA, CI numbers, session id, caveats) — it may run to thousands of characters. Do not split it
+into more columns or tables; split, it must be read across columns.
 
 ```markdown
-| 对象 | 内容 | 落点 | 状态 |
+| Object | Content | Landed on | Status |
 |---|---|---|---|
-| [<号>](<完整链接>) | **<编号>** `<类型>` <一句话> | <分支/SHA> | <状态叙事> |
+| <bare full URL of the change / ticket> | **<ID>** `<type>` <one sentence> | <branch/SHA> | <status narrative> |
 ```
 
-样例(状态列节选):
+Sample (status cell, excerpt):
 
-> 🔵 **已推,等 review + CI** · Change-Id `Ib53f8d9…` 四轨共用 · `src/hca/HcaCaps.cpp` **+6 −3** ·
-> 落点:**ES** [1505386](https://…/1505386) `bc3932816a` PS7 ✅ **MERGED 09-16 13:44 UTC** ·
-> **master** [1506075](https://…/1506075) `e0f1638f17` PS6 ✅ **MERGED 09-17 00:52 UTC** ·
-> **review**:Yan 在 PS5 先 +2、随即 **CR-2 撤回**,PS6 给 **CR-1** 带 inline comment 要求改名,PS7 改完即 +2
+> 🔵 **Pushed, waiting for review + CI** · Change-Id `Ib53f8d9…` shared by all four tracks · `src/hca/HcaCaps.cpp` **+6 −3** ·
+> landed: **ES** https://git-nbu.nvidia.com/r/c/fw_ver/utopx/+/1505386 `bc3932816a` PS7 ✅ **MERGED 09-16 13:44 UTC** ·
+> **master** https://git-nbu.nvidia.com/r/c/fw_ver/utopx/+/1506075 `e0f1638f17` PS6 ✅ **MERGED 09-17 00:52 UTC** ·
+> **review**: Yan gave +2 on PS5, then immediately **retracted it with CR-2**; on PS6 gave **CR-1** with an inline comment asking for a rename; +2 as soon as PS7 fixed it
 
----
+## B Alignment matrix
 
-## B 对齐核对表(矩阵)
+**Fit when**: N objects × M channels, and a missing cell must show at a glance.
 
-**什么时候装**:N 个对象 × M 条通道,要一眼看出哪格缺。
-
-⚠ **标题里必须声明"实证,不是从上表抄的"**,并写清判据 —— 否则它只是主表的副本,
-会跟着主表一起错。
+**The heading must declare "measured, not copied from the table above", and the criterion must be
+written down.** A matrix copied from the main table goes wrong together with it; a fixed criterion
+forces a re-check every time.
 
 ```markdown
-### ★ <N>轨对齐核对表(<日期> 实证,不是从上表抄的)
+### ★ <N>-track alignment matrix (<date>, measured — not copied from the table above)
 
-判据:<Change-Id 命中 / subject 精确匹配 / 代码内容>,交叉验证一致。
+Criterion: <Change-Id hit / exact subject match / code content>, cross-checked and consistent.
 
-| | <通道1> | <通道2> | <通道3> | <标识> |
+| | <channel 1> | <channel 2> | <channel 3> | <identifier> |
 |---|---|---|---|---|
-| **<对象>** | `<SHA>` | `<SHA>` | ⬜ 不需要 | `<Change-Id>` |
+| **<object>** | `<SHA>` | `<SHA>` | ⬜ not needed | `<Change-Id>` |
 ```
 
-样例行:`| **BF3** hotplug host-awareness | \`aec0f69672\` | ⬜ 不需要 | ⬜ 不需要 | \`I368c2063b52dd…\` |`
+Sample row: `| **BF3** hotplug host-awareness | \`aec0f69672\` | ⬜ not needed | ⬜ not needed | \`I368c2063b52dd…\` |`
 
-⬜ 与 ❌ 的区别是这张表的价值所在:**⬜ = 不需要(有理由)**,❌ = 缺了(要补)。
+The table's value is the ⬜ / ❌ distinction: **⬜ = not needed (with a reason)**, ❌ = missing
+(must be fixed).
 
----
+## C Evidence table / criteria table ★
 
-## C 证据表 / 判据表 ★
-
-**什么时候装**:要论证一个归属、根因,或者"某物不存在"。
-
-🔴 **必须有对照行。** 没有对照的零命中是假阴性,不是证据。
+**Fit when**: arguing an attribution, a root cause, or that something does not exist. **A control
+row is mandatory**: a zero without a control is a false negative, not evidence
+(`references/update-discipline.md` §1).
 
 ```markdown
-**<N>重判据实证(<日期>),结论一致:**
+**<N>-criterion evidence (<date>), conclusions agree:**
 
-| 判据 | <对象1> | <对象2> | <对象3> |
+| Criterion | <object 1> | <object 2> | <object 3> |
 |---|---|---|---|
-| <判据一> | <值> | — | — |
-| <判据二:代码内容> | 1 处 | **0** | **0** |
-| **对照:<已知存在的东西>(证明查法有效)** | 10 处 | 8 处 | 8 处 |
+| <criterion 1> | <value> | — | — |
+| <criterion 2: code content> | 1 hit | **0** | **0** |
+| **Control: <something known to exist> (proves the query works)** | 10 hits | 8 hits | 8 hits |
 
-对照行是必需的:<解释为什么零命中是真的,不是路径写错造成的假阴性>。
+The control row is mandatory: <explain why the zero is real and not a false negative from a wrong path>.
 ```
 
-配套两张小表:
+Two companion tables:
 
 ```markdown
-| 指控 | 裁决 |            ← 逐条回应外部质疑
-| 假设 | 结论 |            ← 自己提出并排除的假设,每条要有实测
+| Allegation | Ruling |          ← answer external challenges point by point
+| Hypothesis | Conclusion |     ← hypotheses you raised and eliminated, each with a measurement
 ```
 
----
+## D Timeline table
 
-## D 时间线表
-
-**什么时候装**:要证明先后顺序(谁先谁后决定归属),或跨时区协作。
+**Fit when**: the order of events must be proven (who came first decides attribution), or the
+work spans time zones.
 
 ```markdown
-| 事件 | <当地时间> | <本地时间> | 依据 |
+| Event | <their local time> | <our local time> | Source |
 |---|---|---|---|
 ```
 
-⚠ 跨时区时**两列并排写死**,并在表下注明换算方向。别靠临场心算 —— 算错过。
+Across time zones, **write both columns side by side** and note the conversion direction under
+the table — never convert in your head.
 
-邮件/消息时间线用:`| 时间 | 发件人 | 要点 |`,要点栏**直接引原文并加粗关键句**,不要转述。
+Mail / message timelines: `| Time | Sender | Key points |`; in Key points **quote the original
+and bold the key sentence**, never paraphrase.
 
----
+## E CI / test-run round table
 
-## E CI / 跑测轮次表
-
-**什么时候装**:同一件事反复跑,要看出"第几轮才过、每轮死在哪"。
+**Fit when**: the same thing runs repeatedly and you must see which round passed and where each
+one died.
 
 ```markdown
-| 轮 | build / 作业号 | 挂在哪 | 判定 |
+| Round | build / job number | Where it died | Verdict |
 |---|---|---|---|
-| 1 | [`#24368`](<链接>) | <stage> | **非我方**(<理由>) |
+| 1 | https://<jenkins>/job/<job>/24368/ | <stage> | **not ours** (<reason>) |
 ```
 
-判定列只写三种:**我方** / **非我方** / **未定**。未定就是未定,不要含糊过去。
+The Verdict column takes exactly three values: **ours** / **not ours** / **undecided**. Undecided
+is written as undecided, never fudged.
 
----
+## F Experiment / seed matrix
 
-## F 实验 / 种子矩阵
-
-**什么时候装**:参数扫描、种子复验、A/B。
-
-一行一个配置,列是每一级闸门,**末列 `VERDICT` 收口**。
+**Fit when**: parameter sweep, seed re-verification, A/B. One row per config; the columns are the
+successive gates; **the last column `VERDICT` closes the row**.
 
 ```markdown
-| seed | 判决 | 迭代 | <闸门1> | <闸门2> | VERDICT |
+| seed | Ruling | Iterations | <gate 1> | <gate 2> | VERDICT |
 |---|---|---|---|---|---|
 ```
 
-A/B 专用:`| 种子 | A(原样) | B(加改动) | 分叉点 |` —— **A/B 必须单变量**,
-两边差一个以上就不叫 A/B。
+A/B: `| Seed | A (as is) | B (with change) | Divergence point |` — **A/B must change exactly one
+variable**; with more than one difference it is not an A/B.
 
----
+## G Status board row
 
-## G 状态看板行
-
-**装在骨架里**(必填),这里只给行格式:
+**Part of the skeleton** (mandatory); only the row format is given here:
 
 ```markdown
-| S3 | <里程碑> | 🔵 进行中 | 09-17 14:30 | 在等 CI #24950;下一步:绿了就推 CSP 0.8 |
+| S3 | <milestone> | 🔵 in progress | 09-17 14:30 | waiting for CI #24950; next: push CSP 0.8 once green |
 ```
 
-状态只用:`✅` / `🟡` / `🔵` / `⬜` / `❌`。**"关键产物 / 当前卡点"列写路径或一句话卡点**,
-不写心情。
+Status values: `✅` / `🟡` / `🔵` / `⬜` / `❌` only. The "Key artifact / current blocker" column
+holds a path or a one-line blocker, never mood.
 
----
+## H Numbered problem entries
 
-## H 递增编号问题条目
-
-**什么时候装**:环境搭建 / bring-up / 移植这类"问题不断冒"的任务。
+**Fit when**: environment setup / bring-up / porting — problems keep surfacing. Open the log with
+its recording convention:
 
 ```markdown
-## #<N> <一句话现象> <✅ 已解决 | 🔴 待处置 | ⚠ 我先前的结论是错的>
-
-**现象**:<逐字贴报错原文,不要转述>
-
-**定位**:<代码/配置位置 file:line,以及怎么找到的>
-
-**处置**:<做了什么>
-
-**结果**:<验证方式 + 结论>
+**Recording convention**: append an entry the moment a problem appears; once it is solved, update that entry in place (no new file, no deleted conclusions).
+Every entry has: Symptom / Location / Action / Result. Script-level fixes always go into the script itself, never worked around with manual commands.
 ```
 
-四段固定,缺一段就是没查清。解决后**就地更新该条**,不新开一条。
+```markdown
+## #<N> <one-line symptom> <✅ solved | 🟡 pending disposition | ⚠ my earlier conclusion was wrong>
 
----
+**Symptom**: <paste the error verbatim, do not paraphrase>
 
-## I 归档折叠块
+**Location**: <code/config location file:line, and how it was found>
 
-**什么时候装**:作废项开始占视线时。
+**Action**: <what was done>
+
+**Result**: <how it was verified + conclusion>
+```
+
+Sample heading: `## #1 Chip mislabelled as ARGAMAN, actually BRONCO ✅ solved`
+
+- The four sections are fixed; one missing means the problem is not run down. Paste the symptom
+  verbatim, never paraphrase.
+- When solved, **update the entry in place**; do not open a new one.
+- When a later finding overturns an entry, the new entry states "overturns #N" and the old one
+  stays; numbers are never reused.
+
+## I Archive fold
+
+**Fit when**: voided items start taking up the view.
 
 ```markdown
 <details>
-<summary>已作废 / 已 abandon(<N> 条,存档备查)</summary>
+<summary>Voided / abandoned (<N> items, kept for reference)</summary>
 
-| ~~对象~~ | ~~内容~~ | 作废时间 | 为什么能作废 |
+| ~~Object~~ | ~~Content~~ | Voided at | Why it could be voided |
 |---|---|---|---|
 
 </details>
 ```
 
-⚠ **文档里写"作废"必须同刻在线上系统执行 abandon**,否则只是自欺 —— 踩过。
+Write "voided" here only in the same batch as the abandon in the live system (`SKILL.md` §6).
 
----
+## J Retraction / correction patterns ★★
 
-## J 撤回 / 更正四范式 ★★
+The most distinctive part of the format. **Never delete the old conclusion.**
 
-本文体最独特的部分。**旧结论一律不删。**
-
-### J1 撤回声明块(结论被整个推翻,且已经对外说过)
+### J1 Retraction block — the whole conclusion is overturned and was already stated externally
 
 ```markdown
-#### <原标题> —— ⚠️ **<日期> 结论已撤回,重新开放**
+#### <original title> — ⚠️ **<date> conclusion retracted, reopened**
 
-> ## ⚠️ 撤回声明(<日期>,<谁>质疑后自查)
+> ## ⚠️ Retraction (<date>, self-audit after <who> challenged it)
 >
-> **本节先前的"<旧结论>"作废。** <质疑者>的原话:
-> *"<逐字引用>"* —— 质疑成立。
+> **This section's earlier "<old conclusion>" is void.** <challenger>'s words:
+> *"<verbatim quote>"* — the challenge stands.
 >
-> **我先前的审查不完整**:<哪里没查>。实际上:
+> **My earlier review was incomplete**: <what was not checked>. In fact:
 >
-> | <维度> | <范围> | 我当时审了吗 |
+> | <dimension> | <scope> | Did I review it then? |
 > |---|---|---|
-> | `<文件>` | +25 −2 | ✅ 审了 |
-> | `<文件>` | **40 行** | ❌ **一行没看** |
+> | `<file>` | +25 −2 | ✅ reviewed |
+> | `<file>` | **40 lines** | ❌ **not a single line read** |
 >
-> **<复查发现>**,见下方「<新节>」。**在拿到进一步实证之前,
-> 不要把"<旧结论>"用于任何对外答复。**
+> **<what the re-check found>**, see "<new section>" below. **Until further evidence is in,
+> do not use "<old conclusion>" in any external reply.**
 ```
 
-三个要件:**引原话** · **自查清单表**(诚实列出漏了什么) · **冻结该结论的对外使用**。
+Three required elements: **quote the challenger verbatim** · **self-audit table** (list honestly
+what was missed) · **freeze external use of the conclusion**. Follow it immediately with
+`##### Facts that still hold (unaffected by the retraction)`, separating what is retracted from
+what still holds, and state that **they are different propositions**.
 
-撤回后紧跟一节 `##### 仍然成立的事实(与撤回无关)`,把撤回的部分和仍成立的部分切开,
-并写明**两者是不同的命题**。
-
-### J2 整节作废(留档)
+### J2 Whole section voided (kept on file)
 
 ```markdown
-##### ~~<原标题>~~(<日期> 已被 §<X> 推翻)
+##### ~~<original title>~~ (<date>, overturned by §<X>)
 
-> ⚠⚠ **本节结论已作废,留档只为记住当初为何走错。** <哪里错了 + 真相是什么>。
-> 本节下面对 <某部分> 的溯源仍然有效,只是最后那步归因错了。
+> ⚠⚠ **This section's conclusion is void; it is kept only to remember why it went wrong.** <what was wrong + what the truth is>.
+> The tracing of <some part> below still holds; only the final attribution step was wrong.
 >
-> **教训**:<一句话> 判据:<下次该怎么查>。
+> **Lesson**: <one sentence> Criterion: <how to check next time>.
 ```
 
-四问必答:**哪部分仍有效** / **当初为何走错** / **教训** / **下次的判据**。
+All four must be answered: **which part still holds** / **why it went wrong** / **lesson** /
+**criterion for next time**.
 
-### J3 编号式自我纠正(一次纠正多条)
+### J3 Numbered self-correction (several at once)
 
 ```markdown
-#### ⚠ <N> 条本次自我纠正(都是假阴性/过度解读)
+#### ⚠ <N> self-corrections this round (all false negatives / over-reading)
 
-1. **<错误说法>。** <证据> —— 我一度说成"<原话>",**收回**。
-2. **<错误说法>。** <机制解释> 零命中是假阴性。
+1. **<wrong claim>.** <evidence> — I once said "<original words>"; **withdrawn**.
+2. **<wrong claim>.** <mechanism> The zero hits were a false negative.
 ```
 
-### J4 表内更正 + 教训升级为通用判据
+### J4 In-table correction + lesson promoted to a general criterion
 
 ```markdown
-> ⚠ **<日期> 更正:<哪张表><哪一版>错了。**
-> 错因是**<方法上的毛病>**:<具体>。改用 <正确判据> 才对上,再用 <第三判据> 交叉确认。
+> ⚠ **<date> Correction: <which table>, <which version> was wrong.**
+> The cause was **<a method flaw>**: <specifics>. Switching to <correct criterion> made it match; <third criterion> cross-confirmed it.
 >
-> **教训:<把这次的教训写成下次可直接套用的通用判据>。**
+> **Lesson: <this lesson written as a general criterion that applies directly next time>.**
 ```
 
-J4 是最有价值的一种 —— 它把一次性的错误变成可复用的判据。
+The most valuable form: it turns a one-off mistake into a reusable criterion.
 
-### J5 累犯记录
+### J5 Repeat-offence record
 
 ```markdown
-### <N> 教训(第<N>次了)
+### <N> Lesson (time no. <N>)
 
-§<X> 是 <第一次的形态>,本节是 <这次的形态>。
-**凡 <触发条件>,先 <该做的检查>,再谈 <结论>。**
+§<X> was <the first form>; this section is <this form>.
+**Whenever <trigger>, first <the check to run>, only then <conclusion>.**
 ```
 
-同一个坑踩第二次就建这一节。让重复犯错显形,比藏起来有用。
+Create it the second time the same trap is hit — repetition made visible beats hidden.
 
----
+## K Proposed disposition (not executed)
 
-## K 处置建议(未执行)
-
-**什么时候装**:诊断完了,但处置权不在自己手上。
+**Fit when**: the diagnosis is done but the disposition is not yours to decide. What needs an
+order first: `SKILL.md` §6.
 
 ```markdown
-#### 处置建议(未执行,等指令)
+#### Proposed disposition (not executed, awaiting instruction)
 
-| 方案 | 代价 | 风险 |
+| Option | Cost | Risk |
 |---|---|---|
 
-**推荐**:<哪个 + 一句理由>
+**Recommended**: <which one + one-line reason>
 ```
-
-⚠ **诊断与处置分离。** 诊断可以自己做完;落码 / 推送 / 改线上状态一律先报方案拿指令。

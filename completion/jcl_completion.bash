@@ -251,16 +251,13 @@ _jcl_complete() {
         return 0
     fi
 
-    # set has no positional at all and needs one of -m/-e, so offer those two
-    # rather than nothing when there is no dash typed yet
-    if [[ $cmd == set ]]; then
-        COMPREPLY=($(compgen -W "--model --effort" -- "$cur"))
-        return 0
-    fi
-
-    # refresh and exit-session take any number of SESSION arguments
-    if [[ $cmd == refresh || $cmd == exit-session ]]; then
+    # refresh, exit-session and set take any number of SESSION arguments
+    if [[ $cmd == refresh || $cmd == exit-session || $cmd == set ]]; then
         _jcl_complete_session "$agent"
+        # set also needs one of --model/--effort: offer them until one is there
+        if [[ $cmd == set && " ${COMP_WORDS[*]} " != *" --model "* && " ${COMP_WORDS[*]} " != *" --effort "* ]]; then
+            COMPREPLY+=($(compgen -W "--model --effort" -- "$cur"))
+        fi
         return 0
     fi
 

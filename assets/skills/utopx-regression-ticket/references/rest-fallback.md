@@ -1,18 +1,22 @@
 ## When the redmine MCP is down — the REST fallback
 
-`yai__create_task` was unavailable on 2026-09-15 (the `nvidia-redmine` MCP was disconnected) and
-`redmine-cli` is broken on m-fwdev-167 (`GLIBC_2.32 / 2.34 not found`). The working path is the
-REST API with the key in `~/.redmine_env` (mode 600 — never echo it):
+Use the REST API when the `nvidia-redmine` MCP (`yai__create_task`) is unavailable. It needs
+neither the MCP nor `redmine-cli`: a native `redmine-cli` on m-fwdev-167 fails with
+`GLIBC_2.32 / 2.34 not found`, and the CLI now runs in the pim container (skill `aipim-cli-env`).
+The key is in `~/.redmine_env` (mode 600 — never echo it):
 
 ```bash
 set -a; . ~/.redmine_env; set +a
-K="${REDMINE_API_KEY:-$REDMINE_TOKEN}"; U="${REDMINE_URL:-https://redmine.mellanox.com}"
+K="${REDMINE_API_KEY:-$REDMINE_TOKEN}"; U="${REDMINE_URL:-https://redmine-api.nvidia.com}"
 curl -sk -H "X-Redmine-API-Key: $K" "$U/issues/<id>.json?include=journals,attachments,relations"
 ```
 
+API calls go to `redmine-api.nvidia.com`: the 2026-10-05 domain migration retired the
+`*.mellanox.com` API hosts, and `redmine.mellanox.com` only redirects browsers.
+
 Create with `POST {U}/issues.json`. The MCP's friendly names become numeric ids:
 
-| skill field | REST key | value used on #5273244 |
+| skill field | REST key | value (as used on #5273244) |
 |---|---|---|
 | `project` | `project_id` | `5581` |
 | `tracker` `Task` | `tracker_id` | **`9`** (`Bug SW` = 28) |
@@ -23,13 +27,9 @@ Create with `POST {U}/issues.json`. The MCP's friendly names become numeric ids:
 | sprint | `sprint_id` | `30624` = `MTBC_YL 26-08` |
 | `Chips` Bronco (BF4) | `custom_fields:[{"id":843,"value":["167"]}]` | note: **list of strings** |
 
-Look ids up rather than trusting this table when something 422s:
+When something 422s, look the ids up rather than trusting this table:
 `{U}/trackers.json` · `{U}/enumerations/issue_priorities.json` ·
 `{U}/projects/5581/versions.json?limit=100` · `{U}/custom_fields.json` (needs admin; otherwise read
 the ids off an existing ticket's JSON).
 
-### Ask which sprint, don't infer it from the date
-
-Filing on 2026-09-15 I picked `MTBC_YL 26-09` and Peter corrected it to **`26-08`**. The sprint
-follows the team's planning board, not the calendar month. If he has not said, ask — it is one
-question and the fix afterwards costs a ticket update plus a note.
+Which sprint: ask, don't infer it from the date — SKILL.md → "Sprint lookup".

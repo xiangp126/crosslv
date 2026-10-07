@@ -6,42 +6,33 @@ description: >-
   use redmine-cli to query, create, update, comment, search, and look up reference data. For
   deciding which tracker a new ticket belongs in, see skill `utopx-regression-ticket`.
 ---
-<!--
-Progressive Disclosure:
-- Level 1 (YAML front matter): Skill metadata and description
-- Level 2 (This file): Overview, quick start, key patterns
-- Level 3: workflows/
-
-Related skills:
-- querying-helios-directory: For employee directory lookups (e.g., resolving assignee names)
--->
 
 # Issue Tracking with redmine-cli
 
-> **Use the `nvidia-redmine` MCP first. This CLI is the fallback.**
->
-> When the MCP server is connected, `yai__get_tickets` / `yai__search_tickets` /
-> `yai__list_tickets` / `yai__update_ticket` / `yai__resolve_redmine_url` do everything below
-> and are strictly easier to drive from an agent session: no container, no TTY, no API key to
-> place, and URLs resolve directly. Two paths to the same tracker is one path too many —
-> Some runtimes load MCP tools lazily, so search or inspect the available tool catalogue before
-> concluding they are absent. Reach for `redmine-cli` only when discovery or calls fail, and say
-> which path you used when reporting results.
->
-> (Recorded 2026-09-04. Every Redmine lookup in the #5232246 / #5257102 work went through the
-> MCP; `redmine-cli` was never needed.)
+**Use the `nvidia-redmine` MCP first; this CLI is the fallback.** When the MCP is connected,
+`yai__get_tickets` / `yai__search_tickets` / `yai__list_tickets` / `yai__update_ticket` /
+`yai__resolve_redmine_url` do everything below and are easier to drive from an agent: no
+container, no TTY, no API key to place, and URLs resolve directly.
 
-Track and manage issues in Redmine via `redmine-cli`. **WSL note:** In WSL with Windows-installed binaries, append `.exe` to CLI names (`<tool>-cli.exe`).
+- Some runtimes load MCP tools lazily: search or inspect the available tool catalogue before
+  concluding they are absent.
+- Use `redmine-cli` only when MCP discovery or calls fail, and say which path you used when
+  reporting results.
+- **Writing descriptions and comments:** use textile, put hex inside `@…@`, and correct a comment
+  by editing its journal in place — skill `utopx-regression-ticket` → "Writing to Redmine".
+- **WSL:** with Windows-installed binaries, append `.exe` to CLI names (`<tool>-cli.exe`).
 
-## Verify Installation
+## Setup
 
 ```bash
 redmine-cli --version
 ```
 
-If command not found, see [installation page](https://outlook-cli-80d21a.gitlab-master-pages.nvidia.com/).
+If the command is not found, see the [installation page](https://outlook-cli-80d21a.gitlab-master-pages.nvidia.com/).
 
-**Authentication:** Get your API key at https://redmine.mellanox.com/my/account (API access key > Show), then:
+**Authentication:** get your API key at https://redmine.nvidia.com/my/account (API access key >
+Show), then:
+
 ```bash
 redmine-cli auth set-token <your-api-key>
 redmine-cli auth status
@@ -49,24 +40,21 @@ redmine-cli auth status
 
 For automations, use a dedicated service user (request via ServiceNow).
 
-## When to Use This Skill
+**API host:** since the 2026-10-05 domain migration the API lives at
+`https://redmine-api.nvidia.com`, but redmine-cli still defaults to the retired
+`https://redmine-api.mellanox.com`. Check `redmine-cli auth status` and set it once; it is kept
+in `~/.ai-pim-utils/config.toml`:
 
-Use this skill when users want to:
-
-- **Look up issues**: Get issue details, status, comments by ID
-- **Search/filter issues**: Find issues by any Redmine field using `--filter`
-- **Create issues**: File new issues in a Redmine project
-- **Update issues**: Change status, priority, assignee, or other fields
-- **Comment on issues**: Add notes to existing issues
-- **Browse projects**: List or inspect Redmine projects
-- **Look up reference data**: Discover valid statuses, trackers, and priorities (needed for create/update flags)
-- **Resolve users**: Look up user details by ID
+```bash
+redmine-cli config set base_url https://redmine-api.nvidia.com
+redmine-cli auth status    # base_url: https://redmine-api.nvidia.com (config file)
+```
 
 ## Quick Reference
 
-Run `redmine-cli --help` and `redmine-cli <command> --help` for full syntax.
+Full syntax: `redmine-cli --help`, `redmine-cli <command> --help`.
 
-### Query Issues
+### Query issues
 
 ```bash
 redmine-cli issue get 12345 --json
@@ -77,13 +65,15 @@ redmine-cli issue list --all-projects -f "subject=~deployment" --json
 redmine-cli issue list --project myproject -f "updated_on=>t-7" -f "status_id=open" --json
 ```
 
-**Timestamp note:** Root flags like `--relative`, `--utc`, `--local`, and `--timezone` only affect human output. JSON/TOON output keeps original API timestamps.
+- `--filter` (`-f`) passes raw Redmine filters as `key=value` pairs; operator reference:
+  `redmine-cli issue list --help`.
+- Root flags `--relative`, `--utc`, `--local` and `--timezone` only affect human output; JSON/TOON
+  output keeps the original API timestamps.
 
-The `--filter` (`-f`) flag passes raw Redmine filters as `key=value` pairs. Run `redmine-cli issue list --help` for the full operator reference.
+### Create, update, comment
 
-### Create and Update Issues
-
-**Important:** Use `redmine-cli lookup` commands to discover valid IDs before creating or updating issues. See [Issue Lifecycle](workflows/issue-lifecycle.md).
+Discover valid ids with the `redmine-cli lookup` commands before creating or updating — see
+[Issue Lifecycle](workflows/issue-lifecycle.md).
 
 ```bash
 # Create
@@ -97,7 +87,7 @@ redmine-cli issue comment 12345 --text "Fix deployed to staging" --json
 echo "Multi-line comment" | redmine-cli issue comment 12345
 ```
 
-### Reference Data Lookups
+### Reference data
 
 ```bash
 redmine-cli lookup statuses --json      # Status IDs for --status-id
@@ -105,7 +95,7 @@ redmine-cli lookup trackers --json      # Tracker IDs for --tracker-id
 redmine-cli lookup priorities --json    # Priority IDs for --priority-id
 ```
 
-### Projects and Users
+### Projects and users
 
 ```bash
 redmine-cli project list --json
@@ -116,33 +106,16 @@ redmine-cli user me --json
 
 ## Workflows
 
-Detailed multi-step procedures:
-
-1. **[Issue Lifecycle](workflows/issue-lifecycle.md)** — Create, update, comment, and close issues
-2. **[Search and Triage](workflows/search-triage.md)** — Find and prioritize issues across projects
+1. **[Issue Lifecycle](workflows/issue-lifecycle.md)** — create, update, comment, and close issues
+2. **[Search and Triage](workflows/search-triage.md)** — find and prioritize issues across projects
 
 ## Troubleshooting
 
-**Authentication fails:**
-```bash
-redmine-cli auth logout
-redmine-cli auth set-token <new-key>  # Get key from https://redmine.mellanox.com/my/account
-```
-
-**401 Unauthorized:**
-- API key may be revoked or expired — generate a new one
-- Verify with: `redmine-cli auth status`
-
-**403 Forbidden:**
-- You may not have access to the requested project or issue
-- Check project membership in Redmine web UI
-
-**Write operation rejected (READ_ONLY_MODE):**
-- The CLI build has write support disabled
-- Production builds have write access; dev builds are read-only by default
-
-**"--project-id is required" on issue create:**
-- Look up project IDs first: `redmine-cli project list --json`
-
-**Invalid status/tracker/priority ID:**
-- Look up valid values first: `redmine-cli lookup statuses --json`
+| symptom | action |
+|---|---|
+| authentication fails | `redmine-cli auth logout`, then `redmine-cli auth set-token <new-key>` (key from https://redmine.nvidia.com/my/account) |
+| 401 Unauthorized | the API key may be revoked or expired — generate a new one; verify with `redmine-cli auth status` |
+| 403 Forbidden | no access to the requested project or issue — check project membership in the Redmine web UI |
+| write rejected (`READ_ONLY_MODE`) | the CLI build has write support disabled: production builds have write access, dev builds are read-only by default |
+| "--project-id is required" on issue create | look up project ids first: `redmine-cli project list --json` |
+| invalid status/tracker/priority ID | look up valid values first: `redmine-cli lookup statuses --json` |

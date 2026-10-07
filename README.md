@@ -45,6 +45,7 @@ jcl refresh 3:11.1                         # one exact pane, either agent
 jcl set --agent codex --model gpt-6-astra --effort high
 jcl set --effort xhigh --agent codex        # retain each pane's current model
 jcl set --model opus --model gpt-6-astra    # route one model to each agent
+jcl set 0:6.2 3:4.1 --model opus --effort max   # only the named panes, either agent
 ```
 
 `list`, `save`, `restore`, and `set*` default to both agents. For compatibility,
@@ -82,9 +83,10 @@ Tests: `python3 -B -m unittest discover -s tests -p 'test_*.py' -v`.
 <a id="jskill"></a>
 #### [jskill](./nv-tools/jskill)
 
-Claude Code and Codex share one canonical tree at `assets/skills`. Claude loads one tree link at
-`~/.claude/skills`; Codex receives one link per shared skill under `~/.agents/skills`, preserving
-independently installed Codex skills.
+Claude Code and Codex share one canonical tree at `assets/skills`. Each receives the same one link
+per shared skill, Claude under `~/.claude/skills` and Codex under `~/.agents/skills`, so both load
+exactly the same skills while what a client keeps there itself (Claude Code's synced account skills,
+independently installed Codex skills) stays out of the repository.
 
 ```bash
 jskill list

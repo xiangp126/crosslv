@@ -1,25 +1,27 @@
 ---
 name: fsearch-failures
-description: Query the regression failure database (MARS analytics / fsearch) to answer "how often does this failure happen, on which machines, under which FW and utopx commit" — the main tool for attributing a regression to a commit. Covers the 2026-09 move to a new path + Python 3.8, and the three traps that silently produce the opposite conclusion. Run it FIRST when reproducing a regression or root-causing a CI/DoA/MARS failure, before allocating a box. Use when asked whether a failure is new, how many times it occurred, on how many setups, whether our commit caused it, when doing an A/B attribution over regression history, or when a regression repro or root-cause investigation starts.
+description: >-
+  Query the regression failure database (MARS analytics / fsearch) - how often a failure happens,
+  on which machines, under which FW and utopx commit; the main tool for attributing a regression to
+  a commit (new path and Python 3.8 since 2026-09). Run it FIRST when a repro or root-cause
+  investigation starts, before allocating a box; also to tell whether a failure is new, how often
+  it occurs, whether our commit caused it, or for an A/B attribution over regression history.
 ---
 
 # fsearch — the regression failure database
 
-> **Failure triage is a three-skill chain — know which leg you are on.**
->
-> | Leg | Question it answers | Skill |
-> |---|---|---|
-> | 1 | *Did anything fail last night, and where?* | `regression-report-mail` (Outlook) |
-> | 2 | *Is this failure new? how many setups? which commit introduced it?* | `fsearch-failures` (failure DB) |
-> | 3 | *What exactly happened in that one run?* | `ci-forensics` (Jenkins → MARS log) |
->
-> Going 1→2→3 costs minutes and often ends the investigation at leg 2. Jumping straight to leg 3
-> gets you one log with no idea whether it is a one-off or a month-old epidemic.
+Failure triage is a three-skill chain. Go 1 → 2 → 3: leg 2 often ends the investigation, and one
+log from leg 3 alone cannot tell a one-off from a month-old epidemic.
 
-It is a CLI over the MARS analytics DB. One row per **failure occurrence**, with the
-setup, FW version, **utopx commit**, failure text and timestamp. This is the tool for
-*attribution* questions ("is this ours? since when? how often?"), not for reading one
-run's log — that is skill `ci-forensics`.
+| Leg | Question it answers | Skill |
+|---|---|---|
+| 1 | Did anything fail last night, and where? | `regression-report-mail` (Outlook) |
+| 2 | Is this failure new? How many setups? Which commit introduced it? | `fsearch-failures` (failure DB) |
+| 3 | What exactly happened in that one run? | `ci-forensics` (Jenkins → MARS log) |
+
+fsearch is a CLI over the MARS analytics DB: one row per **failure occurrence**, with the setup, FW
+version, **utopx commit**, failure text and timestamp. Use it for attribution ("is this ours? since
+when? how often?"); to read one run's log use skill `ci-forensics`.
 
 ## Call it
 
@@ -27,23 +29,22 @@ run's log — that is skill `ci-forensics`.
 python3.8 /auto/sw/work/hca_fw/projects/mars_analytics/search.py --errlike "0xac5816"
 ```
 
-First time on a machine, install deps **without touching system python**:
+First time on a machine, install the deps **without touching system python**:
 
 ```bash
 python3.8 -m pip install --user \
     -r /auto/sw/work/hca_fw/projects/mars_analytics/requirements.txt
 ```
 
-(The team's official line is `sudo python3.8 -m pip install -r …`; `--user` works and is
-the right choice from an AI session.)
+(The team's official command is `sudo python3.8 -m pip install -r …`; `--user` works and is the
+right choice from an AI session.)
 
-The interactive `fsearch` alias points at the same script but **is not available in Bash
-tool calls** — always write the full path. If a human's alias is broken:
-`source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias && refreshalias`, then
-`type fsearch` must print
-`sudo python3.8 /auto/sw/work/hca_fw/projects/mars_analytics/search.py`.
+The interactive `fsearch` alias points at the same script but **does not exist in Bash tool
+calls** — always write the full path. To repair a human's broken alias:
+`source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias && refreshalias`; then `type fsearch` must
+print `sudo python3.8 /auto/sw/work/hca_fw/projects/mars_analytics/search.py`.
 
-## 🔴 Three traps — each one silently flips the conclusion
+## Three traps — each one silently flips the conclusion
 
 ### 1. The old path is dead and answers every query with "No records found"
 
@@ -52,30 +53,30 @@ tool calls** — always write the full path. If a human's alias is broken:
 | **use this** | `/auto/sw/work/hca_fw/projects/mars_analytics/search.py` | live |
 | ~~never~~ | ~~`/mswg/projects/fw/fw_ver/mars_analytics/search.py`~~ | frozen 2026-05-31, **always empty** |
 
-It does not error. It returns `No records found.` in ~1.8 s for *anything*.
-On 2026-09-17 this produced a confident "that failure does not exist in regression
-history" — wrong. **Always run a control query with a term you know exists**; if the
-control is also empty, the tool is broken, not the data.
+The dead path does not error — it returns `No records found.` in ~1.8 s for anything, which reads
+as "that failure does not exist in regression history". **Always run a control query with a term
+you know exists**; if the control is also empty, the tool is broken, not the data.
 
 ### 2. The DB only holds the last ~8 days
 
-Measured 2026-09-17: across **every** setup (MUSTANG, BRONCO, TAMAR, cx9) the earliest
-row in the whole database was 2026-09-10.
+The window is DB-wide, the same for every setup (MUSTANG, BRONCO, TAMAR, cx9).
 
-⇒ **"First seen on <date>" is meaningless unless that date is well inside the window.**
-It is usually just the retention edge. A commit that landed three weeks ago cannot be
-A/B'd with fsearch at all — the "before" side does not exist. Same limit kills MARS
-archives (~12 days). For a real before/after you need a local device run of the two
-builds.
+- **"First seen on <date>" is meaningless unless that date is well inside the window** — usually
+  it is just the retention edge.
+- A commit that landed three weeks ago cannot be A/B'd with fsearch at all — the "before" side
+  does not exist. The MARS session archives
+  (`/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup>/<sid>/<sid>.tgz`) go back
+  months — check the oldest `<sid>` with `ls` — so scan them for the before side (skill
+  `ci-forensics`). For a controlled before/after, run the two builds on a local device.
 
 ### 3. `--datefrom` / `--dateto` are accepted and ignored
 
-`--datefrom 2026-08-01 --dateto 2026-08-31` and `--datefrom 2026-09-16` return the *same*
-rows. No error, no warning. **Filter on the timestamp column of the output yourself.**
+`--datefrom 2026-08-01 --dateto 2026-08-31` and `--datefrom 2026-09-16` return the *same* rows, with
+no error and no warning. **Filter on the timestamp column of the output yourself.**
 
-> ⚠ The old "a real query takes 70–90 s, an instant return is a false negative" rule is
-> **obsolete** — Fsearch2 is far faster (32 rows in 5.8 s). Judge by the control query,
-> never by elapsed time.
+Judge a result by the control query, never by elapsed time: the old rule "a real query takes
+70–90 s, an instant return is a false negative" is **obsolete** — Fsearch2 is far faster (32 rows
+in 5.8 s).
 
 ## Flags
 
@@ -113,22 +114,35 @@ git -C <worktree> merge-base --is-ancestor <our-commit> <commit-from-fsearch> \
     && echo "that run contained our change"
 ```
 
-**A failure confined to one setup is a machine/config signal, not a code signal** —
-check that before blaming a commit. Conversely a failure across many setups and branches
-that starts at a known landing date is the strong form of attribution — but see trap 2
-before believing any "starts at".
+- **A failure confined to one setup is a machine/config signal, not a code signal** — check that
+  before blaming a commit. A failure across many setups and branches that starts at a known landing
+  date is the strong form of attribution — but apply trap 2 before believing any "starts at".
+- **"It starts at FW X" — check whether the burned INI changed at the same time.** fsearch rows
+  carry FW and utopx commit but not the INI, and MARS burns a per-session INI that the regression
+  infrastructure regenerates per branch (extra lines injected on top of the release INI). Every
+  session's INI is kept:
+
+  ```bash
+  ls /auto/sw/work/hca_fw/data/burn_fw/ini_files/ | grep "_session_<sid>_"
+  #   <n>_session_<sid>_version_<fw>_psid_<psid>.ini
+  diff <ini of last good session> <ini of first bad session>
+  ```
+
+  An INI change can make a failure look like a FW regression when the FW is innocent. If FW and INI
+  changed together, history cannot separate them: swap one of them on the box (skill
+  `regression-repro`).
 
 ## What it does and does not record
 
-- **Records**: failures during the regression run, case-level; since Fsearch2 also
-  preparation / pre / post steps, cloud sessions (PXE, NICX), MNG, and minireg/DoA/SF
-  (those only from 2026-07-02 onward).
-- **Does not record**: CI build / packaging failures. Anything dying in setup/init before
-  a case starts may never reach it. **Nor any coverage data** — an empty fsearch result says
-  nothing about whether a feature ran. Functional coverage lives in a separate SQLite DB;
-  see skill `regression-report-mail`.
-- Fsearch2 renamed `UTOPX_TAG` → `TEST_TAG` and **removed the `FATAL` column**.
-  TMV is native now — the old `--tmv` flag is gone.
+- **Records**: failures during the regression run, case-level; since Fsearch2 also preparation /
+  pre / post steps, cloud sessions (PXE, NICX), MNG, and minireg/DoA/SF (those only from
+  2026-07-02 onward).
+- **Does not record**: CI build / packaging failures. Anything dying in setup/init before a case
+  starts may never reach it. **Nor any coverage data** — an empty fsearch result says nothing about
+  whether a feature ran. Functional coverage lives in a separate SQLite DB; see skill
+  `regression-report-mail`.
+- Fsearch2 renamed `UTOPX_TAG` → `TEST_TAG` and **removed the `FATAL` column**. TMV is native now —
+  the old `--tmv` flag is gone.
 
 ## Related
 

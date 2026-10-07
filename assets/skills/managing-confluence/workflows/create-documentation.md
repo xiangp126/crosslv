@@ -1,12 +1,10 @@
 # Create Documentation Workflow
 
-> ⚠ **AI sessions:** the `confluence-cli page create/update` calls below are correct **for a human
-> at a terminal**. From an agent they exit 11 (`CONFIRMATION_REQUIRED`) before reaching the API —
+> **Agent sessions:** the `confluence-cli page create/update` calls below are for a human at a
+> terminal. From an agent they exit 11 (`CONFIRMATION_REQUIRED`) before reaching the API —
 > publish with `~/myGit/crosslv/assets/aipim/confluence-update` instead. See `../SKILL.md`.
 
-Use this workflow when the user wants to publish or update documentation in Confluence.
-
-## Typical flow
+Publish or update documentation in Confluence:
 
 1. Confirm the target space or parent page
 2. Create a new page or update an existing one
@@ -17,7 +15,7 @@ Use this workflow when the user wants to publish or update documentation in Conf
 
 ```bash
 confluence-cli config show
-confluence-cli space list --json
+confluence-cli space get ENG --json          # not bare `space list`: it walks every space
 confluence-cli space pages ENG --limit 20 --json
 ```
 

@@ -200,38 +200,156 @@ class SessionTests(unittest.TestCase):
         tmux.assert_not_called()
         kill.assert_not_called()
 
-    def set_commands(self, argv, panes=None, footer="gpt-current high · /tmp"):
+    def set_commands(self, argv, panes=None, footer="gpt-current high · /tmp", turn="idle", comes_back=True):
+        """What set typed: claude's slash commands, then the resume command each
+        restarted codex pane was given (its leading `cd` dropped). `footer` is
+        one footer for every pane, or a dict by pane id."""
+        typed = []
+
+        def relaunch(rec, command, timeout, e):
+            typed.append(command.split(" && ", 1)[1])
+            return True
+
+        tail = ({"side_effect": lambda pane, *a, **k: footer[pane]} if isinstance(footer, dict)
+                else {"return_value": footer})
         with patch.object(jcl, "typeable_panes", return_value=panes or [record()]), \
-             patch.object(jcl, "pane_tail", return_value=footer), \
+             patch.object(jcl, "pane_tail", **tail), \
+             patch.object(jcl, "CODEX_DIR", Path("/nonexistent")), \
+             patch.object(jcl, "codex_turn", return_value=(turn, None)), \
+             patch.object(jcl, "relaunch", side_effect=relaunch), \
+             patch.object(jcl, "await_codex_settings",
+                          side_effect=lambda recs, *a, **k: {r["session_id"] for r in recs} if comes_back else set()), \
              patch.object(jcl, "broadcast_to_agents", return_value=[]) as broadcast:
             rc, out = self.invoke(argv)
-        return rc, out, [c.args[0] for c in broadcast.call_args_list]
+        return rc, out, [c.args[0] for c in broadcast.call_args_list] + typed
+
+    @staticmethod
+    def resumed(model, effort, sid=SID):
+        return f"codex resume {sid} --model {model} -c 'model_reasoning_effort=\"{effort}\"'"
 
     def test_codex_model_and_effort_respects_requested_level(self):
         rc, _, commands = self.set_commands(["set", "--agent", "codex", "--model", "gpt-next", "--effort", "low"])
-        self.assertEqual((rc, commands), (0, ["/model gpt-next low"]))
+        self.assertEqual((rc, commands), (0, [self.resumed("gpt-next", "low")]))
 
     def test_codex_effort_only_preserves_live_model(self):
         rc, _, commands = self.set_commands(["set", "--effort", "xhigh", "--agent", "codex"])
-        self.assertEqual((rc, commands), (0, ["/model gpt-current xhigh"]))
+        self.assertEqual((rc, commands), (0, [self.resumed("gpt-current", "xhigh")]))
 
     def test_codex_model_only_preserves_effort(self):
         rc, _, commands = self.set_commands(["set", "--model", "gpt-next", "--agent", "codex"])
-        self.assertEqual((rc, commands), (0, ["/model gpt-next high"]))
+        self.assertEqual((rc, commands), (0, [self.resumed("gpt-next", "high")]))
 
     def test_mixed_agent_model_routing(self):
         rc, _, commands = self.set_commands(
             ["set", "--model", "opus", "--model", "gpt-next", "--effort", "high"],
             [record(), record("claude", "other")])
         self.assertEqual(rc, 0)
-        self.assertCountEqual(commands, ["/model opus", "/effort high", "/model gpt-next high"])
+        self.assertCountEqual(commands, ["/model opus", "/effort high", self.resumed("gpt-next", "high")])
 
     def test_effort_follows_the_named_model(self):
         recs = [record(), record("claude", "other")]
         rc, _, commands = self.set_commands(["set", "--model", "opus", "--effort", "max"], recs)
         self.assertEqual((rc, commands), (0, ["/model opus", "/effort max"]))  # codex untouched
         rc, _, commands = self.set_commands(["set", "--effort", "max"], recs)
-        self.assertCountEqual(commands, ["/effort max", "/model gpt-current max"])  # sweep
+        self.assertCountEqual(commands, ["/effort max", self.resumed("gpt-current", "max")])  # sweep
+
+    def test_codex_panes_are_restarted_per_setting_and_only_when_needed(self):
+        panes = [record(sid="a", pane="%1", target="t:1.1"),
+                 record(sid="b", pane="%2", target="t:1.2"),
+                 record(sid="c", pane="%3", target="t:1.3")]
+        footers = {"%1": "gpt-6-sol max · /w", "%2": "gpt-6-sol high · /w", "%3": "gpt-6-astra low · /w"}
+        rc, out, commands = self.set_commands(["set", "--effort", "max", "--agent", "codex"], panes, footers)
+        self.assertEqual(rc, 0)
+        # Nothing is typed into a codex session any more; a already runs on the pair
+        self.assertEqual(commands, [self.resumed("gpt-6-sol", "max", "b"),
+                                    self.resumed("gpt-6-astra", "max", "c")])
+        self.assertIn("Restarting 1 of 2 codex pane(s) on gpt-6-sol max", out)
+        self.assertIn("Restarting 1 codex pane(s) on gpt-6-astra max", out)
+        self.assertRegex(out, r"t:1\.1\s+unchanged")
+        self.assertRegex(out, r"t:1\.2\s+confirmed")
+
+    def test_codex_heading_says_when_nothing_needs_a_restart(self):
+        rc, out, commands = self.set_commands(["set", "--effort", "max", "--agent", "codex"],
+                                              [record(), record(sid="b", pane="%2", target="t:1.2")],
+                                              footer="gpt-current max · /w")
+        self.assertEqual((rc, commands), (0, []))
+        self.assertIn("No restart needed for 2 codex pane(s) on gpt-current max", out)
+
+    def test_codex_pane_mid_turn_or_not_back_counts_as_not_done(self):
+        rc, out, commands = self.set_commands(["set", "--effort", "max", "--agent", "codex"], turn="busy")
+        self.assertEqual((rc, commands), (1, []))
+        self.assertIn("busy", out)
+        rc, out, _ = self.set_commands(["set", "--effort", "max", "--agent", "codex"], comes_back=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("unconfirmed", out)
+
+    def test_codex_display_names_become_model_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "models_cache.json").write_text(json.dumps(
+                {"models": [{"slug": "gpt-6-sol", "display_name": "GPT-6-Sol"}]}))
+            with patch.object(jcl, "CODEX_DIR", Path(tmp)):
+                self.assertEqual(jcl.codex_pane_settings("› Ask\n  GPT-6-Sol max · /w"), ("gpt-6-sol", "max"))
+                self.assertEqual(jcl.codex_model_slug("company-model"), "company-model")
+                # A snapshot saved before the mapping still resumes on the id
+                self.assertIn("--model gpt-6-sol ",
+                              jcl.resume_record(record(model="GPT-6-Sol", effort="max")))
+
+    def test_claude_reply_comes_from_the_transcript_and_shows_as_it_lands(self):
+        reply = json.dumps({"type": "user", "message": {"role": "user", "content":
+                            "<local-command-stdout>Set effort level to max (this session only):"
+                            " Deep</local-command-stdout>"}}) + "\n"
+        # The screen is full of the same reply from earlier runs: counting it
+        # can never tell a new one apart
+        screen = "❯ /effort max\n  ⎿  Set effort level to max (this session only)\n" * 6
+        with tempfile.TemporaryDirectory() as tmp:
+            for sid in ("silent", "quick"):
+                Path(tmp, sid + ".jsonl").write_text(reply)
+            recs = [record("claude", "silent", pane="%1", target="t:1.1"),
+                    record("claude", "quick", pane="%2", target="t:1.2")]
+
+            def tmux(*argv):
+                if argv[-1] == "Enter" and argv[2] == "%2":
+                    with Path(tmp, "quick.jsonl").open("a") as fh:
+                        fh.write(reply)
+                return ""
+
+            with patch.object(jcl, "typeable_panes", return_value=recs), \
+                 patch.object(jcl, "claude_transcript",
+                              side_effect=lambda rec: Path(tmp, rec["session_id"] + ".jsonl")), \
+                 patch.object(jcl, "is_live_agent", return_value=True), \
+                 patch.object(jcl, "pane_tail", return_value=screen), \
+                 patch.object(jcl, "tmux", side_effect=tmux), \
+                 patch.object(jcl.time, "sleep"):
+                rc, out = self.invoke(["set", "--effort", "max", "--agent", "claude", "--timeout", "0.2"])
+        self.assertEqual(rc, 1)
+        self.assertRegex(out, r"t:1\.2\s+confirmed\s+example\s+Set effort level to max \(this session only\)")
+        # The pane that answered is shown before the one still being waited on
+        self.assertLess(out.index("t:1.2"), out.index("t:1.1"))
+        self.assertRegex(out, r"t:1\.1\s+unconfirmed")
+
+    def test_set_takes_named_panes_like_refresh(self):
+        recs = [record("claude", "c1", pane="%1", target="t:1.1"),
+                record("claude", "c2", pane="%2", target="t:1.2"),
+                record(sid="cx", pane="%3", target="t:1.3")]
+
+        def sent(*argv):
+            with patch.object(jcl, "collect", return_value=[dict(r) for r in recs]), \
+                 patch.object(jcl, "typeable_panes") as every_pane, \
+                 patch.object(jcl, "broadcast_to_agents", return_value=[]) as broadcast:
+                rc, out = self.invoke(["set", *argv])
+            every_pane.assert_not_called()  # named panes only, not a sweep of all
+            return rc, out, [(c.args[0], [r["session_id"] for r in c.kwargs["records"]])
+                             for c in broadcast.call_args_list]
+
+        # A named claude pane is set even under --agent codex: naming wins
+        self.assertEqual(sent("t:1.2", "--effort", "max", "--agent", "codex")[::2],
+                         (0, [("/effort max", ["c2"])]))
+        self.assertEqual(sent("t:1.1,t:1.2", "--effort", "high")[2], [("/effort high", ["c1", "c2"])])
+        self.assertEqual(sent("--effort", "high", "t:1.1", "t:1.2")[2], [("/effort high", ["c1", "c2"])])
+        self.assertEqual(sent("claude", "--effort", "high")[2], [("/effort high", ["c1", "c2"])])
+        rc, out, calls = sent("t:9.9", "--effort", "max")
+        self.assertEqual((rc, calls), (1, []))
+        self.assertIn("No live session at 't:9.9'", out)
 
     def test_effort_only_fails_without_live_model(self):
         rc, out, commands = self.set_commands(["set", "--effort", "high", "--agent", "codex"], footer="busy")
@@ -240,7 +358,7 @@ class SessionTests(unittest.TestCase):
 
     def test_custom_codex_model_explicit_agent(self):
         rc, _, commands = self.set_commands(["set", "--model", "company-model", "--agent", "codex"])
-        self.assertEqual((rc, commands), (0, ["/model company-model high"]))
+        self.assertEqual((rc, commands), (0, [self.resumed("company-model", "high")]))
 
     def broadcast_result(self, after):
         with patch.object(jcl, "pane_tail", side_effect=["gpt-old high · /tmp", after]), \
@@ -548,6 +666,19 @@ class CompletionTests(unittest.TestCase):
         command = "source completion/jcl_completion.bash\nCOMP_WORDS=(jcl set --agent co)\nCOMP_CWORD=3\n_jcl_complete\nprintf '%s\\n' \"${COMPREPLY[@]}\""
         proc = subprocess.run(["bash", "-c", command], cwd=ROOT, text=True, capture_output=True, check=True)
         self.assertEqual(proc.stdout.strip(), "codex")
+
+    def test_set_completes_panes_and_offers_model_effort_until_given(self):
+        def complete(*words):
+            line = " ".join(words)
+            script = ("source completion/jcl_completion.bash\n"
+                      "_jcl_live_ids() { printf '%s\\n' all claude 0:6.2; }\n"
+                      f"COMP_WORDS=({' '.join(shlex.quote(w) for w in words)}); COMP_CWORD={len(words) - 1}\n"
+                      f"COMP_LINE={shlex.quote(line)}; COMP_POINT=${{#COMP_LINE}}\n"
+                      "_jcl_complete\nprintf '%s\\n' \"${COMPREPLY[@]}\"\n")
+            proc = subprocess.run(["bash", "-c", script], cwd=ROOT, text=True, capture_output=True, check=True)
+            return sorted(proc.stdout.split())
+        self.assertEqual(complete("jcl", "set", ""), ["--effort", "--model", "0:6.2", "all", "claude"])
+        self.assertEqual(complete("jcl", "set", "--effort", "max", ""), ["0:6.2", "all", "claude"])
 
     def test_agent_option_offered_on_each_session_command(self):
         for cmd in ("list", "save", "restore", "refresh", "exit-session", "set"):

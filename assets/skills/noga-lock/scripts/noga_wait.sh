@@ -5,9 +5,11 @@
 # Run this as a run_in_background Bash task and pass --then, so it reports once at
 # the end instead of needing to be babysat.
 #
-# Takeable means EITHER lock_owner is empty OR the lease expired more than --grace
+# Takeable means EITHER Status.status is Release OR the lease expired more than --grace
 # seconds ago: NOGA does not clear lock_owner when a lease lapses, so waiting for an
-# empty owner alone can idle for hours beside a dead lock (cost ~7 h once).
+# empty owner alone can idle for hours beside a dead lock. A status that does not parse
+# as Lock or Release is "unknown, retry" -- never a reason to grab (a lock attempt on a
+# box someone else holds is a Lock Break).
 set -euo pipefail
 
 CLI=/.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py
@@ -17,22 +19,20 @@ HOST=""
 LEASE=8         # hours to hold once taken
 HOURS=8         # ceiling on how long to keep waiting
 GRACE=900       # a lease this many seconds past expiry counts as free
-POLL=15         # 15s, not 60 -- see the note in SKILL.md; grabs are first-come-first-served
+POLL=15         # never raise it: grabs are first-come-first-served (see SKILL.md)
 THEN=""
 
 usage() {
   cat <<'EOF'
-Usage: noga_wait.sh -n <host> [-L 8] [--hours 8] [--grace 900] [--poll 60] [--then 'cmd']
+Usage: noga_wait.sh -n <host> [-L 8] [--hours 8] [--grace 900] [--poll 15] [--then 'cmd']
 
   -n, --name HOST    NOGA host to wait for and lock
   -L, --lease H      hold the lock for H hours once taken (default 8)
       --hours H      give up after H hours of waiting (default 8)
       --grace S      treat a lease expired by more than S seconds as free (default 900)
       --poll S       seconds between polls (default 15). Do NOT raise it: the poll
-                     interval is the window in which somebody else takes the box.
-                     2026-09-02: a 60 s poll saw m-fwreg-017 go free and fired malloc
-                     in the same second, and still lost it -- the malloc round-trip
-                     alone is ~6 s.
+                     interval is the window in which somebody else takes the box, and
+                     the malloc round-trip alone is ~6 s; 60 s loses the race.
       --then CMD     shell command to run once the lock is held
   -h, --help
 
@@ -68,7 +68,7 @@ case "$HOST" in
     exit 3 ;;
 esac
 
-query() { python3 "$CLI" -ql -t host -n "$HOST" 2>/dev/null; }
+query() { python3 "$CLI" -q -t server -n "$HOST" 2>/dev/null; }
 field() { echo "$1" | grep -i "$2" | awk -F'= ' '{print $2}'; }
 
 ITERS=$(( HOURS * 3600 / POLL ))
@@ -77,31 +77,32 @@ echo "== waiting for $HOST (ceiling ${HOURS}h, poll ${POLL}s, grace ${GRACE}s) $
 ACQUIRED=0
 for i in $(seq 1 "$ITERS"); do
   Q=$(query) || { echo "query failed, retrying"; sleep "$POLL"; continue; }
+  status=$(field "$Q" 'Status\.status =' | tr -d ' ')
+  case "$status" in
+    Lock|Release) ;;
+    *) echo "status unknown (${status:-<empty>}), retrying $(date '+%H:%M:%S')"; sleep "$POLL"; continue ;;
+  esac
   owner=$(field "$Q" lock_owner | tr -d ' ')
   tout=$(field "$Q" lock_time_out)
 
   if [ "$owner" = "$USER" ]; then
     echo "ALREADY_OURS $(date '+%F %T')"
-    python3 "$CLI" -l -t host -n "$HOST" -L "$LEASE" >/dev/null 2>&1 || true   # renew
+    python3 "$CLI" -l -t server -n "$HOST" -L "$LEASE" >/dev/null 2>&1 || true   # renew
     ACQUIRED=1
     break
   fi
 
   # noga_expiry.py prints the value and uses its EXIT CODE as the verdict
-  # (0 = expired, 1 = still valid, 2 = unparseable). The old "|| echo 0" treated
-  # exit 1 as an error and appended a second line, so $exp became "-2997\n0" and
-  # every poll died on "[: integer expression expected" -- the --grace path was
-  # dead and an expired-but-owned lease would never be grabbed. Fixed 2026-09-07.
-  # `|| true` is load-bearing: noga_expiry.py exits 1 for "not expired yet", and with
-  # `set -euo pipefail` that non-zero pipeline status kills the whole script silently
-  # (no GAVE_UP, no message -- the monitor just vanishes). The original `|| echo 0`
-  # masked the exit code as a side effect; dropping it on 2026-09-07 reintroduced the
-  # death. Keep BOTH: `| head -1` for the value, `|| true` for the status.
+  # (0 = expired, 1 = still valid, 2 = unparseable). Keep BOTH guards:
+  #   `| head -1`  takes the value only; anything that appends a second line makes $exp
+  #                multi-line and every poll dies on "[: integer expression expected";
+  #   `|| true`    exit 1 means "not expired yet", and under `set -euo pipefail` that
+  #                status would kill the script silently (no GAVE_UP, no message).
   exp=$(python3 "$EXPIRY" "$tout" 2>/dev/null | head -1) || true
   case "$exp" in ''|*[!0-9-]*) exp=0 ;; esac
 
-  if [ -z "$owner" ] || [ "$exp" -gt "$GRACE" ]; then
-    python3 "$CLI" -l -t host -n "$HOST" -L "$LEASE" >/dev/null 2>&1 || true
+  if [ "$status" = Release ] || [ "$exp" -gt "$GRACE" ]; then
+    python3 "$CLI" -l -t server -n "$HOST" -L "$LEASE" >/dev/null 2>&1 || true
     owner=$(field "$(query)" lock_owner | tr -d ' ')
     if [ "$owner" = "$USER" ]; then
       echo "LOCK_ACQUIRED $(date '+%F %T')"
@@ -134,4 +135,4 @@ if [ -n "$THEN" ]; then
   exit $RC
 fi
 
-echo "Release it when done:  python3 $CLI -u -t host -n $HOST"
+echo "Release it when done:  python3 $CLI -u -t server -n $HOST"

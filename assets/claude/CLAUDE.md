@@ -6,8 +6,10 @@ invoke it when the task matches; don't reconstruct the procedure from memory.
 ## Shared skills (Claude Code + Codex)
 
 - Claude Code and Codex load the **same physical skills** from
-  `~/myGit/crosslv/assets/skills`. `~/.claude/skills` is a tree link; shared entries under
-  `~/.agents/skills` are per-skill links so unrelated Codex skills are preserved.
+  `~/myGit/crosslv/assets/skills`. `~/.claude/skills` and `~/.agents/skills` are real
+  directories holding the same one link per shared skill, so what a client keeps there itself
+  (Claude Code's `synced/` account skills, independently installed Codex skills) stays out of the
+  repo.
 - When asked to add, modify, synchronize, or repair a skill, invoke skill `skill-maintainer` and
   edit the canonical path returned by `jskill path <name>`. Never create separate Claude and
   Codex copies.
@@ -44,8 +46,8 @@ never by which one happens to be checked out already:
 | **Task / feature** — a feature you own, a gerrit change you drive | `/auto/fwgwork1/$USER/golan_fw` | `/auto/fwgwork1/$USER/utopx` |
 | **Regression / bug investigation** — Redmine ticket, CI or DoA failure, MARS session | `/auto/fwgwork1/$USER/golan_fw2` | `/auto/fwgwork1/$USER/utopx2` |
 
-A repro pins repos to an old regression commit and may `git stash -u` whatever it finds; feature
-work carries long-lived branches and worktrees. **Never run a repro in the main clone, and never
+A repro pins its worktrees to old regression commits; feature work carries long-lived branches and
+worktrees. **Never run a repro in the main clone, and never
 start feature work in a `*2` clone.**
 
 Then give each task its **own worktree** off the right clone — never work in the clone's own
@@ -56,9 +58,13 @@ so a path segment must start with `golan` / `nicx` / `utopx`. → skills `fw-bui
 ## Tooling
 
 - **ai-pim CLIs** (`confluence-cli`, `jira-cli`, `glean-cli`, `nvbugs-cli`, `redmine-cli`,
-  `slack-cli`, … 28 in total): just call them by name. On m-fwdev-167 bashrc transparently runs
-  them in the `pim` Docker container; elsewhere the native binaries are used. Nothing to start
-  by hand, including after a reboot. → skill `aipim-cli-env`
+  `slack-cli`, and the rest): on m-fwdev-167 they run in the `pim` Docker container through bashrc
+  functions, which Bash tool calls do not inherit — a bare name hits the native
+  `~/.local/bin/<cli>` and dies with `GLIBC_2.32' not found`. From an agent session call
+  `docker exec -e AI_PIM_UTILS_TELEMETRY_DISABLED=1 -w "$PWD" pim <cli> <args>`. Elsewhere the
+  native binaries are used. Their built-in skill sync is off (`skill_sync_disabled = true` in
+  `~/.ai-pim-utils/config.toml`): it writes through `~/.claude/skills` into the shared skills, so
+  keep it off and never run `<cli> skills reset|uninstall`. → skill `aipim-cli-env`
 - **Confluence**: the MCP is **read-only**; `confluence-cli` is the publishing tool. But its
   `page create/update` need an interactive TTY, so **from an AI session publish with
   `~/myGit/crosslv/assets/aipim/confluence-update`** (raw curl). Reads either way are fine.

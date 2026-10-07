@@ -13,8 +13,10 @@ Facts that hold in every session live here. Procedures live in the corresponding
 ## Shared skills (Claude Code + Codex)
 
 - Claude Code and Codex load the **same physical skills** from
-  `~/myGit/crosslv/assets/skills`. `~/.claude/skills` is a tree link; shared entries under
-  `~/.agents/skills` are per-skill links so independently installed Codex skills remain intact.
+  `~/myGit/crosslv/assets/skills`. `~/.claude/skills` and `~/.agents/skills` are real
+  directories holding the same one link per shared skill, so what a client keeps there itself
+  (Claude Code's `synced/` account skills, independently installed Codex skills) stays out of the
+  repo.
 - Whenever the user asks to add, modify, synchronize, or repair a skill, invoke
   `skill-maintainer` and edit the canonical path returned by `jskill path <name>`. Never maintain
   a Claude copy and a Codex copy.
@@ -40,7 +42,10 @@ Facts that hold in every session live here. Procedures live in the corresponding
 
 - ai-pim CLIs (`confluence-cli`, `jira-cli`, `glean-cli`, `nvbugs-cli`, `redmine-cli`,
   `slack-cli`, and the rest) are interactive bash functions on `m-fwdev-167`. From Codex, use
-  the explicit `docker exec ... pim <cli>` form documented by skill `aipim-cli-env`.
+  the explicit `docker exec ... pim <cli>` form documented by skill `aipim-cli-env`. Their
+  built-in skill sync is off (`skill_sync_disabled = true` in `~/.ai-pim-utils/config.toml`)
+  because it writes through the skill links into the shared skills; keep it off and never run
+  `<cli> skills reset|uninstall`.
 - The active Codex MCP set is maintained in `~/.codex/config.toml` and can reuse Claude Code's
   credentials through `claude-mcp-headers`. MCP tools can be deferred; use tool search before
   concluding that a configured tool is unavailable. See skill `aipim-cli-env`.

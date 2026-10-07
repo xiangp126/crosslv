@@ -556,7 +556,8 @@ def resume_record(rec):
     command = resume_command(rec.get("agent", "claude"), rec["session_id"])
     if rec.get("agent") == "codex":
         if rec.get("model"):
-            command += " --model " + shlex.quote(rec["model"])
+            # Snapshots written before the footer was mapped hold "GPT-6-Sol"
+            command += " --model " + shlex.quote(codex_model_slug(rec["model"]))
         if rec.get("effort"):
             command += " -c " + shlex.quote("model_reasoning_effort=" + json.dumps(rec["effort"]))
         if rec.get("agent_home") and rec["agent_home"] != str(CODEX_DIR):
@@ -738,8 +739,30 @@ def new_match(before, after, needles):
     return found[-1]
 
 
+def codex_model_slug(name):
+    """The model id codex takes for a name its footer shows ("GPT-6-Sol" -> "gpt-6-sol").
+
+    The footer shows the display name, and --model takes one without a word
+    of complaint - then answers no turn at all: three questions put to
+    sessions resumed with --model GPT-6-Sol ended at once with no reply
+    (2026-09-30). codex's own model cache maps one to the other; a name it
+    does not list (a custom model) is passed on as given.
+    """
+    try:
+        models = json.loads((CODEX_DIR / "models_cache.json").read_text()).get("models") or []
+    except (OSError, ValueError, AttributeError):
+        models = []
+    for model in models:
+        if name.lower() in (str(model.get("slug", "")).lower(), str(model.get("display_name", "")).lower()):
+            return model.get("slug") or name
+    return name
+
+
 def codex_pane_settings(text):
-    """Read the current footer or /status, never a prompt echo or historical turn."""
+    """Read the current footer or /status, never a prompt echo or historical turn.
+
+    The model comes back as the id --model takes, not the name on screen.
+    """
     for line in reversed(text.splitlines()):
         match = re.match(
             r"^\s*(?:Model:\s*)?([\w./:-]+)\s+"
@@ -747,12 +770,13 @@ def codex_pane_settings(text):
             line,
         )
         if match:
-            return match.group(1), match.group(2)
+            return codex_model_slug(match.group(1)), match.group(2)
     return None, None
 
 
 def broadcast_to_agents(text, records=None, confirm=(), delay=0.3, timeout=8.0,
-                        tail=40, dry_run=False, expected_model=None, expected_effort=None):
+                        tail=40, dry_run=False, expected_model=None, expected_effort=None,
+                        on_done=None):
     """Type a slash command using each agent's composer keys and verify the reply.
 
     Clear the composer line first, using Claude's C-l or Codex's C-e/C-u.
@@ -760,29 +784,41 @@ def broadcast_to_agents(text, records=None, confirm=(), delay=0.3, timeout=8.0,
     separately, `delay` later, once the TUI has the whole line.
 
     `confirm` holds lowercased substrings of the expected reply, short enough to
-    survive a narrow pane wrapping it. Panes are all typed into first and polled
-    afterwards, so the wait is one timeout for all of them, and a fast pane is
-    not slept over.
+    survive a narrow pane wrapping it. A claude reply is looked for in what its
+    transcript gained after the typing; the screen is the fallback. Panes are
+    all typed into first and polled afterwards, so the wait is one timeout for
+    all of them, and a fast pane is not slept over.
 
     Returns a dict per record: {"rec", "status", "detail"}. Status is dry-run,
     failed (tmux refused the keys), gone (pane vanished), sent (nothing to
     confirm), confirmed, or unconfirmed (no reply in time, e.g. a busy session
-    queued the text).
+    queued the text). `on_done` is handed each result the moment it is
+    settled, so a caller can show it without waiting for the slowest pane.
     """
     if records is None:
         records = typeable_panes()
+
+    def settle(result):
+        results.append(result)
+        if on_done:
+            on_done(result)
 
     results, pending = [], []
     for rec in records:
         # The pane id is stable across moves and relinks, the index is not
         pane = rec["pane_id"] or rec["target"]
         if dry_run:
-            results.append({"rec": rec, "status": "dry-run", "detail": text})
+            settle({"rec": rec, "status": "dry-run", "detail": text})
             continue
         before = pane_tail(pane, tail) or "" if confirm else ""
+        transcript = claude_transcript(rec) if confirm and rec["agent"] == "claude" else None
+        try:
+            offset = transcript.stat().st_size if transcript else 0
+        except OSError:
+            transcript = None
         try:
             if not is_live_agent(rec["pid"], rec["agent"], rec.get("proc_start")):
-                results.append({"rec": rec, "status": "gone", "detail": "Agent process exited or changed"})
+                settle({"rec": rec, "status": "gone", "detail": "Agent process exited or changed"})
                 continue
             # Claude binds C-l to clearInput; Codex uses C-l for screen redraw.
             clear_keys = ("C-e", "C-u") if rec["agent"] == "codex" else ("C-l",)
@@ -791,48 +827,56 @@ def broadcast_to_agents(text, records=None, confirm=(), delay=0.3, timeout=8.0,
             time.sleep(delay)
             tmux("send-keys", "-t", pane, "Enter")
         except (OSError, subprocess.CalledProcessError) as exc:
-            results.append({"rec": rec, "status": "failed", "detail": str(exc)})
+            settle({"rec": rec, "status": "failed", "detail": str(exc)})
             continue
         if not confirm:
-            results.append({"rec": rec, "status": "sent", "detail": ""})
+            settle({"rec": rec, "status": "sent", "detail": ""})
             continue
-        result = {"rec": rec, "status": "unconfirmed", "detail": ""}
-        results.append(result)
-        pending.append((result, pane, before))
+        pending.append(({"rec": rec, "status": "unconfirmed", "detail": ""},
+                        pane, before, transcript, offset))
 
     deadline = time.time() + timeout
     while pending:
         waiting = []
-        for result, pane, before in pending:
-            after = pane_tail(pane, tail)
-            if after is None:
-                result["status"] = "gone"
-                continue
-            if result["rec"]["agent"] == "codex":
-                refusal = new_match(before, after, (
-                    "unknown model", "invalid model", "not available", "not supported",
-                    "unknown reasoning", "invalid reasoning", "invalid effort", "unknown effort",
-                ))
-                if refusal:
-                    result.update(status="refused", detail=refusal)
+        for item in pending:
+            result, pane, before, transcript, offset = item
+            line = transcript_reply(transcript, offset, confirm) if transcript else ""
+            if not line:
+                after = pane_tail(pane, tail)
+                if after is None:
+                    result["status"] = "gone"
+                    settle(result)
                     continue
-                model, effort = codex_pane_settings(after)
-                if model == expected_model and (not expected_effort or effort == expected_effort):
-                    result.update(status="confirmed", detail=f"{model} {effort}")
+                if result["rec"]["agent"] == "codex":
+                    refusal = new_match(before, after, (
+                        "unknown model", "invalid model", "not available", "not supported",
+                        "unknown reasoning", "invalid reasoning", "invalid effort", "unknown effort",
+                    ))
+                    if refusal:
+                        result.update(status="refused", detail=refusal)
+                        settle(result)
+                        continue
+                    model, effort = codex_pane_settings(after)
+                    if model == expected_model and (not expected_effort or effort == expected_effort):
+                        result.update(status="confirmed", detail=f"{model} {effort}")
+                        settle(result)
+                        continue
+                    # Merely echoing '/model NAME' is not an acknowledgement.
+                    waiting.append(item)
                     continue
-                # Merely echoing '/model NAME' is not an acknowledgement.
-                waiting.append((result, pane, before))
-                continue
-            line = new_match(before, after, confirm)
+                if not transcript:
+                    line = new_match(before, after, confirm)
             if line:
-                result["status"] = "confirmed"
-                result["detail"] = line
+                result.update(status="confirmed", detail=line)
+                settle(result)
                 continue
-            waiting.append((result, pane, before))
+            waiting.append(item)
         pending = waiting
         if not pending or time.time() >= deadline:
             break
         time.sleep(0.1)
+    for result, *_ in pending:
+        settle(result)
     return results
 
 
@@ -849,42 +893,52 @@ def _short_reply(detail, limit=70):
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def report_broadcast(results, refuse_marker, timeout, recheck):
-    """Print one line per pane and fold the statuses into an exit code.
+def broadcast_widths(records):
+    """Column widths for a set report, known before any pane has answered."""
+    return (max((len(rec["target"]) for rec in records), default=0),
+            max((_dwidth(rec["name"] or rec["cwd"]) for rec in records), default=0))
 
-    Used by set, for model and effort alike. The reply has to be read rather
-    than just counted: claude answers instead of erroring when something outranks the
-    request, so a confirmed reply can still mean nothing changed.
+
+def broadcast_line(result, refuse_marker, widths, c):
+    """One pane's row of a set report.
+
+    The reply has to be read rather than just counted: claude answers instead of
+    erroring when something outranks the request, so a confirmed reply can
+    still mean nothing changed - it is marked refused here, in the result too.
     """
-    c = palette()
+    rec, detail = result["rec"], result["detail"]
+    if result["status"] == "confirmed" and refuse_marker in detail.lower():
+        result["status"] = "refused"
+    status = result["status"]
     # Green only for a reply that actually confirms the change; a pane that said
     # nothing, or said no, must not look like it succeeded.
-    status_colour = {
+    colour = {
         "confirmed": c["GREEN"], "sent": c["GREEN"],
         "refused": c["LIGHTYELLOW"], "unconfirmed": c["LIGHTYELLOW"],
         "failed": c["RED"], "gone": c["RED"], "dry-run": c["GREY"],
-    }
-    width = max((len(r["rec"]["target"]) for r in results), default=0)
-    name_width = max((_dwidth(r["rec"]["name"] or r["rec"]["cwd"]) for r in results), default=0)
-    failures = refused = unconfirmed = 0
+    }.get(status, "")
+    width, name_width = widths
+    name = rec["name"] or rec["cwd"]
+    line = (f"  {c['CYAN']}{rec['target']:<{width}}{c['RESET']}  "
+            f"{colour}{status:<11}{c['RESET']} ")
+    if detail and status != "dry-run":
+        return line + f"{_dljust(name, name_width)}  {c['GREY']}{_short_reply(detail)}{c['RESET']}"
+    return line + name
+
+
+def report_broadcast(results, refuse_marker, timeout, recheck, shown=False):
+    """Print one line per pane, unless `shown` already did as each settled, and
+    fold the statuses into an exit code. Used by set, for model and effort alike.
+    """
+    c = palette()
+    widths = broadcast_widths([result["rec"] for result in results])
     for result in results:
-        rec = result["rec"]
-        status, detail = result["status"], result["detail"]
-        if status == "refused" or (status == "confirmed" and refuse_marker in detail.lower()):
-            status, refused = "refused", refused + 1
-        elif status in ("failed", "gone"):
-            failures += 1
-        elif status == "unconfirmed":
-            unconfirmed += 1
-        colour = status_colour.get(status, "")
-        name = rec["name"] or rec["cwd"]
-        line = (f"  {c['CYAN']}{rec['target']:<{width}}{c['RESET']}  "
-                f"{colour}{status:<11}{c['RESET']} ")
-        if detail and status != "dry-run":
-            line += f"{_dljust(name, name_width)}  {c['GREY']}{_short_reply(detail)}{c['RESET']}"
-        else:
-            line += name
-        print(line)
+        line = broadcast_line(result, refuse_marker, widths, c)
+        if not shown:
+            print(line)
+    failures = sum(1 for result in results if result["status"] in ("failed", "gone"))
+    refused = sum(1 for result in results if result["status"] == "refused")
+    unconfirmed = sum(1 for result in results if result["status"] == "unconfirmed")
 
     if unconfirmed:
         print(
@@ -1024,6 +1078,52 @@ def proc_started_at(pid):
         return None
 
 
+def claude_transcript(rec):
+    """The session's transcript under ~/.claude/projects, or None."""
+    projects = CLAUDE_DIR / "projects"
+    path = projects / re.sub(r"[^A-Za-z0-9]", "-", rec["cwd"]) / f"{rec['session_id']}.jsonl"
+    if path.is_file():
+        return path
+    # The directory is named after where the session began; a resume from
+    # somewhere else leaves the cwd pointing elsewhere
+    return next(projects.glob(f"*/{rec['session_id']}.jsonl"), None)
+
+
+def transcript_reply(path, offset, needles):
+    """First line of a /command reply written to `path` past `offset` matching a needle, or "".
+
+    What claude printed for a slash command lands in its transcript as a
+    <local-command-stdout> entry. Reading only what was appended since the
+    command was typed tells this reply from the same words left on screen by an
+    earlier run - which the screen cannot: a pane whose visible rows were all
+    earlier "/effort max" replies pushed one off the top for every one added,
+    so the count never grew and a reply that had landed read as unconfirmed
+    (2026-10-06).
+    """
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            data = fh.read()
+    except (OSError, TypeError):
+        return ""
+    for raw in data.split(b"\n"):
+        if b"<local-command-stdout>" not in raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except ValueError:  # still being written
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else entry.get("content")
+        if not isinstance(content, str) or not content.startswith("<local-command-stdout>"):
+            continue
+        first = re.sub(r"\x1b\[[0-9;]*m", "", content[len("<local-command-stdout>"):]).split("\n")[0]
+        first = first.replace("</local-command-stdout>", "").strip()
+        if any(needle in first.lower() for needle in needles):
+            return first
+    return ""
+
+
 def claude_switch(entry):
     """(model id, effort) a /model or /effort reply in the transcript set, each or None.
 
@@ -1056,12 +1156,7 @@ def claude_settings(rec):
     than the switch (2026-10-02). Sub-agent replies (sidechain) and the
     client's own synthetic messages are passed over.
     """
-    projects = CLAUDE_DIR / "projects"
-    path = projects / re.sub(r"[^A-Za-z0-9]", "-", rec["cwd"]) / f"{rec['session_id']}.jsonl"
-    if not path.is_file():
-        # The directory is named after where the session began; a resume from
-        # somewhere else leaves the cwd pointing elsewhere
-        path = next(projects.glob(f"*/{rec['session_id']}.jsonl"), None)
+    path = claude_transcript(rec)
     model = effort = ""
     for entry in jsonl_tail(path, (b'"assistant"', b"<local-command-stdout>")) if path else ():
         if entry.get("type") != "assistant":
@@ -1141,11 +1236,10 @@ def session_activity(rec):
         if rec.get("target") and not rec.get("stopped"):
             # The footer is what the TUI runs right now, the source save and
             # refresh read too; the state row is what the thread last recorded,
-            # and a thread with no message yet has none. The footer says
-            # "GPT-6-Sol" where the rows say "gpt-6-sol".
+            # and a thread with no message yet has none.
             live_model, live_effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
             if live_model:
-                model, effort = live_model.lower(), live_effort or effort
+                model, effort = live_model, live_effort or effort
     return state, "now" if state == "busy" else _ago(at), model or "-", effort or "-"
 
 
@@ -1593,26 +1687,35 @@ def cmd_refresh(args):
                   f"{c['CYAN']}{target}{c['RESET']}: {c['GREY']}{command}{c['RESET']}")
             continue
 
-        if not is_live_agent(pid, rec["agent"], rec.get("proc_start")):
-            print(f"{e['RED']}Agent process changed; not restarting {label}{e['RESET']}", file=sys.stderr)
-            failures += 1
-            continue
-
-        if not quit_agent(rec, target, label, args.timeout, e,
-                          f"Agent still running; not typing a resume command into {label}"):
-            failures += 1
-            continue
-
-        try:
-            tmux("send-keys", "-t", target, "-l", command)
-            tmux("send-keys", "-t", target, "Enter")
-        except (OSError, subprocess.CalledProcessError) as exc:
-            print(f"{e['RED']}Failed to relaunch {label}{e['RESET']}: {exc}", file=sys.stderr)
+        if not relaunch(rec, command, args.timeout, e):
             failures += 1
             continue
         print(f"{c['GREEN']}Refreshed{c['RESET']} {label}")
 
     return 1 if failures else 0
+
+
+def relaunch(rec, command, timeout, e):
+    """Quit the agent in its pane and type `command` there; True once typed.
+
+    How refresh restarts a session, and set a codex one onto another model.
+    On False the reason is already on stderr.
+    """
+    pid, target = rec["pid"], rec["pane_id"] or rec["target"]
+    label = f"{target} [{rec['agent']} {rec['session_id']}]"
+    if not is_live_agent(pid, rec["agent"], rec.get("proc_start")):
+        print(f"{e['RED']}Agent process changed; not restarting {label}{e['RESET']}", file=sys.stderr)
+        return False
+    if not quit_agent(rec, target, label, timeout, e,
+                      f"Agent still running; not typing a resume command into {label}"):
+        return False
+    try:
+        tmux("send-keys", "-t", target, "-l", command)
+        tmux("send-keys", "-t", target, "Enter")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"{e['RED']}Failed to relaunch {label}{e['RESET']}: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 
@@ -1691,16 +1794,7 @@ def agent_for_model(name):
 
 # What each slash command needs in order to be sent and judged. Kept in one
 # place so the single-purpose subcommands and `set` cannot drift apart.
-def _model_spec(value, agent="claude", effort=None):
-    if agent == "codex":
-        return {
-            "command": f"/model {value}" + (f" {effort}" if effort else ""),
-            "confirm": (value.lower(),),
-            "refuse": "\0",
-            "recheck": "/model",
-            "expected_model": value,
-            "expected_effort": effort,
-        }
+def _model_spec(value):
     return {
         "command": f"/model {value}",
         # Short substrings on purpose, a narrow pane wraps the whole sentence
@@ -1733,11 +1827,17 @@ def panes_to_type_into(c, e, agent="all"):
 
 
 def send_to_panes(spec, records, args, c):
-    """Type one slash command into every pane and report what came back."""
+    """Type one slash command into every pane and report what came back.
+
+    Each pane's line is printed the moment it settles. Printed together at the
+    end, five panes that had confirmed sat behind one that never answered,
+    with nothing on screen for the whole timeout (2026-10-06).
+    """
     agents = sorted({rec["agent"] for rec in records})
     tag = "".join(f" {agent_colour(a, c)}{a}{c['RESET']}" for a in agents)
     print(f"Sending {c['CYAN']}{spec['command']}{c['RESET']} to "
-          f"{c['BOLD']}{len(records)}{c['RESET']}{tag} pane(s):")
+          f"{c['BOLD']}{len(records)}{c['RESET']}{tag} pane(s):", flush=True)
+    widths = broadcast_widths(records)
     results = broadcast_to_agents(
         spec["command"],
         records=records,
@@ -1747,8 +1847,106 @@ def send_to_panes(spec, records, args, c):
         dry_run=args.dry_run,
         expected_model=spec.get("expected_model"),
         expected_effort=spec.get("expected_effort"),
+        on_done=lambda result: print(broadcast_line(result, spec["refuse"], widths, c), flush=True),
     )
-    return report_broadcast(results, spec["refuse"], args.timeout, spec["recheck"])
+    return report_broadcast(results, spec["refuse"], args.timeout, spec["recheck"], shown=True)
+
+
+def await_codex_settings(recs, model, effort, timeout, on_shown=None):
+    """Session ids whose pane footer shows `model` at `effort` within `timeout` s.
+
+    A resumed TUI takes a few seconds to draw its footer. The panes are polled
+    together, so the wait is one timeout for all of them; `on_shown` gets each
+    record as its footer turns up.
+    """
+    shown, deadline = set(), time.time() + timeout
+    while True:
+        for rec in recs:
+            if rec["session_id"] not in shown:
+                now = codex_pane_settings(pane_tail(rec["pane_id"] or rec["target"]) or "")
+                if now[0] == model and (not effort or now[1] == effort):
+                    shown.add(rec["session_id"])
+                    if on_shown:
+                        on_shown(rec)
+        if len(shown) == len(recs) or time.time() >= deadline:
+            return shown
+        time.sleep(1)
+
+
+def restart_codex_panes(items, model, effort, args, c, e):
+    """Put codex panes on `model` at `effort` by resuming each session with them.
+
+    codex's /model takes no arguments: typed as `/model GPT-6-Sol max` it went
+    to the model as a prompt, and both panes spent a turn explaining they could
+    not switch themselves (2026-10-06). So a session is quit and resumed in its
+    pane with --model and model_reasoning_effort, the way refresh resumes it.
+    One already on the pair keeps running; one in the middle of a turn is left
+    alone rather than cut off. `items` holds (record, model now, effort now).
+    """
+    setting = f"{model} {effort}" if effort else model
+    # Decided before anything is printed, so the heading says what will happen:
+    # it used to announce "Restarting 2 codex pane(s)" over two rows that were
+    # both already on the setting and left running (2026-10-06).
+    plan = []
+    for rec, now_model, now_effort in items:
+        if now_model == model and (not effort or now_effort == effort):
+            plan.append((rec, "unchanged"))
+        elif codex_turn(rec)[0] == "busy":
+            plan.append((rec, "busy"))
+        else:
+            plan.append((rec, "restart"))
+    restarts = [rec for rec, step in plan if step == "restart"]
+    count = (f"{len(restarts)} of {len(items)}" if 0 < len(restarts) < len(items)
+             else str(len(restarts) or len(items)))
+    verb = "Restarting" if restarts else "No restart needed for"
+    print(f"{verb} {c['BOLD']}{count}{c['RESET']} {agent_colour('codex', c)}codex{c['RESET']}"
+          f" pane(s) on {c['CYAN']}{setting}{c['RESET']}:", flush=True)
+
+    colour = {"confirmed": c["GREEN"], "sent": c["GREEN"], "unchanged": c["GREY"],
+              "dry-run": c["GREY"], "busy": c["LIGHTYELLOW"], "unconfirmed": c["LIGHTYELLOW"],
+              "failed": c["RED"]}
+    width = max(len(rec["target"]) for rec, _, _ in items)
+    name_width = max(_dwidth(rec["name"] or rec["cwd"]) for rec, _, _ in items)
+    statuses = []
+
+    # Each row is printed as soon as that pane's outcome is known, as set does
+    # for claude: a slow restart holds up only its own line
+    def row(rec, status, detail):
+        statuses.append(status)
+        print(f"  {c['CYAN']}{rec['target']:<{width}}{c['RESET']}  {colour[status]}{status:<11}{c['RESET']} "
+              f"{_dljust(rec['name'] or rec['cwd'], name_width)}  {c['GREY']}{detail}{c['RESET']}", flush=True)
+
+    relaunched = []
+    for rec, step in plan:
+        if step == "unchanged":
+            row(rec, "unchanged", "already on " + setting)
+            continue
+        if step == "busy":
+            row(rec, "busy", "mid-turn, left running; run again once it is idle")
+            continue
+        command = f"cd {shell_quote(rec['cwd'])} && {resume_record(dict(rec, model=model, effort=effort))}"
+        if args.dry_run:
+            row(rec, "dry-run", command)
+        elif not relaunch(rec, command, args.timeout, e):
+            row(rec, "failed", "not restarted")
+        elif args.no_verify:
+            row(rec, "sent", "resumed on " + setting)
+        else:
+            relaunched.append(rec)
+    if relaunched:
+        announced = set()
+
+        def came_back(rec):
+            announced.add(rec["session_id"])
+            row(rec, "confirmed", "resumed on " + setting)
+
+        shown = await_codex_settings(relaunched, model, effort, max(args.timeout, 30), on_shown=came_back)
+        for rec in relaunched:
+            if rec["session_id"] in shown and rec["session_id"] not in announced:
+                came_back(rec)
+            elif rec["session_id"] not in shown:
+                row(rec, "unconfirmed", "its footer has not shown " + setting + " yet")
+    return 1 if any(status in ("busy", "unconfirmed", "failed") for status in statuses) else 0
 
 
 def send_by_agent(records, args, c, e, model=None, effort=None):
@@ -1785,11 +1983,17 @@ def send_by_agent(records, args, c, e, model=None, effort=None):
                 rc |= send_to_panes(_effort_spec(effort), group, args, c)
                 sent = True
             continue
+        # codex has no /effort, and its /model takes no arguments, so a codex
+        # pane is resumed onto the model and effort instead (see
+        # restart_codex_panes). Panes headed for the same pair go together, in
+        # one report: one report per pane read as if each had needed something
+        # different.
+        targets = {}
         for rec in group:
             current_model, current_effort = codex_pane_settings(
                 pane_tail(rec["pane_id"] or rec["target"]) or ""
             )
-            selected_model = name or current_model
+            selected_model = codex_model_slug(name) if name else current_model
             if not selected_model:
                 print(f"{e['RED']}{rec['target']}: cannot read the current Codex model; "
                       "use `set --agent codex --model NAME --effort LEVEL`."
@@ -1799,7 +2003,10 @@ def send_by_agent(records, args, c, e, model=None, effort=None):
             # No historical/global-config fallback: /model can change the live
             # session without updating its last-turn database metadata.
             selected_effort = effort or current_effort
-            rc |= send_to_panes(_model_spec(selected_model, agent, selected_effort), [rec], args, c)
+            targets.setdefault((selected_model, selected_effort), []).append(
+                (rec, current_model, current_effort))
+        for (selected_model, selected_effort), items in targets.items():
+            rc |= restart_codex_panes(items, selected_model, selected_effort, args, c, e)
             sent = True
     return rc if sent else 1
 
@@ -1816,7 +2023,12 @@ def cmd_set(args):
     if not args.model and not args.effort:
         print(f"{e['RED']}Give --model, --effort, or both.{e['RESET']}", file=sys.stderr)
         return 1
-    records = panes_to_type_into(c, e, args.agent)
+    if args.sessions:
+        # Named panes go through the same selection as refresh and exit-session,
+        # so the three take a SESSION list the same way
+        records = pick_live_sessions(args, c, e, "set", "use /model and /effort in its own pane")
+    else:
+        records = panes_to_type_into(c, e, args.agent)
     if not records:
         return 1
     # Model first: claude treats an effort above the org default as "this
@@ -2634,11 +2846,22 @@ def main(argv=None):
         help="Set model and/or effort on Claude and Codex panes in one pass",
         description=(
             "Discover panes once and send the agent-specific commands. Claude gets"
-            " /model and /effort; Codex gets /model NAME EFFORT. At least one of"
+            " /model and /effort typed in. Codex's /model takes no arguments, so a"
+            " Codex session is restarted in its pane on the model and effort,"
+            " the way refresh resumes it; one already there keeps running, one"
+            " mid-turn is left alone. At least one of"
             " --model/--effort is required. Repeat --model for mixed-agent updates,"
-            " or use --agent codex for Codex only. Input drafts are cleared."
+            " or use --agent codex for Codex only. Name panes to set only those;"
+            " without any, every pane is set. Input drafts are cleared."
             " Pass -n to preview."
         ),
+    )
+    p_set.add_argument(
+        "sessions", nargs="*", metavar="SESSION",
+        help="Panes to set, as tmux targets (0:6.2) - the first column of `list`."
+             " Give several separated by spaces or commas; `claude` or `codex` for"
+             " every pane of that agent. None means every pane, narrowed by --agent;"
+             " naming a pane overrides --agent.",
     )
     p_set.add_argument(
         "--model", action="append", type=command_word, metavar="MODEL",
@@ -2657,7 +2880,8 @@ def main(argv=None):
     )
     p_set.add_argument(
         "--timeout", type=float, default=8.0,
-        help="Seconds to wait for the agent's reply, per command (default: 8)",
+        help="Seconds to wait for the agent's reply, per command (default: 8);"
+             " a restarted Codex pane gets at least 30 to come back",
     )
     p_set.add_argument(
         "--no-verify", action="store_true", help="Send without reading the panes back"

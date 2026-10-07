@@ -24,7 +24,6 @@
       "/auto/fwgwork1/$USER/golan_fw3"
     ]
   },
-  "model": "claude-opus-5-5",
   "hooks": {
     "PreToolUse": [
       {
@@ -210,5 +209,6 @@
       "type": "http",
       "url": "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
     }
-  }
+  },
+  "model": "opus"
 }
