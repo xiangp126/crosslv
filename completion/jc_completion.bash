@@ -94,7 +94,7 @@ _jc_complete() {
                --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status --acl-restart --acl-kickcam \
                --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
                --codex --codex-remove --codex-restore \
-               --cursor-backup --cursor-restore --singbox --link-xray --link-xray-autossh --link-xray-sslh --link-wg \
+               --cursor-backup --cursor-restore --singbox --singbox-reload --singbox-config \
                --xray --xray-port --xray-server --xray-remove \
                --sslh --sslh-ssh-port --sslh-xray-port --sslh-status --sslh-rollback --sslh-remove \
                --bbr --bbr-status \
@@ -116,6 +116,10 @@ _jc_complete() {
         --rtsp-stream)
             compopt -o nospace 2>/dev/null
             _jc_complete_rtsp_streams
+            return 0
+            ;;
+        --singbox-config)
+            COMPREPLY=( $(compgen -W "xray xray-autossh xray-sslh wg" -- ${cur}) )
             return 0
             ;;
         --rtsp-ip)

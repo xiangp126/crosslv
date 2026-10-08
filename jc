@@ -131,6 +131,7 @@ fSshTunnelLocalPort=""
 fSshTunnelAutosshPid=""
 # Singbox (sing-box proxy)
 fSingbox=
+fSingboxReload=
 fSingboxConfig="$HOME/Documents/sing-box-config.jsonc"
 fSingboxLink=""           # xray | wireguard — which config to symlink
 fSingboxProxyMode=""      # wireguard | xray-direct | xray-tunnel
@@ -252,10 +253,12 @@ Camera ACL Options (controls Block_C700_NN rules on OpenWrt router):
 
 Singbox Options:
     --singbox                       Launch sing-box proxy (auto-detects xray or WireGuard)
-    --link-xray                     Link xray sing-box config to ~/Documents
-    --link-xray-autossh             Link xray autossh sing-box config to ~/Documents
-    --link-xray-sslh                Link xray sslh sing-box config to ~/Documents
-    --link-wg                       Link WireGuard sing-box config to ~/Documents
+    --singbox-reload                Validate the config, then hot-reload the running sing-box
+                                    (SIGHUP; proxied connections drop and reconnect once)
+    --singbox-config <name>         Point ~/Documents/sing-box-config.jsonc at a config:
+                                    xray | xray-autossh | xray-sslh | wg
+                                    Combine with --singbox to launch, or --singbox-reload
+                                    to apply it to a running sing-box.
 
 Xray Options (server-side only — run on the Xray server host):
     --xray                          Install or update Xray from Github
@@ -334,7 +337,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
           codex,codex-remove,codex-restore,\
           gemini,gemini-remove,cursor-backup,cursor-restore,\
-          singbox,link-xray,link-xray-autossh,link-xray-sslh,link-wg,\
+          singbox,singbox-reload,singbox-config:,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
           bbr,bbr-status,\
@@ -1457,21 +1460,20 @@ while true; do
             fSingbox=1
             shift
             ;;
-        --link-xray)
-            fSingboxLink="xray"
+        --singbox-reload)
+            fSingboxReload=1
             shift
             ;;
-        --link-xray-autossh)
-            fSingboxLink="xray-autossh"
-            shift
-            ;;
-        --link-xray-sslh)
-            fSingboxLink="xray-sslh"
-            shift
-            ;;
-        --link-wg)
-            fSingboxLink="wireguard"
-            shift
+        --singbox-config)
+            case "$2" in
+                xray|xray-autossh|xray-sslh) fSingboxLink="$2" ;;
+                wg) fSingboxLink="wireguard" ;;
+                *)
+                    echo -e "${RED}Error: --singbox-config expects one of: xray xray-autossh xray-sslh wg (got '$2')${RESET}"
+                    exit 1
+                    ;;
+            esac
+            shift 2
             ;;
 
         --acl-block|--acl-unblock|--acl-status|--acl-restart|--acl-kickcam)
@@ -7192,6 +7194,34 @@ waitForTransportReady() {
     return 1
 }
 
+reloadSingbox() {
+    echo -e "${COLOR}▶ Reloading sing-box${RESET}"
+
+    local pid
+    pid=$(pgrep -x sing-box | head -1)
+    if [ -z "$pid" ]; then
+        echo -e "${RED}Error: sing-box is not running. Start it with: jc --singbox${RESET}"
+        return 1
+    fi
+
+    if ! sing-box check -c "$fSingboxConfig"; then
+        echo -e "${RED}✘ Config check failed — not reloading; sing-box keeps the old config.${RESET}"
+        echo -e "${GREY}   $fSingboxConfig${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔${GREY} Config OK: $fSingboxConfig${RESET}"
+    echo -e "${GREY}   Proxied connections will drop and reconnect once.${RESET}"
+
+    sudo kill -HUP "$pid" || return 1
+    sleep 3
+
+    if ! ps -p "$pid" >/dev/null 2>&1; then
+        echo -e "${RED}✘ sing-box (pid $pid) exited after reload — check its terminal log, then run: jc --singbox${RESET}"
+        return 1
+    fi
+    echo -e "${GREEN}✔ sing-box reloaded${GREY} (pid $pid)${RESET}"
+}
+
 launchSingbox() {
     echo -e "${COLOR}▶ Launching sing-box${RESET}"
 
@@ -7398,9 +7428,10 @@ doEarlyExitJobs() {
     [ -n "$fSambaServerFlag" ]     && { installSambaServer; exit 0; }
     if [ -n "$fSingboxLink" ]; then
         linkSingboxConfig "$fSingboxLink" || exit $?
-        [ -z "$fSingbox" ] && exit 0
+        [ -z "$fSingbox" ] && [ -z "$fSingboxReload" ] && exit 0
     fi
     [ -n "$fSingbox" ]             && { launchSingbox; exit $?; }
+    [ -n "$fSingboxReload" ]       && { reloadSingbox; exit $?; }
     [ -n "$fXrayUpdate" ]          && { installXray; exit 0; }
     [ -n "$fXrayRemove" ]          && { removeXray; exit 0; }
     [ -n "$fSslhInstall" ]         && { installSslh; exit $?; }
