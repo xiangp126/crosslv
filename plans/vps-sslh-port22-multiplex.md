@@ -132,7 +132,7 @@ Cross-check against the client (`../assets/xray/sing-box-config.jsonc`):
 
 - `serverNames[0]` must equal client's `tls.server_name` (`www.nvidia.com`).
 - `shortIds` array must contain the client's `tls.reality.short_id`
-  (`3a050ce1`).
+  (`XRAY_SHORT_ID` in `secrets.conf`).
 - The client's `tls.reality.public_key` is the *public* half of xray's
   `privateKey`. Compute on the server:
   `xray x25519 -i <privateKey>` → `Public key:` field should match.
