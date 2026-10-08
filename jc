@@ -29,15 +29,12 @@ fTKClaudeDir=$fMainDir/assets/claude
 fTKClaudeCodeSettings=$fTKClaudeDir/settings.json
 fTKClaudeCodeLocalSettings=$fTKClaudeDir/settings.local.json
 fTKClaudeCodeMd=$fTKClaudeDir/CLAUDE.md
-fTKClaudeCodeSkills=$fTKSharedSkills
 fTKClaudeDesktopConfig=$fTKClaudeDir/claude_desktop_config.json
-fTKClaudeMcpJson=$fTKClaudeDir/.mcp.json
 # Codex
 fTKCodexDir=$fMainDir/assets/codex
 fTKCodexConfig=$fTKCodexDir/config.toml
 fTKCodexAgents=$fTKCodexDir/AGENTS.md
 fTKCodexBin=$fTKCodexDir/bin
-fTKCodexSkills=$fTKSharedSkills
 # Misc
 fVimPlugsManagerPath=$HOME/.vim/autoload/plug.vim
 fzfBinPath=$HOME/.vim/bundle/fzf/bin/fzf
@@ -50,7 +47,6 @@ fCheckTlsConn=
 fCursorAction=
 fClaudeAction=
 fClaudeDesktopAction=
-fClaudeLinkMcpJson=
 fGitFilters=
 fCodexAction=
 # VNC server
@@ -293,10 +289,9 @@ WireGuard Options (server-side only — run on the WireGuard server host):
 Claude Options:
     --claude                        Install or upgrade Claude Code (CLI)
     --claude-remove                 Remove Claude Code
-    --claude-restore                Link tracked Claude Code settings and skills
-                                    into place (settings.json, settings.local.json,
-                                     CLAUDE.md, skills/)
-    --claude-link-mcp               Symlink tracked .mcp.json into current directory
+    --claude-restore                Link tracked Claude Code settings into place
+                                    (settings.json, settings.local.json, CLAUDE.md)
+                                    and install the shared skills (jskill sync)
     --claude-desktop-backup         Back up macOS Claude Desktop config
                                     (claude_desktop_config.json)
     --claude-desktop-restore        Restore macOS Claude Desktop config
@@ -305,7 +300,8 @@ Codex Options:
     --codex                         Install or upgrade Codex (CLI)
     --codex-remove                  Remove Codex
     --codex-restore                 Link tracked Codex settings into place
-                                    (config.toml, AGENTS.md)
+                                    (config.toml, AGENTS.md, bin/) and install the
+                                    shared skills (jskill sync)
 
 Gemini Options:
     --gemini                        Install or upgrade Gemini (CLI)
@@ -334,7 +330,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           lock-vnc,vnc-start,vnc,firefox,update,samba,samba-reset-password,wireshark,\
           git-lfs,rtsp,rtsp-all,rtsp-kill,rtsp-list,rtsp-raw,rtsp-1080,rtsp-stream:,\
           rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,git-filters,claude,claude-remove,\
-          claude-restore,claude-desktop-backup,claude-desktop-restore,claude-link-mcp,\
+          claude-restore,claude-desktop-backup,claude-desktop-restore,\
           codex,codex-remove,codex-restore,\
           gemini,gemini-remove,cursor-backup,cursor-restore,\
           singbox,singbox-reload,singbox-config:,\
@@ -1330,10 +1326,6 @@ while true; do
             ;;
         --claude-desktop-restore)
             fClaudeDesktopAction="restore"
-            shift
-            ;;
-        --claude-link-mcp)
-            fClaudeLinkMcpJson=1
             shift
             ;;
         --codex)
@@ -2807,11 +2799,6 @@ _trackSyncResult() {
 getClaudeCodeDir() { echo "$HOME/.claude"; }
 getCodexDir()      { echo "$HOME/.codex"; }
 
-linkClaudeMcpJson() {
-    echo -e "${COLOR}Linking Claude .mcp.json${RESET}"
-    linkFile "$fTKClaudeMcpJson" "$PWD" ".mcp.json"
-}
-
 getClaudeDesktopConfigDir() {
     case "$(uname -s)" in
         Darwin) echo "$HOME/Library/Application Support/Claude" ;;
@@ -2839,7 +2826,10 @@ restoreClaudeCodeSettings() {
     _trackSyncResult $? processedCount failedCount
     linkFile "$fTKClaudeCodeMd"            "$dstDir"
     _trackSyncResult $? processedCount failedCount
-    linkDirectory "$fTKClaudeCodeSkills"   "$dstDir" "skills"
+    # Skills are not one link to the tree: Claude Code writes into its skills
+    # directory (synced/ account skills), and a tree link put that into the
+    # repo. jskill gives Claude and Codex the same per-skill links instead.
+    "$fTKToolsDir/jskill" sync
     _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then
@@ -2913,7 +2903,6 @@ restoreClaudeDesktopSettings() {
 restoreCodexSettings() {
     echo -e "${COLOR}Restoring Codex settings${RESET}"
     local dstDir=$(getCodexDir)
-    local userSkillsDir="$HOME/.agents/skills"
     local processedCount=0 failedCount=0
 
     [ ! -d "$dstDir" ] && mkdir -p "$dstDir"
@@ -2931,13 +2920,10 @@ restoreCodexSettings() {
     linkDirectory "$fTKCodexBin" "$dstDir" "bin"
     _trackSyncResult $? processedCount failedCount
 
-    [ ! -d "$userSkillsDir" ] && mkdir -p "$userSkillsDir"
-    local skillDir=
-    for skillDir in "$fTKCodexSkills"/*; do
-        [ -f "$skillDir/SKILL.md" ] || continue
-        linkDirectory "$skillDir" "$userSkillsDir"
-        _trackSyncResult $? processedCount failedCount
-    done
+    # The same per-skill links Claude gets, and stale ones removed: one tool
+    # owns the shared skill links for both clients
+    "$fTKToolsDir/jskill" sync
+    _trackSyncResult $? processedCount failedCount
 
     if [ $failedCount -gt 0 ]; then
         return 1
@@ -7405,7 +7391,6 @@ setupGitFilters() {
 doEarlyExitJobs() {
     [ -n "$fLinkClangFormatPath" ] && { linkClangFormat "$1"; exit 0; }
     [ -n "$fGitFilters" ]         && { setupGitFilters; exit $?; }
-    [ -n "$fClaudeLinkMcpJson" ]   && { linkClaudeMcpJson; exit 0; }
     [ -n "$fCheckTlsConn" ]        && { checkTlsConnection "$1"; exit 0; }
     case "$fCursorAction" in
         backup)  backupCursorSettings;  exit $? ;;

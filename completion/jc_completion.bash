@@ -92,7 +92,7 @@ _jc_complete() {
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
                --firefox --update --samba --samba-reset-password --git-lfs --check-tls --swap \
                --gdm --text --claude --claude-remove --acl-block --acl-unblock --acl-status --acl-restart --acl-kickcam \
-               --claude-restore --claude-desktop-backup --claude-desktop-restore --claude-link-mcp \
+               --claude-restore --claude-desktop-backup --claude-desktop-restore \
                --codex --codex-remove --codex-restore \
                --cursor-backup --cursor-restore --singbox --singbox-reload --singbox-config \
                --xray --xray-port --xray-server --xray-remove \
