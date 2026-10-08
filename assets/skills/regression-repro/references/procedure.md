@@ -145,10 +145,12 @@ provisioning step with `--then`, and the two failure modes that silently kill a 
 Start it with the long-running-job method in `references/hosts/<runtime>.md`; keep one watcher and
 observe that same job — never start duplicates. Details and traps: **skill `noga-lock`**.
 
-**A released lease does not mean an idle box** — this must print 0 before you trust it:
+**A released lease does not mean an idle box** — confirm the regression really ended before the
+first burn/reset, however you got the lock (skill `noga-lock` → "Before touching any box you
+locked"); at minimum this must print 0 (run it as its own `ssh` command):
 
 ```bash
-ssh <box> 'ps -eo cmd | grep -c "[u]topx.exe"'
+ssh <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
 ```
 
 ### 3b-bis. EXCEPTION — same-PSID substitution (only with explicit user approval)

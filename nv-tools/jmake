@@ -57,6 +57,7 @@ fRegMine=
 fRegIdle=
 fRegExtend=
 fRegCancel=
+fRegFree=
 fRegWho=
 fFirmware=
 fIniFile=
@@ -363,7 +364,11 @@ Regression Server Options:
         --reg-mine                  Show my allocated regression servers (sqme)
         --reg-idle                  Show idle regression servers (midle)
         --reg-extend                Extend my regression-server allocation by 3h (extend_my_alloc)
-        --reg-cancel                Cancel my regression-server allocations (scancelme)
+        --reg-cancel                Cancel my regression-server allocations (scancelme; an
+                                    interactive menu whose entry 0 releases ALL my boxes)
+        --reg-free <server>[,...]   Release the named regression server(s) - comma-separate
+                                    or repeat - each one I hold; a summary names the ones
+                                    not released and why. Only when Peter asks for it
         --reg-who <server>          Show who holds a regression server and until when
 
 Supported Models:
@@ -393,7 +398,7 @@ LONGOPTS="help,clean,debug,db,build,clean-db,git-clean,clean-submodule,jobs:,wor
 list,list-extended,link-db,link-clangd:,link-claude,all,all-extended,models:,skip:,nicx,patch,ethlt,codecov,cov,continue,track,fetch,push,\
 rebase,add,commit,amend,stat,show,df,diff,burn,burn-official:,device:,fw-query,fw-reset,mst-install,mst-start,\
 mst-stop,mst-restart,ofed-restart,ofed-start,ofed-stop,power-cycle:,power-on:,power-off:,docker-group,firmware:,mlx:,ini:,\
-reg-info,reg-malloc:,reg-mine,reg-idle,reg-extend,reg-cancel,reg-who:"
+reg-info,reg-malloc:,reg-mine,reg-idle,reg-extend,reg-cancel,reg-free:,reg-who:"
 
 if ! PARSED=$("$GETOPT_BIN" --options $SHORTOPTS --longoptions $LONGOPTS --name "$0" -- "$@"); then
     echo -e "${MAGENTA}Error: Failed to parse command-line options.${RESET}" >&2
@@ -685,6 +690,11 @@ while true; do
         --reg-cancel)
             fRegCancel=true
             shift
+            ;;
+        --reg-free)
+            # Comma-separated and/or repeated: --reg-free a,b --reg-free c
+            fRegFree="${fRegFree:+$fRegFree }${2//,/ }"
+            shift 2
             ;;
         --reg-who)
             fRegWho="$2"
@@ -2312,6 +2322,8 @@ FWV_ALIAS_FILE="/mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias"
 # No alias covers "who holds box X" -- minfo/midle/sqme only list inventory,
 # idle and mine -- so --reg-who talks to the NOGA CLI directly.
 NOGA_CLI="/.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py"
+# The allocation tool behind malloc and scancelme; --reg-free calls it by name
+NOGA_ALLOC="$(dirname "$FWV_ALIAS_FILE")/noga_allocation/noga_alloc.py"
 # NOTE: .fwvalias is sourced inline from main() (see maybeSourceFwvAlias).
 # We can't wrap that in a helper function: top-level `declare -A` in .fwvalias
 # becomes LOCAL when source runs inside a function, so the project_full_names
@@ -2444,6 +2456,94 @@ runRegCancel() {
     echo "$SEPARATOR"
 }
 
+# "<status> <owner>" of one regression server, per the NOGA CLI; nothing, and a
+# non-zero return, when NOGA does not know the name or cannot be reached.
+# Status.status is the authoritative state - Release means free.
+regServerLock() {
+    local out
+    out=$(python3 "$NOGA_CLI" -q -t server -n "$1" 2>&1) || return 1
+    printf '%s %s\n' "$(sed -nE 's/^Status\.status = (.*)$/\1/p' <<<"$out" | head -1)" \
+                     "$(sed -nE 's/^Status\.lock_owner = (.*)$/\1/p' <<<"$out" | head -1)"
+}
+
+# Release the named regression server(s). --reg-cancel (scancelme) is a menu
+# whose entry 0 is "All resources" - every box under this user, the ones other
+# sessions are working on included - and without a terminal it dies on
+# EOFError. This releases the named boxes only, only while this user holds
+# them, and nothing calls it on its own: a locked box is released when Peter
+# asks.
+runRegFree() {
+    [[ -z "$fRegFree" ]] && return
+    local server status owner cmd
+    local -a servers=() released=() free=() kept=()
+    for server in $fRegFree; do  # each name once, in the order given
+        [[ " ${servers[*]} " == *" $server "* ]] || servers+=("$server")
+    done
+    echo "$SEPARATOR"
+
+    # As many as can be released are: each box this user holds is released on
+    # its own, everything else is left as it is and named in the summary.
+    for server in "${servers[@]}"; do
+        if [[ "$server" == l-fwminireg-* ]]; then
+            # Dedicated CI/DoA machines: never ours to lock or release, whatever NOGA says
+            echo -e "$NOTATION ${RED}✗ $server is a CI/DoA machine; jmake never releases one${RESET}"
+            kept+=("$server: a CI/DoA machine")
+            continue
+        fi
+        if ! read -r status owner < <(regServerLock "$server") || [[ -z "$status" ]]; then
+            echo -e "$NOTATION ${RED}✗ NOGA has no server named $server, or the query failed${RESET}"
+            kept+=("$server: unknown to NOGA, or the query failed")
+            continue
+        fi
+        if [[ "$status" == Release ]]; then
+            echo -e "$NOTATION ${GREEN}✓ $server is already free${RESET}"
+            free+=("$server")
+            continue
+        fi
+        if [[ "$owner" != "$USER" ]]; then
+            echo -e "$NOTATION ${RED}✗ $server is held by ${YELLOW}${owner:-?}${RED}, not $USER${RESET}"
+            kept+=("$server: held by ${owner:-?}")
+            continue
+        fi
+        # stdin from /dev/null: nothing must sit waiting on a prompt nobody answers
+        cmd="ensure_min_python_for_noga_alloc && $NOGA_ALLOC --team_name hca_fw --resource_name $server --action release"
+        echo -e "$NOTATION Running: ${YELLOW}$cmd${RESET}"
+        eval "$cmd" </dev/null
+        # The read-back decides, not the reply
+        if read -r status owner < <(regServerLock "$server") && [[ "$status" == Release ]]; then
+            echo -e "$NOTATION ${GREEN}✓ Released $server${RESET}"
+            released+=("$server")
+        else
+            echo -e "$NOTATION ${RED}✗ $server still reads ${status:-unknown}${owner:+ ($owner)}" \
+                    "after the release${RESET}"
+            kept+=("$server: still ${status:-unknown}${owner:+ ($owner)} after the release")
+        fi
+    done
+    echo "$SEPARATOR"
+
+    # What is still held, to show the other boxes were left alone
+    if (( ${#released[@]} )); then
+        fRegMine=true
+        runRegMine
+    fi
+    # With one name its own line already said it all; with several, the last
+    # word is which ones were not released and why
+    if (( ${#servers[@]} > 1 )); then
+        echo -e "$NOTATION ${BOLD}Summary of ${#servers[@]} servers${RESET}"
+        (( ${#released[@]} )) && echo -e "$NOTATION ${GREEN}released:${RESET}     ${released[*]}"
+        (( ${#free[@]} ))     && echo -e "$NOTATION ${GREY}already free:${RESET} ${free[*]}"
+        if (( ${#kept[@]} )); then
+            echo -e "$NOTATION ${RED}not released:${RESET}"
+            local item
+            for item in "${kept[@]}"; do
+                echo -e "$NOTATION   $item"
+            done
+        fi
+        echo "$SEPARATOR"
+    fi
+    (( ${#kept[@]} )) && exit 1
+}
+
 runRegWho() {
     [[ -z "$fRegWho" ]] && return
     local server="$fRegWho"
@@ -2520,6 +2620,7 @@ doEarlyExitJobs() {
     [ -n "$fRegIdle" ]       && { runRegIdle; exit 0; }
     [ -n "$fRegExtend" ]     && { runRegExtend; exit 0; }
     [ -n "$fRegCancel" ]     && { runRegCancel; exit 0; }
+    [ -n "$fRegFree" ]       && { runRegFree; exit 0; }
     [ -n "$fRegWho" ]        && { runRegWho; exit 0; }
 }
 
@@ -2537,7 +2638,7 @@ main() {
     # runRegInfo, ...). Aliases are always global so they're unaffected.
     if [[ -n "$fFwReset" || -n "$fRegInfo" || -n "$fRegMalloc" \
        || -n "$fRegMine"  || -n "$fRegIdle"  || -n "$fRegExtend" \
-       || -n "$fRegCancel" ]]; then
+       || -n "$fRegCancel" || -n "$fRegFree" ]]; then
         if [[ ! -f "$FWV_ALIAS_FILE" ]]; then
             echo -e "$NOTATION ${RED}Error: required alias file not found: ${YELLOW}$FWV_ALIAS_FILE${RESET}" >&2
             exit 1

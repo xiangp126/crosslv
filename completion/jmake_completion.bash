@@ -17,9 +17,9 @@ JMAKE_GOLAN_MODELS="alpine arava arava_codecov arava_ethlt aravacov argaman arga
 
 # Helper function to complete multiple models with comma separation
 # Supports: jmake --models mustang,gilboa,<TAB> to suggest remaining models
-# No quotes needed!
+# No quotes needed! $1 overrides the candidate list (--reg-free passes servers).
 _jmake_complete_models() {
-    local all_models="$JMAKE_GOLAN_MODELS"
+    local all_models="${1:-$JMAKE_GOLAN_MODELS}"
     local typed_content="$cur"
     local remaining_models=""
     local last_word=""
@@ -177,7 +177,7 @@ _jmake_complete() {
                --amend --stat --df --diff --show --burn --burn-official --firmware --mlx --ini --device --fw-query --fw-reset \
                --mft-install --mft-start --mft-stop --mft-restart --ofed-restart --ofed-start --ofed-stop \
                --power-cycle --power-on --power-off --docker-group \
-               --reg-info --reg-malloc --reg-mine --reg-idle --reg-extend --reg-cancel"
+               --reg-info --reg-malloc --reg-mine --reg-idle --reg-extend --reg-cancel --reg-free --reg-who"
 
     # Handle option arguments
     case $prev in
@@ -249,7 +249,13 @@ _jmake_complete() {
             COMPREPLY=( $(compgen -W "$servers" -- "$cur") )
             return 0
             ;;
-        --reg-malloc)
+        --reg-free)
+            # Several servers, comma-separated like --models
+            compopt -o nospace
+            _jmake_complete_models "$_JMAKE_REG_SERVERS"
+            return 0
+            ;;
+        --reg-malloc|--reg-who)
             COMPREPLY=( $(compgen -W "$_JMAKE_REG_SERVERS" -- "$cur") )
             return 0
             ;;

@@ -9,7 +9,7 @@ todos:
     content: Decode the Redmine URL → failure signature, test tool, MARS coordinates (results_dir/setup_id/session_id/key_id), machine, device, MST dev, FW version
     status: pending
   - id: allocate-box
-    content: malloc the SAME server from setup_id (jmake --reg-malloc <machine>); if busy, run the monitor script polling its lock every 15s and grab it the instant it frees; --reg-extend to keep it, --reg-cancel when done. Never substitute a different host. Unknown command → ask Glean. Capture the current FW as a restore point
+    content: malloc the SAME server from setup_id (jmake --reg-malloc <machine>); if busy, run the monitor script polling its lock every 15s and grab it the instant it frees; --reg-extend to keep it; never release it without Peter's explicit permission. Never substitute a different host. Unknown command → ask Glean. Capture the current FW as a restore point
     status: pending
   - id: extract-regression
     content: From the MARS session tarball, read new_burn_fw + get_last_commit + run_case (FW/.mlx/INI/PSID + test-tool commit + exact command & seed) AND the session's own setup steps (clear_nv_data / SetMlxConfig / load_udriver / per-case Fwreset) — the scripts must replay these

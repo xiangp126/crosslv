@@ -46,7 +46,8 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
 
 - **Box lifecycle:** reserve the `<machine>` from `setup_id` with `jmake --reg-malloc <machine>`
   (never substitute another host or trim the command), keep it alive with `jmake --reg-extend`,
-  **release it with `jmake --reg-cancel` when done**. If it is busy, monitor its lock and grab it
+  **release it only when Peter says so**, with `jmake --reg-free <machine>` (never
+  `jmake --reg-cancel`, which can release every box you hold). If it is busy, monitor its lock and grab it
   the instant it frees (§3b) — do not switch boxes. **Unknown reg/lab command → ask Glean
   (`glean_search` / `glean_chat`) before guessing.**
 - **Some reg boxes are outside the malloc pool.** `jmake --reg-malloc` / `--reg-mine` only see
@@ -409,4 +410,4 @@ monitor + grab if busy); pin a per-ticket worktree off **`utopx2`** to its `get_
 to `mt41695_pciconf0`; bring up **exactly** per the attached `fw_reset` / `modprobe_udriver` /
 `print_mst_devs` logs; run the `run_case` command **verbatim** (`traffic_test_error.conf --iter=150 --ops_per_it=100 --case_name
 utopx_6_traffic_test_error`) with its pinned seed `1753076298`; confirm the `cmd_hca_cap`
-"actual < expected" fatal reproduces. Release with `jmake --reg-cancel` when done.
+"actual < expected" fatal reproduces. Keep the box until Peter says to release it.

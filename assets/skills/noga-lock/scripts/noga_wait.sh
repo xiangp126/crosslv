@@ -135,4 +135,4 @@ if [ -n "$THEN" ]; then
   exit $RC
 fi
 
-echo "Release it when done:  python3 $CLI -u -t server -n $HOST"
+echo "Keep it until Peter says to release it; then:  jmake --reg-free $HOST"

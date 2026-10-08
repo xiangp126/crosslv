@@ -1,6 +1,6 @@
 ---
 name: noga-lock
-description: Reserve, extend, release and monitor lab servers in the NOGA pool — both the `jmake --reg-malloc/--reg-extend/--reg-cancel` wrappers and raw noga_manage.py, the unattended wait-then-grab loop for a box held by mars_reg, and how to read the UTC lock_time_out. Use when asked to take/grab/lock a lab machine, malloc or extend an allocation, wait for a server to free up, check who holds a box, release a lock, or find machines by PSID.
+description: Reserve, extend, release and monitor lab servers in the NOGA pool — both the `jmake --reg-malloc/--reg-extend/--reg-free/--reg-cancel` wrappers and raw noga_manage.py, the unattended wait-then-grab loop for a box held by mars_reg, and how to read the UTC lock_time_out. Use when asked to take/grab/lock a lab machine, malloc or extend an allocation, wait for a server to free up, check who holds a box, release a lock, or find machines by PSID.
 ---
 
 # NOGA lab-server locks
@@ -14,6 +14,14 @@ until it frees up, take it, then set it up.
   anything (flint, mlxconfig, utopx, burn, reset) on a box whose `lock_owner` is another user; work
   only on a box you hold or one that is free, and to get a held box, wait for it to free up and take
   it first. Do not fight a live holder.
+- **Never release a box you hold without Peter's explicit permission** — not when the experiment
+  is done, not when the box looks idle, not to be polite to other teams. When the work on it is
+  finished, report that and ask; release only after he says so, and only the box(es) he named:
+  `jmake --reg-free <server>[,<server>...]`.
+- **Never let a lease you hold expire.** An expired lease loses the box exactly like releasing it
+  (`mars_reg` or another user takes it within minutes). Renew every held box when **1 hour** is
+  left on it, and arm the renewal watchdog (below) the moment you take a box — not only for
+  unattended holds. Keep it running while you build, push or write docs.
 
 ## Commands
 
@@ -26,7 +34,7 @@ HOST=l-fwreg-171                              # any pool host
 # Authoritative lock + owner check. Want: Status.status = Lock, Status.lock_owner = <you>
 python3 $CLI -q -t server -n $HOST | grep -E 'Status\.(status|lock_owner|lock_time_out)'
 python3 $CLI -l -t server -n $HOST -L 8 -N "<why>"   # take for 8 h (-L is hours); renews to 8 h from now when yours
-python3 $CLI -u -t server -n $HOST                   # release
+python3 $CLI -u -t server -n $HOST                   # release (prefer jmake --reg-free, which checks the owner)
 ```
 
 - **`-t server`, always.** Pool boxes are NOGA type `Server` (every query prints
@@ -56,7 +64,8 @@ from any dev box. If `jmake --reg-*` is unavailable, `source` that file and call
 | `jmake --reg-mine` | `sqme` | servers currently allocated to me, with the **TIME LEFT** column |
 | `jmake --reg-malloc <machine>` | `malloc <machine> -t 8` | allocate, default 8h (alias: `malloc <machine> -t <hours>`) |
 | `jmake --reg-extend` | `extend_my_alloc` | end time := NOW+3h — see Extend |
-| `jmake --reg-cancel` | `scancelme` (`noga_alloc.py --cancel_me`) | release — see Release |
+| `jmake --reg-free <server>[,<server>...]` | `noga_alloc.py --resource_name <server> --action release`, per box | release each named box you hold; others skipped and summarised — see Release |
+| `jmake --reg-cancel` | `scancelme` (`noga_alloc.py --cancel_me`) | interactive menu; entry 0 releases ALL your boxes — do not use |
 
 `jmake --reg-malloc` outcomes:
 
@@ -77,9 +86,8 @@ Sets the end time to **NOW+3h**. It *replaces*, it does not add — it can SHORT
 
 | TIME LEFT (`jmake --reg-mine`) | do |
 |---|---|
-| **> 3h** | **do NOT extend** — it would SHORTEN the lease |
-| < 3h | extend; the only window where it is a net gain |
-| < 1h | extend now, and verify the read-back before starting anything long |
+| **> 1h** | do nothing yet |
+| **<= 1h** | extend now (end time := NOW+3h) and read back the new TIME LEFT |
 
 - **Always INTERACTIVE**: it prints a numbered menu of your boxes (`0` = All resources) and reads
   the entry from stdin, even when you hold a single box; a non-interactive shell gets `EOFError`.
@@ -92,24 +100,44 @@ Sets the end time to **NOW+3h**. It *replaces*, it does not add — it can SHORT
   longer to run.
 - Verify the result with `jmake --reg-mine` (TIME LEFT — see Reading `lock_time_out`).
 
-### Release — one box by name
+### Release — named boxes only
 
-`jmake --reg-cancel` is interactive like extend, and riskier: menu entry 0 is "All resources",
-which releases EVERY box under your name — including boxes another session or agent is working
-on. When you hold more than one, release the one box by name:
+Only on Peter's explicit instruction (see the rule at the top), and only the box(es) he named:
+
+```bash
+jmake --reg-free <machine> </dev/null
+jmake --reg-free <machine-a>,<machine-b> </dev/null            # several: comma-separated...
+jmake --reg-free <machine-a> --reg-free <machine-b> </dev/null  # ...or repeated
+```
+
+Best effort: it de-duplicates the names, then handles each one in order
+(`noga_manage.py -q -t server -n <machine>`):
+
+| box | result |
+|---|---|
+| `l-fwminireg-*` | `✗ … CI/DoA machine`, skipped (never sent to NOGA) |
+| unknown to NOGA / query failed | `✗ NOGA has no server named …`, skipped |
+| already `Release` | `✓ <machine> is already free`, skipped |
+| held by someone else | `✗ <machine> is held by <owner>, not <you>`, skipped |
+| held by you | released with `noga_alloc.py --team_name hca_fw --resource_name <machine> --action release` (stdin from `/dev/null`), then read back: `✓ Released <machine>` or `✗ <machine> still reads … after the release` |
+
+- After the loop: one `jmake --reg-mine` listing if anything was released, then — only when two or
+  more names were given — `Summary of N servers` with `released:`, `already free:` and
+  `not released:` (one line per box with the reason).
+- Exit code 0 only if every named box ended free (released or already free); 1 if any was not.
+- Because every box you hold in the list IS released, put only the boxes Peter named in the list
+  and re-read it before running — a stray name of yours gets released too.
+
+Never use `jmake --reg-cancel`: it is an interactive menu whose entry 0 ("All resources") releases
+every box under your name, including boxes other sessions are working on, and without a terminal
+it dies on `EOFError`. If jmake is unavailable, release by hand after checking the owner:
 
 ```bash
 bash -c 'source /mswg/projects/fw/fw_ver/hca_fw_tools/.fwvalias >/dev/null 2>&1;
   ensure_min_python_for_noga_alloc &&
   /mswg/projects/fw/fw_ver/hca_fw_tools/noga_allocation/noga_alloc.py --team_name hca_fw \
     --resource_name <machine> --action release' </dev/null
-# -> "-INFO-release request was successful"
 ```
-
-Read back: `noga_manage.py -q -t server -n <machine>` shows `Status.status = Release`, and
-`jmake --reg-mine` still lists your other boxes.
-
-Release locks you are no longer using — holding several boxes "just in case" blocks other teams.
 
 ### Noga REST outage (HTTP 504)
 
@@ -170,6 +198,33 @@ owner `mars_reg` by ~01:50 CST, box rebooted at 02:00 CST, then the regression i
   device, Fwreset failing — it looks like a broken environment. When these suddenly fail, query
   `lock_owner` before debugging the environment. Once the box has been taken, stop touching it and
   let `noga_wait.sh` take it back after the release.
+
+### Before touching any box you locked: confirm no regression is running on it
+
+Every time, however you got the lock — taken from `mars_reg`, found free, first to lock it, or
+re-locked after a release. A NOGA `Release` or your own lock is not proof: MARS can still be
+running, or finishing, a session on the box. Run all three before the first burn, reset or
+mlxconfig, and do not touch the box until they pass:
+
+1. No regression process — must print 0. Run it as its own `ssh` command: any other text in the
+   same command line (e.g. a path under `/tmp/mars_tests`) matches the pattern and counts the
+   command itself.
+   ```bash
+   ssh <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
+   ```
+2. No fresh MARS activity on the box — must print 0:
+   ```bash
+   ssh <box> 'find /tmp/mars_tests -newermt "-30 min" 2>/dev/null | wc -l'
+   ```
+3. The newest MARS session for the setup ended:
+   `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup>/<newest sid>/` must hold
+   `<sid>.tgz`, and its `session.log` must contain `Teardown event: session_end` and
+   `Done step (2:Release The Setup)` (MARS log times are Israel time). A newest session directory
+   without the `.tgz` means the session may still be running or archiving — wait. The `.tgz` is
+   written about a minute after the release; right after a `mars_reg` release, re-check once it
+   appears.
+
+If any check fails, stop, report it to Peter, and keep the lock.
 
 ## Waiting for a busy box — `noga_wait.sh`
 
@@ -261,17 +316,16 @@ window is).
 
 - **"Don't release the machine" (Peter) means RENEW it** before expiry — not merely refrain
   from `-u`.
-- **Reactive, not scheduled.** TIME LEFT passes your eyes on its own — every `jmake --reg-mine`,
-  every allocation banner. When you notice it running low, extend instead of mentioning it. Do not
-  arm a daemon, compute when to come back, or report a number and wait. (An unattended multi-hour
-  hold with nobody at the keyboard is the watchdog case below.)
+- **Scheduled, not reactive.** Arm the renewal watchdog as soon as you hold a box; it renews at
+  1 hour left. Noticing TIME LEFT by chance is not enough — a box was lost while the session was
+  busy pushing commits. Also check TIME LEFT whenever you report progress.
 
 Renew by the path you took the box with — never cross them:
 
 | box taken with | renew with | when | effect |
 |---|---|---|---|
-| `jmake --reg-malloc` | `jmake --reg-extend`, menu entry `<n>` piped in (see Extend) | only when TIME LEFT < 3h | end time := **NOW+3h** |
-| a direct Noga lock (`noga_manage.py -l`, `noga_wait.sh`) | `python3 "$CLI" -l -t server -n "$HOST" -L 8 -N "<why>"` | any time | lease := **NOW+8h** |
+| `jmake --reg-malloc` | `jmake --reg-extend`, menu entry `<n>` piped in (see Extend) | when TIME LEFT <= 1h | end time := **NOW+3h** |
+| a direct Noga lock (`noga_manage.py -l`, `noga_wait.sh`) | `python3 "$CLI" -l -t server -n "$HOST" -L 8 -N "<why>"` | when TIME LEFT <= 1h | lease := **NOW+8h** |
 
 Do not renew a malloc'd box through Noga just because 8 h is more than 3 h. Read back after either
 path:
@@ -280,19 +334,19 @@ path:
 python3 "$CLI" -q -t server -n "$HOST" | grep -E 'Status\.(lock_owner|lock_time_out)'
 ```
 
-### Unattended multi-hour hold: a renewal watchdog
+### The renewal watchdog (arm it for every box you hold)
 
-`noga_wait.sh` only **acquires**; it does not keep the box. For a multi-hour hold, arm a renewal
-watchdog right after acquiring, as a background task that notifies you when it exits. The loop
+`noga_wait.sh` only **acquires**; it does not keep the box. Arm a renewal watchdog right after
+acquiring any box, as a background task that notifies you when it exits. The loop
 must:
 
 - poll about every **5 min**;
 - **check `lock_owner` first**; if the box is not held by you, say so loudly and re-lock at once
   through `noga_wait.sh`, which grabs immediately when the box is takeable and otherwise waits for
   the release — never `-l` over another user's live lease;
-- renew by the path you took the box with (`VIA`): `malloc` → `jmake --reg-extend`, only when TIME
-  LEFT < 3h (once below 3h it extends on every poll, holding the lease near 3h); `noga` →
-  `noga_manage.py -l` on every poll (lease := NOW+8h). A box `noga_wait.sh` re-took is `noga`;
+- renew when TIME LEFT <= **1h**, by the path you took the box with (`VIA`): `malloc` →
+  `jmake --reg-extend` (end := NOW+3h); `noga` → `noga_manage.py -l` (lease := NOW+8h). A box
+  `noga_wait.sh` re-took is `noga`;
 - print a heartbeat about every **30 min** so a dead watchdog is obvious.
 
 ```bash
@@ -312,11 +366,12 @@ while true; do
     echo "!!!!! $HOST NOT HELD: status=$st owner=${owner:-<none>} $(date '+%F %T') -- re-locking"
     "$S/noga_wait.sh" -n "$HOST" -L 8 --hours 12 || exit 1   # grabs at once if takeable, else waits
     VIA=noga                                                 # noga_wait.sh locks directly via Noga
-  elif [ "$VIA" = noga ]; then
-    python3 "$CLI" -l -t server -n "$HOST" -L 8 -N "hold" >/dev/null 2>&1   # lease := NOW+8h
-  else                                                       # malloc: extend only when TIME LEFT < 3h
+  else                                                       # renew when TIME LEFT <= 1h
     past=$(python3 "$S/noga_expiry.py" "$tout" 2>/dev/null | head -1) || true   # negative = s left
-    if [ -n "$past" ] && [ "$past" -gt -10800 ]; then
+    if [ -n "$past" ] && [ "$past" -gt -3600 ] && [ "$VIA" = noga ]; then
+      python3 "$CLI" -l -t server -n "$HOST" -L 8 -N "hold" >/dev/null 2>&1   # lease := NOW+8h
+      echo "renewed $HOST via noga $(date '+%F %T')"
+    elif [ -n "$past" ] && [ "$past" -gt -3600 ]; then
       n=$(jmake --reg-extend </dev/null 2>/dev/null | awk -v h="$HOST" '$4 == h {print $2}')
       if [ -n "$n" ]; then
         echo "$n" | jmake --reg-extend >/dev/null 2>&1       # end time := NOW+3h
