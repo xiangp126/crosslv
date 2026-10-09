@@ -482,16 +482,19 @@ for _ai_cmd in "${_ai_nvm_tools[@]}"; do
             esac
         done
 
-        # NVM activation. Idempotent — skip if the AI's binary is already
-        # findable. If not, put the bin of the newest node install that has it
-        # on PATH, read straight off the directory as the non-interactive block
+        # NVM activation. Idempotent — skip if the AI's binary already resolves
+        # into the nvm tree. Otherwise put the bin of the newest node install
+        # that has it first on PATH - ahead of any other copy, too: l-fwdev-014
+        # has a root-installed codex 0.153.4 in /usr/local/bin, which lacks
+        # --no-daemon, so every codex launch there died (2026-10-08). Read
+        # straight off the directory as the non-interactive block
         # at the top does. This used to source nvm.sh and run nvm use default:
         # 0.3 s, and nvm walks up from the cwd looking for a package.json, so
         # it asked for /labhome/package.json and /labhome/node_modules -- autofs
         # lookups of keys that do not exist, ~7 s each whenever autofs has
         # forgotten the miss (2026-10-03). The lazy nvm stub still loads nvm
         # for anyone who types nvm.
-        if [[ -z \"\$(type -P $_ai_cmd)\" ]]; then
+        if [[ \"\$(type -P $_ai_cmd)\" != \"\$NVM_DIR\"/* ]]; then
             local _nvm_bin _found=
             for _nvm_bin in \"\$NVM_DIR\"/versions/node/v*/bin; do
                 [ -x \"\$_nvm_bin/$_ai_cmd\" ] && _found=\$_nvm_bin

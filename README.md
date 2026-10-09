@@ -34,22 +34,24 @@
 Manage local Claude Code and Codex interactive sessions without losing their conversation IDs:
 
 ```bash
-jcl list                                  # both agents
-jcl list --agent codex                     # Codex only; --json for scripting
+jcl list                                  # both agents; --json for scripting
 jcl save                                  # snapshot both agents
+jcl show                                  # what the snapshot holds, which of it runs here
 jcl restore --agent codex --dry-run        # preview Codex recovery from the snapshot
 jcl restore --agent codex
-jcl refresh all --agent codex --dry-run    # preview restart in the same tmux panes
-jcl refresh all --agent codex
+jcl refresh codex --dry-run                # preview restart in the same tmux panes
+jcl refresh codex                          # every Codex pane; `all` is both agents
 jcl refresh 3:11.1                         # one exact pane, either agent
+jcl exit-session all                       # quit both agents, panes stay at the shell
 jcl set --agent codex --model gpt-6-astra --effort high
 jcl set --effort xhigh --agent codex        # retain each pane's current model
 jcl set --model opus --model gpt-6-astra    # route one model to each agent
 jcl set 0:6.2 3:4.1 --model opus --effort max   # only the named panes, either agent
 ```
 
-`list`, `save`, `restore`, and `set*` default to both agents. For compatibility,
-`refresh all` defaults to Claude; use `--agent codex` or `--agent all` explicitly.
+`restore` and `set` take `--agent` and default to both agents. `refresh` and
+`exit-session` name agents instead: `claude` or `codex` selects every pane of one
+agent, `all` every pane of both. `list`, `save`, and `show` always cover both.
 The default snapshot remains `~/.claude/tmux-snapshot.json`; use `-o` on save and
 `-f` on restore for another file. Existing Claude-only snapshots remain readable.
 

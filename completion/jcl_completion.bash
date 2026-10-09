@@ -21,9 +21,10 @@ fi
 # takes to scan tmux and /proc, so parsing the json properly is effectively free,
 # and it is what keeps pane-less background agents out of the list.
 _jcl_live_ids() {
-    jcl list --json --agent "${2:-all}" 2>/dev/null | python3 -c '
+    jcl list --json 2>/dev/null | python3 -c '
 import json, sys
 used = set(sys.argv[1].replace(",", " ").split()) if len(sys.argv) > 1 else set()
+wanted = sys.argv[2] if len(sys.argv) > 2 else "all"
 try:
     records = json.load(sys.stdin)
 except ValueError:
@@ -33,7 +34,8 @@ if "all" in used:
     sys.exit(0)
 live = [rec for rec in records
         if rec.get("alive") and rec.get("target") and not rec.get("stopped")
-        and rec.get("kind") in (None, "", "interactive")]
+        and rec.get("kind") in (None, "", "interactive")
+        and wanted in ("all", rec.get("agent"))]
 print("all")
 # One keyword per agent that actually has a live pane: `codex` with no codex
 # running would only lead to "No matching live sessions".
@@ -43,7 +45,7 @@ for agent in sorted({rec.get("agent") for rec in live} - used):
 for rec in live:
     if rec["target"] not in used:
         print(rec["target"])
-' "$1" 2>/dev/null
+' "$1" "${2:-all}" 2>/dev/null
 }
 
 # Complete one SESSION argument of `refresh`.
@@ -186,7 +188,7 @@ _jcl_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore refresh exit-session set patch-resurrect save-auth restore-auth fill-auth"
+    local commands="list save restore show refresh exit-session set patch-resurrect save-auth restore-auth fill-auth"
     for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
         case "${COMP_WORDS[i]}" in
             --agent) agent="${COMP_WORDS[i+1]:-all}" ;;
@@ -197,7 +199,7 @@ _jcl_complete() {
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | refresh | exit-session | set | patch-resurrect | save-auth | restore-auth | fill-auth)
+            list | save | restore | show | refresh | exit-session | set | patch-resurrect | save-auth | restore-auth | fill-auth)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -234,11 +236,12 @@ _jcl_complete() {
     fi
 
     case "$cmd" in
-        list) opts="-h --help --agent -a --all --json --ids-only" ;;
-        save) opts="-h --help --agent -o --output" ;;
+        list) opts="-h --help -a --all --json --ids-only" ;;
+        save) opts="-h --help -o --output" ;;
         restore) opts="-h --help --agent -f --file -n --dry-run" ;;
-        refresh) opts="-h --help --agent --timeout -n --dry-run" ;;
-        exit-session) opts="-h --help --agent --timeout -n --dry-run" ;;
+        show) opts="-h --help -f --file --json" ;;
+        refresh) opts="-h --help --timeout -n --dry-run" ;;
+        exit-session) opts="-h --help --timeout -n --dry-run" ;;
         set) opts="-h --help --agent --model --effort --delay --timeout --no-verify -n --dry-run" ;;
         patch-resurrect) opts="-h --help -n --dry-run -v --verbose" ;;
         save-auth) opts="-h --help -o --output --force -n --dry-run" ;;

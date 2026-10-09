@@ -1,7 +1,7 @@
-model = "gpt-6.1-sol"
+model = "gpt-6-sol"
 model_context_window = 1000000
 service_tier = "fast"
-model_reasoning_effort = "medium"
+model_reasoning_effort = "max"
 check_for_update_on_startup = false
 sandbox_mode = "danger-full-access"
 sqlite_home = "/var/tmp/pexiang-codex-sqlite"

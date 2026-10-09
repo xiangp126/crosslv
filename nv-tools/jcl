@@ -297,6 +297,16 @@ def codex_rollout_path(home, session_id):
     return next(Path(home, "sessions").glob(f"*/*/*/rollout-*-{session_id}.jsonl"), None)
 
 
+def codex_unwritten(rec):
+    """A snapshot's codex session that was saved empty and still has no rollout.
+
+    Asked of the disk at restore time, not taken from the snapshot: one saved
+    before its first message may have had one since, and then it resumes.
+    """
+    return bool(rec.get("empty")) and codex_rollout_path(
+        rec.get("agent_home") or CODEX_DIR, rec["session_id"]) is None
+
+
 def codex_rollout_meta(home, session_id):
     """What a rollout recorded about itself in its first line, or {}.
 
@@ -416,6 +426,11 @@ def codex_records(pid, cwd, targets, argv):
             continue
         if meta.get("thread_source") not in (None, "", "user", "cli"):
             continue
+        # codex writes the rollout, and the state row with it, only once the
+        # first message is sent. Until then there is nothing to resume: `codex
+        # resume` of such a thread finds no session (2026-10-09, pane 3:9.1).
+        empty = (not meta and not rollout and "started" not in evidence
+                 and codex_rollout_path(evidence["home"], session_id) is None)
         records.append({
             "agent": "codex", "sessionId": session_id, "pid": pid,
             "procStart": proc_start_marker(pid), "kind": "interactive",
@@ -429,6 +444,7 @@ def codex_records(pid, cwd, targets, argv):
             # also wrote `vscode` into a terminal thread it created, which was
             # then skipped by refresh as well (2026-10-01, pane 3:9.1).
             "origin": "desktop" if desktop else "terminal",
+            "empty": empty,
             "cwd": meta.get("cwd") or cwd,
             "name": meta.get("name") or meta.get("title") or "",
             "model": meta.get("model") or "",
@@ -553,7 +569,12 @@ def resume_command(agent, session_id):
 
 
 def resume_record(rec):
-    command = resume_command(rec.get("agent", "claude"), rec["session_id"])
+    # A codex session nothing was ever sent in left no rollout to resume; what
+    # it did hold, a model and an effort, comes back in a new one.
+    if rec.get("agent") == "codex" and rec.get("empty"):
+        command = "codex"
+    else:
+        command = resume_command(rec.get("agent", "claude"), rec["session_id"])
     if rec.get("agent") == "codex":
         if rec.get("model"):
             # Snapshots written before the footer was mapped hold "GPT-6-Sol"
@@ -562,6 +583,13 @@ def resume_record(rec):
             command += " -c " + shlex.quote("model_reasoning_effort=" + json.dumps(rec["effort"]))
         if rec.get("agent_home") and rec["agent_home"] != str(CODEX_DIR):
             command = "env CODEX_HOME=" + shlex.quote(rec["agent_home"]) + " " + command
+    elif rec.get("agent", "claude") == "claude":
+        # What save read off the transcript; without these a resumed session
+        # comes back on the defaults, effort included (/effort is per session)
+        if rec.get("model"):
+            command += " --model " + shlex.quote(rec["model"])
+        if rec.get("effort"):
+            command += " --effort " + shlex.quote(rec["effort"])
     return command
 
 
@@ -631,6 +659,7 @@ def collect(include_stale=False, agent="all"):
                 "effort": data.get("effort") or "",
                 "agent_home": data.get("agent_home") or "",
                 "origin": data.get("origin") or (claude_origin(data) if agent == "claude" else "terminal"),
+                "empty": bool(data.get("empty")),
                 "alive": alive,
                 "stopped": proc_state(pid) == "T" if alive else False,
                 "pane_id": env.get("TMUX_PANE", ""),
@@ -1244,7 +1273,7 @@ def session_activity(rec):
 
 
 def cmd_list(args):
-    records = collect(include_stale=args.all, agent=args.agent)
+    records = collect(include_stale=args.all)
     if args.json:
         print(json.dumps(records, indent=2, ensure_ascii=False))
         return 0
@@ -1302,9 +1331,27 @@ def cmd_list(args):
     return 0
 
 
+def fill_settings(rec):
+    """Put the model and effort a live session runs with into rec, for its resume command.
+
+    Codex: off the pane footer, what the TUI runs now. Claude: off the
+    transcript (latest reply, or a /model or /effort since). Shared by save and
+    patch-resurrect, so a jcl restore and a tmux-resurrect restore bring a
+    session back on the same settings.
+    """
+    if rec["agent"] == "codex":
+        if rec.get("target") and not rec.get("stopped"):
+            model, effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
+            if model:
+                rec.update(model=model, effort=effort)
+    elif not rec.get("model"):
+        model, effort = claude_settings(rec)
+        rec.update(model=model, effort=effort)
+
+
 def cmd_save(args):
     c, e = palette(), palette(sys.stderr)
-    records = collect(agent=args.agent)
+    records = collect()
     # A session Claude/Codex Desktop hosts itself has no pane to come back to;
     # restore would invent a tmux session named after the agent to put it in.
     # Desktop threads resumed INSIDE a pane are kept, marked by their origin, so
@@ -1314,11 +1361,13 @@ def cmd_save(args):
     if hosted:
         names = ", ".join(rec["name"] or rec["session_id"][:8] for rec in hosted)
         print(f"{c['GREY']}Not saved, {len(hosted)} desktop session(s): {names}{c['RESET']}")
+    empty = [rec for rec in records if rec.get("empty")]
+    if empty:
+        names = ", ".join(rec["target"] or rec["session_id"][:8] for rec in empty)
+        print(f"{c['GREY']}No conversation yet in {len(empty)} codex session(s),"
+              f" so restore will skip: {names}{c['RESET']}")
     for rec in records:
-        if rec["agent"] == "codex" and rec["target"] and not rec["stopped"]:
-            model, effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
-            if model:
-                rec.update(model=model, effort=effort)
+        fill_settings(rec)
     if not records:
         print(f"{e['RED']}No running agent sessions, snapshot not written.{e['RESET']}", file=sys.stderr)
         return 1
@@ -1329,9 +1378,103 @@ def cmd_save(args):
     }
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
+    # A save replaces the whole file, and what is not running now is not in the
+    # new one: sessions restore was still to bring back were lost without a
+    # word (2026-10-08). Keep the old file and name what drops out.
+    try:
+        old = out.read_text()
+        dropped = [r for r in json.loads(old).get("sessions", [])
+                   if (r.get("agent"), r.get("session_id"))
+                   not in {(n["agent"], n["session_id"]) for n in records}]
+    except (OSError, ValueError):
+        old, dropped = None, []
+    if old is not None:
+        backup = out.with_name(out.name + ".bak")
+        backup.write_text(old)
     out.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")
     print(f"{c['GREEN']}Saved{c['RESET']} {c['BOLD']}{len(records)}{c['RESET']}"
           f" session(s) to {c['CYAN']}{out}{c['RESET']}")
+    if dropped:
+        print(f"{c['LIGHTYELLOW']}{len(dropped)} session(s) of the previous snapshot are not in this one"
+              f"{c['RESET']} (not running now); the old file is {c['CYAN']}{backup}{c['RESET']}:")
+        for r in dropped:
+            print(f"  {c['GREY']}{r.get('target') or '-':6}{c['RESET']} {r.get('agent', 'claude'):6} "
+                  f"{r.get('name') or r.get('cwd') or '-'}  {c['GREY']}{r.get('session_id')}{c['RESET']}")
+        print(f"  {c['GREY']}jcl show -f {backup}   /   jcl restore -f {backup}{c['RESET']}")
+    return 0
+
+
+def cmd_show(args):
+    """Print a snapshot the way `list` prints the live sessions.
+
+    RUNNING says whether each one runs on this host at the moment: `yes` in
+    the pane it was saved from, `yes (in <pane>)` once it has moved, `yes (no
+    pane)` outside tmux. The `no` rows are what restore would bring back,
+    except `no (desktop)`, which restore leaves alone, and `no (empty)`, a codex
+    session nothing was ever sent in, which has nothing to resume. Only this
+    host is looked at, so a session still running on another one shows `no`.
+    """
+    c, e = palette(), palette(sys.stderr)
+    try:
+        snapshot = json.loads(Path(args.file).read_text())
+    except (OSError, ValueError) as exc:
+        print(f"{e['RED']}Cannot read snapshot {args.file}{e['RESET']}: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(snapshot, indent=2, ensure_ascii=False))
+        return 0
+    records = snapshot.get("sessions", [])
+    when = snapshot.get("saved_at") or "?"
+    try:
+        age = " (" + _ago(time.mktime(time.strptime(when, "%Y-%m-%d %H:%M:%S"))) + ")"
+    except ValueError:
+        age = ""
+    print(f"{c['GREY']}Snapshot {args.file}, saved {when}{age} on {snapshot.get('host', '?')}{c['RESET']}")
+    if not records:
+        print(f"{e['RED']}Snapshot holds no sessions.{e['RESET']}", file=sys.stderr)
+        return 1
+
+    live = {(r["agent"], r["session_id"]): r for r in collect() if r.get("alive")}
+    headers = ("TMUX", "WINDOW", "AGENT", "MODEL", "EFFORT", "RUNNING", "NAME", "CWD", "SESSION ID")
+    rows, back, running = [], 0, 0
+    for rec in records:
+        now = live.get((rec.get("agent", "claude"), rec.get("session_id")))
+        empty = not now and codex_unwritten(rec)
+        if not now:
+            where = ("no (desktop)" if rec.get("origin") == "desktop"
+                     else "no (empty)" if empty else "no")
+        elif not now["target"]:
+            where = "yes (no pane)"
+        elif now["target"] == rec.get("target"):
+            where = "yes"
+        else:
+            where = f"yes (in {now['target']})"
+        running += bool(now)
+        if not now and rec.get("origin") != "desktop" and not empty:
+            back += 1
+        rows.append((rec.get("target") or "-", rec.get("window_name") or "-",
+                     rec.get("agent", "claude"), rec.get("model") or "-", rec.get("effort") or "-",
+                     where, rec.get("name") or "-", rec.get("cwd") or "-", rec.get("session_id") or "-"))
+    widths = [max(_dwidth(h), *(_dwidth(r[i]) for r in rows)) for i, h in enumerate(headers)]
+    rule = c["GREY"] + "  ".join("-" * w for w in widths) + c["RESET"]
+    print(c["BOLD"] + "  ".join(_dljust(h, w) for h, w in zip(headers, widths)) + c["RESET"])
+    print(rule)
+    for row in rows:
+        cells = []
+        for header, cell, w in zip(headers, row, widths):
+            colour = {"TMUX": c["CYAN"], "AGENT": agent_colour(cell, c), "CWD": c["BLUE"],
+                      "NAME": ""}.get(header, c["GREY"])
+            if header == "RUNNING" and cell.startswith("yes"):
+                colour = c["GREEN"]
+            cells.append(colour + _dljust(cell, w) + c["RESET"] if colour else _dljust(cell, w))
+        print("  ".join(cells))
+    print(rule)
+    agents = {}
+    for rec in records:
+        agents[rec.get("agent", "claude")] = agents.get(rec.get("agent", "claude"), 0) + 1
+    by_agent = ", ".join(f"{n} {agent_colour(a, c)}{a}{c['RESET']}" for a, n in sorted(agents.items()))
+    print(f"{c['BOLD']}{len(records)}{c['RESET']} session(s)  ·  {by_agent}  ·  "
+          f"{running} running on {os.uname().nodename}, {back} for restore to bring back")
     return 0
 
 
@@ -1392,6 +1535,15 @@ def cmd_restore(args):
             # where to continue it to the user.
             print(f"{c['LIGHTYELLOW']}Skipped, desktop session{c['RESET']}: {label}")
             print(f"  {c['GREY']}to take it over here: cd {shell_quote(cwd)} && {resume_record(rec)}{c['RESET']}")
+            continue
+        # Settled here, before resume_record reads it: a session saved empty
+        # that has had a message since must resume, not start over
+        rec["empty"] = codex_unwritten(rec)
+        if rec["empty"]:
+            # A fresh codex in its place would be a new session, which the next
+            # restore would not recognise either: it would start one more.
+            print(f"{c['GREY']}Skipped, no conversation to resume{c['RESET']}: {label}")
+            print(f"  {c['GREY']}to start a new one there: cd {shell_quote(cwd)} && {resume_record(rec)}{c['RESET']}")
             continue
 
         command = f"cd {shell_quote(cwd)} && {resume_record(rec)}"
@@ -1545,13 +1697,15 @@ def pick_live_sessions(args, c, e, verb, own_hint):
 
     # Commas as well as spaces, so a list pasted from anywhere splits the same way
     selectors = [part for item in args.sessions for part in item.split(",") if part]
-    # `claude` / `codex` sweep one agent; `all` sweeps whatever --agent says.
+    # `claude` / `codex` sweep one agent; `all` sweeps whatever set's --agent
+    # says, and both agents for refresh and exit-session, which have none.
     # None of the three can be mistaken for a pane: a pane is only ever named
     # in full, session:window.pane, never by a bare word. They mix with panes:
     # `codex 0:6.2` is every codex session plus that one.
     sweep = {s for s in selectors if s in ("claude", "codex")}
     if "all" in selectors:
-        sweep |= {"claude", "codex"} if args.agent == "all" else {args.agent}
+        agent = getattr(args, "agent", "all")
+        sweep |= {"claude", "codex"} if agent == "all" else {agent}
     targets = [s for s in selectors if s not in ("all", "claude", "codex")]
     only = next(iter(sweep)) if len(sweep) == 1 and not targets else "all"
     records = [
@@ -1562,9 +1716,9 @@ def pick_live_sessions(args, c, e, verb, own_hint):
 
     chosen = [rec for rec in records if rec["agent"] in sweep]
     if targets:
-        # Naming a session says exactly which one is meant, so --agent (which
-        # defaults to claude) must not quietly drop it; the filter is there to
-        # narrow a sweep, not to veto a pane named outright.
+        # Naming a session says exactly which one is meant, so set's --agent
+        # must not quietly drop it; the filter is there to narrow a sweep, not
+        # to veto a pane named outright.
         picked, errors = select_records(records, targets)
         if errors:
             for line in errors:
@@ -2058,10 +2212,7 @@ def cmd_patch_resurrect(args):
         if r["target"] and r.get("kind") in ("", "interactive")
     ]
     for rec in records:
-        if rec["agent"] == "codex" and not rec["stopped"]:
-            model, effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
-            if model:
-                rec.update(model=model, effort=effort)
+        fill_settings(rec)
     by_pane = foreground_by_pane(records)
 
     record_types = ("pane", "window", "state", "grouped_session")
@@ -2751,14 +2902,16 @@ def main(argv=None):
     )
     p_list.add_argument("--json", action="store_true", help="Emit JSON")
     p_list.add_argument("--ids-only", action="store_true", help="Print session ids only")
-    p_list.add_argument("--agent", choices=["claude", "codex", "all"], default="all")
+    # No --agent: the AGENT column already tells the few rows apart, and --json
+    # callers (the completion among them) filter for themselves
     p_list.set_defaults(func=cmd_list)
 
     p_save = sub.add_parser(
         "save", help="Snapshot the running sessions to a file before a reboot"
     )
     p_save.add_argument("-o", "--output", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
-    p_save.add_argument("--agent", choices=["claude", "codex", "all"], default="all")
+    # No --agent: a save replaces the whole file, so `--agent codex` threw the
+    # Claude sessions out of it and then reported them as not running
     p_save.set_defaults(func=cmd_save)
 
     p_restore = sub.add_parser(
@@ -2771,6 +2924,14 @@ def main(argv=None):
     )
     p_restore.set_defaults(func=cmd_restore)
 
+    p_show = sub.add_parser(
+        "show", help="Show what a snapshot holds and which of it runs on this host"
+    )
+    p_show.add_argument("-f", "--file", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
+    # No --agent, as with list: the AGENT column tells the rows apart
+    p_show.add_argument("--json", action="store_true", help="Print the snapshot file as is")
+    p_show.set_defaults(func=cmd_show)
+
     p_refresh = sub.add_parser(
         "refresh",
         help="Restart the named sessions in place to pick up a new login",
@@ -2778,22 +2939,21 @@ def main(argv=None):
             "Restart named interactive sessions in their tmux panes using"
             " `claude --resume ID` or `codex resume ID`, retaining history."
             " This reloads login, MCP, and configuration changes. `codex` or"
-            " `claude` selects every pane of that agent; `all` follows --agent,"
-            " which defaults to Claude. The calling agent and suspended sessions are excluded."
+            " `claude` selects every pane of that agent, `all` every pane of both."
+            " The calling agent and suspended sessions are excluded."
             " Run list first, or pass -n to preview."
         ),
     )
+    # No --agent, here or on exit-session: `claude` and `codex` already name
+    # one agent, so it could only repeat them. What it did add was a default
+    # that narrowed `all` to Claude: an `exit-session all` before a move left a
+    # codex holding its thread on the old host (2026-10-09).
     p_refresh.add_argument(
         "sessions", nargs="*", metavar="SESSION",
         help="Panes to restart, as tmux targets (0:6.2) - the first column of"
              " `list`. Give several separated by spaces or commas; `claude` or"
-             " `codex` for every live session of that agent, `all` for every one"
-             " (narrowed by --agent). There is no default. Naming a pane"
-             " overrides --agent.",
-    )
-    p_refresh.add_argument(
-        "--agent", choices=["claude", "codex", "all"], default="claude",
-        help="Restrict an `all` sweep (default: claude); an explicit pane selects either agent",
+             " `codex` for every live session of that agent, `all` for every one."
+             " There is no default.",
     )
     p_refresh.add_argument(
         "--timeout", type=float, default=15.0,
@@ -2814,21 +2974,17 @@ def main(argv=None):
             " its shell prompt. Use it before `source ~/.bashrc` or anything else"
             " only a fresh shell picks up; `restore` then resumes each session in"
             " the pane it came from. `codex` or `claude` selects every pane of"
-            " that agent; `all` follows --agent, which defaults to Claude. The calling agent and"
+            " that agent, `all` every pane of both. The calling agent and"
             " suspended sessions are excluded. Run list first, or pass -n to preview."
         ),
     )
+    # No --agent, as with refresh above
     p_exit.add_argument(
         "sessions", nargs="*", metavar="SESSION",
         help="Panes to exit, as tmux targets (0:6.2) - the first column of"
              " `list`. Give several separated by spaces or commas; `claude` or"
-             " `codex` for every live session of that agent, `all` for every one"
-             " (narrowed by --agent). There is no default. Naming a pane"
-             " overrides --agent.",
-    )
-    p_exit.add_argument(
-        "--agent", choices=["claude", "codex", "all"], default="claude",
-        help="Restrict an `all` sweep (default: claude); an explicit pane selects either agent",
+             " `codex` for every live session of that agent, `all` for every one."
+             " There is no default.",
     )
     p_exit.add_argument(
         "--timeout", type=float, default=15.0,
