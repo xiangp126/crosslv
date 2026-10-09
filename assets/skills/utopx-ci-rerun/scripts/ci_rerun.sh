@@ -5,6 +5,9 @@
 #   - REASON is validated against the LIVE choice list (the list gets edited over time)
 #   - concurrency is checked before triggering (utopx_ci caps at 15 and HARD-ABORTS the
 #     excess ~1 min in, at the CI Execution Checkpoint stage -- it does not queue)
+#   - the target branch must not be locked in VDash (the same checkpoint aborts a run on a
+#     locked branch and the bot votes Verified-1). The branch is read from the change's last
+#     utopx_ci build, never typed in: VDash answers "unlocked" for a misspelled branch.
 #
 # Reminder the script cannot check for you: Code-Review+2 must already be in place, or
 # the pipeline aborts at "Pre Gerrit Validation" with "Code-Review vote is insufficient".
@@ -16,12 +19,15 @@ REASON=""
 THRESHOLD=11          # trigger only at or below this many running builds
 FORCE=0
 ACTION=trigger
+LOCK_BRANCH=""
+VDASH_LOCK_URL="https://vdash.nvidia.com/api/hca-fw-ci/locks/check"
 
 usage() {
   cat <<'EOF'
 Usage:
   ci_rerun.sh --reasons [-p utopx|golan_fw]
   ci_rerun.sh --concurrency
+  ci_rerun.sh --lock <branch>
   ci_rerun.sh -c <change-number> -r "<reason verbatim>" [-p utopx|golan_fw] [--force]
 
 Options:
@@ -30,7 +36,8 @@ Options:
   -p, --project P    utopx (default) | golan_fw
       --reasons      list the current REASON choices and exit
       --concurrency  print the number of running utopx_ci builds and exit
-      --force        skip the concurrency gate (you had better have a reason)
+      --lock B       print the VDash CI lock state of utopx branch B and exit
+      --force        skip the branch-lock and concurrency gates (you had better have a reason)
   -h, --help
 
 Credentials come from ~/.jenkins_env (JENKINS_URL, JENKINS_BLOSSOM_URL,
@@ -48,6 +55,7 @@ while [ $# -gt 0 ]; do
     -p|--project)  PROJECT="$2"; shift 2 ;;
     --reasons)     ACTION=reasons; shift ;;
     --concurrency) ACTION=concurrency; shift ;;
+    --lock)        ACTION=lock; LOCK_BRANCH="$2"; shift 2 ;;
     --force)       FORCE=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
@@ -88,13 +96,69 @@ print(sum(1 for b in json.load(sys.stdin)["builds"] if b.get("building")))
 '
 }
 
+lock_state() {
+  # The query the CI Execution Checkpoint makes (project is "utopx"; "fw_ver/utopx" is a 400).
+  # The checkpoint treats a VDash outage as "unlocked"; here it is UNKNOWN, which blocks.
+  local resp
+  resp=$(curl -sk --max-time 30 -w '\n%{http_code}' "$VDASH_LOCK_URL?project=utopx&branch=$1") || resp=""
+  printf '%s' "$resp" | python3 -c '
+import sys, json
+body, _, code = sys.stdin.read().rpartition("\n")
+try:
+    d = json.loads(body)
+except ValueError:
+    d = None
+if code != "200" or not isinstance(d, dict) or "locked" not in d:
+    print("UNKNOWN (HTTP %s) %s" % (code or "-", body[:120].replace("\n", " ")))
+elif not d["locked"] and not d.get("locks"):
+    print("UNLOCKED")
+else:
+    who = lambda l: (l.get("locked_by") or {}).get("display_name") or (l.get("locked_by") or {}).get("username")
+    print("LOCKED " + " ; ".join("by %s since %s (%s)" % (who(l), l.get("locked_at"), l.get("reason"))
+                                 for l in d.get("locks") or []))
+'
+}
+
+branch_of_change() {
+  # GERRIT_BRANCH of the newest utopx_ci build of change $1. allBuilds, not builds: the
+  # builds field stops at 100 entries however wide the window.
+  curl -sf "${JENKINS_BLOSSOM_URL:?}/job/utopx_ci/api/json?tree=allBuilds%5Bnumber,actions%5Bparameters%5Bname,value%5D%5D%5D" \
+  | python3 -c '
+import sys, json
+change = sys.argv[1]
+for b in sorted(json.load(sys.stdin)["allBuilds"], key=lambda b: -b["number"]):
+    ps = {p["name"]: p.get("value") for a in b.get("actions") or [] for p in a.get("parameters") or []}
+    if str(ps.get("GERRIT_CHANGE_NUMBER")) == change:
+        print(ps.get("GERRIT_BRANCH") or "")
+        break
+' "$1"
+}
+
 case "$ACTION" in
   reasons)     list_reasons; exit 0 ;;
   concurrency) echo "utopx_ci running builds: $(count_running)"; exit 0 ;;
+  lock)        [ -n "$LOCK_BRANCH" ] || { usage; exit 2; }
+               echo "$LOCK_BRANCH: $(lock_state "$LOCK_BRANCH")"; exit 0 ;;
 esac
 
 [ -n "$CHANGE" ] || { echo "-c/--change is required" >&2; usage; exit 2; }
 [ -n "$REASON" ] || { echo "-r/--reason is required (see --reasons)" >&2; exit 2; }
+
+if [ "$PROJECT" = utopx ] && [ "$FORCE" -eq 0 ]; then
+  BRANCH=$(branch_of_change "$CHANGE") || { echo "cannot read utopx_ci builds from blossom" >&2; exit 6; }
+  if [ -z "$BRANCH" ]; then
+    echo "no utopx_ci build of change $CHANGE on blossom to read its branch from;" >&2
+    echo "check the lock by hand (--lock <exact branch>) and the concurrency, then use --force." >&2
+    exit 6
+  fi
+  STATE=$(lock_state "$BRANCH")
+  echo "== CI lock on $BRANCH: $STATE"
+  if [ "$STATE" != UNLOCKED ]; then
+    echo "refusing to trigger: a run on a locked branch is aborted at the CI Execution Checkpoint" >&2
+    echo "and the bot votes Verified-1. Wait for the unlock (re-check with --lock)." >&2
+    exit 6
+  fi
+fi
 
 echo "== validating REASON against the live choice list"
 CHOICES=$(list_reasons)

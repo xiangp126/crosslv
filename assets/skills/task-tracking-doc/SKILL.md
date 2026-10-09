@@ -64,6 +64,12 @@ Copy `templates/TRACKING.md`. Its seven blocks are mandatory, in this order:
 Block 5 is load-bearing: the next session's agent may never load this skill, but it reads the
 first screen of the document — the file carries its own enforcement.
 
+**N objects x M channels** (commits x branches and the like): the per-channel ledger
+(`templates/parts.md` part L) goes between blocks 1 and 2, at the very top — it answers the most
+frequent question, "where is X on channel Y", so it must be on the first screen. When converting an
+existing document to this skeleton, keep whatever its owner reads first at the front; never bury it
+under the new header blocks.
+
 ## 4. The update contract
 
 This is the part that fails. Four layers, in order of reliability.
@@ -85,15 +91,21 @@ event itself is the trigger. Record in the same batch as the action:
 | **any judgement overturned** | write "⚠ Correction" in place; **do not delete the old conclusion** (or it gets re-derived) |
 | session interrupted | the in-flight item plus one line on the next step |
 
+With a per-channel ledger, push, CI verdict and merge also update that object's row in it, in the
+same batch.
+
 **(c) Two companions.**
 - **Archive the log before stating the conclusion.** Retention windows are hard limits: CI
-  console / Jenkins builds ~12 days, failure DB ~8 days. `curl`/`cp` those into `logs/` first,
-  then analyse. (MARS session archives,
-  `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup>/<sid>/<sid>.tgz`, are kept
-  for months.)
+  consoles one to two weeks (a fixed build count per job; the DoA job forgets first), failure DB
+  ~8 days. `curl`/`cp` those into `logs/` first, then analyse. (MARS session archives,
+  `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/[<setup set>/]<setup>/<sid>/<sid>.tgz`,
+  are kept for months, but the MARS API that maps a session id to that path forgets it after about
+  two weeks — record the archive path, not just the id.)
 - **Write identifiers in full and name their kind.** These look alike but differ: the **local SHA
   before push**, the **patchset revision** on the review server, the **real SHA on the branch
-  after landing**. A bare hash later yields a false "this commit does not exist".
+  after landing**. A bare hash later yields a false "this commit does not exist". The landed SHA
+  needs no fetch: the newest patchset of a merged gerrit change is the commit on the branch
+  (`git ls-remote origin 'refs/changes/<last two digits>/<change>/*'`).
 
 **(d) Mechanical backstop.** `scripts/tracking_lint.py` reports staleness: `Last updated` lagging
 the newest artifact in the task directory is physical evidence of a missed update.
@@ -164,7 +176,7 @@ any time (hence one template, not three).
 
 | What the task looks like | Parts to fit |
 |---|---|
-| N objects x M channels (commit x branch, fix x platform) | main ledger table + **alignment matrix** (measured, never copied from the ledger table) + archive fold |
+| N objects x M channels (commit x branch, fix x platform) | **per-channel ledger at the top** (part L) + main ledger table + **alignment matrix** (measured, never copied from the ledger table) + archive fold |
 | Linear, with milestones (bring-up, port, project) | status board + definition of done + timeline table |
 | Problems keep surfacing | **numbered problem entries** (`## #N` with Symptom / Location / Action / Result and a status suffix) |
 | Arguing an attribution or a root cause | **evidence table with a control row** + criteria table + experiment matrix ending in VERDICT |

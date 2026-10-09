@@ -29,7 +29,9 @@ Change-Id, so a Change-Id-only search reports "only on master" for a change that
 criterion finds on every branch.
 
 `git merge-base --is-ancestor <hash> <branch>` never works across cherry-picked branches —
-propagation changes the hash.
+propagation changes the hash. It is the right test only where the hash survives: commits a branch
+inherited through a branch cut (`templates/parts.md` part L), checked with a control commit known
+to be absent.
 
 ## 3. Not disproved ≠ established
 

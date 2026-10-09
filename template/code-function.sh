@@ -133,7 +133,12 @@ _code_find_by_name() {
     # before the assignment to it takes effect, leaving base empty.
     local base="${want##*/}"
     if command -v rg > /dev/null 2>&1; then
-        listing=$(command rg --files --color=never 2>/dev/null)
+        # --no-ignore: honouring ignore files sends rg up through every parent
+        # directory looking for them, and /labhome is an autofs mount where each
+        # missing name is a mount attempt - `code tmux.conf` from crosslv took
+        # 27 s, run after run (2026-10-10). The cost is that ignored files are
+        # candidates too, as they are in fzf, whose fd runs with --no-ignore.
+        listing=$(command rg --files --no-ignore --color=never 2>/dev/null)
     else
         listing=$(command find . -type f 2>/dev/null)
     fi

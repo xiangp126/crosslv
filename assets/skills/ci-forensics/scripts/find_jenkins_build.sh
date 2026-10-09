@@ -4,7 +4,8 @@
 # jobs: the change number) is the only reliable way to find "your" build.
 #
 # One request pulls numbers + status + parameters for the last N builds, instead of
-# one request per build.
+# one request per build. It reads allBuilds: the builds field stops at 100 entries
+# however wide the window, which turns an older build into a false "not found".
 set -euo pipefail
 
 JOB=""
@@ -35,7 +36,9 @@ Which instance hosts what:
 
 A "Not Found" page (anonymous) or a 401 (wrong credentials) looks exactly like a
 purged build and is NOT one. Try the other instance before concluding it is gone.
-Jenkins purges builds in roughly 12 days -- save what you need immediately.
+Jenkins keeps a fixed number of builds per job, so a busy job forgets sooner:
+golan_fw_minireg (the DoA, which holds the session ids) about a week, utopx_ci
+about two weeks. Save what you need immediately.
 
 Windowing with -n is fine for LOCATING a build. It is never acceptable for
 COUNTING running builds (long and short builds interleave).
@@ -67,7 +70,7 @@ else
   BASE="${JENKINS_URL:?}"; AUTH=(-u "$JENKINS_USER:$JENKINS_API_TOKEN")
 fi
 
-TREE="builds%5Bnumber,building,result,actions%5Bparameters%5Bname,value%5D%5D%5D%7B0,$COUNT%7D"
+TREE="allBuilds%5Bnumber,building,result,actions%5Bparameters%5Bname,value%5D%5D%5D%7B0,$COUNT%7D"
 RESP=$(curl -sf "${AUTH[@]}" "$BASE/job/$JOB/api/json?tree=$TREE") || {
   echo "request failed against $BASE/job/$JOB" >&2
   echo "if this was anonymous, try without --blossom (and vice versa) before assuming purged." >&2
@@ -79,7 +82,7 @@ import sys, json, os
 param, value = os.environ["PARAM"], os.environ["VALUE"]
 d = json.load(sys.stdin)
 hits = []
-for b in d.get("builds", []):
+for b in d.get("allBuilds", []):
     ps = {p["name"]: p.get("value")
           for a in b.get("actions", []) or []
           for p in (a.get("parameters", []) or [])
@@ -114,7 +117,7 @@ if [ -n "$SAVE" ]; then
 Now read it:
   grep -E 'Stage: ".*" Status:' <log> | grep -v 'Status: Success'
   grep -oE 'golan_fw_minireg #[0-9]+|nicx_minireg_doa/#[0-9]+' <log> | sort -u
-  grep -oE 'session_id [0-9]+ .-device [a-z0-9]+ .-status [a-z]+' <log>
-                                    ^ .-device, never --device (grep parses a leading -- as an option)
+  grep -oE 'session_id [0-9]+ .-device [a-z0-9_]+ (.-branch [^ ]+ )?.-status [a-z]+' <log>
+                              ^ .-device, never --device (grep parses a leading -- as an option)
 EOF
 fi

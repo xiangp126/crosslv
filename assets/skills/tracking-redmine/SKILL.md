@@ -18,8 +18,8 @@ container, no TTY, no API key to place, and URLs resolve directly.
   concluding they are absent.
 - Use `redmine-cli` only when MCP discovery or calls fail, and say which path you used when
   reporting results.
-- **Writing descriptions and comments:** use textile, put hex inside `@…@`, and correct a comment
-  by editing its journal in place — skill `utopx-regression-ticket` → "Writing to Redmine".
+- **Writing descriptions and comments:** use HTML as the web editor stores it (`<p>`, `<code>`,
+  `<pre>`, `<ul>`), not textile, and correct a comment by editing its journal in place — skill `utopx-regression-ticket` → "Writing to Redmine".
 - **WSL:** with Windows-installed binaries, append `.exe` to CLI names (`<tool>-cli.exe`).
 
 ## Setup

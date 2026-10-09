@@ -1,6 +1,6 @@
 ---
 name: utopx-ci-rerun
-description: Re-trigger CI on a gerrit change for fw_ver/utopx or fw_ver/golan_fw via the *_ci_rerun Jenkins jobs, and follow through to the real utopx_ci / golan_fw_minireg build it spawns. Use when asked to re-run CI, retrigger a build, kick a change through CI again, check whether a CI run actually started, or when a CI build failed and it is unclear whether the failure was environmental.
+description: Re-trigger CI on a gerrit change for fw_ver/utopx or fw_ver/golan_fw via the *_ci_rerun Jenkins jobs, and follow through to the real utopx_ci / golan_fw_minireg build it spawns. Use when asked to re-run CI, retrigger a build, kick a change through CI again, check whether a CI run actually started, wait for a CI-locked branch to reopen, or when a CI build failed or was aborted and it is unclear whether the cause was environmental.
 ---
 
 # Re-running utopx / golan_fw CI on a gerrit change
@@ -18,12 +18,14 @@ Regenerate it at `$JENKINS_URL/user/<user>/configure`.
 ~/myGit/crosslv/assets/skills/utopx-ci-rerun/scripts/ci_rerun.sh --help
 ~/myGit/crosslv/assets/skills/utopx-ci-rerun/scripts/ci_rerun.sh --reasons                 # list valid REASON values
 ~/myGit/crosslv/assets/skills/utopx-ci-rerun/scripts/ci_rerun.sh --concurrency             # check before triggering
+~/myGit/crosslv/assets/skills/utopx-ci-rerun/scripts/ci_rerun.sh --lock <branch>           # is the branch CI-locked?
 ~/myGit/crosslv/assets/skills/utopx-ci-rerun/scripts/ci_rerun.sh -c 1467618 -r "<reason>"  # trigger
 ```
 
-The script refuses to trigger above the concurrency ceiling and validates REASON against the live
-choice list. Re-run through the dedicated `*_ci_rerun` job only — **never re-trigger the CI job
-directly.** Both rerun jobs live on the internal Jenkins:
+The script refuses to trigger while the change's branch is locked or above the concurrency
+ceiling, and validates REASON against the live choice list. Re-run through the dedicated
+`*_ci_rerun` job only — **never re-trigger the CI job directly.** Both rerun jobs live on the
+internal Jenkins:
 
 | project | rerun job |
 |---|---|
@@ -37,6 +39,18 @@ directly.** Both rerun jobs live on the internal Jenkins:
   `Code-Review vote is insufficient` / `Strongest Vote: 0` — it never reaches Compile or DoA. A new
   patchset outdates existing votes, so re-collect CR+2 after every re-push. "Run it green, then get
   the vote" does not work.
+- **The branch must not be CI-locked.** A branch owner can lock a branch in VDash (broken branch,
+  code freeze); the `CI Execution Checkpoint` then aborts every run ~1 min in with
+  `CI is DISABLED for project fw_ver/utopx, branch <branch>, because of ::: <project>/<branch> locked by <name> (<reason>) ::: Run aborted.`
+  and the bot votes `Verified-1`. Nothing compiled or ran, so the abort is environmental; confirm
+  with a control (other changes on that branch aborted the same way). The lock state is
+  `https://vdash.nvidia.com/api/hca-fw-ci/locks/check?project=utopx&branch=<branch>` — the
+  checkpoint's own query; `project=fw_ver/utopx` is rejected with `400 Unknown project`.
+  `ci_rerun.sh --lock <branch>` prints it, and the trigger refuses while it is locked, reading the
+  branch from the change's last `utopx_ci` build because VDash answers `"locked": false` for a
+  branch name that does not exist. To wait for an unlock, poll from a bounded background loop and
+  trigger only after two `UNLOCKED` readings a minute apart. A VDash outage counts as unlocked for
+  the checkpoint but as `UNKNOWN` (blocking) for the script.
 - **The failure must be environmental.** DoA uses fixed seeds, so a real code defect reproduces
   identically every time; a re-run only burns a queue slot and copies stale `Verified-1` votes onto
   a new patchset. Decide per skill `ci-forensics` (Attribution discipline).

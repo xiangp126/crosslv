@@ -1,6 +1,6 @@
 ---
 name: utopx-regression-ticket
-description: Open a Redmine ticket for a UTOPX regression or CI failure — the default channel whenever Peter says "open a ticket". Covers the exact project/tracker/sprint/chips field set, the three-part description format (Fatal message / MARS view_log link / Root cause with confidence), how to build the MARS link, and when a firmware defect goes to the Design project instead. Also the formatting rules for ANY text written to Redmine (descriptions and comments: textile, not HTML) and how to correct a posted comment in place. Use when asked to open a ticket, file a bug, or raise a Redmine issue for a regression, CI, DoA or MARS-session failure, and whenever posting or editing a Redmine comment.
+description: Open a Redmine ticket for a UTOPX regression or CI failure — the default channel whenever Peter says "open a ticket". Covers the exact project/tracker/sprint/chips field set, the three-part description format (Fatal message / MARS view_log link / Root cause with confidence), how to build the MARS link, and when a firmware defect goes to the Design project instead. Also the formatting rules for ANY text written to Redmine (descriptions and comments: HTML as the web editor stores it, not textile) and how to correct a posted comment in place. Use when asked to open a ticket, file a bug, or raise a Redmine issue for a regression, CI, DoA or MARS-session failure, and whenever posting or editing a Redmine comment.
 ---
 
 # Opening a Redmine ticket for a UTOPX regression failure
@@ -91,46 +91,46 @@ dedup tooling match on this string. Examples:
 
 Applies to descriptions and comments.
 
-### Format: textile
+### Format: HTML, the way the web editor stores it
 
-Redmine renders content that contains HTML as HTML, and textile inside it stays literal. Anything
-else is rendered as textile. The MCP appends a textile footer
-(`%{font-size:smaller}via YAI Redmine MCP […]%`) to everything it writes, so write the body in
-textile.
+The web editor on redmine.nvidia.com stores descriptions and comments as HTML (`<p>…</p>`,
+`<br />`, CRLF line ends). Content that contains HTML renders as HTML; anything else goes through
+textile, and on this instance textile output gets large vertical gaps: a single line break inside
+a paragraph shows as an extra empty line, every list item takes two lines, and a textile table is
+preceded by a large empty block. Write descriptions and comments in HTML.
 
-| element | textile |
+| element | HTML |
 |---|---|
-| heading | `h3. Title`, `h4. Title` |
-| bold | `*text*` |
-| field names, identifiers, hex | `@pci_switch=0x1@` |
-| fatal lines, logs | `<pre>` and `</pre>` on their own lines |
-| lists | `* item`, `# item` |
-| table | see the example below |
-| link | `"text":https://…` or a bare URL |
+| paragraph | `<p>…</p>`, one per paragraph; no line breaks inside it |
+| heading | `<h3>Title</h3>`, `<h4>Title</h4>` |
+| bold | `<strong>text</strong>` |
+| field names, identifiers, hex | `<code>pci_switch=0x1</code>` |
+| fatal lines, logs | `<pre>…</pre>` |
+| list | `<ul><li>…</li></ul>`, `<ol><li>…</li></ol>` |
+| link | `<a href="https://…">text</a>` |
 
-Table example:
-
-```
-|_. Run |_. FW |_. Result |
-| A | 82.48.6150 | FAIL |
-```
-
-- Put every hex value, `->` and `'` inside `@…@` or `<pre>`. Outside them textile renders `0x0` as
-  `0×0`, `->` as `→` and `'` as `’`.
-- Do not put `@` right before a word or number outside a code span: `@6148` opens one.
+- Escape `&`, `<` and `>` in text and inside `<pre>` (`&amp;`, `&lt;`, `&gt;`).
+- A table layout has not been checked on this instance; use a list instead.
+- The MCP appends its footer in textile (`%{font-size:smaller}via YAI Redmine MCP […]%`), which
+  shows raw in an HTML note. Right after posting, replace that line in place (see "Correcting")
+  with `<p><span style="font-size:smaller">via YAI Redmine MCP […]</span></p>`, keeping the text
+  inside the brackets unchanged.
 
 ### Posting
 
-1. Draft locally (`/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/*_redmine.textile`) and show
+1. Draft locally (`/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/*_redmine.html`) and show
    it to Peter.
 2. After he approves, post the approved text unchanged, with the same wording and format. Take any
    change back to him first.
-3. Post a new comment with `yai__update_ticket(ticket_id=<id>, notes=<textile>)` and no other
+3. Post a new comment with `yai__update_ticket(ticket_id=<id>, notes=<html>)` and no other
    fields.
-4. Re-read the ticket. The stored note must equal what you sent, plus the MCP footer.
+4. Replace the MCP footer with its HTML form (see Format), then re-read the ticket: the stored
+   note must equal what you sent plus the HTML footer.
 
 Do not state how something renders without seeing it. Ask Peter for a screenshot, or compare with
-a note he confirms displays correctly.
+a note he confirms displays correctly. Never try out a layout on a live ticket: every edit is
+visible to all readers. If a layout is not proven on this instance, let Peter check the draft in
+the editor's preview first; if an edit renders badly, restore the approved version at once.
 
 ### Correcting a posted comment: edit it in place, never post a new one
 
@@ -145,8 +145,8 @@ curl -sk -X PUT -H "X-Redmine-API-Key: $K" -H 'Content-Type: application/json' \
 - `204` means done. Re-read `issues/<id>.json?include=journals`: the journal count must be
   unchanged, and only that journal's notes may differ.
 - `GET /journals/<id>.json` returns 404 because there is no show route; PUT still works.
-- In a note that went out as HTML the MCP footer shows raw. Replace that line with
-  `<p><span style="font-size:smaller">via YAI Redmine MCP […]</span></p>`.
+- After posting an HTML note through the MCP, this PUT is also how the footer gets its HTML form
+  (see Format).
 
 ## Description — three parts, kept short
 
@@ -161,15 +161,13 @@ the NOT-verified list — goes into the **first comment**, with the full write-u
 
 In this order:
 
-```
-Fatal message:
+```html
+<p>Fatal message:</p>
 <pre>
-<the UFATAL / FATAL lines, verbatim>
+<the UFATAL / FATAL lines, verbatim, with & < > escaped>
 </pre>
-
-<MARS view_log URL>
-
-Root cause (<HIGH|MEDIUM|LOW> confidence): <the analysis>
+<p><a href="<MARS view_log URL>">MARS log</a></p>
+<p>Root cause (<HIGH|MEDIUM|LOW> confidence): <the analysis></p>
 ```
 
 ### Building the MARS link

@@ -79,8 +79,8 @@ replace a device A/B when the suspect landed outside the retention window.
   `SUPERSEDED`; never delete them.
 - **`FINDINGS_<ticket#>.md` (from `templates/findings.md`) is the deliverable**, not the chat
   answer.
-- **Posting an RCA on the ticket:** draft it locally in textile, get Peter's approval, then post the
-  approved text unchanged. Correct a posted comment by editing it in place (skill
+- **Posting an RCA on the ticket:** draft it locally in HTML (skill `utopx-regression-ticket` →
+  "Writing to Redmine"), get Peter's approval, then post the approved text unchanged. Correct a posted comment by editing it in place (skill
   `utopx-regression-ticket` → "Writing to Redmine").
 
 ## Reproduction fidelity

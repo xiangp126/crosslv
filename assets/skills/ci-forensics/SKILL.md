@@ -25,8 +25,12 @@ session_id. Phase 1 gets the session_ids out of Jenkins, Phase 2 gets the raw lo
 
 ## Phase 1 — a red job → session_ids
 
-Do this in one pass: Jenkins purges builds in ~**12 days**. Record the session_ids in your notes
-immediately — the MARS archive sits on NFS and stays readable long after the build is purged.
+Do this in one pass: Jenkins keeps a fixed number of builds per job, so a busy job forgets sooner —
+`golan_fw_minireg`, the DoA job that holds the session_ids, keeps about **a week**, `utopx_ci` about
+two weeks. Record the session_ids — and, once fetched, their archive paths (Phase 2) — in your notes
+immediately: the MARS archive sits on NFS and stays readable long after the build is purged. To measure a job's window, read
+`api/json?tree=allBuilds[number,timestamp]`: the plain `builds` field stops at 100 entries, however
+wide the `{0,N}` window, and fakes a short retention.
 
 ```bash
 ~/myGit/crosslv/assets/skills/ci-forensics/scripts/find_jenkins_build.sh --help
@@ -46,15 +50,29 @@ grep -oE '<downstream job> #[0-9]+' logs/ci_<build>.log | sort -u
 
 `Failure_ignored` is routine (`Pre FC Validation`, `Macros Guard`) — not a real stage failure.
 
+Two verdicts with nothing behind them to attribute:
+
+- **ABORTED in `CI Execution Checkpoint`** — nothing compiled or ran: the concurrency cap was
+  exceeded, or the branch is locked
+  (`CI is DISABLED for project fw_ver/utopx, branch <branch>, because of ::: <project>/<branch> locked by <name> (<reason>) ::: Run aborted.`,
+  followed by a bot `Verified-1`). Environmental by definition; the lock check and the rerun gate
+  are in skill `utopx-ci-rerun`.
+- **SUCCESS without a DoA** — on some branches the console says
+  `Skipping micro-DoA. Missing stable seeds file or FW build reference.` and the green verdict
+  covers the compile only. Say so when reporting it.
+
 Pull the per-session verdicts out of the downstream console; this one grep tells you what failed
 before you touch MARS:
 
 ```bash
-grep -oE 'session_id [0-9]+ .-device [a-z0-9]+ .-status [a-z]+' logs/<downstream>.log
+grep -oE 'session_id [0-9]+ .-device [a-z0-9_]+ (.-branch [^ ]+ )?.-status [a-z]+' logs/<downstream>.log
 ```
 
 Write `.-device`, never `--device`: grep/ugrep parses a leading `--` in the pattern as an option
-and dies with `invalid option`.
+and dies with `invalid option`. The arguments between `--device` and `--status` vary between
+versions (current consoles put `--branch <branch>` there), and a pattern that does not allow for
+them silently matches nothing — check the hit count against the `Successful sessions:` /
+`Failed sessions:` lists printed just above.
 
 Traps:
 
@@ -74,13 +92,20 @@ Traps:
 Three hops, no authentication at any step. What the script does (and what to do by hand):
 
 1. `curl https://mars.nvidia.com/api/session/<session_id>` returns XML (the `/ui/...` web page
-   needs an interactive login and 302s; the API does not). Take `<RESULT_DIR>` from it. Check
-   `PASSED`/`FAILED`/`IGNORED`/`NATIVE_STATUS` first to tell "ran and then failed" from "never got
-   started". `RESULT_DIR` differs per session (different devices land in different setup sets) —
-   read it for every session, never reuse the first one.
-2. The full archive is `<RESULT_DIR>/<setup name>(...)/<session_id>/<session_id>.tgz`, readable
-   directly over NFS. The setup directory carries a parenthesised suffix you cannot guess; locate
-   it with `find <RESULT_DIR> -maxdepth 3 -name "<session_id>.tgz"`.
+   needs an interactive login and 302s; the API does not). Take `<RESULT_DIR>` and `<SETUP_NAME>`
+   from it. Check `PASSED`/`FAILED`/`IGNORED`/`NATIVE_STATUS` first to tell "ran and then failed"
+   from "never got started". Both paths differ per session (different devices land in different
+   setup sets) — read them for every session, never reuse the first one's.
+   The API forgets a session after about two weeks — it then answers HTTP 200 with
+   `Failed to get session <id> info` — while the archive stays on NFS for months. Record the
+   archive path the script prints next to the session_id; later run
+   `mars_fetch.sh <session_id> --tgz <path>`.
+2. The full archive is `<RESULT_DIR>/<SETUP_NAME>/<session_id>/<session_id>.tgz`, readable
+   directly over NFS. `SETUP_NAME` carries the parenthesised suffix you cannot guess (DoA:
+   `mini_reg_SETUP_SET_<n>(<user>_<device>_<link>-CI_DOA_<n>-JK_BUILD_<n>)`, also listed in the
+   DoA console's `Successful sessions:` / `Failed sessions:`). Build the path from the two values;
+   do not `find` under `RESULT_DIR` — it can hold thousands of setup directories, and the scan
+   takes minutes on NFS.
 3. Unpack, then filter on `result:` in each `status.txt`: `0`=pass, `1`=fail, `2`=not executed.
    Parent nodes merely propagate failure upward. **A real case is a `result: 1` node with a
    sibling `log.txt`.** Do not search for "the deepest path" — the tree is uneven, and a

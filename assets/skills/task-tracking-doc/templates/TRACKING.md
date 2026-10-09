@@ -7,6 +7,9 @@ Assumes a reader with zero context on the task; <kind of detail> is in `<sub-doc
 
 ---
 
+<!-- N objects x M channels only (commits x branches and the like): the per-channel ledger,
+     templates/parts.md part L, goes here, above the status board. Otherwise delete this comment. -->
+
 ## Status board
 
 > Index of the whole file. **Must fit on one screen** — details go into the body below, never into this table.
@@ -64,10 +67,12 @@ For the events below, **update the moment they happen, in the same batch as the 
 | **any judgement overturned** | write "⚠ Correction" in place, **do not delete the old conclusion** — keeping it is how you know why it went wrong |
 | session interrupted | the in-flight item + one sentence on the next step |
 
+If this file has a per-channel ledger at the top, push / CI verdict / merge also update that object's row there.
+
 **Two companion rules**
 
-- **Archive the log before stating a conclusion.** The CI console (~12 days) and the failure DB (~8 days) expire, and once expired
-  they are gone for good (MARS session archives are kept for months). Capture into `logs/` and copy the job numbers and session id into this file.
+- **Archive the log before stating a conclusion.** CI consoles (one to two weeks) and the failure DB (~8 days) expire, and once expired
+  they are gone for good (MARS session archives are kept for months, but the MARS API forgets a session after about two weeks). Capture into `logs/` and copy the job numbers, session id and archive path into this file.
 - **Write identifiers in full and say which kind they are.** The "local SHA before push" and the "SHA on the branch after merge" often differ;
   mixing them up ends in "no such commit".
 

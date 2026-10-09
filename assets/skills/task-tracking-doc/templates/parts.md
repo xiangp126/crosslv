@@ -262,3 +262,58 @@ order first: `SKILL.md` §6.
 
 **Recommended**: <which one + one-line reason>
 ```
+
+## L Per-channel ledger (top of the file)
+
+**Fit when**: N objects × M channels (commits × branches, fixes × platforms). It goes above the
+status board (`SKILL.md` §3): "where is X on channel Y" is the question asked most often.
+
+- **One table per channel, same row order in every table**, so a row can be compared across
+  tables. A row that does not apply stays in place as `⬜` with its reason — a missing row reads
+  as forgotten.
+- An overview table first: one row per channel, one line of state.
+- An unmerged change shows its patchset number and SHA, labelled `not merged (PS<n> <sha>)` —
+  never an unlabelled hash in the landed-SHA column.
+- A row a channel inherited through a branch cut (same commit, no change of its own) says so and
+  carries the parent channel's link and SHA.
+- Abandoned changes go into a fold at the end of the section, one line each with the reason.
+- Under the heading: the data sources and a reconciliation — total changes in the review system =
+  rows in the tables + abandoned + unrelated. A total that does not add up is a missing row.
+
+Build it from the live system, never from the body text:
+
+| Column | Source |
+|---|---|
+| change, title, status, merge time | review-system query by owner + project |
+| SHA on the branch | `git ls-remote origin 'refs/changes/*'` — the newest patchset of a merged change is the landed commit |
+| inherited rows | `git merge-base --is-ancestor <sha> <channel tip>`, plus a control: a commit known to be absent from that channel must answer no |
+
+Then cross-check it against the alignment matrix (part B) — the two are built independently.
+
+```markdown
+## ★ <review system> link ledger (by channel)
+
+> One table per channel; row order fixed: <object list>. Push / CI verdict / merge update the row here in the same batch.
+> Sources (<date>): <query> + `git ls-remote`. Reconciliation: <total> = <in tables> + <abandoned> + <unrelated>.
+
+| Channel | Full name | State |
+|---|---|---|
+| <short name> | `<branch>` | ✅ <objects> merged · ⬜ <object> not needed |
+
+### <short name> (`<branch>`)
+
+| Item | Title | Change | Status | Merged (UTC) | SHA on the branch |
+|---|---|---|---|---|---|
+| <object> | <title> | <bare full URL> | ✅ MERGED | <MM-DD HH:MM> | `<sha10>` |
+| <object> | <title> | <bare full URL> | 🔵 NEW · <what it waits for> | — | not merged (PS<n> `<sha10>`) |
+| <object> | <title> | — | ⬜ not needed: <reason> | — | — |
+| <object> | <title> | <parent channel's URL> | ✅ inherited with the branch cut (same commit as <parent>) | <time> (on <parent>) | `<sha10>` |
+
+<details><summary>Abandoned (<N>) and unrelated (<M>) changes</summary>
+
+- <bare full URL> — <what it was; why it was abandoned>
+
+</details>
+```
+
+Sample row: `| BF11 | Align general_obj_type_dpa_db_cq_mapping with 48.x FW | https://git-nbu.nvidia.com/r/c/fw_ver/utopx/+/1522238 | ✅ MERGED | 10-09 10:59 | \`cdef4e3a03\` |`

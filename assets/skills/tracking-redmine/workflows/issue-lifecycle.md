@@ -49,8 +49,8 @@ redmine-cli issue update 12345 --done-ratio 75 --json
 # Inline text
 redmine-cli issue comment 12345 --text "Investigated — root cause is in auth module" --json
 
-# From file (textile — see skill utopx-regression-ticket → "Writing to Redmine")
-redmine-cli issue comment 12345 --file analysis.textile
+# From file (HTML — see skill utopx-regression-ticket → "Writing to Redmine")
+redmine-cli issue comment 12345 --file analysis.html
 
 # From stdin (useful for piping)
 echo "Automated comment from CI" | redmine-cli issue comment 12345
