@@ -83,6 +83,12 @@ so a path segment must start with `golan` / `nicx` / `utopx`. → skills `fw-bui
   must be authorized by hand from `/mcp`. `jcl restore-auth` stays manual — only you know a
   logout happened, and a failing MCP call is far more often an expired token (renews itself)
   or a wrong scope (restore cannot help) than a wiped credentials file.
+- **Messaging Codex sessions**: Codex sessions on this host appear in `/list-agents` under their
+  titles (agent-bridge stand-ins), and `SendMessage` reaches them like any session; their
+  replies arrive as `Message from @<codex title>`. To reach a session by **session id** (`jcl
+  list`'s SESSION ID column; the first 8+ characters will do), run `agent-bridge send --to <id>
+  '<text>'`: a Codex session gets it directly, and for a Claude session the command prints the
+  `uds:` address to hand `SendMessage`.
 
 ## Hard rules
 

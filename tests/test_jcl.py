@@ -118,7 +118,7 @@ class SessionTests(unittest.TestCase):
             rc, out = self.invoke(["save", "-o", str(path)])
             self.assertTrue(json.loads(path.read_text())["sessions"][0]["empty"])
         self.assertEqual(rc, 0, out)
-        self.assertIn("No conversation yet in 1 codex session(s), so restore will skip: test:1.0", out)
+        self.assertIn("No conversation yet in 1 codex session, so restore will skip: test:1.0", out)
 
     def test_exec_helper_and_subagents_are_not_interactive(self):
         paths = [f"/custom/thread-writer-locks/{SID}.lock"]
@@ -515,7 +515,7 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             self.assertEqual(Path(str(path) + ".bak").read_text(), old)
             self.assertEqual([r["session_id"] for r in json.loads(path.read_text())["sessions"]], ["up"])
-        self.assertIn("1 session(s) of the previous snapshot are not in this one", out)
+        self.assertIn("1 session of the previous snapshot is not in this one", out)
         self.assertIn("lost-one", out)
 
     def test_show_marks_what_runs_here_and_what_restore_brings_back(self):
@@ -532,16 +532,16 @@ class SessionTests(unittest.TestCase):
         header = next(line for line in lines if line.startswith("TMUX"))
         start, end = header.index("RUNNING"), header.index("NAME")
         running = {line.split()[0]: line[start:end].strip()
-                   for line in lines if line.startswith(("t:", "- "))}
+                   for line in lines if line.startswith(("t:", "app "))}
         self.assertEqual(running["t:1.1"], "yes")             # where it was saved from
         self.assertEqual(running["t:1.3"], "yes (in t:2.1)")  # running, but moved
         self.assertEqual(running["t:1.2"], "no")              # restore would bring it back
-        self.assertEqual(running["-"], "no (desktop)")        # restore leaves it alone
+        self.assertEqual(running["app"], "no (app)")          # restore leaves it alone
         self.assertEqual(running["t:1.4"], "no (empty)")      # nothing to resume
-        self.assertIn(f"2 running on {os.uname().nodename}, 1 for restore to bring back", out)
+        self.assertIn(f"2 running on {os.uname().nodename} · 1 for restore to bring back", out)
 
     def test_restore_skips_desktop_and_empty_sessions(self):
-        for extra, reason in (({"origin": "desktop"}, "Skipped, desktop session"),
+        for extra, reason in (({"origin": "desktop"}, "Skipped, app session"),
                               ({"empty": True}, "Skipped, no conversation to resume")):
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp, \
                  patch.object(jcl, "collect", return_value=[]), \
@@ -608,7 +608,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         quit_agent.assert_not_called()
         self.assertIn("Skipping the session", out)
-        self.assertIn("Skipping desktop session", out)
+        self.assertIn("Skipping an app session: test:1.1", out)
 
     def test_claude_sessions_come_from_files_before_the_cli(self):
         rec = {"pid": 7, "sessionId": "abc", "cwd": "/w", "name": "n", "kind": "interactive"}
@@ -732,6 +732,27 @@ class SessionTests(unittest.TestCase):
                 append(reply("claude-sonnet-5", "high"))
                 self.assertEqual(settings(), ("claude-sonnet-5", "high"))
 
+    def test_claude_settings_fall_back_to_the_command_line(self):
+        rec = record("claude", "fresh", model="", effort="")
+        # A stand-in before its first relay: no transcript yet. An option's
+        # value that merely contains a flag is not that flag.
+        argv = ["claude", "-p", "--model", "haiku", "--settings", '{"a": "--effort"}']
+        with patch.object(jcl, "claude_transcript", return_value=None), \
+             patch.object(jcl, "proc_argv", return_value=argv):
+            self.assertEqual(jcl.claude_settings(rec), ("haiku", ""))
+            # Exited (--all): its pid may be another process's by now
+            self.assertEqual(jcl.claude_settings(dict(rec, alive=False)), ("", ""))
+        with patch.object(jcl, "claude_transcript", return_value=None), \
+             patch.object(jcl, "proc_argv",
+                          return_value=["claude", "--model=opus", "--effort", "max", "--model", "sonnet"]):
+            self.assertEqual(jcl.claude_settings(rec), ("sonnet", "max"))  # the last --model wins
+        # What the transcript says comes first; the command line fills the rest
+        replies = [{"type": "assistant", "message": {"model": "claude-haiku-4-5-20251001"}}]
+        with patch.object(jcl, "claude_transcript", return_value=Path("t.jsonl")), \
+             patch.object(jcl, "jsonl_tail", return_value=replies), \
+             patch.object(jcl, "proc_argv", return_value=["claude", "--model", "haiku", "--effort", "low"]):
+            self.assertEqual(jcl.claude_settings(rec), ("claude-haiku-4-5-20251001", "low"))
+
     def test_list_adds_columns_and_puts_paneless_sessions_below_a_rule(self):
         now = jcl.time.time()
         recs = [record("claude", "c1", status="waiting", status_at=(now - 7200) * 1000),
@@ -742,23 +763,238 @@ class SessionTests(unittest.TestCase):
         with patch.object(jcl, "collect", return_value=recs), \
              patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")), \
              patch.object(jcl, "codex_turn", return_value=("busy", now - 30)), \
+             patch.object(jcl, "proc_started_at", return_value=now - 5 * 3600), \
              patch.object(jcl, "pane_tail", return_value="› Ask\n  GPT-6-Sol xhigh · /w\n"):
             rc, out = self.invoke(["list"])
         self.assertEqual(rc, 0)
         lines = out.splitlines()
-        self.assertEqual(lines[0].split(), ["TMUX", "WINDOW", "AGENT", "PID", "STATE", "ACTIVE",
-                                            "MODEL", "EFFORT", "NAME", "CWD", "SESSION", "ID"])
-        self.assertEqual(lines[2].split(), ["test:1.0", "agent", "claude", "12345", "waiting", "2h",
-                                            "ago", "claude-opus-5-5", "max", "example", "/tmp", "c1"])
-        self.assertEqual(lines[3].split()[4:9], ["stopped", "1m", "ago", "claude-opus-5-5", "max"])
+        # What to look at on the left, the grey details on the right; UP is how
+        # long the process has run, STATE the state alone
+        self.assertEqual(lines[0].split(), ["TMUX", "WIN", "AGENT", "STATE", "NAME", "MODEL",
+                                            "EFFORT", "UP", "PID", "CWD", "SESSION", "ID"])
+        self.assertEqual(set(lines[1]), {"─"})  # one unbroken line, no column-by-column dashes
+        self.assertEqual(lines[2].split(), ["test:1.0", "agent", "claude", "waiting", "example",
+                                            "opus-5-5", "max", "5h", "12345", "/tmp", "c1"])
+        self.assertEqual(lines[3].split()[3:8], ["stopped", "example", "opus-5-5", "max", "5h"])
         # A codex pane reads its footer; one without a pane, the thread's record
-        self.assertEqual(lines[4].split()[:8], ["test:1.2", "agent", "codex", "12345",
-                                                "busy", "now", "gpt-6-sol", "xhigh"])
-        self.assertEqual(lines[5], lines[1])  # the rule between the two groups
-        self.assertEqual(lines[6].split()[:8], ["-", "agent", "codex", "12345",
-                                                "busy", "now", "gpt-test", "high"])
-        self.assertEqual(lines[7], lines[1])
-        self.assertIn("3 in tmux, 1 in desktop", lines[8])
+        self.assertEqual(lines[4].split()[:7], ["test:1.2", "agent", "codex", "busy", "example",
+                                                "gpt-6-sol", "xhigh"])
+        self.assertTrue(lines[5].startswith("── no tmux pane ─"))  # the second group, named
+        # app: a session an app runs; a Codex Desktop thread's PID is its server's
+        self.assertEqual(lines[6].split()[:9], ["app", "agent", "codex", "busy", "example",
+                                                "gpt-test", "high", "5h", "12345*"])
+        self.assertEqual(lines[7], "")        # a blank line, not a rule, before the summary
+        # What needs you first, then what there is
+        self.assertEqual(lines[8], "4 sessions · 2 busy · 1 waiting · 2 claude · 2 codex"
+                                   " · 3 in tmux · 1 in app · * shared Codex Desktop app-server")
+
+    def test_list_cuts_names_and_paths_past_their_cap(self):
+        recs = [record("claude", "c1", name="claude-codex-cross-session-messaging",
+                       cwd="/auto/fwgwork1/pexiang/bugZilla/Page_Supplier"),  # the caps: whole
+                record(sid="cx", target="test:1.2", pane="%97",
+                       name="Explain ISSI in QUERY_ISSI and how the caps are delegated",
+                       cwd="/auto/fwgwork1/pexiang/utopx_worktrees/feature_sat_pf_emu_manager"),
+                record(sid="cy", target="test:1.3", pane="%98", name="名" * 30, cwd="/x/" + "a" * 60)]
+        with patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")), \
+             patch.object(jcl, "codex_turn", return_value=("idle", jcl.time.time() - 600)), \
+             patch.object(jcl, "proc_started_at", return_value=jcl.time.time() - 3600), \
+             patch.object(jcl, "pane_tail", return_value=""):
+            rc, out = self.invoke(["list"])
+        lines = out.splitlines()
+        self.assertEqual(rc, 0)
+        header = lines[0]
+        self.assertEqual(header.index("MODEL") - header.index("NAME") - 2, 36)      # NAME's width
+        self.assertEqual(header.index("SESSION ID") - header.index("CWD") - 2, 45)  # CWD's
+        self.assertIn("claude-codex-cross-session-messaging  opus-5-5", lines[2])
+        self.assertIn("/auto/fwgwork1/pexiang/bugZilla/Page_Supplier  c1", lines[2])
+        # A name keeps its start; a path its end, from a "/" while there is one
+        self.assertIn("Explain ISSI in QUERY_ISSI and how…   gpt-test", lines[3])
+        self.assertIn("…/utopx_worktrees/feature_sat_pf_emu_manager   cx", lines[3])
+        self.assertIn("名" * 17 + "…   gpt-test", lines[4])                # by columns, not chars
+        self.assertIn("…" + "a" * 44 + "  cy", lines[4])
+
+    def test_model_is_capped_and_verbose_shows_every_cell_whole(self):
+        long_name = "Explain ISSI in QUERY_ISSI and how the caps are delegated"
+        long_cwd = "/auto/fwgwork1/pexiang/utopx_worktrees/feature_sat_pf_emu_manager"
+        recs = [record("claude", "c1", name=long_name, cwd=long_cwd)]
+        with patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "claude_settings", return_value=("claude-sonnet-4-6", "max")), \
+             patch.object(jcl, "proc_started_at", return_value=jcl.time.time() - 3600):
+            _, short = self.invoke(["list"])
+            _, whole = self.invoke(["list", "-v"])
+        self.assertIn(" sonnet-4… ", short)               # claude- left to AGENT, held to 9
+        self.assertNotIn("claude-", short.replace("claude ", ""))
+        for full in ("claude-sonnet-4-6", long_name, long_cwd):
+            self.assertIn(full, whole)                    # -v: every cell whole
+
+    def test_a_full_day_still_fits_the_187_column_terminal(self):
+        # Everything wide at once: a two-digit window, a waiting session, NAME
+        # past its cap and CWD at it, a long Codex model, a stand-in's AGENT,
+        # seven-digit pids, twelve days up
+        now = jcl.time.time()
+        recs = [record("claude", "c1", target="3:12.1", window_name="Hack", status="waiting",
+                       name="n" * 50, cwd="/auto/fwgwork1/pexiang/bugZilla/Page_Supplier",
+                       pid=4194303),
+                record(sid=SID, target="3:9.1", window_name="U2", model="gpt-6-astra",
+                       effort="xhigh", pid=4194302),
+                record("claude", "p1", target="", pane="", window_name="", origin="desktop",
+                       pid=4194301, stand_in_for=SID, cwd="/var/tmp/agent-bridge-152126/stand-in")]
+        with patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")), \
+             patch.object(jcl, "codex_turn", return_value=("idle", now - 600)), \
+             patch.object(jcl, "pane_tail", return_value=""), \
+             patch.object(jcl, "proc_started_at", return_value=now - 12 * 86400):
+            _, out = self.invoke(["list"])
+        self.assertIn(" opus-5-5 ", out)
+        self.assertIn(" gpt-6-as… ", out)
+        self.assertLessEqual(max(jcl._dwidth(line) for line in out.splitlines()), 187)
+
+    def test_shell_state_reads_idle(self):
+        # Claude's "shell": the model done, a background command still running
+        rec = record("claude", "c1", status="shell", status_at=(jcl.time.time() - 7200) * 1000)
+        with patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")):
+            self.assertEqual(jcl.session_activity(rec)[0], "idle")
+
+    def test_up_is_how_long_the_process_has_run(self):
+        now = jcl.time.time()
+        recs = [record("claude", "c1", status="idle", status_at=(now - 60) * 1000),
+                record("claude", "gone", target="test:1.1", alive=False)]
+        with patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")), \
+             patch.object(jcl, "proc_started_at", return_value=now - 3 * 86400):
+            _, out = self.invoke(["list", "--all"])
+        header, rows = out.splitlines()[0], out.splitlines()[2:4]
+        up = slice(header.index("UP"), header.index("UP") + 2)   # right-aligned under its header
+        # Idle for a minute but up three days: the two are not the same thing
+        self.assertEqual((rows[0].split()[3], rows[0][up]), ("idle", "3d"))
+        self.assertEqual((rows[1].split()[3], rows[1][up]), ("exited", "  "))   # nothing runs to time
+
+
+class StandInTests(unittest.TestCase):
+    """agent-bridge's stand-ins: headless Claude sessions named after a Codex session."""
+
+    def invoke(self, argv):
+        return SessionTests.invoke(self, argv)
+
+    def test_collect_marks_a_stand_in_with_its_codex_session(self):
+        files = [{"pid": 7, "sessionId": "real", "cwd": "/w", "name": "n", "kind": "interactive"},
+                 {"pid": 8, "sessionId": "proxy", "cwd": "/tmp/agent-bridge-1/stand-in",
+                  "name": "Explain ISSI", "kind": "interactive"}]
+        with patch.object(jcl, "sessions_from_files", return_value=files), \
+             patch.object(jcl, "codex_sessions", return_value=[]), \
+             patch.object(jcl, "pane_lookup", return_value={}), \
+             patch.object(jcl, "is_live_agent", return_value=True), \
+             patch.object(jcl, "proc_environ",
+                          side_effect=lambda pid: {"AGENT_BRIDGE_PROXY": SID} if pid == 8 else {}), \
+             patch.object(jcl, "proc_state", return_value="S"):
+            marks = {r["session_id"]: r["stand_in_for"] for r in jcl.collect()}
+        self.assertEqual(marks, {"real": "", "proxy": SID})
+
+    def test_each_stand_in_hangs_below_its_codex_session(self):
+        recs = [record("claude", "c1"),
+                record(sid=SID, name="Explain ISSI", target="test:1.2", pane="%97"),
+                record(sid="dsk", name="Read PSF", target="", pane="", origin="desktop"),
+                record("claude", "p1", name="Explain ISSI", target="", pane="", origin="desktop",
+                       stand_in_for=SID, cwd="/tmp/agent-bridge-1/stand-in"),
+                record("claude", "p2", name="Gone", target="", pane="", origin="desktop",
+                       stand_in_for="no-such-thread"),
+                record("claude", "p3", name="Read PSF", target="", pane="", origin="desktop",
+                       stand_in_for="dsk"),
+                record("claude", "p4", name="Explain ISSI (b2c3)", target="", pane="",
+                       origin="desktop", stand_in_for=SID)]
+        with patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "claude_settings", return_value=("-", "-")), \
+             patch.object(jcl, "codex_turn", return_value=("idle", jcl.time.time() - 600)), \
+             patch.object(jcl, "pane_tail", return_value=""):
+            rc, out = self.invoke(["list"])
+            _, verbose = self.invoke(["list", "-v"])
+        lines = out.splitlines()
+        self.assertEqual(rc, 0)
+        # In order: c1, SID, then its stand-ins p1 and p4, dsk and its p3, the orphan p2
+        shown = [line for line in lines[2:-2] if not line.startswith("─")]
+        # The name a stand-in shares with its Codex session is said once; one
+        # of its own, or one with no Codex row above it, is shown
+        self.assertIn(" -- ", shown[2])
+        self.assertIn(" -- ", shown[5])
+        self.assertIn("Explain ISSI (b2c3)", shown[3])
+        self.assertIn("Gone", shown[6])
+        # A stand-in's own session id is nothing to send to: -- but for -v
+        self.assertEqual([shown[n].split()[-1] for n in (2, 3, 5, 6)], ["--"] * 4)
+        for proxy in ("p1", "p2", "p3", "p4"):
+            self.assertNotIn(proxy, out.split())
+            self.assertIn(proxy, verbose.split())
+        verbose_rows = {line.split()[-1]: line for line in verbose.splitlines()[2:-2]}
+        self.assertNotIn(" -- ", verbose_rows["p1"])  # -v: every stand-in's own name
+        self.assertEqual(sum("Explain ISSI  " in line for line in verbose.splitlines()), 2)
+        def lead(line):  # a TMUX handle, or the corner a stand-in's line starts with
+            token = line.split()[0]
+            return token[0] if token[0] in "├╰✗" else token
+        rows = [(lead(line), line.split()[-1]) for line in verbose.splitlines()[2:-2]
+                if not line.startswith("─")]
+        self.assertEqual(rows, [("test:1.0", "c1"), ("test:1.2", SID),
+                                ("├", "p1"), ("╰", "p4"),        # the last corner is rounded
+                                ("app", "dsk"), ("╰", "p3"),
+                                ("✗", "p2")])                    # nothing to hang from: last
+        # Each line reaches the word stand-in, under AGENT
+        for line in lines[2:-2]:
+            if line[0] in "├╰✗":
+                self.assertEqual(line.index("stand-in"), lines[0].index("AGENT"), line)
+        self.assertTrue(lines[6].startswith("── no tmux pane "))  # paned, then the rest
+        self.assertIn("/tmp/agent-bridge-1/stand-in", lines[4])  # where it really runs
+        self.assertIn("3 sessions", lines[-1])        # a stand-in is not a session of yours
+        self.assertIn("1 claude · 2 codex (+4 stand-ins)", lines[-1])
+
+    def test_model_is_shown_without_its_release_date(self):
+        # The id a transcript records for Haiku made MODEL ten columns wider
+        rec = record("claude", "p1", target="", pane="", stand_in_for=SID)
+        with patch.object(jcl, "claude_settings", return_value=("claude-haiku-4-5-20251001", "")):
+            self.assertEqual(jcl.session_activity(rec)[1], "claude-haiku-4-5")
+        with patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")):
+            self.assertEqual(jcl.session_activity(rec)[1:], ("claude-opus-5-5", "max"))
+
+    def test_save_leaves_stand_ins_to_agent_bridge(self):
+        recs = [record("claude", "c1"),
+                record("claude", "p1", name="Explain ISSI", target="", pane="", origin="desktop",
+                       stand_in_for=SID)]
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "claude_settings", return_value=("", "")):
+            path = Path(tmp) / "snap.json"
+            rc, out = self.invoke(["save", "-o", str(path)])
+            saved = [r["session_id"] for r in json.loads(path.read_text())["sessions"]]
+        self.assertEqual((rc, saved), (0, ["c1"]))
+        self.assertIn("Not saved, 1 agent-bridge stand-in:", out)
+        self.assertNotIn("app session", out)
+
+
+class BridgeTests(unittest.TestCase):
+    """jcl bridge: agent-bridge, given the rest of the line."""
+
+    def test_the_rest_of_the_line_goes_to_agent_bridge_untouched(self):
+        with patch.object(jcl.os, "execve") as execve:
+            jcl.main(["bridge", "-h"])        # argparse would take -h for jcl's own
+            jcl.main(["bridge", "peers", "--json"])
+        path, argv, env = execve.call_args_list[0].args
+        self.assertEqual(Path(path), Path(jcl.__file__).resolve().parent / "agent-bridge")
+        self.assertEqual(argv, ["agent-bridge", "-h"])
+        self.assertEqual(env["AGENT_BRIDGE_PROG"], "jcl bridge")   # so its hints say jcl bridge
+        self.assertEqual(execve.call_args_list[1].args[1], ["agent-bridge", "peers", "--json"])
+
+    def test_send_is_left_to_agent_sessions(self):
+        # A message goes out as the session whose shell sends it: a person asks
+        # a session to send rather than sending from jcl
+        with patch.object(jcl.os, "execve") as execve, \
+             patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(jcl.main(["bridge", "send", "--to", "x", "hi"]), 2)
+        execve.assert_not_called()
+        self.assertIn("agent-bridge send", err.getvalue())
+
+    def test_an_agent_bridge_that_will_not_run_is_reported(self):
+        with patch.object(jcl.os, "execve", side_effect=FileNotFoundError(2, "No such file")), \
+             patch("sys.stderr", new_callable=io.StringIO) as err:
+            self.assertEqual(jcl.main(["bridge", "peers"]), 1)
+        self.assertIn("Cannot run", err.getvalue())
 
 
 class CompletionTests(unittest.TestCase):
@@ -788,6 +1024,22 @@ class CompletionTests(unittest.TestCase):
             # instead; list and show have a column for it; save takes all
             check = self.assertNotIn if cmd in ("list", "save", "show", "refresh", "exit-session") else self.assertIn
             check("--agent", proc.stdout.splitlines(), cmd)
+
+    def test_bridge_completes_as_agent_bridge_does(self):
+        def complete(*words):
+            script = ("source completion/agent-bridge_completion.bash\n"
+                      "source completion/jcl_completion.bash\n"
+                      "_agent_bridge_session_ids() { printf '%s\\n' 01a11eb2-382c-7f70-b029-83dab6f870bd; }\n"
+                      f"COMP_WORDS=({' '.join(shlex.quote(w) for w in words)}); COMP_CWORD={len(words) - 1}\n"
+                      f"COMP_LINE={shlex.quote(' '.join(words))}; COMP_POINT=${{#COMP_LINE}}\n"
+                      "_jcl_complete\nprintf '%s\\n' \"${COMPREPLY[@]}\"\n")
+            proc = subprocess.run(["bash", "-c", script], cwd=ROOT, text=True, capture_output=True, check=True)
+            return sorted(proc.stdout.split())
+        self.assertEqual(complete("jcl", "bri"), ["bridge"])
+        self.assertEqual(complete("jcl", "bridge", "pe"), ["peers"])
+        self.assertEqual(complete("jcl", "bridge", "peers", "--"), ["--help", "--json"])
+        self.assertNotIn("send", complete("jcl", "bridge", ""))   # the agents' own
+        self.assertEqual(complete("jcl", "bridge", "send", "--to", "01a1"), [])
 
 
 if __name__ == "__main__":

@@ -188,7 +188,7 @@ _jcl_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore show refresh exit-session set patch-resurrect save-auth restore-auth fill-auth"
+    local commands="list save restore show refresh exit-session set patch-resurrect save-auth restore-auth fill-auth bridge"
     for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
         case "${COMP_WORDS[i]}" in
             --agent) agent="${COMP_WORDS[i+1]:-all}" ;;
@@ -199,12 +199,34 @@ _jcl_complete() {
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | show | refresh | exit-session | set | patch-resurrect | save-auth | restore-auth | fill-auth)
+            list | save | restore | show | refresh | exit-session | set | patch-resurrect | save-auth | restore-auth | fill-auth | bridge)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
         esac
     done
+
+    # bridge runs agent-bridge with the rest of the line, so the rest completes
+    # as agent-bridge's own line does (completion/agent-bridge_completion.bash)
+    # except send, which agent sessions run themselves: jcl bridge refuses it
+    if [[ $cmd == bridge ]]; then
+        if declare -F _agent_bridge_complete &>/dev/null && [[ ${COMP_WORDS[i+1]} != send || $COMP_CWORD -eq $((i + 1)) ]]; then
+            # Computed first: `local -a COMP_WORDS=(...)` empties the array
+            # before its right-hand side is read
+            local -a words=(agent-bridge "${COMP_WORDS[@]:i+1}")
+            local cword=$((COMP_CWORD - i))
+            local -a COMP_WORDS=("${words[@]}")
+            local COMP_CWORD=$cword
+            _agent_bridge_complete
+            local -a kept=()
+            local w
+            for w in "${COMPREPLY[@]}"; do
+                [[ $cword -eq 1 && $w == send ]] || kept+=("$w")
+            done
+            COMPREPLY=("${kept[@]}")
+        fi
+        return 0
+    fi
 
     # Options that expect a path
     case "$prev" in
@@ -236,7 +258,7 @@ _jcl_complete() {
     fi
 
     case "$cmd" in
-        list) opts="-h --help -a --all --json --ids-only" ;;
+        list) opts="-h --help -a --all --json --ids-only -v --verbose" ;;
         save) opts="-h --help -o --output" ;;
         restore) opts="-h --help --agent -f --file -n --dry-run" ;;
         show) opts="-h --help -f --file --json" ;;

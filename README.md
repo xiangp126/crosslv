@@ -17,6 +17,7 @@
 | Debug      | Bash Script | [jroute](#jroute)           | Simple script to switch the default route between available gateways                                 |
 | Debug      | Bash Script | [jt](#jt)                   | Log file viewer with syntax highlighting                                                             |
 | Agents     | Python Script | [jcl](#jcl)               | List, save, restore, refresh, and configure Claude Code and Codex sessions in tmux |
+| Agents     | Python Script | [agent-bridge](#agent-bridge) | Let Claude Code and Codex sessions message each other by name or session id |
 | Agents     | Python Script | [jskill](#jskill)         | Maintain one skill source shared by Claude Code and Codex |
 | Debug      | Python Script | [gdb_tools](#gdb_tools)     | Python tools for visualizing data structures in memory while debugging with GDB                      |
 | VM         | Bash Script | [backup_vms](#backup_vms)   | Backup vms and config files                                                                         |
@@ -45,6 +46,7 @@ jcl refresh 3:11.1                         # one exact pane, either agent
 jcl exit-session all                       # quit both agents, panes stay at the shell
 jcl set --agent codex --model gpt-6-astra --effort high
 jcl set --effort xhigh --agent codex        # retain each pane's current model
+jcl bridge status                          # agent-bridge, given the rest of the line
 jcl set --model opus --model gpt-6-astra    # route one model to each agent
 jcl set 0:6.2 3:4.1 --model opus --effort max   # only the named panes, either agent
 ```
@@ -81,6 +83,91 @@ session. These configured servers need no separate Codex authorization or copied
 refresh token.
 
 Tests: `python3 -B -m unittest discover -s tests -p 'test_*.py' -v`.
+
+<a id="agent-bridge"></a>
+#### [agent-bridge](./nv-tools/agent-bridge)
+
+Lets every Claude Code and Codex session on this host message every other one by
+session name. Claude-to-Claude is Claude Code's own cross-session messaging and
+is left as it is; this adds Claude-to-Codex, Codex-to-Claude and Codex-to-Codex.
+The names are the ones `jcl list` shows - a Codex session is reached by its title - and a
+session id from its SESSION ID column works too (the first 8+ characters will do).
+
+```bash
+agent-bridge                               # status: the daemon and its stand-ins; starts nothing
+agent-bridge peers                         # who can be messaged, by name and session id
+agent-bridge send --to 'Explain ISSI in QUERY_ISSI' 'text'   # from a Codex or Claude shell
+agent-bridge send --to 01a11eb2-382c 'text'                  # the same, by session id
+agent-bridge scan                          # look for Codex sessions now, then status
+agent-bridge start                         # the daemon again after a stop; send, peers, scan start it too
+agent-bridge stop                          # the daemon and every stand-in
+agent-bridge restart                       # both, then status once the stand-ins are back
+```
+
+`jcl bridge …` runs it with the rest of the line (`jcl bridge -h` is its own help),
+all but `send`, which agent sessions run from their own shell.
+Its tables take jcl's look - the colours, the rules, the summary line. `peers` is
+an address book: a name, the agent, the session id, and whether a message gets
+there; where a session runs and on what is `jcl list`'s to show. And
+`completion/agent-bridge_completion.bash` completes its commands, their options
+and the session ids `--to` takes. `send` is the one command a terminal cannot
+run: a message goes out as the session whose shell sends it.
+
+- **From a Claude session**: Codex sessions appear in `/list-agents` under their
+  titles; message them with `SendMessage` like any other session. Their replies
+  arrive as `Message from @<codex title>`. By session id, `agent-bridge send`
+  queues straight into a Codex session, and for a Claude session prints the
+  `uds:` address to give `SendMessage` (a Claude session sends to Claude itself).
+- **From a Codex session**: `agent-bridge send --to '<name or id>' '<text>'`, run
+  from its shell (it identifies the sender by `CODEX_THREAD_ID`). A message arriving
+  in Codex reads `Message from @<name> - another agent, not Peter. Reply with:
+  agent-bridge send --to ...`; `assets/codex/AGENTS.md` tells Codex to treat it
+  as a colleague's request, never as the user's approval.
+
+How it works: Claude Code offers no documented way for another program to post
+into a session (its socket protocol is internal; Channels are blocked by the org
+policy), so each Codex session gets a **stand-in**: a headless `claude -p`
+session named after it (its title, or `codex-<last 6 of its id>` when it has
+none; ` (<last 4>)` is added when another session already has that name).
+Being a real Claude session it is listed and messaged natively. Its `UserPromptSubmit` hook hands every arriving message to the
+daemon, which runs `codex queue` into the Codex session, and blocks the turn
+(no model call). To send, the daemon writes a trigger to the stand-in's stdin;
+its model calls `SendMessage`, whose input a `PreToolUse` hook replaces with the
+exact text, and a `PostToolUse` hook ends the turn at once. Codex-to-Codex skips
+the stand-ins and uses `codex queue` directly.
+
+The daemon starts on demand, from start, send, peers or scan (`agent-bridge
+start` does nothing else), and keeps one stand-in per live Codex session that has
+had a first message, renaming or stopping them as sessions change; it leaves after
+15 minutes with nothing to do. Everything it keeps is in `/var/tmp/agent-bridge-<uid>/`:
+its socket and lock, `daemon.log`, and one `stand-in-<id>.log` per stand-in. Not
+`/tmp`, whose files m-fwdev-167 deletes after two days untouched - a long-running
+daemon's socket among them. Nothing cleans `/var/tmp`, so the daemon keeps it
+small: every log - `daemon.log` and each `stand-in-<id>.log` - is turned over at
+256 KB with one `.1` generation kept, two files and 512 KB at most, and a gone
+session's logs go a day after their last line. Stand-ins run with `--no-session-persistence`, so they leave
+no transcripts under `~/.claude/projects`. `jcl list` shows each
+stand-in on a row of its own right below the Codex session it stands in for,
+joined to it by a line drawn from under it to the word `stand-in`; one whose
+Codex session is gone is marked `✗` and comes last. Its SESSION ID reads `--` -
+messages go to the Codex session's id, not the stand-in's - and `jcl list -v` shows
+it. `jcl save` leaves them to agent-bridge.
+Limits:
+- each stand-in is a Claude process of about 200 MB, and each Codex-to-Claude
+  message costs one short Haiku turn;
+- a Codex session that has had no message yet cannot be queued into, and gets
+  no stand-in until it has; `codex queue` itself is not in Codex's documentation;
+- a Codex session whose last turn was interrupted (Esc), in a terminal or in Codex
+  Desktop, holds every queued message until its next typed one and runs them
+  right after it. The sender is told: `agent-bridge send` adds a `Held:` line,
+  and a Claude sender gets one notice per interruption from the stand-in;
+- `codex queue` must reach the shared app-server (`--no-daemon` is refused for it),
+  and runs one in-process when none is up - it starts no daemon of its own;
+- a stand-in prompts for permissions, so a message to a session in
+  bypass-permissions mode is held for approval, as it would be between two
+  Claude sessions;
+- terminal Codex sessions run with `--no-daemon`, so Codex's own task tools
+  between Codex sessions stay off; Codex-to-Codex goes through `agent-bridge`.
 
 <a id="jskill"></a>
 #### [jskill](./nv-tools/jskill)

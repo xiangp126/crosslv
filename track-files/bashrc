@@ -523,11 +523,16 @@ for _ai_cmd in "${_ai_nvm_tools[@]}"; do
         # them out of its snapshots (2026-09-30). The daemon also refused to
         # start the CLI whenever Codex Desktop had launched it, and upgraded
         # itself four times in a day, 400M a copy, until the home filled up.
-        # Every invocation gets the flag: codex takes it ahead of any
+        # Every invocation gets the flag but queue: codex takes it ahead of any
         # subcommand (each one in 0.157.1 checked), so no list of subcommands
-        # is kept here to fall behind -- the one that was had missed queue.
+        # is kept here to fall behind. queue alone refuses it - a message has
+        # to go through the shared server the receiving session watches, and
+        # \`codex --no-daemon queue\` stops at \"--no-daemon cannot be used with
+        # codex queue\" (2026-10-11). Without a server it runs one in-process.
         if [[ $_ai_cmd == codex ]]; then
-            [[ \" \${_args[*]} \" == *\" --no-daemon \"* ]] || _args=(--no-daemon \"\${_args[@]}\")
+            local _queue=
+            for _arg in \"\${_args[@]}\"; do [[ \$_arg == queue ]] && _queue=1; done
+            [[ -n \$_queue || \" \${_args[*]} \" == *\" --no-daemon \"* ]] || _args=(--no-daemon \"\${_args[@]}\")
 
             # Start the native program the npm package carries, not its node
             # launcher. bin/codex is codex.js, and every start of it walks up
