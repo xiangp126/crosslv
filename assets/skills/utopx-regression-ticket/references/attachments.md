@@ -1,8 +1,10 @@
 ## Attachments — upload as much as you can, this is not optional
 
 Attach as many supporting files as possible, so the next reader does not have to re-extract
-everything from the MARS tarball. Template: **[#5232246](https://redmine.nvidia.com/issues/5232246)**
-— 13 attachments, all the per-case artifacts of the failing node.
+everything from the MARS tarball. Template: **[#5273909](https://redmine.nvidia.com/issues/5273909)**
+— the ten per-case artifacts of the failing node plus the instrumented repro log and the probe
+script, all in the journal of the first comment, each with a description; then
+`ROOTCAUSE_analysis.md` in a separate comment.
 
 ### The MARS per-case artifact set
 
@@ -29,12 +31,13 @@ next to it. Upload that `log.txt`, renamed to the convention:
 <artifact>_<failing key_id>.log        e.g. query_mlxconfig_0.15.1.1.1.8.1.6.61.6.1.log
 ```
 
-Extract with one `tar` call, no full unpack:
-
-```bash
-tar tzf <session>.tgz | grep -E "^0\.15\.1\.1\.1\.8\.1\.6\.<caseIdx>\." > /tmp/members
-tar xzf <session>.tgz -C /tmp/stage $(grep -E '\.(cap|txt)$' /tmp/members)
-```
+`scripts/mars_artifacts.sh <setup_id> <session_id> <key_id> <outdir>` does all of it: one `tar`
+listing, one `tar` extract of the sibling nodes (no full unpack), the renames, and
+`<outdir>/manifest.tsv` with the standard descriptions (`custom post checker`, `dmesg`,
+`dump_file`, `fw_reset step`, `mstdump N`, `oplist`, `NV config dump`,
+`Failing case log (<case_name>, session <id>)`). It warns about any of the ten that is missing.
+The archive is `/.autodirect/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup_id>/<session_id>/<session_id>.tgz`;
+MARS keeps it about 12 days, so extract before it ages out.
 
 ### Also attach your own work
 
@@ -49,7 +52,10 @@ Give every upload a `description` — the filename alone does not say what the r
 
 ### The upload flow (REST)
 
-Two steps; the token is single-use:
+`scripts/post_ticket.py note --ticket <id> --note <file> --manifest <tsv>` uploads every manifest
+row and posts them with the note in one journal, then reads the ticket back. Append your own files
+to the manifest as `<file><TAB><description>[<TAB><upload name>]`. The raw flow underneath — two
+steps, the token is single-use:
 
 ```python
 POST {U}/uploads.json?filename=<name>   Content-Type: application/octet-stream, body = raw bytes

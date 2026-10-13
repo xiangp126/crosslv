@@ -1,6 +1,6 @@
 ---
 name: utopx-regression-ticket
-description: Open a Redmine ticket for a UTOPX regression or CI failure — the default channel whenever Peter says "open a ticket". Covers the exact project/tracker/sprint/chips field set, the three-part description format (Fatal message / MARS view_log link / Root cause with confidence), how to build the MARS link, and when a firmware defect goes to the Design project instead. Also the formatting rules for ANY text written to Redmine (descriptions and comments: HTML as the web editor stores it, not textile) and how to correct a posted comment in place. Use when asked to open a ticket, file a bug, or raise a Redmine issue for a regression, CI, DoA or MARS-session failure, and whenever posting or editing a Redmine comment.
+description: Open a Redmine ticket for a UTOPX regression or CI failure (the default channel when Peter says "open a ticket"), modelled on #5273909 - field set, subject from the MAIN_FATAL line, a short description, a first comment carrying the evidence with every MARS per-case artifact attached, and the analysis attachment. Also the HTML format for ANY Redmine description or comment and how to correct a posted comment in place. Use when opening a ticket or filing a bug for a regression, CI, DoA or MARS-session failure, and whenever posting or editing a Redmine comment.
 ---
 
 # Opening a Redmine ticket for a UTOPX regression failure
@@ -24,6 +24,26 @@ Within Redmine, pick the project by subject matter:
 |---|---|---|
 | **utopx test defect** — wrong expected value, bad model, a UFATAL in a case that ran | **5581** `ConnectX FW Core - Verification` | Task/Story — the rest of this skill |
 | **firmware defect** — FW returns the wrong cap/syndrome, the test is right | **5580** `ConnectX FW Core - Design` | **`Bug SW`**, with `Reported by Department` / `Detected In Version` |
+
+## The ticket, end to end — template [#5273909](https://redmine.nvidia.com/issues/5273909)
+
+Open [#5273909](https://redmine.nvidia.com/issues/5273909) and copy its shape: subject, description,
+first comment, attachments, analysis comment. A ticket is not opened until all of these are on it:
+
+| # | part | content | section |
+|---|---|---|---|
+| 1 | subject | `[UTOPX]` + the quoted MAIN_FATAL message | Subject |
+| 2 | description | MAIN_FATAL line, MARS URL, Root cause paragraph, "See the first comment for …" — nothing else | Description |
+| 3 | first comment | the evidence in `== … ==` sections, **with every MARS per-case artifact attached in the same journal** (10 files) plus your own repro logs, probe scripts and candidate patch | What the first comment needs, Attachments |
+| 4 | analysis comment | one line pointing at the local analysis file, with that file attached as `ROOTCAUSE_analysis.md` | Attachments |
+
+Draft all four locally, show them to Peter, and post them together after he approves:
+
+1. `scripts/mars_artifacts.sh` — the MARS per-case artifacts and their manifest (Attachments).
+2. `yai__create_task` — the ticket with the field set below.
+3. `scripts/post_ticket.py desc`, then `note` twice — description, first comment with its uploads,
+   analysis comment (Posting).
+4. "After creating" — fields, sprint dates, attachment count.
 
 ## The field set
 
@@ -76,16 +96,22 @@ Codex.
 ## Subject
 
 ```
-[UTOPX]<the fatal text, verbatim, one line>
+[UTOPX]<the message inside the quotes of the MAIN_FATAL line>
 ```
 
-Copy the message the test actually printed, including the odd double spaces: reviewers and the
-dedup tooling match on this string. Examples:
+Take it from the run log's `MAIN_FATAL:` line (`grep -a MAIN_FATAL <run_case log>`), which reads
+`<file>:<line>, in Func <Func>. "<message>"`. Copy the message verbatim, including the odd double
+spaces: reviewers and the dedup tooling match on this string. Join a multi-line message with single
+spaces. A cap mismatch prints the full expected and received cap dumps between the message head and
+its closing `Field mismatch:  DETAILS: …` line: keep the head and that line, drop the dumps. Examples:
 
 ```
-[UTOPX]status != OK is supported only in error test on command QUERY_EMULATED_RESOURCES_INFO syndrome : 0xe5dfad;query_emulated_resources_info: operation is not supported;
-[UTOPX]cmd_hca_cap: general_obj_type_dpa_db_cq_mapping not greater than (or zero if expected) : expected= 0x0 Actual 0x1
+[UTOPX]QUERY_EMULATED_FUNCTIONS_INFO mismatch of num_emulated_functions DETAILS: expected:0x61 actual:0x2
+[UTOPX]actual cap fields can't be less than expected cap (or zero) Field mismatch:  DETAILS: cmd_hca_cap: general_obj_type_dpa_db_cq_mapping not  greater than (or zero if expected)   : expected= 0x0 Actual 0x1
 ```
+
+Not the `Field mismatch` line alone and not the `general_layout.cpp:365 … FATAL :` block: both drop
+part of the MAIN_FATAL message.
 
 ## Writing to Redmine — format, posting, correcting
 
@@ -118,14 +144,31 @@ preceded by a large empty block. Write descriptions and comments in HTML.
 
 ### Posting
 
-1. Draft locally (`/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/*_redmine.html`) and show
-   it to Peter.
-2. After he approves, post the approved text unchanged, with the same wording and format. Take any
-   change back to him first.
-3. Post a new comment with `yai__update_ticket(ticket_id=<id>, notes=<html>)` and no other
-   fields.
-4. Replace the MCP footer with its HTML form (see Format), then re-read the ticket: the stored
-   note must equal what you sent plus the HTML footer.
+1. Draft locally in `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/`: the description and each
+   comment as an `.html` file, the uploads of a comment as a manifest `.tsv`. Show them to Peter.
+2. After he approves, post the approved files unchanged. Take any change back to him first.
+3. Post with `scripts/post_ticket.py` (REST, key from `~/.redmine_env`). Run every step with
+   `--dry-run` first; every real write is read back and compared with the file:
+
+   ```bash
+   P=$(jskill path utopx-regression-ticket)/scripts/post_ticket.py
+   $P desc --ticket <id> --subject '<subject>' --description <dir>/TICKET_<id>_description.html
+   $P note --ticket <id> --note <dir>/NOTE_<id>_first_comment.html --manifest <dir>/attach/manifest.tsv
+   $P note --ticket <id> --note <dir>/NOTE_<id>_rootcause.html --manifest <dir>/rootcause.tsv
+   ```
+
+   - `desc` replaces subject and description and keeps the footer that `yai__create_task` put on
+     the ticket, converted to its HTML form.
+   - `note` uploads every manifest row and attaches them to the comment in **one journal**.
+     Manifest rows: `<file><TAB><description>[<TAB><upload name>]`, paths relative to the
+     manifest. Upload the analysis as `ROOTCAUSE_analysis.md` with the third column.
+   - Notes posted this way carry no MCP footer.
+   - `verify --ticket <id> [--subject …] [--description <file>] [--journal <id> --note <file>]`
+     re-checks a posted ticket read-only.
+   - Exit code 0 only when everything stored equals what was sent.
+4. A later short comment without uploads may go through `yai__update_ticket(ticket_id=<id>,
+   notes=<html>)`; then replace the MCP footer with its HTML form (see Format) and re-read the
+   ticket.
 
 Do not state how something renders without seeing it. Ask Peter for a screenshot, or compare with
 a note he confirms displays correctly. Never try out a layout on a live ticket: every edit is
@@ -148,27 +191,38 @@ curl -sk -X PUT -H "X-Redmine-API-Key: $K" -H 'Content-Type: application/json' \
 - After posting an HTML note through the MCP, this PUT is also how the footer gets its HTML form
   (see Format).
 
-## Description — three parts, kept short
+## Description — four parts, kept short
 
 The description is a landing page, not the analysis: a reader sees what broke and where, and
-chooses whether to read further. Template: [#5232246](https://redmine.nvidia.com/issues/5232246)
-— the fatal line plus the MARS link, nothing else.
+chooses whether to read further. Template: [#5273909](https://redmine.nvidia.com/issues/5273909).
 
-Budget: **fatal message + MARS link + a Root cause paragraph of ~5 lines** (the confidence word
-plus the mechanism). Everything longer — the A/B evidence, per-branch SHAs, the candidate patch,
-the NOT-verified list — goes into the **first comment**, with the full write-up as an
-**attachment**.
+Budget: **MAIN_FATAL line + MARS URL + a Root cause paragraph of 5–8 lines + a pointer to the first
+comment.** Everything else — log excerpts, code paths, session lists, per-branch SHAs, the
+candidate patch, the NOT-verified list — goes into the **first comment**, with the full write-up as
+an **attachment**.
 
 In this order:
 
 ```html
-<p>Fatal message:</p>
-<pre>
-<the UFATAL / FATAL lines, verbatim, with & < > escaped>
-</pre>
-<p><a href="<MARS view_log URL>">MARS log</a></p>
-<p>Root cause (<HIGH|MEDIUM|LOW> confidence): <the analysis></p>
+<p>Fatal message:<br />
+<file>:<line>, in Func <Func>. &quot;<message>&quot;</p>
+
+<p><a href="<MARS view_log URL>"><MARS view_log URL></a></p>
+
+<p>Root cause (<HIGH|MEDIUM|LOW> confidence): <the mechanism, plain prose></p>
+
+<p>See the first comment for <what it holds>.</p>
 ```
+
+- **Fatal message**: the MAIN_FATAL line on one line, as in the subject (head + `DETAILS:` line,
+  dumps dropped). Not a `<pre>` block of the multi-line FATAL output.
+- **MARS URL**: shown as itself — the link text is the URL, not a label such as "MARS log".
+- **Root cause**: the confidence word, then what the test does, what FW reports and why, what
+  utopx expects and why, and why it is intermittent if it is. Plain prose: no `<code>` markup,
+  session lists, SHAs or patch.
+- **Pointer**: one sentence naming what the first comment holds.
+- HTML entities as the web editor stores them: `&quot;`, `&#39;`, `&amp;` in the URL; keep the
+  message's double spaces as `&nbsp; `.
 
 ### Building the MARS link
 
@@ -194,6 +248,20 @@ https://mars.mellanox.com/web/server/php/view_log.php
 
 ### What the first comment needs
 
+Post it right after the description, with every attachment of the "Attachments" section in the
+**same journal**. Layout of [#5273909](https://redmine.nvidia.com/issues/5273909): one intro line,
+then `== <title> ==` sections, prose plus `<pre>` blocks for log and code excerpts:
+
+| section | holds |
+|---|---|
+| `== The failing check (session, setup, branch, FW) ==` | case, seed, conf; the ops around the fatal; the expected vs received values that matter |
+| `== Where FW's <value> comes from (<FW tag>, <sha>) ==` | the FW call chain, `file:line` per step |
+| `== Where utopx's <value> comes from (<utopx tag>, <sha>) ==` | the utopx call chain, `file:line`; the change that introduced it |
+| `== Occurrences ==` | A/B over sessions, scale, recent sessions, branches that carry the code but do not show it |
+| `== Fix ==` | the candidate patch and why it matches FW; say whether it has run |
+| `== Not related ==` | look-alike tickets or changes, and why they are different |
+| `== Not verified ==` | every open point |
+
 The full root cause goes into the first comment, not the description:
 
 - **The suspect change**: gerrit URL + title + owner + merge date + per-branch SHAs.
@@ -213,8 +281,23 @@ The full root cause goes into the first comment, not the description:
 
 Required: attach as much as you can. The MARS per-case artifacts sit in sibling nodes of the
 failing `key_id`, not under it; the `.cap` files are MARS metadata, not the artifact; your own A/B
-logs and patches go on the ticket too. Procedure, naming convention, one-shot `tar` extraction and
-the two-step REST upload flow: **`references/attachments.md`**.
+logs and patches go on the ticket too. Procedure, naming convention and the REST upload flow:
+**`references/attachments.md`**.
+
+```bash
+S=$(jskill path utopx-regression-ticket)/scripts
+$S/mars_artifacts.sh <setup_id> <session_id> <key_id> <dir>/attach
+# then append your own rows to <dir>/attach/manifest.tsv: <file><TAB><description>
+```
+
+- With the first comment, in one journal: all ten MARS per-case artifacts (`custom_post_checker`,
+  `dmesg`, `dump_file`, `fw_reset`, `mstdump_1..3`, `oplist`, `query_mlxconfig`, `run_case`), then
+  your repro logs, probe scripts and candidate patch. [#5273909](https://redmine.nvidia.com/issues/5273909)
+  carries twelve.
+- Then a separate comment, one line pointing at the local analysis file, with that file attached as
+  `ROOTCAUSE_analysis.md`. A corrected version goes up later as `ROOTCAUSE_analysis_v2.md`.
+- Every upload gets a `description`.
+- A ticket with zero attachments is not opened yet.
 
 ## After creating — verify, don't assume
 
@@ -222,7 +305,7 @@ the two-step REST upload flow: **`references/attachments.md`**.
 yai__get_tickets(ticket_ids=[<new id>], include="basic")
 ```
 
-Check `author`, `assigned_to`, `priority`, `attachments`, `tag_list`, `story_points`,
+Check `author`, `assigned_to`, `priority`, `attachments` (at least the ten MARS artifacts), `tag_list`, `story_points`,
 `custom_fields[Chips]`, and `start_date`/`due_date`. The dates are the only visible proof the
 sprint took (the API response has no sprint field): they must match the sprint window, e.g.
 `MTBC_YL 26-08` -> 2026-08-01 .. 2026-08-31. If they don't, set the sprint on the UI board.
