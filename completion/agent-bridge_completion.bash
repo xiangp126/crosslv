@@ -2,9 +2,8 @@
 # Completion function for agent-bridge
 
 # The session ids `send --to` takes: the live sessions `jcl list --json`
-# reports, minus agent-bridge's stand-ins, which stand for a Codex session that
-# is offered itself. Ids rather than names: a name may hold spaces and change
-# with a title, an id does neither. jcl answers in ~0.2 s and, unlike
+# reports. Ids rather than names: a name may hold spaces and change with a
+# title, an id does neither. jcl answers in ~0.2 s and, unlike
 # `agent-bridge peers`, starts no daemon just to complete a word.
 _agent_bridge_session_ids() {
     jcl list --json 2>/dev/null | python3 -c '
@@ -14,8 +13,7 @@ try:
 except ValueError:
     sys.exit(0)
 for rec in records:
-    if (rec.get("alive") and not rec.get("stand_in_for")
-            and rec.get("kind") in (None, "", "interactive")):
+    if rec.get("alive") and rec.get("kind") in (None, "", "interactive"):
         print(rec["session_id"])
 ' 2>/dev/null
 }
@@ -26,13 +24,13 @@ _agent_bridge_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    # daemon and hook are agent-bridge's own, run by itself and its stand-ins
-    local commands="send peers status scan start stop restart"
+    # daemon is agent-bridge's own, run by itself
+    local commands="send peers status start stop restart"
 
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            send | peers | status | scan | start | stop | restart)
+            send | peers | status | start | stop | restart)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -56,7 +54,7 @@ _agent_bridge_complete() {
     case "$cmd" in
         send) opts="-h --help --to" ;;
         peers) opts="-h --help --json" ;;
-        status | scan | start | stop | restart) opts="-h --help" ;;
+        status | start | stop | restart) opts="-h --help" ;;
     esac
 
     if [[ $cur == -* ]]; then

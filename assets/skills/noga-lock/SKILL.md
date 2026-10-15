@@ -128,6 +128,11 @@ Best effort: it de-duplicates the names, then handles each one in order
 - Because every box you hold in the list IS released, put only the boxes Peter named in the list
   and re-read it before running — a stray name of yours gets released too.
 
+**Stop your own watchers for that box first.** A renewal watchdog or a `noga_wait.sh` for the box
+re-locks it within one poll after the release. Stop them, confirm none is left with
+`ps -eo cmd | grep -c '[n]oga_wait\.sh -n <box>'` (the `[n]` keeps grep from counting itself; a
+plain `pgrep -f` also counts the shell that runs it), then release.
+
 Never use `jmake --reg-cancel`: it is an interactive menu whose entry 0 ("All resources") releases
 every box under your name, including boxes other sessions are working on, and without a terminal
 it dies on `EOFError`. If jmake is unavailable, release by hand after checking the owner:
@@ -179,12 +184,17 @@ its `lock_time_out` (lazy auto-release sweep, or the holder extended). Watch for
 ## When you may take a lock
 
 1. `lock_owner` is empty — free, take it.
-2. `lock_owner` is set **but** `lock_time_out` is more than a grace period (15 min works well) in
-   the past. **NOGA does not clear `lock_owner` when a lease expires** — expired-but-owned is the
-   normal state of a free box, so a monitor that waits only for an empty owner can idle for hours
-   beside a lapsed lock.
+2. `lock_owner` is set **but** `lock_time_out` is more than 60 s in the past (the `noga_wait.sh`
+   default `--grace`; the 60 s only absorbs clock skew and a holder's last-second renewal).
+   **NOGA does not clear `lock_owner` when a lease expires** — expired-but-owned is the normal state
+   of a free box, so a monitor that waits only for an empty owner can idle for hours beside a lapsed
+   lock.
 3. Otherwise wait. In this pool `mars_reg` is the regression service and always wins by
    convention; it releases around **13:05–13:15 CST**, typically well before its nominal timeout.
+
+**Lock first, then check.** Once a lease has expired, take the lock at once instead of waiting for
+proof that the box is idle — holding the lock is what keeps the box from going to someone else.
+Whether you may *touch* the box is decided afterwards, by the pre-touch check below.
 
 ### `mars_reg` takes boxes back for its nightly session
 
@@ -199,32 +209,39 @@ owner `mars_reg` by ~01:50 CST, box rebooted at 02:00 CST, then the regression i
   `lock_owner` before debugging the environment. Once the box has been taken, stop touching it and
   let `noga_wait.sh` take it back after the release.
 
-### Before touching any box you locked: confirm no regression is running on it
+### Before touching any box you locked: confirm the MARS session is done with it
 
-Every time, however you got the lock — taken from `mars_reg`, found free, first to lock it, or
-re-locked after a release. A NOGA `Release` or your own lock is not proof: MARS can still be
-running, or finishing, a session on the box. Run all three before the first burn, reset or
-mlxconfig, and do not touch the box until they pass:
+The check exists to establish one fact before the first burn, reset or mlxconfig: the regression
+session that held the box has finished with it. Establish it once — it takes seconds; do not add
+waiting windows on top.
 
-1. No regression process — must print 0. Run it as its own `ssh` command: any other text in the
-   same command line (e.g. a path under `/tmp/mars_tests`) matches the pattern and counts the
-   command itself.
+1. **How did the box free up?**
+   - **`mars_reg` released it** (`Status.status` flipped to `Release`; `noga_wait.sh` grabbed on
+     `Release`): MARS releases the NOGA lock in its own teardown step
+     `Done step (2:Release The Setup)`, so the session is done with the box. Nothing more to read.
+   - **You took a lease that expired without a release**, or you cannot tell: confirm the session
+     reached that step. Newest session directory
+     `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup>/<sid>/` — once `<sid>.tgz`
+     exists (written a few minutes after the release), read `session.log` out of it:
+     ```bash
+     tar -xzOf <dir>/<sid>.tgz --wildcards '*session.log' | grep -a 'Done step (2:Release The Setup)'
+     ```
+     (MARS log times are Israel time; `Teardown event: session_end` can be missing from the
+     archived copy.) No `.tgz` and no release step means the session is still running or archiving:
+     keep the lock, do not touch the box, look again in a few minutes.
+2. **No regression process left on the box** — must print 0. Run it as its own `ssh` command: any
+   other text in the same command line (e.g. a path under `/tmp/mars_tests`) matches the pattern
+   and counts the command itself.
    ```bash
    ssh <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
    ```
-2. No fresh MARS activity on the box — must print 0:
-   ```bash
-   ssh <box> 'find /tmp/mars_tests -newermt "-30 min" 2>/dev/null | wc -l'
-   ```
-3. The newest MARS session for the setup ended:
-   `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup>/<newest sid>/` must hold
-   `<sid>.tgz`, and its `session.log` must contain `Teardown event: session_end` and
-   `Done step (2:Release The Setup)` (MARS log times are Israel time). A newest session directory
-   without the `.tgz` means the session may still be running or archiving — wait. The `.tgz` is
-   written about a minute after the release; right after a `mars_reg` release, re-check once it
-   appears.
 
-If any check fails, stop, report it to Peter, and keep the lock.
+Both hold → start. If a process is still there, keep the lock and look again in a few minutes;
+report to Peter if it stays busy well past the expected end of the session.
+
+`/tmp/mars_tests` file times (`find /tmp/mars_tests -newermt "-30 min"`) are a fallback only, for
+when the session record cannot be found (unknown setup name). Once the release is established they
+add nothing but a 30-minute wait after the session's last test.
 
 ## Waiting for a busy box — `noga_wait.sh`
 
@@ -237,7 +254,7 @@ If any check fails, stop, report it to Peter, and keep the lock.
 The script polls every 15 s by default (never pass a larger `--poll`) and prints a heartbeat every
 20 polls — about every 5 min at 15 s — with the owner and the seconds past expiry (negative = time
 left). It grabs only when `Status.status` is `Release` or the lease expired more than `--grace`
-seconds ago; a status that is neither `Lock` nor `Release` is retried (`status unknown …`), never
+seconds ago (default 60); a status that is neither `Lock` nor `Release` is retried (`status unknown …`), never
 grabbed. Between heartbeats it stays silent unless a query fails (`query failed, retrying`) or the
 wait ends (`ALREADY_OURS`, `LOCK_ACQUIRED` or `GAVE_UP`).
 
@@ -246,6 +263,8 @@ Running it:
 - **Read the current runtime adapter first**: `references/hosts/claude.md` in Claude Code,
   `references/hosts/codex.md` in Codex. In either runtime: chain setup into the same watcher with
   `--then`, avoid duplicate watchers, and retain a way to observe liveness.
+- **Whatever `--then` runs must start with the pre-touch check** (section above) and must not burn,
+  reset or mlxconfig the box until it passes — the grab no longer waits for the box to be idle.
 - Do not model a multi-hour wait as one blocking tool call. Do not assume `nohup` or `setsid`
   launched from a managed shell will outlive that shell.
 - **Verify liveness** with `ps` plus the output/heartbeat-log mtime (a live `noga_wait.sh` writes

@@ -48,6 +48,24 @@ for rec in live:
 ' "$1" "${2:-all}" 2>/dev/null
 }
 
+# What `delete` takes: every session id `list --all` knows, and the pane of
+# each live one. No `all` / `claude` / `codex`: a deletion names its session.
+_jcl_delete_candidates() {
+    jcl list --all --json 2>/dev/null | python3 -c '
+import json, sys
+used = set(sys.argv[1].replace(",", " ").split()) if len(sys.argv) > 1 else set()
+try:
+    records = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+for rec in records:
+    if rec.get("alive") and rec.get("target") and rec["target"] not in used:
+        print(rec["target"])
+    if rec["session_id"] not in used:
+        print(rec["session_id"])
+' "$1" 2>/dev/null
+}
+
 # Complete one SESSION argument of `refresh`.
 #
 # COMP_WORDS cannot be used to find what is being typed: it has already split
@@ -188,7 +206,7 @@ _jcl_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore show refresh exit-session set patch-resurrect save-auth restore-auth fill-auth bridge"
+    local commands="list save restore show refresh exit-session delete set patch-resurrect save-auth restore-auth fill-auth bridge"
     for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
         case "${COMP_WORDS[i]}" in
             --agent) agent="${COMP_WORDS[i+1]:-all}" ;;
@@ -199,7 +217,7 @@ _jcl_complete() {
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | show | refresh | exit-session | set | patch-resurrect | save-auth | restore-auth | fill-auth | bridge)
+            list | save | restore | show | refresh | exit-session | delete | set | patch-resurrect | save-auth | restore-auth | fill-auth | bridge)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -264,6 +282,7 @@ _jcl_complete() {
         show) opts="-h --help -f --file --json" ;;
         refresh) opts="-h --help --timeout -n --dry-run" ;;
         exit-session) opts="-h --help --timeout -n --dry-run" ;;
+        delete) opts="-h --help -y --yes --timeout -n --dry-run" ;;
         set) opts="-h --help --agent --model --effort --delay --timeout --no-verify -n --dry-run" ;;
         patch-resurrect) opts="-h --help -n --dry-run -v --verbose" ;;
         save-auth) opts="-h --help -o --output --force -n --dry-run" ;;
@@ -273,6 +292,15 @@ _jcl_complete() {
 
     if [[ $cur == -* ]]; then
         COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+        return 0
+    fi
+
+    # delete takes session ids and panes, never a keyword: each one is named
+    if [[ $cmd == delete ]]; then
+        local line="${COMP_LINE:0:$COMP_POINT}"
+        local word="${line##* }"
+        COMPREPLY=($(compgen -W "$(_jcl_delete_candidates "${line% *}")" -- "$word"))
+        __ltrim_colon_completions "$word"
         return 0
     fi
 

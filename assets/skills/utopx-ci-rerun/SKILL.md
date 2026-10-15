@@ -89,7 +89,9 @@ That is a broken pipeline script in `fw_automations`; it hits every change in th
   `consoleText` or `api/json`. Match builds on parameter `GERRIT_CHANGE_NUMBER` (and
   `GERRIT_PATCHSET_NUMBER`).
 - The DoA it spawns is **`golan_fw_minireg #N`** (plus `nicx_minireg_doa/#N` on master-line
-  branches, which runs the extra `NICX-DoA` stage). Grep the `utopx_ci` console for both.
+  branches, which runs the extra `NICX-DoA` stage). The `utopx_ci` console names them only as
+  `Remote build URL: …/job/<job>/<N>/` — find them with `grep -oE 'Remote build URL: [^ ]+'`;
+  a `golan_fw_minireg #N` grep matches nothing.
 - **`golan_fw_minireg` is NOT on blossom** — it is on the internal `$JENKINS_URL` and needs the
   token. Anonymous blossom answers `Not Found`, authenticated blossom answers `401`; **neither
   means the log was purged.**

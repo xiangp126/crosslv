@@ -18,18 +18,19 @@ EXPIRY="$(dirname "$0")/noga_expiry.py"
 HOST=""
 LEASE=8         # hours to hold once taken
 HOURS=8         # ceiling on how long to keep waiting
-GRACE=900       # a lease this many seconds past expiry counts as free
+GRACE=60        # a lease this many seconds past expiry counts as free (lock first, check after)
 POLL=15         # never raise it: grabs are first-come-first-served (see SKILL.md)
 THEN=""
 
 usage() {
   cat <<'EOF'
-Usage: noga_wait.sh -n <host> [-L 8] [--hours 8] [--grace 900] [--poll 15] [--then 'cmd']
+Usage: noga_wait.sh -n <host> [-L 8] [--hours 8] [--grace 60] [--poll 15] [--then 'cmd']
 
   -n, --name HOST    NOGA host to wait for and lock
   -L, --lease H      hold the lock for H hours once taken (default 8)
       --hours H      give up after H hours of waiting (default 8)
-      --grace S      treat a lease expired by more than S seconds as free (default 900)
+      --grace S      treat a lease expired by more than S seconds as free (default 60);
+                     a grabbed box is not idle yet -- run the pre-touch check first
       --poll S       seconds between polls (default 15). Do NOT raise it: the poll
                      interval is the window in which somebody else takes the box, and
                      the malloc round-trip alone is ~6 s; 60 s loses the race.

@@ -140,6 +140,22 @@ ethtool -i <netdev> | grep firmware      # the authoritative "running" version
   instantly and every PF is discarded → `NicPfs list is empty`. Tell-tale in the log: a healthy
   run has **~20 seconds** between `Found N Functions` and `Searching for Physical functions`; a
   broken one has both in the same millisecond.
+- **Exception — a card that exposes a PSF** (CX8 with `nv_config.global.internal_fw_cap.psf_en = 1`
+  in the INI; the extra function is `15b3:1028`, a DMA controller): reset with the PSF-aware
+  `fwreset.py`, not `jmake --fw-reset`, and do not run `openibd start` (every function must stay
+  on udriver):
+  ```bash
+  sudo /swgwork/topazu/dev/hca_fw_tools/fw_reset/fwreset.py --debug -d $D    # ~6 s
+  ```
+  It classifies the PSF as `function type: DMA_PF`, force-binds it to udriver and verifies the bind
+  (`BIND VERIFY OK`); it binds only the PSF, so re-bind the PFs to udriver afterwards.
+  `jmake --fw-reset` stops/starts mlx5_core around the reset. The chip-family
+  `gilboa_fw_reset.sh` does not know the PSF and can wedge the ICMD channel
+  (`Error - failed to execute icmd. icmd_status:0, icmd_busy:1.`; unbind and retry do not help,
+  only a power-cycle does). If the `fwreset.py` path is gone, ask Peter for its current location —
+  do not fall back to either of the other two. In icm_mng_global mode also reset right after each
+  run (the PSF stays initialised after utopx exits; see the per-run script rules in skill
+  `regression-repro`).
 - `flint -d $D q` reads the **flash image**, so it shows the new version even without a reset. The
   running version is what `ethtool -i` / `mlxfwmanager --query` / a fresh `dmesg` probe says.
 - `mlxfwreset -d $D q` answers `There is no supported reset-level` → a pending NV parameter needs a
@@ -268,6 +284,13 @@ driver a PF is still bound to: it holds live references to the PFs, and unloadin
 whole host offline. To change bindings, `unbind`/`bind` the PF through sysfs; to reload, run
 `modprobe udriver` again.
 
+**Which udriver**: the one utopx is built against, `UDRIVER_VERSION` in the tree's `build.sh`.
+Install it with `install_udriver` (`.fwvalias` function `install_udriver_func`, run on the machine
+that holds the card): it clones `hca_fw/udriver` master and runs `install.sh`, which installs the
+library, headers and `.ko` but loads nothing. The new library is used at once, the new module only
+after a power-cycle — so install, power-cycle, then run, and check `/bin/udriver_commit_hash`
+against the pin.
+
 Run it with the CI parameters (`utopx_fixed.cases:27`):
 
 ```bash
@@ -307,9 +330,25 @@ Do these **in this order**:
 
 **Do not "fix" NV by guessing.** Setting parameters one by one to what you *think* the baseline was
 can move the config further from the passing state — watch the checksum line drift. If NV is the
-variable, restore it wholesale (`mlxconfig -d $D -y reset` for factory defaults, or `set_raw` with
-the TLVs captured from the passing log), not parameter by parameter. A factory reset is **not**
-necessarily the passing state: a card that has run utopx carries TLVs written by the test itself.
+variable, restore it as a whole and from data: `mlxconfig -d $D -y reset`, then the parameter set the
+passing state was built with, a few parameters per call with Next Boot read back after each (global
+hard rule 2) — never a replay of a whole dump. A factory reset alone is **not** the passing state: it
+leaves no TLVs at all, while the passing card carried whatever its setup wrote. On a box in a MARS
+rotation that is the setup's own recipe:
+
+```bash
+tar -xzOf /auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup>/<sid>/<sid>.tgz \
+    | grep -a 'running cmd: sudo mlxconfig'
+```
+
+- Snapshot NV read-only with `mlxconfig -d $D -f <file> backup` (`-f` goes before the command;
+  written after it, mlxconfig exits 3). Decode raw TLVs offline, without the device:
+  `mlxconfig -t HCA raw2xml <in.raw> <out.xml>`, the input starting with a `MLNX_RAW_TLV_FILE` line.
+- Judge a restore by every recipe parameter's **Current** value after the cold boot, plus the PCI
+  class codes of the functions. Raw TLV bytes do not compare — a TLV's writer ID depends on who
+  wrote it, and TLVs carry fields outside the recipe — and "no Current ≠ Next" does not hold
+  either: a known-good state can carry a pending value that never takes effect.
+- Skill `regression-repro`'s `templates/lab-box/` does all of this in `env_rebuild.sh`.
 
 **Get the real error before theorising about it.** utopx's `debug_conf.xml` raises logging to
 debug and prints every ICMD with its status:
@@ -434,5 +473,5 @@ true. No FW change, no reburn.
 - **Driving a feature to merged, not just building it once** → skill `feature-delivery`. A feature
   means two repos, two review threads, gates that may still be closed, and a reg box that
   `mars_reg` re-provisions **daily** — so the sequence above gets scripted
-  (`env_rebuild_<box>.sh` + `per_run_<task>.sh`) and the verdict becomes "did the new code path
+  (skill `regression-repro` `templates/lab-box/`: `env_rebuild.sh` + `per_run.sh`) and the verdict becomes "did the new code path
   execute", not `TEST PASSED`.

@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """Let Claude Code and Codex sessions on this host message each other by name.
 
-Claude sessions already message each other natively (SendMessage, /list-agents).
-Neither tool lets an outside program speak that protocol: its wire format is
-internal, and Channels, the documented way in, is blocked by the org policy.
-So each Codex session gets a stand-in: a headless Claude session named after it
-(`claude -p --input-format stream-json --name <title>`). Being a real Claude
-session, it is listed by /list-agents, takes SendMessage, and sends with it. Two
-documented extension points connect it to the Codex side:
+Claude sessions already message each other natively (SendMessage,
+/list-agents), and a Codex session takes a message from outside with `codex
+queue`. This daemon joins the two:
 
-  in   a UserPromptSubmit hook hands each arriving message to the daemon, which
-       queues it into the Codex session (`codex queue`), and blocks the turn, so
-       the stand-in's model never runs for it;
-  out  the daemon writes a trigger line to the stand-in's stdin; its model calls
-       SendMessage with placeholders, a PreToolUse hook replaces the whole input
-       with the real text, and a PostToolUse hook ends the turn at once - so the
-       model never sees the text and a message arriving meanwhile starts a turn
-       of its own, through the hook, instead of being read in passing.
+  into Codex   `codex queue`, whoever sends;
+  into Claude  one line written into the session's inbox socket - the socket
+               Claude Code documents for scripts to post into - as SendMessage
+               itself writes it. Its `from` is a reply socket kept here for the
+               Codex session sending, so a SendMessage reply to that address
+               comes back here and is queued into that session.
 
-Codex sessions send with `agent-bridge send` (run from their shell, which
-carries CODEX_THREAD_ID); a message between two Codex sessions goes straight to
-`codex queue`. The daemon starts on demand (any subcommand but status and stop) and
-keeps one stand-in per live Codex session that has had a first message.
+Agents send with `agent-bridge send` from their shell, which carries
+CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID. Codex sessions are not in Claude's
+/list-agents: a Claude session starts a conversation with one by `agent-bridge
+send` as well, and answers one with SendMessage to the uds: address its message
+came from. The daemon starts on demand (any subcommand but status and stop) and
+keeps a reply socket for each live Codex session that has had a first message.
+
+Design 1 put a headless Claude "stand-in" in front of each Codex session
+instead. It is kept on the branch agent-bridge-design1;
+plans/agent-bridge-claude-codex-messaging.md describes both designs.
 """
 import argparse
 import collections
@@ -33,7 +33,6 @@ import os
 import queue
 import re
 import shlex
-import shutil
 import signal
 import socket
 import socketserver
@@ -42,6 +41,7 @@ import sys
 import threading
 import time
 import unicodedata
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -49,33 +49,33 @@ UID = os.getuid()
 # Local disk, short: a socket path over 108 bytes cannot be bound, and a lock
 # on the NFS home outlives a crashed host (2026-10-09). /var/tmp, not /tmp:
 # m-fwdev-167's systemd-tmpfiles deletes what has sat in /tmp for two days,
-# and the socket and the lock of a daemon up that long are such files. Nothing
-# cleans /var/tmp, so the logs here are kept in size by turn_logs().
+# and the sockets and the lock of a daemon up that long are such files. Nothing
+# cleans /var/tmp, so the log here is kept in size by turn_logs().
 RUN_DIR = Path(f"/var/tmp/agent-bridge-{UID}")
 SOCKET = RUN_DIR / "bridge.sock"
-STATE = RUN_DIR / "state.json"
 LOG = RUN_DIR / "daemon.log"
-# Stand-ins run in a directory of their own: no project's CLAUDE.md or
-# settings reach them from where they start
-PROXY_CWD = RUN_DIR / "stand-in"
+# One socket per Codex session, named by its id: the uds: address its messages
+# to Claude sessions come from and their replies go to. The same path after a
+# restart, so an address handed out before one still reaches it.
+REPLY_DIR = RUN_DIR / "r"
 SELF = Path(__file__).resolve()
 JCL = SELF.parent / "jcl"
 CLAUDE_SESSIONS = Path.home() / ".claude" / "sessions"
+CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 # What the user typed to get here: `jcl bridge` says so, and hints name the
 # command that works there - jcl bridge has no send, being a person's
 PROG = os.environ.get("AGENT_BRIDGE_PROG") or "agent-bridge"
 
-LOG_MAX = 256 << 10       # bytes a log reaches before turn_logs() turns it over
-OUTBOUND_MARK = "[bridge-outbound]"
-SCAN_EVERY = 30          # seconds between looks for Codex sessions
-IDLE_EXIT = 15 * 60      # daemon leaves after this long with no stand-in and no request
-SEND_TIMEOUT = 90        # one stand-in turn: a Haiku call and a SendMessage
-RATE_LIMIT = (20, 600)   # messages per (sender, target) pair per window, in seconds
-PROXY_PROMPT = (
-    "You are a relay. When a user turn starting with [bridge-outbound] arrives, call the "
-    "SendMessage tool exactly once with to=\"placeholder\" and message=\"placeholder\"; "
-    "the real values are filled in for you. Never do anything else."
-)
+LOG_MAX = 256 << 10       # bytes the log reaches before turn_logs() turns it over
+SCAN_EVERY = 30           # seconds between looks for sessions
+IDLE_EXIT = 15 * 60       # daemon leaves after this long with no Codex session and no request
+CONFIRM_WAIT = 10         # seconds a send looks for its message in the recipient's transcript
+SEND_TIMEOUT = 150        # a send: up to two scans (jcl, 60 s each) and the confirmation
+LINE_MAX = 1_000_000      # Claude takes a same-machine message of about a million characters
+RATE_LIMIT = (20, 600)    # messages per (sender, target) pair per window, in seconds
+# The permission modes in which a session holds what another session sends for
+# its user's approval: bypassPermissions, and plan where bypass is available
+HOLDING_MODES = ("bypassPermissions", "plan")
 ENVELOPE_RE = re.compile(r"<cross-session-message\s+([^>]*)>\n?(.*?)\n?</cross-session-message>", re.S)
 ATTR_RE = re.compile(r'([\w-]+)="([^"]*)"')
 
@@ -85,15 +85,12 @@ def log(msg):
         fh.write(f"{time.strftime('%m-%d %H:%M:%S')} {msg}\n")
 
 
-def turn_logs(in_use):
-    """Keep the logs in RUN_DIR small, nothing else cleaning /var/tmp.
+def turn_logs():
+    """Keep the log in RUN_DIR small, nothing else cleaning /var/tmp.
 
-    Called by the daemon alone. A log past LOG_MAX is turned over, so each is
-    two files at most, the current one and the one before: daemon.log becomes
-    daemon.log.1, and the daemon's own stdout and stderr move on to the new
-    file with it; a stand-in's log is copied to its .1 and emptied in place,
-    the stand-in appending to it. The logs of a Codex session that is gone go
-    a day after their last line.
+    Called by the daemon alone. Past LOG_MAX, daemon.log becomes daemon.log.1
+    and the daemon's own stdout and stderr move on to the new file with it: two
+    files at most, the current one and the one before.
     """
     try:
         if LOG.stat().st_size > LOG_MAX:
@@ -104,17 +101,6 @@ def turn_logs(in_use):
             os.close(fd)
     except OSError:
         pass
-    for path in RUN_DIR.glob("stand-in-*.log*"):
-        try:
-            st = path.stat()
-            if path.name.split(".log")[0] + ".log" not in in_use:
-                if time.time() - st.st_mtime > 86400:
-                    path.unlink()
-            elif path.name.endswith(".log") and st.st_size > LOG_MAX:
-                shutil.copyfile(path, path.with_name(path.name + ".1"))
-                os.truncate(path, 0)
-        except OSError:
-            pass
 
 
 def secure_run_dir():
@@ -125,15 +111,15 @@ def secure_run_dir():
         raise SystemExit(f"agent-bridge: {RUN_DIR} must be a 0700 directory owned by you")
 
 
-def parse_envelopes(prompt):
-    """Each cross-session message in a stand-in's prompt, as dicts.
+def parse_envelopes(content):
+    """Each cross-session message in a message's content, as dicts.
 
-    The envelope is Claude Code's own format, read here and nowhere else: it is
-    the one internal detail this tool depends on. Several messages that queued
-    up while the stand-in was busy can arrive in one prompt.
+    The envelope is Claude Code's own wrapping of a peer message: SendMessage
+    puts one around the text of each line it writes into an inbox, a reply to
+    a Codex session included.
     """
     found = []
-    for match in ENVELOPE_RE.finditer(prompt):
+    for match in ENVELOPE_RE.finditer(content):
         attrs = {k: html.unescape(v) for k, v in ATTR_RE.findall(match[1])}
         found.append({"from": attrs.get("from", ""), "from_name": attrs.get("from-name", ""),
                       "text": match[2]})
@@ -143,43 +129,170 @@ def parse_envelopes(prompt):
 def messaging_name(rec):
     """The name a Codex session is reached by: its title, as jcl shows it.
 
-    Untitled, the tail of its id: the head of a UUIDv7 is a timestamp, which
-    two sessions started together share (two stand-ins came up as
-    codex-01a12630, 2026-10-10).
+    Spaces become hyphens, as in the names Claude gives its sessions, so a name
+    copied off the screen needs no quotes (2026-10-12). Untitled, the tail of
+    its id: the head of a UUIDv7 is a timestamp, which two sessions started
+    together share (two came up as codex-01a12630, 2026-10-10).
     """
-    name = " ".join((rec.get("name") or "").split())[:60]
+    name = "-".join((rec.get("name") or "").split())[:60]
     return name or f"codex-{rec['session_id'][-6:]}"
 
 
 def unique_names(records):
     """Codex session id -> a name no other session on the host answers to.
 
-    Claude does not rename a stand-in whose --name another session holds, so
-    the clash is settled here: the later one gets the tail of its id appended.
+    A Codex session signs its messages to Claude sessions with it. One the same
+    as a Claude session's would send a reply by name to that session, so the
+    later one gets the tail of its id appended.
     """
     taken = {r.get("name") for r in records if r.get("agent") == "claude" and r.get("name")}
     names = {}
     for rec in sorted((r for r in records if r.get("agent") == "codex"), key=lambda r: r["session_id"]):
         name = messaging_name(rec)
         if name in taken:
-            name = f"{name} ({rec['session_id'][-4:]})"
+            name = f"{name}-{rec['session_id'][-4:]}"
         taken.add(name)
         names[rec["session_id"]] = name
     return names
 
 
 def codex_message(from_name, reply_to, text):
-    """What a Codex session reads: who sent it, how to answer, then the text."""
-    return (f"Message from @{from_name} - another agent, not Peter. Reply with: "
+    """What a Codex session reads: who sent it, how to answer, then the text.
+
+    The first line is all the bridge adds: Codex has no envelope to say who a
+    message is from. The text is the sender's, untouched, and the line names
+    nobody else - Peter included, who is no party to it (2026-10-12).
+    """
+    return (f"Message from @{from_name} - another agent. Reply with: "
             f"agent-bridge send --to {shlex.quote(reply_to)} '<your reply>'\n{text}")
 
 
-def find_claude():
-    found = shutil.which("claude")
-    if found:
-        return found
-    hits = sorted(glob.glob(str(Path.home() / ".nvm/versions/node/*/bin/claude")))
-    return hits[-1] if hits else "claude"
+def _attr(value):
+    """An envelope attribute's value, escaped as parse_envelopes() unescapes it."""
+    return html.escape(value, quote=False).replace('"', "&quot;")
+
+
+def inbox_line(reply, from_name, text, msg_id):
+    """One message as SendMessage writes it into an inbox (Claude Code 2.1.283).
+
+    Claude Code documents its inbox socket for scripts to post into, but not
+    this line: it is SendMessage's own, captured byte for byte (2026-10-12).
+    `from` is where a reply goes. from-mode says prompting, which the bridge
+    is: a session that bypasses permission prompts holds the message for its
+    user, as it holds one from any prompting session. A closing tag in the
+    text would end the envelope early, so it is escaped.
+    """
+    address = f"uds:{reply}"
+    body = text.replace("</cross-session-message", "&lt;/cross-session-message")
+    content = (f'<cross-session-message from="{_attr(address)}" from-name="{_attr(from_name)}"'
+               f' from-mode="prompting">\n{body}\n</cross-session-message>')
+    return json.dumps({"msgV": 1, "msg_id": msg_id, "type": "user",
+                       "message": {"role": "user", "content": content},
+                       "priority": "next", "from": address},
+                      ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+def post_to_claude(inbox, reply, from_name, text):
+    """Write one message into a Claude session's inbox socket; its msg_id.
+
+    OSError when the inbox takes no connection, the session having gone;
+    ValueError for a message past what a Claude session takes.
+    """
+    msg_id = str(uuid.uuid4())
+    line = inbox_line(reply, from_name, text, msg_id)
+    if len(line) > LINE_MAX:
+        raise ValueError(f"{len(line)} characters, more than the {LINE_MAX} a Claude session takes")
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.settimeout(10)
+        sock.connect(str(inbox))
+        sock.sendall(line.encode())
+    return msg_id
+
+
+def claude_registry(pid):
+    """A Claude session's own record, ~/.claude/sessions/<pid>.json, or {}."""
+    try:
+        return json.loads((CLAUDE_SESSIONS / f"{pid}.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def claude_transcript(session_id):
+    """A Claude session's transcript under ~/.claude/projects, or None."""
+    return next(CLAUDE_PROJECTS.glob(f"*/{session_id}.jsonl"), None)
+
+
+def last_permission_mode(transcript):
+    """The permission mode a Claude session last recorded in its transcript, or ""."""
+    try:
+        with open(transcript, "rb") as fh:
+            fh.seek(max(0, fh.seek(0, os.SEEK_END) - (1 << 20)))
+            found = re.findall(rb'"permissionMode":"([A-Za-z]+)"', fh.read())
+    except (OSError, TypeError):
+        return ""
+    return found[-1].decode() if found else ""
+
+
+def permission_mode(rec, transcript):
+    """A Claude session's permission mode: the last its transcript records, else its command line's.
+
+    A session that has had no turn yet has recorded none; one started with
+    --dangerously-skip-permissions or --permission-mode says so in its argv.
+    """
+    mode = last_permission_mode(transcript)
+    if mode:
+        return mode
+    try:
+        argv = Path(f"/proc/{rec.get('pid')}/cmdline").read_bytes().decode(errors="replace").split("\0")
+    except OSError:
+        return ""
+    for n, arg in enumerate(argv):
+        if arg == "--dangerously-skip-permissions":
+            return "bypassPermissions"
+        if arg == "--permission-mode" and n + 1 < len(argv):
+            return argv[n + 1]
+        if arg.startswith("--permission-mode="):
+            return arg.split("=", 1)[1]
+    return ""
+
+
+def confirm_delivery(rec, transcript, offset, msg_id, wait=CONFIRM_WAIT):
+    """Whether a Claude session took a message.
+
+    "delivered", "busy", "waiting", "held" or "unconfirmed". Claude Code writes
+    each peer message it delivers into the session's transcript with the
+    sender's msg_id (origin.msg_id): an idle session at once, a busy one at its
+    next tool call. Not there after `wait` seconds, the session's own status
+    says why - busy, or waiting on its user - and its permission mode whether
+    it holds messages for its user's approval, which it tells no address the
+    bridge has (2026-10-12). An idle session that holds nothing and has not
+    taken it no longer reads the line inbox_line() writes: a Claude Code
+    upgrade has changed it.
+    """
+    needle = msg_id.encode()
+    deadline = time.monotonic() + wait
+    while True:
+        transcript = transcript or claude_transcript(rec["session_id"])
+        if transcript:
+            try:
+                with open(transcript, "rb") as fh:
+                    fh.seek(offset)
+                    if needle in fh.read():
+                        return "delivered"
+            except OSError:
+                pass
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.25)
+    status = claude_registry(rec.get("pid")).get("status")
+    if status in ("busy", "waiting"):
+        return status
+    return "held" if permission_mode(rec, transcript) in HOLDING_MODES else "unconfirmed"
+
+
+def reply_socket(thread):
+    """The reply socket of a Codex session: where Claude sessions answer it."""
+    return REPLY_DIR / f"{thread}.sock"
 
 
 def codex_command():
@@ -223,31 +336,12 @@ def deliver_to_codex(thread, text):
     return False, reason
 
 
-def is_stand_in(pid):
-    """Whether a process is one of these stand-ins (every daemon's, not just this one's)."""
-    try:
-        return b"\0AGENT_BRIDGE_PROXY=" in b"\0" + Path(f"/proc/{pid}/environ").read_bytes()
-    except OSError:
-        return False
-
-
 def own_view(records):
-    """`jcl list --json` as the bridge needs it.
-
-    jcl lists the stand-ins as Claude sessions of their own: kept, their names
-    would count as taken by Claude and every stand-in would be renamed away from
-    itself on the next scan. A Claude session's inbox comes from its session file.
-    """
+    """`jcl list --json` as the bridge needs it: each Claude session with its inbox."""
     view = []
     for rec in records:
         if rec.get("agent") == "claude":
-            if is_stand_in(rec.get("pid")):
-                continue
-            try:
-                data = json.loads((CLAUDE_SESSIONS / f"{rec.get('pid')}.json").read_text())
-            except (OSError, ValueError):
-                data = {}
-            rec = {**rec, "inbox": data.get("messagingSocketPath") or ""}
+            rec = {**rec, "inbox": claude_registry(rec.get("pid")).get("messagingSocketPath") or ""}
         view.append(rec)
     return view
 
@@ -311,16 +405,6 @@ def where_of(rec):
     return rec.get("target") or ("desktop" if rec.get("origin") == "desktop" else "-")
 
 
-def proc_rss_mb(pid):
-    try:
-        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) // 1024
-    except OSError:
-        pass
-    return 0
-
-
 def request(msg, timeout=10.0):
     """One request to the daemon over its socket, one JSON reply back."""
     with socket.socket(socket.AF_UNIX) as sock:
@@ -357,137 +441,44 @@ def ensure_daemon(wait=10.0):
     return False
 
 
-class StandIn:
-    """One headless Claude session standing in for one Codex session."""
+class ReplyHandler(socketserver.StreamRequestHandler):
+    """One connection to a reply socket: a Claude session answering a Codex session."""
 
-    def __init__(self, thread, wanted):
-        self.thread = thread
-        self.wanted = wanted        # the name asked for: the Codex session's title
-        self.name = ""              # what Claude registered; differs on a name clash
-        self.proc = None
-        self.started = 0.0
-        self.sent = 0
-        self.lock = threading.Lock()   # one outbound turn at a time
-        self.pending = None
+    timeout = 30      # what Claude Code gives a connection to its own inbox
 
-    def alive(self):
-        return self.proc is not None and self.proc.poll() is None
-
-    def start(self):
-        hook = lambda kind: f"{shlex.quote(sys.executable)} {shlex.quote(str(SELF))} hook {kind}"
-        settings = {
-            "crossSessionInbound": "accept",
-            "hooks": {
-                "UserPromptSubmit": [{"hooks": [{"type": "command", "command": hook("inbound")}]}],
-                "PreToolUse": [{"matcher": "SendMessage",
-                                "hooks": [{"type": "command", "command": hook("pretool")}]}],
-                "PostToolUse": [{"matcher": "SendMessage",
-                                 "hooks": [{"type": "command", "command": hook("posttool")}]}],
-            },
-        }
-        cmd = [find_claude(), "-p", "--input-format", "stream-json", "--output-format", "stream-json",
-               "--verbose", "--name", self.wanted, "--model", "haiku", "--restricted",
-               "--strict-mcp-config", "--tools", "SendMessage", "--settings", json.dumps(settings),
-               "--append-system-prompt", PROXY_PROMPT,
-               # No transcript: it held nothing but relays, ~55 KB a stand-in,
-               # on the NFS home under ~/.claude/projects (2026-10-11)
-               "--no-session-persistence"]
-        # Its own environment: inheriting TMUX_PANE files the stand-in under the
-        # pane of whoever started the daemon, and jcl would list it there
-        env = {k: v for k, v in os.environ.items()
-               if not k.startswith(("CLAUDE_CODE_", "CODEX_", "TMUX")) and k != "CLAUDECODE"}
-        env["AGENT_BRIDGE_PROXY"] = self.thread
-        PROXY_CWD.mkdir(parents=True, exist_ok=True)
-        # Appended to, and emptied here: turn_logs() can then empty it in place
-        # and the stand-in carries on writing at its start
-        out = open(RUN_DIR / f"stand-in-{self.thread[:8]}.log", "a")
-        out.truncate(0)
-        self.proc = subprocess.Popen(cmd, cwd=PROXY_CWD, stdin=subprocess.PIPE, stdout=out,
-                                     stderr=subprocess.STDOUT, text=True, env=env,
-                                     start_new_session=True)
-        out.close()
-        self.started = time.time()
-        self.sent = 0
-        session = CLAUDE_SESSIONS / f"{self.proc.pid}.json"
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and self.alive():
-            try:
-                self.name = json.loads(session.read_text()).get("name") or ""
-                if self.name:
-                    break
-            except (OSError, ValueError):
-                pass
-            time.sleep(0.5)
-        log(f"stand-in for {self.thread} started as {self.name or '?'!r} (pid {self.proc.pid})")
-
-    def stop(self):
-        if not self.alive():
-            return
+    def handle(self):
         try:
-            self.proc.stdin.close()
-            self.proc.wait(timeout=15)
-        except (OSError, subprocess.TimeoutExpired):
-            self.proc.terminate()
-        log(f"stand-in for {self.thread} ({self.name!r}) stopped")
+            for raw in iter(lambda: self.rfile.readline(LINE_MAX + 1), b""):
+                self.server.bridge.reply_line(self.server.thread, raw)
+        except OSError:
+            pass
 
-    def send(self, to, message):
-        """Have the stand-in SendMessage `message` to `to`; (ok, detail)."""
-        with self.lock:
-            if not self.alive():
-                return False, "the stand-in for this Codex session is not running"
-            done = threading.Event()
-            self.pending = {"to": to, "message": message, "claimed": False, "done": done,
-                            "result": (False, "the stand-in did not send")}
-            try:
-                line = {"type": "user", "message": {"role": "user",
-                                                    "content": f"{OUTBOUND_MARK} send now"}}
-                self.proc.stdin.write(json.dumps(line) + "\n")
-                self.proc.stdin.flush()
-            except OSError as exc:
-                self.pending = None
-                return False, f"cannot reach the stand-in: {exc}"
-            if not done.wait(SEND_TIMEOUT):
-                self.pending["result"] = (False, "timed out waiting for the stand-in to send")
-            result, self.pending = self.pending["result"], None
-            self.sent += 1
-            return result
 
-    def claim(self):
-        """The message the PreToolUse hook should put into SendMessage, once."""
-        pending = self.pending
-        if not pending or pending["claimed"]:
-            return None
-        pending["claimed"] = True
-        return {"to": pending["to"], "message": pending["message"]}
+class ReplyServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    """The reply socket of one Codex session."""
 
-    def settle(self, response):
-        """Record what SendMessage answered (PostToolUse) and release send()."""
-        pending = self.pending
-        if not pending:
-            return
-        if isinstance(response, dict):
-            ok = bool(response.get("success"))
-            detail = str(response.get("message") or response.get("error") or "")
-        else:
-            text = str(response or "")
-            ok, detail = not text.startswith("Not sent"), text
-        pending["result"] = (ok, detail)
-        pending["done"].set()
+    daemon_threads = True
+
+    def __init__(self, thread, bridge):
+        self.thread, self.bridge = thread, bridge
+        super().__init__(str(reply_socket(thread)), ReplyHandler)
 
 
 class Daemon:
     def __init__(self):
-        self.stand_ins = {}           # Codex thread id -> StandIn
+        self.replies = {}             # Codex thread id -> its ReplyServer
+        self.names = {}               # Codex thread id -> the name its messages are signed with
         self.started = time.time()
         self.lock = threading.RLock()
+        self.reply_lock = threading.RLock()   # binding and closing reply sockets
         self.sessions = []            # last `jcl list --json`
         self.last_activity = time.time()
         self.deliveries = queue.Queue()
         self.rate = collections.defaultdict(collections.deque)
         self.stop_event = threading.Event()
         self.scan_lock = threading.Lock()
-        # Set once the first scan has started its stand-ins: answered before
-        # that, peers listed every Codex session as unreachable
+        # Set once the first scan is done: answered before it, peers listed
+        # nobody
         self.scanned = threading.Event()
         # (sender, Codex thread) -> the interruption a sender was told of, so
         # each hears once that the session holds its messages, not per message
@@ -497,8 +488,12 @@ class Daemon:
         return [r for r in self.sessions if r.get("agent") == "codex" and r.get("alive")
                 and r.get("kind") in ("", "interactive", None)]
 
+    def claude_sessions(self):
+        return [r for r in self.sessions if r.get("agent") == "claude" and r.get("alive")
+                and r.get("kind") in ("", "interactive", None)]
+
     def scan(self):
-        """Look for Codex sessions; start, rename or stop stand-ins to match."""
+        """Look for sessions; keep a reply socket for each Codex session that can take a message."""
         with self.scan_lock:
             try:
                 out = subprocess.run([str(JCL), "list", "--json"], capture_output=True, text=True,
@@ -507,48 +502,56 @@ class Daemon:
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                 log(f"scan failed: {exc}")
                 return
-            names = unique_names([r for r in self.sessions if r.get("agent") == "claude"]
-                                 + self.codex_sessions())
-            wanted = {r["session_id"]: names[r["session_id"]] for r in self.codex_sessions()
-                      if not r.get("empty")}
+            self.names = unique_names([r for r in self.sessions if r.get("agent") == "claude"]
+                                      + self.codex_sessions())
+            live = {r["session_id"] for r in self.codex_sessions() if not r.get("empty")}
             with self.lock:
-                current = dict(self.stand_ins)
-            # No restart for the history a stand-in piles up (~325 tokens a
-            # relay): Claude Code compacts it near the limit, and a restart
-            # changes the address its correspondents reply to (2026-10-11)
-            for thread, stand_in in current.items():
-                if thread not in wanted or not stand_in.alive() or stand_in.wanted != wanted[thread]:
-                    stand_in.stop()
-                    with self.lock:
-                        self.stand_ins.pop(thread, None)
-            for thread, name in wanted.items():
-                with self.lock:
-                    if thread in self.stand_ins:
-                        continue
-                stand_in = StandIn(thread, name)
-                stand_in.start()
-                with self.lock:
-                    self.stand_ins[thread] = stand_in
-            self.write_state()
+                kept = list(self.replies)
+            for thread in kept:
+                if thread not in live:
+                    self.close_reply(thread)
+            for thread in live:
+                self.open_reply(thread)
             self.scanned.set()
 
-    def write_state(self):
-        with self.lock:
-            state = {"updated": time.time(), "stand_ins": {
-                t: {"name": s.name, "wanted": s.wanted, "pid": s.proc.pid if s.proc else 0}
-                for t, s in self.stand_ins.items() if s.alive()}}
-        tmp = STATE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state))
-        tmp.replace(STATE)
+    def open_reply(self, thread):
+        """Bind a Codex session's reply socket unless it is bound; whether it is."""
+        with self.reply_lock:
+            with self.lock:
+                server = self.replies.get(thread)
+            if server and reply_socket(thread).exists():
+                return True
+            if server:          # its file removed from under it
+                self.close_reply(thread)
+            REPLY_DIR.mkdir(mode=0o700, exist_ok=True)
+            reply_socket(thread).unlink(missing_ok=True)
+            try:
+                server = ReplyServer(thread, self)
+            except OSError as exc:
+                log(f"reply socket for codex {thread}: {exc}")
+                return False
+            os.chmod(reply_socket(thread), 0o600)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            with self.lock:
+                self.replies[thread] = server
+        return True
 
-    def stand_in(self, thread):
-        with self.lock:
-            stand_in = self.stand_ins.get(thread)
-        if stand_in and stand_in.alive():
-            return stand_in
-        self.scan()
-        with self.lock:
-            return self.stand_ins.get(thread)
+    def close_reply(self, thread):
+        with self.reply_lock:
+            with self.lock:
+                server = self.replies.pop(thread, None)
+            if not server:
+                return
+            server.shutdown()
+            server.server_close()
+            reply_socket(thread).unlink(missing_ok=True)
+
+    def reply_owner(self, path):
+        """The live Codex session a reply socket path belongs to, or None."""
+        path = Path(path)
+        if path.parent != REPLY_DIR or path.suffix != ".sock":
+            return None
+        return path.stem if any(r["session_id"] == path.stem for r in self.codex_sessions()) else None
 
     def claude_name(self, address):
         """The name of the Claude session a SendMessage address reaches."""
@@ -563,37 +566,32 @@ class Daemon:
         return interrupted_at(rec) if rec else None
 
     def name_of(self, thread):
-        with self.lock:
-            stand_in = self.stand_ins.get(thread)
-        if stand_in and stand_in.name:
-            return stand_in.name
+        """The name a Codex session's messages are signed with."""
+        if thread in self.names:
+            return self.names[thread]
         rec = next((r for r in self.codex_sessions() if r["session_id"] == thread), None)
-        return messaging_name(rec) if rec else f"codex-{thread[:8]}"
-
-    def claude_sessions(self):
-        return [r for r in self.sessions if r.get("agent") == "claude" and r.get("alive")
-                and r.get("kind") in ("", "interactive", None)]
+        return messaging_name(rec) if rec else f"codex-{thread[-6:]}"
 
     def resolve(self, target):
-        """("codex", thread id) or ("claude", SendMessage address) for a --to.
+        """("codex", thread id) or ("claude", a name or uds: address) for a --to.
 
         A --to is a session's name, its session id or the first 8 or more
         characters of it (jcl's SESSION ID column), or the uds: address a
-        message came from. A Claude session named by id is reached through its
-        own inbox, uds:<socket>; one named by name is left to SendMessage. An id
-        start shared by two sessions is refused rather than guessed: a Codex id
-        is a UUIDv7, whose head is a timestamp, so sessions started within the
-        same minute share it.
+        message came from: a Claude session's inbox, or a Codex session's reply
+        socket. A Claude session named by id is reached through its own inbox,
+        uds:<socket>. An id start shared by two sessions is refused rather than
+        guessed: a Codex id is a UUIDv7, whose head is a timestamp, so sessions
+        started within the same minute share it.
         """
         if target.startswith("uds:"):
-            return "claude", target
-        with self.lock:
-            for thread, stand_in in self.stand_ins.items():
-                if target in (stand_in.name, stand_in.wanted):
-                    return "codex", thread
+            thread = self.reply_owner(target[4:])
+            return ("codex", thread) if thread else ("claude", target)
+        # A Codex title typed with its spaces, as names read before 2026-10-12
+        wanted = "-".join(target.split())
         for rec in self.codex_sessions():
-            if target in (rec["session_id"], messaging_name(rec)):
-                return "codex", rec["session_id"]
+            thread = rec["session_id"]
+            if wanted in (thread, self.names.get(thread), messaging_name(rec)):
+                return "codex", thread
         hits = []
         if len(target) >= 8 and re.fullmatch(r"[0-9a-fA-F-]+", target):
             hits = [r for r in self.codex_sessions() + self.claude_sessions()
@@ -602,13 +600,32 @@ class Daemon:
             raise LookupError(f"{target} starts {len(hits)} session ids ("
                               + ", ".join(r["session_id"] for r in hits) + "); give more of it")
         if not hits:
-            return "claude", target     # a Claude session's name: SendMessage resolves it
+            return "claude", target     # a Claude session's name
         rec = hits[0]
         if rec["agent"] == "codex":
             return "codex", rec["session_id"]
         if not rec.get("inbox"):
             raise LookupError(f"Claude session {rec['session_id']} has no inbox to deliver to")
         return "claude", f"uds:{rec['inbox']}"
+
+    def claude_target(self, dst):
+        """The live Claude session a --to names, by its inbox's uds: address or by its name."""
+        for look in range(2):
+            if dst.startswith("uds:"):
+                hits = [r for r in self.claude_sessions() if f"uds:{r.get('inbox')}" == dst]
+            else:
+                hits = [r for r in self.claude_sessions() if r.get("name") == dst]
+            if hits or look:
+                break
+            self.scan()        # a session started, or renamed, since the last look
+        if not hits:
+            raise LookupError(f"no session {dst!r} on this host; `agent-bridge peers` lists them")
+        if len(hits) > 1:
+            raise LookupError(f"{len(hits)} Claude sessions are named {dst!r}; give one's session id ("
+                              + ", ".join(r["session_id"] for r in hits) + ")")
+        if not hits[0].get("inbox"):
+            raise LookupError(f"Claude session {dst!r} has no inbox to deliver to")
+        return hits[0]
 
     def allowed(self, src, dst):
         count, window = RATE_LIMIT
@@ -626,30 +643,17 @@ class Daemon:
         op = req.get("op")
         if op == "ping":
             return {"ok": True}
-        if op == "claim":
-            stand_in = self.stand_ins.get(req.get("thread", ""))
-            return {"ok": True, "outbound": stand_in.claim() if stand_in else None}
-        if op == "result":
-            stand_in = self.stand_ins.get(req.get("thread", ""))
-            if stand_in:
-                stand_in.settle(req.get("response"))
-            return {"ok": True}
-        if op == "inbound":
-            return self.inbound(req)
         if op == "send":
             return self.send(req)
         if op == "scan":
             self.scan()
-            return {"ok": True, "state": json.loads(STATE.read_text())}
+            return {"ok": True}
         if op == "status":
-            where = {r["session_id"]: where_of(r) for r in self.codex_sessions()}
             with self.lock:
-                rows = [{"thread": t, "name": s.name, "wanted": s.wanted, "pid": s.proc.pid,
-                         "alive": s.alive(), "rss_mb": proc_rss_mb(s.proc.pid),
-                         "uptime": int(time.time() - s.started), "sent": s.sent,
-                         "where": where.get(t, "-")}
-                        for t, s in self.stand_ins.items() if s.proc]
-            return {"ok": True, "stand_ins": rows, "pid": os.getpid(), "started": self.started}
+                relayed = set(self.replies)
+            rows = [{"thread": r["session_id"], "name": self.name_of(r["session_id"]), "where": where_of(r)}
+                    for r in self.codex_sessions() if r["session_id"] in relayed]
+            return {"ok": True, "codex": rows, "pid": os.getpid(), "started": self.started}
         if op == "peers":
             if not self.scanned.wait(90):
                 self.scan()
@@ -659,8 +663,53 @@ class Daemon:
             return {"ok": True}
         return {"ok": False, "error": f"unknown op {op!r}"}
 
+    def reply_line(self, thread, raw):
+        """A line on a Codex session's reply socket: a Claude session answering it."""
+        self.last_activity = time.time()
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            log(f"reply socket of codex {thread}: a line that is not JSON, dropped")
+            return
+        kind = msg.get("type")
+        if kind == "auth":
+            return
+        if kind == "control":
+            self.notice_from_claude(thread, msg)
+            return
+        if kind != "user":
+            log(f"reply socket of codex {thread}: a {kind!r} line, dropped")
+            return
+        content = (msg.get("message") or {}).get("content") or ""
+        if not isinstance(content, str):     # content blocks, should a sender ever use them
+            content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
+        messages = (parse_envelopes(content)
+                    or [{"from": msg.get("from", ""), "from_name": "", "text": content}])
+        self.inbound({"thread": thread, "messages": messages})
+
+    def notice_from_claude(self, thread, msg):
+        """Claude's word on a message it has not delivered, passed on to the Codex session.
+
+        A receipt names the session that sends it (from) and says why (status,
+        reason), not which message (2.1.283). Claude Code sends one only to a
+        reply address named after the sending process's pid in its own socket
+        directory, which no reply socket here is (2026-10-12): this is for the
+        day that changes.
+        """
+        status = msg.get("status")
+        log(f"reply socket of codex {thread}: {msg.get('action')} {status!r} from {msg.get('from')!r}")
+        if msg.get("action") != "peer_message_status" or status in (None, "delivered"):
+            return
+        who = self.claude_name(msg.get("from") or "") or "a Claude session"
+        words = {"held": "holds your message for its user's approval", "refused": "refused your message",
+                 "expired": "dropped your message, its user not having approved it in time",
+                 "dropped": "dropped your message"}
+        ok, detail = deliver_to_codex(thread, f"agent-bridge: {who} {words.get(status, status)}.")
+        if not ok:
+            log(f"notice to codex {thread} not queued: {detail}")
+
     def inbound(self, req):
-        """Claude -> Codex: the stand-in's hook hands over what arrived."""
+        """Claude -> Codex: what arrived on a Codex session's reply socket."""
         thread = req.get("thread", "")
         for msg in req.get("messages", []):
             src = msg.get("from_name") or msg.get("from") or "unknown session"
@@ -669,6 +718,21 @@ class Daemon:
                 continue
             self.deliveries.put({"thread": thread, "msg": msg})
         return {"ok": True}
+
+    def notify_claude(self, thread, address, text):
+        """A word from the bridge to a Claude session about its message to a Codex session.
+
+        It comes from that Codex session's reply socket, so an answer to it
+        goes to the Codex session.
+        """
+        rec = next((r for r in self.claude_sessions() if f"uds:{r.get('inbox')}" == address), None)
+        if not rec or not self.open_reply(thread):
+            log(f"notice to {address!r} not sent: no such Claude session, or no reply socket")
+            return
+        try:
+            post_to_claude(rec["inbox"], reply_socket(thread), "agent-bridge", text)
+        except (OSError, ValueError) as exc:
+            log(f"notice to {address!r} not sent: {exc}")
 
     def delivery_worker(self):
         while not self.stop_event.is_set():
@@ -682,43 +746,86 @@ class Daemon:
             text = msg["text"] if reply_to else f"[sender not identified]\n{msg['text']}"
             ok, detail = deliver_to_codex(thread, codex_message(name, reply_to or name, text))
             log(f"to codex {thread} from {name!r}: {'queued' if ok else 'FAILED ' + detail}")
-            if ok and reply_to:
-                held = self.held_since(thread)
-                stand_in = self.stand_in(thread)
-                if held and stand_in and self.held_told.get((reply_to, thread)) != held:
-                    self.held_told[(reply_to, thread)] = held
-                    notice = (f"agent-bridge: your message to {self.name_of(thread)} is queued, but "
-                              "its last turn was interrupted: it reads queued messages only after "
-                              "its next typed one")
-                    threading.Thread(target=stand_in.send, args=(reply_to, notice), daemon=True).start()
-            if not ok and reply_to:
-                # Tell the sender, the way an undeliverable message would be told
-                stand_in = self.stand_in(thread)
-                if stand_in:
-                    notice = (f"agent-bridge: your message to {self.name_of(thread)} was not "
-                              f"delivered: {detail}")
-                    threading.Thread(target=stand_in.send, args=(reply_to, notice), daemon=True).start()
+            if not reply_to.startswith("uds:"):
+                continue         # nobody to tell
+            if not ok:
+                # Told the way an undeliverable message is told
+                self.notify_claude(thread, reply_to, f"agent-bridge: your message to {self.name_of(thread)}"
+                                                     f" was not delivered: {detail}")
+                continue
+            held = self.held_since(thread)
+            if held and self.held_told.get((reply_to, thread)) != held:
+                self.held_told[(reply_to, thread)] = held
+                self.notify_claude(thread, reply_to,
+                                   f"agent-bridge: your message to {self.name_of(thread)} is queued, but"
+                                   " its last turn was interrupted: it reads queued messages only after"
+                                   " its next typed one")
+
+    def post(self, thread, rec, text):
+        """A Codex session's message, written into a Claude session's inbox; send's answer."""
+        to = rec.get("name") or rec["session_id"][:8]
+        if not self.open_reply(thread):
+            return {"ok": False, "error": f"this Codex session has no reply socket; see {LOG}"}
+        # The session's own record, now: its id changes with a /clear, and the
+        # transcript the message lands in with it
+        registry = claude_registry(rec.get("pid"))
+        target = {**rec, "session_id": registry.get("sessionId") or rec["session_id"]}
+        transcript = claude_transcript(target["session_id"])
+        try:
+            offset = transcript.stat().st_size if transcript else 0
+        except OSError:
+            transcript, offset = None, 0
+        try:
+            msg_id = post_to_claude(registry.get("messagingSocketPath") or rec["inbox"],
+                                    reply_socket(thread), self.name_of(thread), text)
+        except ValueError as exc:
+            return {"ok": False, "error": f"too long: {exc}"}
+        except OSError as exc:
+            return {"ok": False, "error": f"{to} takes no messages ({exc}); has it exited?"}
+        state = confirm_delivery(target, transcript, offset, msg_id)
+        if state == "unconfirmed":
+            version = registry.get("version") or "?"
+            detail = (f"not confirmed: {to} is idle and holds nothing, but has not taken it - its"
+                      f" Claude Code ({version}) may read its inbox differently now")
+            log(f"WARNING codex {thread} -> claude {to!r}: {detail} (msg_id {msg_id})")
+        else:
+            detail = {"delivered": "delivered",
+                      "busy": "queued: it is busy, and reads it at its next tool call",
+                      "waiting": "queued: it is waiting for its user",
+                      "held": "held: its permission mode keeps messages from other sessions for"
+                              " its user's approval"}[state]
+            log(f"codex {thread} -> claude {to!r}: {detail}")
+        return {"ok": True, "to": to, "detail": detail, "unconfirmed": state == "unconfirmed"}
 
     def send(self, req):
         """`agent-bridge send` from a Codex or a Claude session's shell.
 
-        A Codex session's message to Claude goes out through its stand-in; any
-        message to Codex goes straight into `codex queue`. A Claude session
-        reaching another Claude session needs nothing from here - SendMessage
-        does it - so it is told the address to use instead.
+        Anything to a Codex session goes into `codex queue`. A Codex session's
+        message to a Claude session is written into that session's inbox, from
+        the Codex session's reply socket. A Claude session reaching another
+        Claude session needs nothing from here - SendMessage does it - so it is
+        told the address to use instead.
         """
         sender, target, text = req.get("from") or {}, (req.get("to") or "").strip(), req.get("text", "")
         if not target or not text:
             return {"ok": False, "error": "need --to and a message"}
         agent, src = sender.get("agent"), sender.get("id", "")
         pool = self.codex_sessions if agent == "codex" else self.claude_sessions
-        if not any(r["session_id"] == src for r in pool()):
+
+        def is_sender(r):
+            if agent == "claude" and sender.get("socket"):
+                return r.get("inbox") == sender["socket"]
+            return r["session_id"] == src
+
+        if not any(is_sender(r) for r in pool()):
             self.scan()
-        rec = next((r for r in pool() if r["session_id"] == src), None)
+        rec = next((r for r in pool() if is_sender(r)), None)
         if not rec:
-            return {"ok": False, "error": f"no live {agent} session {src} on this host"}
+            return {"ok": False, "error": f"no live {agent} session {src or sender.get('socket')} on this host"}
+        src = rec["session_id"]
         if agent == "codex":
-            src_name, reply_to, own = self.name_of(src), self.name_of(src), None
+            src_name = reply_to = self.name_of(src)
+            own = f"uds:{reply_socket(src)}"
         else:
             src_name = rec.get("name") or src[:8]
             own = f"uds:{sender.get('socket') or rec.get('inbox')}"
@@ -739,29 +846,21 @@ class Daemon:
         if agent == "claude":
             return {"ok": False, "use_sendmessage": dst,
                     "error": f"from a Claude session, reach a Claude session with SendMessage, to={dst!r}"}
-        stand_in = self.stand_in(src)
-        if not stand_in:
-            return {"ok": False, "error": "this Codex session has no stand-in: it needs one "
-                                          "message of its own before it can take part"}
-        ok, detail = stand_in.send(dst, text)
-        log(f"codex {src} -> {dst!r}: {'sent' if ok else 'FAILED ' + detail}")
-        # SendMessage's own answer is written for the model that called it
-        # ("queued there - a [Cross-session delivery notice] follows if ..."),
-        # and "Sent to df158f35 (...)" was all a sender got to read (2026-10-11)
-        return {"ok": ok, "detail": "delivered" if ok else detail, "to": self.claude_name(dst)}
+        try:
+            claude = self.claude_target(dst)
+        except LookupError as exc:
+            return {"ok": False, "error": str(exc)}
+        return self.post(src, claude, text)
 
     def peers(self):
-        with self.lock:
-            names = {t: s.name for t, s in self.stand_ins.items() if s.alive()}
         rows = []
         for rec in self.sessions:
             if not rec.get("alive") or rec.get("kind") not in ("", "interactive", None):
                 continue
             if rec["agent"] == "codex":
                 thread = rec["session_id"]
-                reach = "empty" if rec.get("empty") else ("yes" if thread in names else "codex only")
-                rows.append({"name": names.get(thread) or messaging_name(rec), "agent": "codex",
-                             "where": where_of(rec), "reachable": reach,
+                rows.append({"name": self.name_of(thread), "agent": "codex", "where": where_of(rec),
+                             "reachable": "empty" if rec.get("empty") else "yes",
                              "session_id": thread, "cwd": rec.get("cwd", "")})
             else:
                 rows.append({"name": rec.get("name") or rec["session_id"][:8], "agent": "claude",
@@ -810,75 +909,22 @@ class Daemon:
         try:
             while not self.stop_event.is_set():
                 self.scan()
+                turn_logs()
                 with self.lock:
-                    idle = not self.stand_ins
-                    in_use = {f"stand-in-{thread[:8]}.log" for thread in self.stand_ins}
-                turn_logs(in_use)
+                    idle = not self.replies
                 if idle and time.time() - self.last_activity > IDLE_EXIT:
-                    log("no Codex session to stand in for, leaving")
+                    log("no Codex session to relay for, leaving")
                     break
                 self.stop_event.wait(SCAN_EVERY)
         finally:
             server.shutdown()
             with self.lock:
-                stand_ins = list(self.stand_ins.values())
-            for stand_in in stand_ins:
-                stand_in.stop()
+                threads = list(self.replies)
+            for thread in threads:
+                self.close_reply(thread)
             SOCKET.unlink(missing_ok=True)
-            STATE.unlink(missing_ok=True)
             log(f"daemon {os.getpid()} down")
         return 0
-
-
-def hook(kind, payload, env=os.environ):
-    """What a stand-in's hook prints for `payload`, or None for nothing."""
-    thread = env.get("AGENT_BRIDGE_PROXY", "")
-    if kind == "inbound":
-        prompt = payload.get("prompt", "")
-        if prompt.startswith(OUTBOUND_MARK):
-            return None      # the daemon's own trigger: the model has to see it
-        messages = parse_envelopes(prompt) or [{"from": "", "from_name": "", "text": prompt}]
-        try:
-            request({"op": "inbound", "thread": thread, "messages": messages})
-            reason = "agent-bridge: handed to the Codex session"
-        except (OSError, ValueError) as exc:
-            reason = f"agent-bridge: daemon unreachable, message dropped ({exc})"
-        # Block in every case: an unblocked prompt would reach the relay model
-        return {"decision": "block", "reason": reason}
-    if kind == "pretool":
-        try:
-            out = request({"op": "claim", "thread": thread}).get("outbound")
-        except (OSError, ValueError):
-            out = None
-        decision = {"hookEventName": "PreToolUse"}
-        if not out:
-            decision.update(permissionDecision="deny",
-                            permissionDecisionReason="agent-bridge: nothing to send")
-        else:
-            decision.update(permissionDecision="allow",
-                            permissionDecisionReason="agent-bridge relays a Codex message",
-                            updatedInput={"to": out["to"], "message": out["message"]})
-        return {"hookSpecificOutput": decision}
-    if kind == "posttool":
-        try:
-            request({"op": "result", "thread": thread, "response": payload.get("tool_response")})
-        except (OSError, ValueError):
-            pass
-        # Ending the turn here is what keeps a message that arrived meanwhile
-        # from being read by the model between tool calls
-        return {"continue": False, "stopReason": "agent-bridge: sent"}
-    raise ValueError(kind)
-
-
-def cmd_hook(args):
-    try:
-        payload = json.load(sys.stdin)
-    except ValueError:
-        payload = {}
-    out = hook(args.kind, payload)
-    if out is not None:
-        print(json.dumps(out))
-    return 0
 
 
 def cmd_daemon(args):
@@ -889,7 +935,6 @@ COLOURS = {
     "RESET": "\033[0m", "BOLD": "\033[1m", "GREY": "\033[90m",
     "RED": "\033[31m", "GREEN": "\033[32m", "BLUE": "\033[34m",
     "MAGENTA": "\033[35m", "CYAN": "\033[36m", "LIGHTYELLOW": "\033[93m",
-    "LIGHTMAGENTA": "\033[95m",
 }
 
 
@@ -929,40 +974,18 @@ def _ago(at, suffix=" ago"):
             return f"{int(secs // size)}{unit}{suffix}"
 
 
-# jcl list's cap on NAME, for status's table: a longer name keeps its start,
-# cut at a "…". --json keeps it whole.
-NAME_WIDTH = 36
-
-
-def _clip_end(text, width):
-    """text, or as much of its start as fits in width columns before a "…"."""
-    if _dwidth(text) <= width:
-        return text
-    while _dwidth(text + "…") > width:
-        text = text[:-1]
-    return text.rstrip() + "…"
-
-
 def _tmux_cell(where):
     # app: Codex Desktop's or an IDE's own session, as jcl list marks it
     return "app" if where == "desktop" else where or "-"
 
 
 def _cell_colour(column, value, c):
-    """jcl list's colours, for the columns these tables share with it."""
-    if column == "CODEX":  # a pane; app, Codex Desktop's own, in codex blue as jcl has it
-        if value == "app":
-            return c["BLUE"]
-        return c["GREY"] if value == "-" else c["CYAN"]
+    """jcl list's colours, for the columns peers shares with it."""
     if column == "AGENT":
         return agent_colour(value, c)
-    if column == "REACHABLE":  # codex only: not in Claude's /list-agents yet
-        return {"yes": c["GREEN"], "codex only": c["LIGHTYELLOW"]}.get(value, c["GREY"])
     if column == "NAME":  # left plain so it stands out against the rest
         return ""
-    if column == "STAND-IN":  # the colour jcl list draws a stand-in in
-        return c["LIGHTMAGENTA"]
-    return c["GREY"]  # SESSION ID, RSS, UP, SENT
+    return c["GREY"]  # SESSION ID
 
 
 def _many(n, noun):
@@ -1018,11 +1041,16 @@ def cmd_start(args):
 
 
 def caller(env=os.environ):
-    """Who is running this: a Codex or a Claude session, by what its shell carries."""
+    """Who is running this: a Codex or a Claude session, by what its shell carries.
+
+    A Claude session by its inbox, CLAUDE_CODE_MESSAGING_SOCKET, which Claude
+    Code documents for scripts; CLAUDE_CODE_SESSION_ID, which it does not, is
+    the fallback.
+    """
     if env.get("CODEX_THREAD_ID"):
         return {"agent": "codex", "id": env["CODEX_THREAD_ID"]}
-    if env.get("CLAUDE_CODE_SESSION_ID"):
-        return {"agent": "claude", "id": env["CLAUDE_CODE_SESSION_ID"],
+    if env.get("CLAUDE_CODE_MESSAGING_SOCKET") or env.get("CLAUDE_CODE_SESSION_ID"):
+        return {"agent": "claude", "id": env.get("CLAUDE_CODE_SESSION_ID", ""),
                 "socket": env.get("CLAUDE_CODE_MESSAGING_SOCKET", "")}
     return None
 
@@ -1034,7 +1062,8 @@ def cmd_send(args):
         # A message goes out as the session whose shell sends it: a terminal
         # has none to send as, and must not pass for Peter typing either
         print(f"{e['RED']}agent-bridge send runs from a Codex or a Claude Code session{e['RESET']}"
-              " (neither CODEX_THREAD_ID nor CLAUDE_CODE_SESSION_ID is set).", file=sys.stderr)
+              " (none of CODEX_THREAD_ID, CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CODE_SESSION_ID"
+              " is set).", file=sys.stderr)
         print(f"{e['GREY']}From a terminal, type into the session itself.{e['RESET']}", file=sys.stderr)
         return 2
     text = " ".join(args.message) if args.message else sys.stdin.read()
@@ -1042,13 +1071,15 @@ def cmd_send(args):
         return daemon_down(e)
     try:
         resp = request({"op": "send", "from": sender, "to": args.to, "text": text},
-                       timeout=SEND_TIMEOUT + 60)
+                       timeout=SEND_TIMEOUT)
     except (OSError, ValueError) as exc:
         print(f"{e['RED']}Not sent{e['RESET']}: {exc}", file=sys.stderr)
         return 1
     if resp.get("ok"):
         detail = f"{c['GREY']} ({resp['detail']}){c['RESET']}" if resp.get("detail") else ""
-        print(f"{c['GREEN']}Sent{c['RESET']} to {resp.get('to') or args.to}{detail}")
+        # Written into its inbox but not seen taken: worth a look, not a resend
+        sent = c["LIGHTYELLOW"] if resp.get("unconfirmed") else c["GREEN"]
+        print(f"{sent}Sent{c['RESET']} to {resp.get('to') or args.to}{detail}")
         if resp.get("held"):
             print(f"{c['LIGHTYELLOW']}Held{c['RESET']}: its last turn was interrupted, so it reads"
                   " queued messages only after its next typed one")
@@ -1073,29 +1104,24 @@ def cmd_peers(args):
     if not peers:
         print(f"{e['RED']}No session to message on this host.{e['RESET']}", file=sys.stderr)
         return 1
-    # An address book, not a second jcl list: what --to takes and whether a
-    # message gets there. Where a session runs and on what is jcl list's to
-    # show (they were columns here once, and the table read as a copy of it).
-    # A name stays whole, being what a sender copies.
-    headers = ("NAME", "AGENT", "SESSION ID", "REACHABLE")
-    rows = [(p["name"] or "", p["agent"], p["session_id"], p["reachable"]) for p in peers]
+    # An address book, not a second jcl list: what --to takes. Where a session
+    # runs and on what is jcl list's to show (they were columns here once, and
+    # the table read as a copy of it). A name stays whole, being what a sender
+    # copies. A REACHABLE column read yes on every row; the rare session a
+    # message cannot reach is named in the summary instead (2026-10-12).
+    headers = ("NAME", "AGENT", "SESSION ID")
+    rows = [(p["name"] or "", p["agent"], p["session_id"]) for p in peers]
     _table(headers, rows, c)
     print()
     agents = collections.Counter(p["agent"] for p in peers)
-    reach = collections.Counter(p["reachable"] for p in peers)
     parts = [f"{c['BOLD']}{len(peers)}{c['RESET']} {'session' if len(peers) == 1 else 'sessions'}"]
     parts += [f"{n} {agent_colour(a, c)}{a}{c['RESET']}" for a, n in sorted(agents.items())]
-    parts.append(f"{c['GREEN']}{reach['yes']} reachable{c['RESET']}")
-    if reach["codex only"]:
-        parts.append(f"{c['LIGHTYELLOW']}{reach['codex only']} codex only{c['RESET']}")
-    rest = len(peers) - reach["yes"] - reach["codex only"]
-    if rest:
-        parts.append(f"{c['GREY']}{rest} not reachable{c['RESET']}")
+    why = {"empty": "no message yet", "no": "no inbox"}
+    unreachable = [f"{p['name'] or p['session_id'][:8]} ({why.get(p['reachable'], p['reachable'])})"
+                   for p in peers if p["reachable"] != "yes"]
+    if unreachable:
+        parts.append(f"{c['LIGHTYELLOW']}not reachable{c['RESET']}: " + ", ".join(unreachable))
     print(" · ".join(parts))
-    me = caller()
-    mine = f"   (this session: {me['id']})" if me else ""
-    print(f"{c['GREY']}Send with: agent-bridge send --to '<NAME or SESSION ID (first 8+ characters)>'"
-          f" '<text>'{mine}{c['RESET']}")
     return 0
 
 
@@ -1111,38 +1137,17 @@ def cmd_status(args):
         return 1
     print(f"{c['GREY']}Daemon {resp.get('pid')}, up {_ago(resp.get('started'), '')},"
           f" log {LOG}{c['RESET']}")
-    stand_ins = resp.get("stand_ins", [])
-    if not stand_ins:
-        print(f"{c['GREY']}No stand-ins: no live Codex session has had a first message.{c['RESET']}")
+    codex = resp.get("codex", [])
+    if not codex:
+        print(f"{c['GREY']}No Codex session to relay for: none is live, or none has had a"
+              f" first message.{c['RESET']}")
         return 0
-    # One row per Codex session a stand-in answers for: where that session is,
-    # the name Claude sessions reach it by and its id; the stand-in's own pid,
-    # memory, age and the messages it has sent on the Codex session's behalf
-    headers = ("CODEX", "NAME", "STAND-IN", "RSS", "UP", "SENT", "CODEX SESSION ID")
-    rows = [
-        (
-            _tmux_cell(s.get("where")),
-            _clip_end(s["name"] or s["wanted"] or "-", NAME_WIDTH),
-            str(s["pid"]) if s.get("alive") else f"{s['pid']} exited",
-            f"{s['rss_mb']} MB",
-            _ago(time.time() - s["uptime"], ""),
-            str(s["sent"]),
-            s["thread"],
-        )
-        for s in stand_ins
-    ]
-    _table(headers, rows, c, right={"STAND-IN", "RSS", "UP", "SENT"})
-    print()
-    print(f"{c['LIGHTMAGENTA']}{_many(len(stand_ins), 'stand-in')}{c['RESET']}"
-          f" · {sum(s['rss_mb'] for s in stand_ins)} MB")
+    # The Codex sessions it relays for, by name and where they are. A table of
+    # them, with per-session counts reset by every restart, said no more than
+    # jcl list does (2026-10-12)
+    names = ", ".join(f"{s['name'] or s['thread'][:8]} ({_tmux_cell(s.get('where'))})" for s in codex)
+    print(f"Relaying for {c['BLUE']}{_many(len(codex), 'Codex session')}{c['RESET']}: {names}")
     return 0
-
-
-def cmd_scan(args):
-    if not ensure_daemon():
-        return daemon_down(palette(sys.stderr))
-    request({"op": "scan"}, timeout=120)
-    return cmd_status(args)
 
 
 def cmd_restart(args):
@@ -1150,7 +1155,7 @@ def cmd_restart(args):
     if rc:
         return rc
     # The new daemon scans at once and a scan request waits behind that scan:
-    # status after it shows the stand-ins back, not "no stand-ins" yet
+    # status after it lists every Codex session's reply socket, not none yet
     request({"op": "scan"}, timeout=120)
     return cmd_status(args)
 
@@ -1162,15 +1167,15 @@ def cmd_stop(args):
     except (OSError, ValueError):
         print(f"{c['GREY']}agent-bridge daemon is not running.{c['RESET']}")
         return 0
-    # It stops its stand-ins before it removes the socket, so the socket going
-    # is what says they have gone too
+    # It closes its reply sockets before it removes its own socket, so that
+    # one going is what says it has finished
     deadline = time.monotonic() + 60
     while SOCKET.exists() and time.monotonic() < deadline:
         time.sleep(0.5)
     if SOCKET.exists():
         print(f"{e['RED']}agent-bridge daemon is still stopping{e['RESET']}; see {LOG}", file=sys.stderr)
         return 1
-    print(f"{c['GREEN']}Stopped{c['RESET']} the agent-bridge daemon and its stand-ins")
+    print(f"{c['GREEN']}Stopped{c['RESET']} the agent-bridge daemon")
     return 0
 
 
@@ -1179,14 +1184,14 @@ def main(argv=None):
         prog=PROG,
         description="Let Claude Code and Codex sessions on this host message each other.",
     )
-    # daemon and hook are agent-bridge's own, run by itself and its stand-ins:
-    # left out of the list help shows, and of the completion. So is send under
-    # jcl bridge, which refuses it: a person asks a session to send instead.
+    # daemon is agent-bridge's own, run by itself: left out of the list help
+    # shows, and of the completion. So is send under jcl bridge, which refuses
+    # it: a person asks a session to send instead.
     by_agents = PROG == "agent-bridge"
     sub = parser.add_subparsers(
         dest="command",
-        metavar=("{send,peers,status,scan,start,stop,restart}" if by_agents
-                 else "{peers,status,scan,start,stop,restart}"))
+        metavar=("{send,peers,status,start,stop,restart}" if by_agents
+                 else "{peers,status,start,stop,restart}"))
 
     # No help= at all hides a command: argparse 3.10 prints SUPPRESS as is
     p_send = sub.add_parser(
@@ -1196,10 +1201,12 @@ def main(argv=None):
             " it from the shell of a Codex or Claude Code session: the message goes out"
             " as that session (CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID says which) and"
             " arrives as \"Message from @<its name>\". A Codex session gets it queued in;"
-            " a Claude session gets it from the stand-in of the Codex session sending it."
-            " Between two Claude sessions nothing needs relaying: the address to give"
-            " SendMessage is printed instead, with exit status 3. From a plain terminal"
-            " it refuses, with exit status 2."
+            " a Claude session gets it written into its inbox, as SendMessage delivers,"
+            " and answers it with SendMessage to the uds: address it came from. Codex"
+            " sessions are not in Claude's /list-agents: this is how a Claude session"
+            " reaches one. Between two Claude sessions nothing needs relaying: the"
+            " address to give SendMessage is printed instead, with exit status 3. From a"
+            " plain terminal it refuses, with exit status 2."
         ),
     )
     p_send.add_argument(
@@ -1217,39 +1224,25 @@ def main(argv=None):
         "peers", help="Show the sessions that can be messaged",
         description=(
             "Show the Claude Code and Codex sessions on this host that can be messaged,"
-            " under the names and session ids `send --to` takes. REACHABLE is yes for a"
-            " session any session can reach; codex only for a Codex session with no"
-            " stand-in yet, which is not in Claude's /list-agents but which `send`"
-            " reaches from either agent; empty for a Codex session that has had no"
-            " message yet, which nothing can queue into; no for a Claude session with"
-            " no messaging socket. Where a session runs and on what: `jcl list`."
-            " Starts the daemon unless it is running."
+            " under the names and session ids `send --to` takes. One a message cannot"
+            " reach is named in the summary: a Codex session that has had no message"
+            " yet, which nothing can queue into, or a Claude session with no messaging"
+            " socket. Where a session runs and on what: `jcl list`. Starts the daemon"
+            " unless it is running."
         ),
     )
     p_peers.add_argument("--json", action="store_true", help="Emit JSON")
     p_peers.set_defaults(func=cmd_peers)
 
     p_status = sub.add_parser(
-        "status", help="Show the daemon and its stand-ins",
+        "status", help="Show the daemon and the Codex sessions it relays for",
         description=(
-            "Show whether the daemon runs, and the stand-in it keeps for each Codex"
-            " session: CODEX is that session's tmux pane, or app for Codex Desktop's own;"
-            " NAME is what Claude sessions reach it by; STAND-IN, RSS and UP are the"
-            " stand-in's process; SENT counts the messages it sent for the Codex"
-            " session. Starts nothing. What `agent-bridge` alone runs."
+            "Show whether the daemon runs, its log, and the Codex sessions it relays for -"
+            " each live one that has had a first message - by name and tmux pane (app for"
+            " Codex Desktop's own). Starts nothing. What `agent-bridge` alone runs."
         ),
     )
     p_status.set_defaults(func=cmd_status)
-
-    p_scan = sub.add_parser(
-        "scan", help="Look for Codex sessions now",
-        description=(
-            "Look for Codex sessions now instead of at the next scan (one every"
-            f" {SCAN_EVERY} s), start or stop stand-ins to match, then show status."
-            " Starts the daemon unless it is running."
-        ),
-    )
-    p_scan.set_defaults(func=cmd_scan)
 
     p_start = sub.add_parser(
         "start", help="Start the daemon unless it is running",
@@ -1257,16 +1250,17 @@ def main(argv=None):
             "Start the daemon unless it is running; a running one is left as it is."
             " An agent's send or peers starts it too, so this is for bringing it"
             " back after a stop. It leaves by itself after"
-            f" {IDLE_EXIT // 60} minutes with no stand-in to keep and no request."
+            f" {IDLE_EXIT // 60} minutes with no Codex session to relay for and no request."
         ),
     )
     p_start.set_defaults(func=cmd_start)
 
     p_stop = sub.add_parser(
-        "stop", help="Stop the daemon and every stand-in",
+        "stop", help="Stop the daemon",
         description=(
-            "Stop the daemon. Its stand-ins exit with it, and their names leave Claude's"
-            " /list-agents, until start - or an agent's send or peers - brings it back."
+            "Stop the daemon. Until start - or an agent's send or peers - brings it"
+            " back, a Claude session's reply to a Codex session's uds: address is not"
+            " delivered."
         ),
     )
     p_stop.set_defaults(func=cmd_stop)
@@ -1274,19 +1268,15 @@ def main(argv=None):
     p_restart = sub.add_parser(
         "restart", help="Stop and start the daemon, then show status",
         description=(
-            "Stop the daemon and its stand-ins, start it again, and show status once"
-            " the stand-ins are back - after an update of agent-bridge, or when it"
-            " misbehaves. They come back under the same names at new uds: addresses:"
-            " a reply to an old address is not delivered, a reply by name still is."
+            "Stop the daemon, start it again, and show status - after an update of"
+            " agent-bridge, or when it misbehaves. Each Codex session's uds: address"
+            " stays the same: a reply sent to one afterwards still arrives."
         ),
     )
     p_restart.set_defaults(func=cmd_restart)
 
     p_daemon = sub.add_parser("daemon")
     p_daemon.set_defaults(func=cmd_daemon)
-    p_hook = sub.add_parser("hook")
-    p_hook.add_argument("kind", choices=["inbound", "pretool", "posttool"])
-    p_hook.set_defaults(func=cmd_hook)
 
     args = parser.parse_args(argv)
     if not args.command:

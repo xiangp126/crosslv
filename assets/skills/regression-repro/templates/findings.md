@@ -217,7 +217,7 @@ Everything lives in `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/`:
 | `repro_plan_<ticket#>.md` | the working plan + **live Investigation log** + Run log |
 | `FINDINGS_<ticket#>.md` | this document |
 | `regression_ini/` | the regression's burned INI + release default, and their diff |
-| `tools/` | `env_rebuild_<box>.sh`, `per_run_reset.sh`, provisioning scripts |
+| `tools/` | `lab.conf`, `env_rebuild.sh`, `per_run.sh`, `selftest.sh` (from `templates/lab-box/`), provisioning scripts |
 | `FIX_<topic>.patch` | **the fix** — exactly one file may carry this prefix |
 | `REJECTED_<vN>_<why>.patch` | a candidate that was tried and disproved, kept as the record |
 | `*.log` | repro / control / verification run logs |

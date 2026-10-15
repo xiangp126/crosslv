@@ -15,7 +15,7 @@ todos:
     content: From the MARS session tarball, read new_burn_fw + get_last_commit + run_case (FW/.mlx/INI/PSID + test-tool commit + exact command & seed) AND the session's own setup steps (clear_nv_data / SetMlxConfig / load_udriver / per-case Fwreset) — the scripts must replay these
     status: pending
   - id: write-scripts
-    content: 'While waiting for the box: write tools/env_rebuild_<box>.sh + tools/per_run_reset.sh from the tarball data (Phase 9b). Mark both UNVERIFIED, make destructive paths opt-in, gate both on Noga lock ownership. Do NOT wait for a confirmed repro'
+    content: 'While waiting for the box: copy templates/lab-box/ into tools/ and fill in lab.conf from the tarball data (Phase 9b); leave VERIFIED= empty until the first repro. Do NOT wait for a confirmed repro'
     status: pending
   - id: pin-repos
     content: 'In BOTH repos create a per-ticket worktree off the *2 clone on the pin branch <ticket#>_<topic> at the failing version (git -C <clone> worktree add -b <ticket#>_<topic> /auto/fwgwork1/$USER/golan_fw_<ticket#> or utopx_<ticket#> <sha>) — never a detached HEAD, never the clone''s own checkout; init submodules recursively; confirm with git branch --show-current + git describe --tags'
@@ -89,13 +89,13 @@ Then, inside that dir:
    `repro_plan_<ticket#>.md`.
 2. Copy the regression's burned INI (and the release-default INI) into `regression_ini/`
    (Phase 5).
-3. **As soon as Phases 1–2 are decoded — before the box is free — write the two automation
-   scripts** into `tools/` (Phase 9b): `tools/env_rebuild_<box>.sh` (runs from the dev box) and
-   `tools/per_run_reset.sh` (runs on the reg box), so you start reproducing the moment the lock
-   lands. Everything they need (FW/INI/PSID, the mlxconfig set, the per-case reset command, the
-   verbatim tool command + seed) is in the session tarball; none of it needs the box. Mark both
-   **UNVERIFIED** in their headers until the first run reproduces the signature; keep every
-   destructive path opt-in.
+3. **As soon as Phases 1–2 are decoded — before the box is free — set up the automation** in
+   `tools/` (Phase 9b): copy `templates/lab-box/` and fill in `lab.conf` (`env_rebuild.sh` runs
+   from the dev box, `per_run.sh` on the reg box), so you start reproducing the moment the lock
+   lands. Everything it needs (FW/INI/PSID, the mlxconfig set, the per-case reset command, the
+   verbatim tool command + seed) is in the session tarball; none of it needs the box. Leave
+   `VERIFIED=` empty until the first run reproduces the signature (both scripts print
+   `!!! UNVERIFIED !!!` meanwhile); destructive paths stay opt-in.
 4. **Update the `## Investigation log` section of this file LIVE** as you read source and form
    hypotheses — it, not the chat transcript, is the durable record of the root-cause work.
 5. **Verify a fix candidate on the box (Phase 9.5) before Gerrit:** build, deploy, rerun the

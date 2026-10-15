@@ -57,7 +57,11 @@ merge:
    discovery, who decided what, and repeated warnings. Keep a reason only when it changes how the
    rule is applied, as one clause. Check with:
    `grep -rlP '[\x{4e00}-\x{9fff}]' ~/myGit/crosslv/assets/skills` (must print nothing).
-6. Run `jskill sync`, then `jskill check`; also run the skill's own tests or scripts when they
+6. Number sections with digits and plain letters only (`3`, `3a`, `9.5`), never latin ordinals
+   (`3b-bis`, `ter`). A section that belongs between two others becomes a subsection of the one it
+   belongs to; if it must carry a number, renumber and update every reference to it in the skills
+   tree (`grep -rn '<old number>' ~/myGit/crosslv/assets/skills`).
+7. Run `jskill sync`, then `jskill check`; also run the skill's own tests or scripts when they
    changed.
 
 ## Add a skill

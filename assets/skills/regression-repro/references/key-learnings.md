@@ -60,7 +60,7 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
   backend. Probe `api_cmd=get_teams` with curl and wait it out in the background; never read a 504
   traceback as "box locked". `lock_time_out` is UTC and auto-release lags — watch the
   `Status.status` flip, not the clock. (STM-only fallback: Noga's direct Oracle DB API.)
-- **Same-PSID substitution** (approval rule: `SKILL.md`; procedure: §3b-bis): match the PSID
+- **Same-PSID substitution** (approval rule: `SKILL.md`; procedure: §3b): match the PSID
   (board), not just the family; verify the substitute is idle + healthy (last session Burn RC=0)
   and, ideally, already shows the signature in its own latest regression.
 - **Find same-PSID boxes via Noga, not MARS INI names.** The board PSID lives on the **NIC**
@@ -74,7 +74,7 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
   filename gives session → FW version / PSID with no tarball at all. A box that cannot burn FW is
   useless no matter how well its PSID/mode match.
 - **Check the box-specific `topology_<mode>.xml` BEFORE locking.** A same-PSID substitute often
-  still needs its own authored (per-box entry_points/IPs, §3b-bis). Verify topology first (e.g.
+  still needs its own authored (per-box entry_points/IPs, §3b). Verify topology first (e.g.
   `topology_eth_arm_agent.xml`), lock second.
 - **Every script that touches the box must first verify `Status.lock_owner == $USER` via Noga**;
   refuse and exit non-zero unless the owner is you. `hostname` is not a guard: the nightly
@@ -89,11 +89,13 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
   ticket's `dump_nv_data` attachment. Don't add your own nvconfig rows.
 - **Reset between every run** (`jmake --fw-reset`); device/emulation state leaks (NV clearing:
   Phase 10).
-- **One command per ssh**, reuse one SSH connection, drop the ControlMaster socket after any
+- **One command per ssh**, reuse one SSH connection, close the ControlMaster socket before any
   reboot. **Always fetch tags first.**
-- **SSH ControlMaster is mandatory in `env_rebuild`**
-  (`-o ControlMaster=auto -o ControlPath=<mux> -o ControlPersist=28800`): NFS-home auth fails for
-  ~30 s after a power-cycle; one authenticated master socket avoids every later auth race.
+- **Every ssh runs with `-o BatchMode=yes`; scripts also `unset DISPLAY`.** For a while after a
+  power-cycle publickey auth fails (the NFS home with `authorized_keys` is not mounted yet); without
+  BatchMode ssh then asks for a password through `ssh-askpass` on the user's desktop and blocks. Wait
+  for the box with a fresh BatchMode connection (`-o ControlMaster=no -o ControlPath=none` under
+  `timeout`), then open the master (procedure.md Phase 9b, "ssh from a script").
 - **Reuse the deployed binary.** The regression leaves its exact prebuilt `utopx.exe` + configs in
   `/tmp/mars_tests/<test-DB>/tests/` on the box — use it in place (no build; read-only, see
   `SKILL.md`) and confirm the commit via the run's "tarball git tag is: <describe>" line. Local
@@ -120,11 +122,12 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
   (`clear_nv_data`) changes the starting topology enough that the bug cannot present; adding
   `--timeout` / `--case_name` to the recorded tool command is another silent divergence. Diff
   before assuming a difference matters: two INI files with different names can be byte-identical.
-- **The box is re-provisioned DAILY by the regression — script the rebuild (Phase 9b-bis).** A
+- **The box is re-provisioned DAILY by the regression — script the rebuild (Phase 9b).** A
   repro env is rebuilt every session, not built once. A ticket's steps assume an
   already-provisioned box, so "I followed them exactly and it still fails" usually means a missing
   prerequisite the reporter never had to think about. Recover the real list from the session
-  tarball's `install_Tools` step and capture it in `tools/provision_<box>.sh`.
+  tarball's `install_Tools` step and capture it in `lab.conf`'s `setup_box`. The NV is rewritten
+  too, so the rebuild restores it (`NV_RECIPE`).
 - **Some reg boxes net-boot a fresh image every reboot:** MFT vanishes, `/tmp` is wiped, boot
   takes 10-19 min. Re-ensure MFT after every power-cycle, log to NFS not `/tmp`, and size
   `wait_host` for the slow case. `clear_nv_data` + a reboot that loses MFT strands the card in
@@ -160,15 +163,15 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
 
 ## Repro harness and verdicts (Phase 9b)
 
-- **Write env_rebuild + per_run_reset right after decoding the ticket — NOT after the first
-  repro.** Waiting for a contended box takes hours; build the scripts in that window so the lock
-  lands on a ready harness. Guard against false confidence with an `!!! UNVERIFIED !!!` banner,
-  opt-in destructive paths, and warn-only gates where no grounded baseline exists yet — not by
-  delaying.
-  - `tools/env_rebuild_<box>.sh` (from the dev box): slow one-time setup — burn, mlxconfig, verify.
-  - `tools/per_run_reset.sh` (on the reg box): the per-attempt loop — mst start → FW gate → PCI
-    gate → ARM → baseline Fwreset → buggy tool → post-run Fwreset → verdict.
-  - Both use `FORCE=1` guards and color-coded output; `chmod +x` both.
+- **Set up the harness right after decoding the ticket — NOT after the first repro.** Waiting for
+  a contended box takes hours; copy `templates/lab-box/` into `tools/` and fill in `lab.conf` in that
+  window, so the lock lands on a ready harness. Guard against false confidence with `VERIFIED=`
+  left empty (both scripts print `!!! UNVERIFIED !!!`), opt-in destructive paths, and warn-only gates
+  only until a grounded baseline exists — not by delaying.
+  - `env_rebuild.sh` (from the dev box): guards → `setup_box` → with `--burn`: image gate, NV reset +
+    recipe, burn, make it live → gates.
+  - `per_run.sh` (on the reg box): guards → FW gate → baseline gate → reset → tool, with the
+    post-run reset in an EXIT trap → verdict as the exit code.
 - **A single-signal verdict will eventually lie — require CORE evidence + a passing baseline.**
   Decide on the defect's *direct effect* (a before/after state diff you captured), not on a
   downstream symptom like "the next script failed". Hard-gate the baseline; a warning that
@@ -196,6 +199,19 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
   generated by `.Gen()` under a `[0-1]` constraint, so the nightly hit the bug ~half the time;
   pinning the seed turned that 50% flake into a 3/3 reproduction. Without a pinned seed such a bug
   is not reproducible on demand.
+- **The seed replays a case only from the case's starting NV.** utopx prints
+  `mlxconfigchecksum:<cksum> <bytes>` (the cksum of `mlxconfig -f <file> backup`) at the top of
+  every run. From another starting NV the random stream diverges in NV generation already
+  (`Num of functions generated` differs, so emulated-PF counts, GVMI layout and every later op
+  differ) — the "first run after a cold boot has another layout" effect.
+  - utopx does not restore NV when a run ends; it leaves its TLVs plus a golden TLV (type `0xff`).
+    The next per-case `Fwreset.py --next_udriver --run_new_fwreset` rewrites NV to the golden set,
+    also after a FATAL. So in a MARS session every case after the first starts from that restored
+    state, while the first run after `SetMlxConfig` + cold boot starts from the bare SetMlxConfig
+    TLVs (writer `ICMD MLXCONFIG`) and draws another flow.
+  - Replay: after the env rebuild run one priming utopx run (any command; record it separately,
+    it does not count), then for every attempt: Fwreset → `mlxconfig -f <file> backup` → `cksum`
+    equal to the case log's `mlxconfigchecksum` → run. A mismatch makes the attempt VOID.
 
 ## Evidence discipline — the two ways a root cause goes wrong
 

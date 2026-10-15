@@ -466,19 +466,24 @@ fuzzySearch() {
     # Sample output of fzfSelected:
     # daemon/wad/wad_app_eng.c:3071:          goto session_make_failed;
     # Z15 Bug 0996624 FTP fails active in TP mode/debug2_passive.c:398:CLNT lftp/4.9.2
-    local line opened=0
+    local line opened=0 failed=0 editor_rc
     while IFS= read -r line; do
         [ -z "$line" ] && continue
         if [[ $line =~ ^([^:]+):([0-9]+): ]]; then
-            openInEditor "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-            opened=$((opened + 1))
-            echo -e "Line opened: ${COLOR}${line:0:80}${RESET}"
+            if openInEditor "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; then
+                opened=$((opened + 1))
+                echo -e "Line opened: ${COLOR}${line:0:80}${RESET}"
+            else
+                editor_rc=$?
+                failed=$((failed + 1))
+                printf 'Failed to open: %s (editor exit status %s)\n' "${line:0:80}" "$editor_rc" >&2
+            fi
         else
             echo -e "${COLOR}Skipped unexpected format: ${line:0:80}${RESET}" >&2
         fi
     done <<< "$fzfSelected"
 
-    [ "$opened" -eq 0 ] && exit 1
+    [[ "$opened" -gt 0 && "$failed" -eq 0 ]] || return 1
     return 0
 }
 

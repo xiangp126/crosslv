@@ -1,7 +1,7 @@
 #!/bin/bash
 # set -x
-# Wrapper for VS Code / Cursor CLI.
-# Works on both local machines (macOS/Linux) and remote servers connected via VS Code / Cursor.
+# Wrapper for the VS Code CLI, with Cursor remote compatibility.
+# Works on local machines (macOS/Linux) and remote editor servers.
 # To install, add `source /path/to/code-function.sh` to your ~/.bashrc.
 # For usage, run `code --help`.
 
@@ -24,9 +24,8 @@ _code_usage() {
 Usage: code [options] <args>
 
 Description:
-    A wrapper function for the VS Code / Cursor server CLI.
-    It finds the server CLI binary and sets the correct IPC socket.
-    Supports both VS Code (.vscode-server) and Cursor (.cursor-server).
+    A wrapper for the VS Code server CLI, compatible with Cursor remote sessions.
+    It finds the CLI for the current editor window and sets the correct IPC socket.
     The reason for this function is to avoid the bug which has never been fixed by Microsoft:
     # Unable to connect to VS Code server: Error in request - ENOENT /run/user/1000/vscode-ipc-*.sock
     https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
@@ -34,12 +33,12 @@ Description:
 
 Options:
     -h, --help                       Show this help message and exit
-    -d, --debug                      Enable debug mode (set -x)
-    -e, --refresh                    Force re-detection of the server binary and IPC socket, ignoring cache
-    -v, --version                    Show version information
-    -s, --status                     Print process usage and diagnostics information
-    -c, --clean                      Clean obsolete IPC sockets
-    -p, --print                      Print core variables
+    --debug                          Enable debug mode (set -x)
+    --fresh                          Verify this window's hook, choose a live window if needed, and repair the tmux hook
+    --version                        Show version information
+    --status                         Print process usage and diagnostics information
+    --clean                          Clean obsolete IPC sockets for the selected editor
+    --connection                     Show the selected editor, CLI, and IPC socket
     -r, --reload                     Reload and update this function from its source file
 
 Commands:
@@ -49,7 +48,7 @@ Commands:
     --locate-shell-integration-path  Print the path to a terminal shell integration script
 
 Example: code --version
-         code -d
+         code --debug
          code --install-extension gitlens-13.0.2.vsix
          code myfile.txt
          code src/hca/CmdSetHcaCap.cpp:451
@@ -218,8 +217,8 @@ _code_strip_cwd_prefix() {
 
 # Helper function: parse options
 _code_parse_options() {
-    local shortopts="hdevpscr"
-    local longopts="help,debug,refresh,version,print,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
+    local shortopts="hr"
+    local longopts="help,debug,fresh,version,connection,status,clean,reload,install-extension:,list-extensions,locate-shell-integration-path"
     local script_name="code"
 
     local PARSED
@@ -233,32 +232,32 @@ _code_parse_options() {
         case "$1" in
             -h|--help)
                 _code_usage
-                return 1
+                return 2
                 ;;
-            -d|--debug)
+            --debug)
                 _code_f_debug=true
                 set -x
                 shift
                 ;;
-            -e|--refresh)
-                _code_f_refresh=true
+            --fresh)
+                _code_f_fresh=true
                 shift
                 ;;
-            -v|--version)
+            --version)
                 _code_f_args=("--version")
                 shift
                 ;;
-            -p|--print)
-                _code_f_print=true
+            --connection)
+                _code_f_connection=true
                 shift
                 ;;
-            -s|--status)
+            --status)
                 _code_f_args=("--status")
                 shift
                 ;;
-            -c|--clean)
-                _code_clean_obsolete_ipc_socks
-                return 1
+            --clean)
+                _code_f_clean=true
+                shift
                 ;;
             -r|--reload)
                 _code_self_reload
@@ -414,13 +413,74 @@ _code_parse_options() {
 # unix-socket fd under /proc/<pid>/fd resolves to `socket:[inode]`, not the
 # bound path, so match via the socket's inode from /proc/net/unix rather
 # than comparing readlink output to the path directly.
-_code_ipc_sock_is_live() {
-    local sock="$1" pid inode fd
+_code_process_editor() {
+    local pid="$1" exe cmdline
+    exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
+    case "$exe" in
+        "$HOME/.vscode-server/"*) printf 'vscode\n'; return 0 ;;
+        "$HOME/.cursor-server/"*) printf 'cursor\n'; return 0 ;;
+    esac
+    cmdline=$(tr '\0' ' ' 2>/dev/null < "/proc/$pid/cmdline")
+    case "$cmdline" in
+        *"$HOME/.vscode-server/"*) printf 'vscode\n'; return 0 ;;
+        *"$HOME/.cursor-server/"*) printf 'cursor\n'; return 0 ;;
+    esac
+    return 1
+}
+
+_code_ipc_extension_host() {
+    local sock="$1" want="${2:-}" pid inode fd editor
     [[ -n "$sock" && -S "$sock" ]] || return 1
-    command -v pgrep > /dev/null 2>&1 || return 0
-    inode=$(awk -v s="$sock" '$NF==s{print $(NF-1)}' /proc/net/unix 2>/dev/null | head -n 1)
+    command -v pgrep > /dev/null 2>&1 || return 1
+    inode=$(awk -v s="$sock" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
     [[ -n "$inode" ]] || return 1
     for pid in $(pgrep -f -- '--type=extensionHost' 2>/dev/null); do
+        editor=$(_code_process_editor "$pid") || continue
+        [[ -n "$want" && "$editor" != "$want" ]] && continue
+        for fd in /proc/"$pid"/fd/*; do
+            if [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$inode]" ]]; then
+                printf '%s %s\n' "$pid" "$editor"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+_code_ipc_sock_is_live() {
+    _code_ipc_extension_host "$1" "${2:-}" > /dev/null
+}
+
+# A terminal's own CLI hook can be served by server-main without an extension
+# host fd. Trust that hook only after an explicit --fresh CLI probe; a server-main
+# listener alone can outlive the window it used to serve.
+_code_ipc_server_main() {
+    local sock="$1" inode pid fd editor
+    [[ -n "$sock" && -S "$sock" ]] || return 1
+    inode=$(awk -v s="$sock" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
+    [[ -n "$inode" ]] || return 1
+    for pid in $(pgrep -f -- '/out/server-main[.]js' 2>/dev/null); do
+        editor=$(_code_process_editor "$pid") || continue
+        for fd in /proc/"$pid"/fd/*; do
+            if [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$inode]" ]]; then
+                printf '%s %s\n' "$pid" "$editor"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+# A dead socket is safe to clean only when the selected editor's server still
+# owns its listener. Both editors use the same vscode-ipc-* filename pattern.
+_code_ipc_sock_owned_by_editor() {
+    local sock="$1" want="$2" inode pid fd editor
+    [[ -n "$sock" && -S "$sock" ]] || return 1
+    inode=$(awk -v s="$sock" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
+    [[ -n "$inode" ]] || return 1
+    for pid in $(ps -u "$UID" -o pid= 2>/dev/null); do
+        editor=$(_code_process_editor "$pid") || continue
+        [[ "$editor" == "$want" ]] || continue
         for fd in /proc/"$pid"/fd/*; do
             [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$inode]" ]] && return 0
         done
@@ -434,9 +494,9 @@ _code_ipc_sock_is_live() {
 # newest socket file by mtime is not necessarily attached to anything; taking
 # it blindly sends the open request into a void with no error and no window.
 _code_pick_live_ipc_sock() {
-    local dir="$1" sock
+    local dir="$1" editor="$2" sock
     while IFS= read -r sock; do
-        if _code_ipc_sock_is_live "$sock"; then
+        if _code_ipc_sock_is_live "$sock" "$editor"; then
             echo "$sock"
             return 0
         fi
@@ -444,186 +504,658 @@ _code_pick_live_ipc_sock() {
     return 1
 }
 
-_set_vscode_code_path() {
-    # Step 1: Find the commit ID of the active server
-    # Use process substitution to ensure `commit_id` is set in the current shell scope, not a subshell.
-    local pid_file curr_pid commit_id=
-    cd "$_code_f_search_path" || return
-
-    # For Cursor: no pid.txt, find the most recent commit directory with cursor binary
-    # Cursor path: ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
-    if [[ "$_code_f_is_cursor" == "1" ]]; then
-        local cursor_platform_path="$_code_f_search_path/linux-x64"
-        local code_bin dir
-        if [[ -d "$cursor_platform_path" ]]; then
-            while IFS= read -r -d '' dir; do
-                code_bin="$cursor_platform_path/$dir/bin/remote-cli/cursor"
-                if [[ -x "$code_bin" ]]; then
-                    commit_id="$dir"
-                    break
-                fi
-            done < <(find "$cursor_platform_path" -maxdepth 1 -mindepth 1 -type d -printf '%T@\t%f\0' 2>/dev/null | sort -rzn | cut -z -f2-)
-        fi
-    else
-        # For VS Code: use pid.txt to find active server
-        while IFS= read -r -d $'\0' pid_file; do
-            if [ -f "$pid_file" ]; then
-                curr_pid=$(cat "$pid_file" 2>/dev/null)
-                if [ -n "$curr_pid" ] && [[ "$curr_pid" =~ ^[0-9]+$ ]]; then
-                    if kill -0 "$curr_pid" 2>/dev/null; then
-                        commit_id=$(basename "$(dirname "$pid_file")")
-                        break
-                    fi
-                fi
+# Record the live sockets seen while a tmux client's target still works. A
+# later editor reload creates a new path even if its old socket was removed.
+_code_live_ipc_snapshot() {
+    local editor="$1" dir sock snapshot=''
+    for dir in /tmp "/run/user/$UID"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r -d '' sock; do
+            if _code_ipc_sock_is_live "$sock" "$editor"; then
+                snapshot+="${snapshot:+|}$sock"
             fi
-        done < <(find . -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
-    fi
-
-    # Step 2: Set the VSCODE_BIN_PATH
-    if [[ -z "$commit_id" ]]; then
-        echo -e "${MAGENTA}Warning: No active server found under $_code_f_search_path.${RESET}" >&2
-        cd - &> /dev/null || return
-        return 1
-    fi
-
-    # Different path structure for Cursor vs VS Code
-    # Cursor: ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
-    # VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code
-    if [[ "$_code_f_is_cursor" == "1" ]]; then
-        VSCODE_BIN_PATH="$_code_f_search_path/linux-x64/$commit_id/bin/remote-cli/cursor"
-    else
-        VSCODE_BIN_PATH="$_code_f_search_path/$commit_id/server/bin/remote-cli/code"
-    fi
-
-    if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
-        echo -e "${MAGENTA}Error: Binary not found or not executable at $VSCODE_BIN_PATH${RESET}" >&2
-        return 1
-    fi
-
-    # Step 3: Set the VSCODE_IPC_HOOK_CLI
-    # The integrated terminal exports the hook belonging to its own window, which
-    # is the only reliable way to target the window the user is actually looking
-    # at. With several windows open, the newest socket belongs to whichever one
-    # was active last, so files end up in an unrelated window. Keep the inherited
-    # hook while it is alive and only guess when it is not.
-    # shellcheck disable=SC2012 disable=SC2155
-    local _run_path="/run/user/$UID"
-    local newIPCHook=
-
-    if _code_ipc_sock_is_live "$VSCODE_IPC_HOOK_CLI"; then
-        newIPCHook="$VSCODE_IPC_HOOK_CLI"
-    elif [[ -n "$TMUX" ]] && command -v tmux > /dev/null 2>&1; then
-        # A tmux pane keeps the environment captured when the session was first
-        # created, so its inherited hook is usually stale. Ask tmux for the value
-        # it picked up on the most recent attach before falling back to guessing.
-        local _tmuxHook
-        _tmuxHook=$(tmux show-environment VSCODE_IPC_HOOK_CLI 2>/dev/null)
-        _tmuxHook="${_tmuxHook#VSCODE_IPC_HOOK_CLI=}"
-        _code_ipc_sock_is_live "$_tmuxHook" && newIPCHook="$_tmuxHook"
-    fi
-
-    if [[ -n "$newIPCHook" ]]; then
-        # Keep the socket directory in sync so --clean acts on the right one
-        _code_f_sys_path=$(dirname "$newIPCHook")
-    else
-        newIPCHook=$(_code_pick_live_ipc_sock "$_code_f_sys_path")
-    fi
-    if [[ -z "$newIPCHook" ]]; then
-        local _fallback
-        if [[ "$_code_f_sys_path" == "/tmp" ]]; then
-            _fallback="$_run_path"
-        else
-            _fallback="/tmp"
-        fi
-        newIPCHook=$(_code_pick_live_ipc_sock "$_fallback")
-        [[ -n "$newIPCHook" ]] && _code_f_sys_path="$_fallback"
-    fi
-    if [ -z "$newIPCHook" ]; then
-        echo -e "${MAGENTA}Error: No vscode-ipc-*.sock file found under $_run_path or /tmp${RESET}" >&2
-        return 1
-    fi
-    # VSCODE_IPC_HOOK_CLI is an environment variable that is used by the VS Code CLI to communicate with the server.
-    export VSCODE_IPC_HOOK_CLI=$newIPCHook
-    export VSCODE_BIN_PATH
-    # Step 4: Return to the original directory
-    cd - &> /dev/null || return
+        done < <(find "$dir" -maxdepth 1 -type s -uid "$UID" -name 'vscode-ipc-*.sock' -print0 2>/dev/null)
+    done
+    printf '%s' "$snapshot"
 }
 
-# Helper function: print core variables
-_code_print_core_vars() {
-    echo -e "${MAGENTA}VS Code Server Core Vars${RESET}"
-    echo "==============================================="
-    echo -e "${GREEN}✔${GREY} Active VS Code Bin Path:${BLUE} $VSCODE_BIN_PATH${RESET}"
-    echo -e "${GREEN}✔${GREY} Active VS Code IPC Hook:${BLUE} $VSCODE_IPC_HOOK_CLI${RESET}"
-    echo "==============================================="
+_code_pick_unseen_ipc_sock() {
+    local editor="$1" seen="$2" current sock found='' count=0
+    local sockets=()
+    [[ -n "$seen" ]] || return 1
+    current=$(_code_live_ipc_snapshot "$editor")
+    [[ -n "$current" ]] || return 1
+    IFS='|' read -r -a sockets <<< "$current"
+    for sock in "${sockets[@]}"; do
+        [[ "|$seen|" == *"|$sock|"* ]] && continue
+        found="$sock"
+        count=$((count + 1))
+    done
+    [[ $count -eq 1 ]] || return 1
+    printf '%s\n' "$found"
+}
+
+# Extension-host children often run from the window's main workspace. Use their
+# cwd only as a hint; a multi-root window can contain other folders as well.
+_code_extension_host_workspace_hint() {
+    local pid="$1" child dir count best='' best_count=0 tied=0 fd log root
+    local -A counts=()
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+        dir=$(readlink -f "/proc/$child/cwd" 2>/dev/null) || continue
+        case "$dir" in
+            /|/tmp|"$HOME"|"$HOME/.cursor-server/"*|"$HOME/.vscode-server/"*) continue ;;
+        esac
+        counts["$dir"]=$(( ${counts["$dir"]:-0} + 1 ))
+    done
+    for dir in "${!counts[@]}"; do
+        count=${counts["$dir"]}
+        if (( count > best_count )); then
+            best="$dir"
+            best_count=$count
+            tied=0
+        elif (( count == best_count )); then
+            tied=1
+        fi
+    done
+    if [[ -n "$best" && $tied -eq 0 ]]; then
+        printf '%s\n' "${best##*/}"
+        return 0
+    fi
+
+    for fd in /proc/"$pid"/fd/*; do
+        log=$(readlink "$fd" 2>/dev/null) || continue
+        [[ "$log" == */remoteexthost.log ]] || continue
+        root=$(awk 'match($0, /folderQueries=\[\{"cwd":"[^"]+"/) {
+            value = substr($0, RSTART, RLENGTH)
+            sub(/^.*"cwd":"/, "", value)
+            sub(/"$/, "", value)
+            print value
+            exit
+        }' "$log" 2>/dev/null)
+        if [[ -n "$root" ]]; then
+            printf '%s\n' "${root##*/}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# A terminal's Git IPC socket is set by the Git extension of the window that
+# opened the terminal. Its path comes from the workspace storage path, so it
+# usually survives a window reload, but a terminal can also carry a path that
+# nothing listens on any more. Only a live socket counts: when exactly one
+# candidate's extension host holds it, that host's CLI socket is the window's.
+_code_git_handle_ipc_sock() {
+    local git_sock="$1" editor="$2" git_inode current sock info pid owner fd matched='' matches=0
+    local sockets=()
+    [[ -n "$git_sock" && -S "$git_sock" ]] || return 1
+    git_inode=$(awk -v s="$git_sock" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
+    [[ -n "$git_inode" ]] || return 1
+    current=$(_code_live_ipc_snapshot "$editor")
+    [[ -n "$current" ]] || return 1
+    IFS='|' read -r -a sockets <<< "$current"
+    for sock in "${sockets[@]}"; do
+        info=$(_code_ipc_extension_host "$sock") || continue
+        read -r pid owner <<< "$info"
+        for fd in /proc/"$pid"/fd/*; do
+            if [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$git_inode]" ]]; then
+                matched="$sock"
+                matches=$((matches + 1))
+                break
+            fi
+        done
+    done
+    (( matches == 1 )) || return 1
+    printf '%s\n' "$matched"
+}
+
+# Use a unique live socket automatically. With several windows, the terminal's
+# Git IPC socket identifies its window when that socket is still live.
+# Otherwise show workspace hints and ask only from an interactive terminal.
+_code_choose_live_ipc_sock() {
+    local editor="$1" git_sock="${2:-}" current sock info pid owner workspace_hint choice i
+    local bold='' grey='' cyan='' accent='' reset='' name
+    local sockets=() host_pids=() owners=()
+    current=$(_code_live_ipc_snapshot "$editor")
+    [[ -n "$current" ]] || return 1
+    IFS='|' read -r -a sockets <<< "$current"
+    if (( ${#sockets[@]} == 1 )); then
+        printf '%s\n' "${sockets[0]}"
+        return 0
+    fi
+    _code_git_handle_ipc_sock "$git_sock" "$editor" && return 0
+    [[ -t 0 && -t 2 && -r /dev/tty ]] || return 1
+    for sock in "${sockets[@]}"; do
+        info=$(_code_ipc_extension_host "$sock") || info=''
+        read -r pid owner <<< "$info"
+        host_pids+=("$pid")
+        owners+=("$owner")
+    done
+    # The menu goes to stderr, which is a terminal here; NO_COLOR keeps it plain.
+    if [[ -z "${NO_COLOR:-}" ]]; then
+        bold=$'\033[1m'
+        grey=$'\033[90m'
+        cyan=$'\033[36m'
+        reset=$'\033[0m'
+    fi
+    printf '%scode:%s choose the editor window you are using %s(workspace names are hints)%s:\n' \
+        "$bold" "$reset" "$grey" "$reset" >&2
+    for (( i = 0; i < ${#sockets[@]}; i++ )); do
+        sock="${sockets[i]}"
+        pid="${host_pids[i]}"
+        owner="${owners[i]}"
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        if [[ "$owner" == cursor ]]; then
+            name='Cursor'
+            [[ -n "$reset" ]] && accent=$'\033[35m'
+        else
+            name='VS Code'
+            [[ -n "$reset" ]] && accent=$'\033[34m'
+        fi
+        workspace_hint=$(_code_extension_host_workspace_hint "$pid")
+        if [[ -n "$workspace_hint" ]]; then
+            printf '  %s%d)%s %s%-7s%s %s%s%s  %s(workspace hint; pid %s)%s\n' \
+                "$bold" "$((i + 1))" "$reset" "$accent" "$name" "$reset" \
+                "$cyan" "$workspace_hint" "$reset" "$grey" "$pid" "$reset" >&2
+        else
+            printf '  %s%d)%s %s%-7s%s %sworkspace unknown  (pid %s)%s\n' \
+                "$bold" "$((i + 1))" "$reset" "$accent" "$name" "$reset" "$grey" "$pid" "$reset" >&2
+        fi
+        printf '     %s%s%s\n' "$grey" "$sock" "$reset" >&2
+    done
+    printf '%sSelect 1-%d%s (Enter cancels): ' "$bold" "${#sockets[@]}" "$reset" >&2
+    # Status 2 means the user declined, so callers need not explain how to ask.
+    IFS= read -r choice < /dev/tty || return 2
+    [[ "$choice" =~ ^[0-9]+$ ]] || return 2
+    (( choice >= 1 && choice <= ${#sockets[@]} )) || return 2
+    printf '%s\n' "${sockets[choice - 1]}"
+}
+
+# After an editor reload, a tmux client can keep the old hook even if tmux was
+# reattached. A replacement socket is created shortly after the old one; a
+# much later socket may belong to a different window.
+_code_ipc_sock_is_recent_successor() {
+    local old="$1" newer="$2" old_time newer_time
+    [[ -S "$old" && -S "$newer" && "$newer" -nt "$old" ]] || return 1
+    old_time=$(stat -c %Y -- "$old" 2>/dev/null) || return 1
+    newer_time=$(stat -c %Y -- "$newer" 2>/dev/null) || return 1
+    (( newer_time - old_time <= 120 ))
+}
+
+# Recover only when exactly one live socket was created soon after the stale
+# client hook. The extension host can identify the editor even if the old
+# socket has lost every process fd.
+_code_pick_successor_ipc_sock() {
+    local old="$1" editor="$2" dir sock found='' count=0
+    [[ -S "$old" ]] || return 1
+    for dir in /tmp "/run/user/$UID"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r -d '' sock; do
+            [[ "$sock" == "$old" ]] && continue
+            _code_ipc_sock_is_recent_successor "$old" "$sock" || continue
+            if _code_ipc_sock_is_live "$sock" "$editor"; then
+                found="$sock"
+                count=$((count + 1))
+            fi
+        done < <(find "$dir" -maxdepth 1 -type s -uid "$UID" -name 'vscode-ipc-*.sock' -print0 2>/dev/null)
+    done
+    [[ $count -eq 1 ]] || return 1
+    printf '%s\n' "$found"
+}
+
+_code_ipc_sock_used_by_tmux_client() {
+    local sock="$1" pid client_env
+    [[ -n "$TMUX" ]] && command -v tmux > /dev/null 2>&1 || return 1
+    for pid in $(tmux list-clients -F '#{client_pid}' 2>/dev/null); do
+        [[ -r "/proc/$pid/environ" ]] || continue
+        while IFS= read -r -d '' client_env; do
+            [[ "$client_env" == "VSCODE_IPC_HOOK_CLI=$sock" ]] && return 0
+        done < "/proc/$pid/environ"
+    done
+    return 1
+}
+
+_set_vscode_code_path() {
+    # A pane's environment is captured at creation, while the tmux client is
+    # attached from the window in use now. Choose that window before choosing
+    # a CLI, so VS Code stays primary without stealing requests from Cursor.
+    local _run_path="/run/user/$UID"
+    local newIPCHook='' source='' client_pid='' client_session='' client_hook='' client_git='' client_env='' tmux_hook=''
+    local saved_entry='' saved_hook='' saved_editor='' saved_seen='' saved_tail='' snapshot=''
+    local host_info='' host_pid='' editor='' label='' host_start='' root='' exe='' commit='' path=''
+    local pid_file='' curr_pid='' dir='' preferred='' fallback='' dead_editor='' successor=''
+    local client_inode='' trusted_entry='' failed_entry='' failed_match='' use_server_main='' quiet_binding=''
+    if [[ -n "$TMUX" ]] && command -v tmux > /dev/null 2>&1; then
+        # Resolve the client displaying this pane first. If tmux cannot provide
+        # one, use its most recently active client rather than socket mtime.
+        if [[ -n "$TMUX_PANE" ]]; then
+            client_pid=$(tmux display-message -p -t "$TMUX_PANE" '#{client_pid}' 2>/dev/null)
+            client_session=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null)
+        fi
+        if [[ ! "$client_pid" =~ ^[0-9]+$ ]]; then
+            if [[ -n "$client_session" ]]; then
+                client_pid=$(tmux list-clients -F '#{client_activity} #{client_pid} #{session_name}' 2>/dev/null \
+                    | awk -v s="$client_session" '$3==s {print $1, $2}' | sort -nr | head -n 1)
+            else
+                client_pid=$(tmux list-clients -F '#{client_activity} #{client_pid}' 2>/dev/null | sort -nr | head -n 1)
+            fi
+            client_pid="${client_pid##* }"
+        fi
+        if [[ -z "$client_session" && "$client_pid" =~ ^[0-9]+$ ]]; then
+            client_session=$(tmux list-clients -F '#{client_pid} #{session_name}' 2>/dev/null | awk -v p="$client_pid" '$1==p{sub(/^[^ ]+ /, ""); print; exit}')
+        fi
+        if [[ "$client_pid" =~ ^[0-9]+$ && -r "/proc/$client_pid/environ" ]]; then
+            while IFS= read -r -d '' client_env; do
+                case "$client_env" in
+                    VSCODE_IPC_HOOK_CLI=*) client_hook="${client_env#VSCODE_IPC_HOOK_CLI=}" ;;
+                    VSCODE_GIT_IPC_HANDLE=*) client_git="${client_env#VSCODE_GIT_IPC_HANDLE=}" ;;
+                esac
+            done < "/proc/$client_pid/environ"
+        fi
+        if [[ -n "$client_hook" ]]; then
+            client_inode=$(awk -v s="$client_hook" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
+            if [[ "$client_pid" =~ ^[0-9]+$ ]]; then
+                saved_entry=$(tmux show-option -gqv "@code_hook_$client_pid" 2>/dev/null)
+                trusted_entry=$(tmux show-option -gqv "@code_trusted_$client_pid" 2>/dev/null)
+                failed_entry=$(tmux show-option -gqv "@code_failed_$client_pid" 2>/dev/null)
+                if [[ -n "$_code_f_fresh" && -z "$_code_f_skip_client_hook" && -n "$failed_entry" ]]; then
+                    tmux set-option -gqu "@code_failed_$client_pid" || return 1
+                    failed_entry=''
+                fi
+                if [[ -n "$client_inode" && "$failed_entry" == "$client_hook|$client_inode" ]]; then
+                    failed_match=true
+                fi
+                if [[ "$saved_entry" == "$client_hook|"* ]]; then
+                    saved_tail="${saved_entry#*|}"
+                    saved_hook="${saved_tail%%|*}"
+                    [[ "$saved_tail" == *'|'* ]] && saved_editor="${saved_tail#*|}"
+                    saved_seen=$(tmux show-option -gqv "@code_seen_$client_pid" 2>/dev/null)
+                fi
+            fi
+            if [[ -z "$_code_f_skip_client_hook" ]] && host_info=$(_code_ipc_extension_host "$client_hook"); then
+                newIPCHook="$client_hook"
+                source="tmux client $client_pid"
+                quiet_binding=true
+                if [[ -n "$failed_match" ]]; then
+                    tmux set-option -gqu "@code_failed_$client_pid" || return 1
+                fi
+            elif [[ -z "$_code_f_skip_client_hook" && -n "$client_inode" \
+                && -z "$failed_match" && "$trusted_entry" == "$client_hook|$client_inode" ]] \
+                && host_info=$(_code_ipc_server_main "$client_hook"); then
+                newIPCHook="$client_hook"
+                source="verified hook for tmux client $client_pid"
+                use_server_main=true
+                quiet_binding=true
+            elif [[ -z "$_code_f_skip_client_hook" && -z "$failed_match" \
+                && ( -n "$_code_f_fresh" || -n "$_code_f_inspect" || ${#_code_f_args[@]} -gt 0 ) ]] \
+                && host_info=$(_code_ipc_server_main "$client_hook"); then
+                newIPCHook="$client_hook"
+                source="tmux client $client_pid"
+                use_server_main=true
+                if [[ -n "$_code_f_inspect" && -z "$_code_f_fresh" ]]; then
+                    _code_f_unverified=true
+                elif [[ -z "$_code_f_fresh" ]]; then
+                    _code_f_auto_fresh=true
+                fi
+            elif [[ -n "$saved_hook" ]] && host_info=$(_code_ipc_extension_host "$saved_hook"); then
+                newIPCHook="$saved_hook"
+                source="saved hook for tmux client $client_pid"
+                quiet_binding=true
+            elif [[ -n "$saved_editor" && -n "$saved_seen" ]] \
+                && successor=$(_code_pick_unseen_ipc_sock "$saved_editor" "$saved_seen"); then
+                newIPCHook="$successor"
+                source="unique new $saved_editor socket for tmux client $client_pid"
+            elif _code_ipc_sock_owned_by_editor "$client_hook" vscode; then
+                label='VS Code'
+                dead_editor='vscode'
+            elif _code_ipc_sock_owned_by_editor "$client_hook" cursor; then
+                label='Cursor'
+                dead_editor='cursor'
+            else
+                label='editor'
+            fi
+            if [[ -n "$label" ]]; then
+                # A remembered live-socket set is stronger than mtime. If it
+                # exists but several new windows appeared, do not guess from
+                # whichever hook happened to be exported in this shell.
+                if [[ -z "$saved_seen" ]]; then
+                    # A successful earlier repair updates the shell and tmux
+                    # session hooks, while /proc/<client>/environ stays fixed.
+                    if [[ "$VSCODE_IPC_HOOK_CLI" != "$client_hook" ]] \
+                        && _code_ipc_sock_is_live "$VSCODE_IPC_HOOK_CLI" "$dead_editor" \
+                        && _code_ipc_sock_is_recent_successor "$client_hook" "$VSCODE_IPC_HOOK_CLI"; then
+                        newIPCHook="$VSCODE_IPC_HOOK_CLI"
+                        source="shell hook after stale tmux client $client_pid"
+                    else
+                        if [[ -n "$client_session" ]]; then
+                            tmux_hook=$(tmux show-environment -t "$client_session" VSCODE_IPC_HOOK_CLI 2>/dev/null)
+                        else
+                            tmux_hook=$(tmux show-environment VSCODE_IPC_HOOK_CLI 2>/dev/null)
+                        fi
+                        [[ "$tmux_hook" == VSCODE_IPC_HOOK_CLI=* ]] && tmux_hook="${tmux_hook#VSCODE_IPC_HOOK_CLI=}"
+                        if [[ "$tmux_hook" != "$client_hook" ]] \
+                            && _code_ipc_sock_is_live "$tmux_hook" "$dead_editor" \
+                            && _code_ipc_sock_is_recent_successor "$client_hook" "$tmux_hook"; then
+                            newIPCHook="$tmux_hook"
+                            source="tmux session hook after stale client $client_pid"
+                        fi
+                    fi
+                    if [[ -z "$newIPCHook" ]]; then
+                        successor=$(_code_pick_successor_ipc_sock "$client_hook" "$dead_editor")
+                        if [[ -n "$successor" ]]; then
+                            newIPCHook="$successor"
+                            source="newer $label hook after stale tmux client $client_pid"
+                        fi
+                    fi
+                fi
+                if [[ -z "$newIPCHook" ]]; then
+                    successor=$(_code_choose_live_ipc_sock "${saved_editor:-$dead_editor}" "$client_git")
+                    if [[ -n "$successor" ]]; then
+                        newIPCHook="$successor"
+                        source="selected for tmux client $client_pid"
+                    fi
+                fi
+                if [[ -z "$newIPCHook" ]]; then
+                    if [[ -n "$_code_f_skip_client_hook" ]]; then
+                        printf 'code: %s hook %s did not respond, and no live replacement was selected. Reload that window or reattach tmux.\n' \
+                            "$label" "$client_hook" >&2
+                    elif [[ "$label" == editor ]]; then
+                        printf 'code: tmux client %s has a stale editor hook %s; run code --fresh to choose a live window.\n' "$client_pid" "$client_hook" >&2
+                    else
+                        printf 'code: tmux client %s has an unverified %s hook %s; run code --fresh to verify it.\n' "$client_pid" "$label" "$client_hook" >&2
+                    fi
+                    return 1
+                fi
+            fi
+        fi
+    fi
+
+    if [[ -z "$newIPCHook" ]] && host_info=$(_code_ipc_extension_host "$VSCODE_IPC_HOOK_CLI"); then
+        newIPCHook="$VSCODE_IPC_HOOK_CLI"
+        source="pane environment"
+    fi
+    # Outside tmux this shell runs in the editor terminal itself. A hook served
+    # by server-main is that terminal's own CLI server: each request carries the
+    # terminal's id, so it reaches whichever window shows the terminal now.
+    if [[ -z "$newIPCHook" && -z "$TMUX" && -z "$_code_f_skip_client_hook" ]] \
+        && host_info=$(_code_ipc_server_main "$VSCODE_IPC_HOOK_CLI"); then
+        newIPCHook="$VSCODE_IPC_HOOK_CLI"
+        source="terminal hook"
+        use_server_main=true
+    fi
+    if [[ -z "$newIPCHook" && -n "$TMUX" ]] && command -v tmux > /dev/null 2>&1; then
+        if [[ -n "$client_session" ]]; then
+            tmux_hook=$(tmux show-environment -t "$client_session" VSCODE_IPC_HOOK_CLI 2>/dev/null)
+        else
+            tmux_hook=$(tmux show-environment VSCODE_IPC_HOOK_CLI 2>/dev/null)
+        fi
+        [[ "$tmux_hook" == VSCODE_IPC_HOOK_CLI=* ]] && tmux_hook="${tmux_hook#VSCODE_IPC_HOOK_CLI=}"
+        if host_info=$(_code_ipc_extension_host "$tmux_hook"); then
+            newIPCHook="$tmux_hook"
+            source="tmux global environment"
+        fi
+    fi
+
+    # Without a usable hook, a terminal outside tmux can still be placed by its
+    # Git IPC socket. Inside tmux the chooser uses the client's Git socket.
+    if [[ -z "$newIPCHook" && -z "$TMUX" ]] \
+        && newIPCHook=$(_code_git_handle_ipc_sock "${VSCODE_GIT_IPC_HANDLE:-}" ''); then
+        source="Git IPC socket of this terminal"
+    fi
+
+    if [[ -z "$newIPCHook" && -n "$_code_f_fresh" ]]; then
+        newIPCHook=$(_code_choose_live_ipc_sock '' "$client_git") || {
+            [[ $? -eq 2 ]] \
+                || printf 'code: no window hook could be verified; run code --fresh in an interactive terminal to choose one.\n' >&2
+            return 1
+        }
+        source="selected for current terminal"
+    fi
+
+    if [[ -z "$newIPCHook" ]]; then
+        # Without a window-specific hook, VS Code wins over Cursor even if a
+        # Cursor socket has a newer mtime.
+        if [[ "$_code_f_sys_path" == "/tmp" ]]; then fallback="$_run_path"; else fallback="/tmp"; fi
+        for preferred in vscode cursor; do
+            for dir in "$_code_f_sys_path" "$fallback"; do
+                newIPCHook=$(_code_pick_live_ipc_sock "$dir" "$preferred") && break
+            done
+            [[ -n "$newIPCHook" ]] && break
+        done
+        [[ -n "$newIPCHook" ]] && source="socket scan"
+    fi
+    if [[ -z "$newIPCHook" ]]; then
+        printf 'code: no live VS Code or Cursor IPC socket found under %s or /tmp.\n' "$_run_path" >&2
+        return 1
+    fi
+    if ! host_info=$(_code_ipc_extension_host "$newIPCHook") \
+        && { [[ -z "$use_server_main" ]] || ! host_info=$(_code_ipc_server_main "$newIPCHook"); }; then
+        printf 'code: %s lost its extension host during detection. Reload that window and run code --fresh.\n' "$newIPCHook" >&2
+        return 1
+    fi
+    read -r host_pid editor <<< "$host_info"
+    _code_f_editor="$editor"
+    if [[ "$editor" == cursor ]]; then label='Cursor'; else label='VS Code'; fi
+    _code_f_sys_path=$(dirname "$newIPCHook")
+
+    # Use the selected extension host's server commit, not a newer installed
+    # CLI that may belong to a server which has not started yet.
+    exe=$(readlink -f "/proc/$host_pid/exe" 2>/dev/null)
+    if [[ "$editor" == vscode ]]; then
+        root="$HOME/.vscode-server/cli/servers"
+        if [[ "$exe" == "$root/"* ]]; then
+            path="${exe#"$root/"}"
+            commit="${path%%/*}"
+        fi
+        VSCODE_BIN_PATH="$root/$commit/server/bin/remote-cli/code"
+        if [[ -z "$commit" || ! -x "$VSCODE_BIN_PATH" ]]; then
+            while IFS= read -r -d '' pid_file; do
+                curr_pid=$(cat "$pid_file" 2>/dev/null)
+                if [[ "$curr_pid" =~ ^[0-9]+$ ]] && kill -0 "$curr_pid" 2>/dev/null; then
+                    VSCODE_BIN_PATH="$(dirname "$pid_file")/server/bin/remote-cli/code"
+                    [[ -x "$VSCODE_BIN_PATH" ]] && break
+                fi
+            done < <(find "$root" -maxdepth 2 -type f -name 'pid.txt' -print0 2>/dev/null)
+        fi
+    else
+        root="$HOME/.cursor-server/bin/linux-x64"
+        if [[ "$exe" == "$root/"* ]]; then
+            path="${exe#"$root/"}"
+        else
+            path=$(tr '\0' ' ' 2>/dev/null < "/proc/$host_pid/cmdline")
+            path="${path#*"$root/"}"
+        fi
+        commit="${path%%/*}"
+        VSCODE_BIN_PATH="$root/$commit/bin/remote-cli/cursor"
+    fi
+    if [[ ! -x "$VSCODE_BIN_PATH" ]]; then
+        printf 'code: no %s CLI found for server pid %s (%s).\n' "$editor" "$host_pid" "$VSCODE_BIN_PATH" >&2
+        return 1
+    fi
+
+    if [[ -n "$_code_f_fresh" || -n "$_code_f_auto_fresh" ]]; then
+        if ! timeout 8s env VSCODE_IPC_HOOK_CLI="$newIPCHook" "$VSCODE_BIN_PATH" --status > /dev/null 2>&1; then
+            if [[ -n "$use_server_main" && -z "$_code_f_skip_client_hook" ]] \
+                && [[ "$newIPCHook" == "$client_hook" || "$source" == 'terminal hook' ]]; then
+                if [[ "$newIPCHook" == "$client_hook" ]]; then
+                    tmux set-option -gqu "@code_trusted_$client_pid" || return 1
+                    tmux set-option -gq "@code_failed_$client_pid" "$client_hook|$client_inode" || return 1
+                fi
+                _code_f_failed_hook="$newIPCHook"
+                _code_f_skip_client_hook=true
+                _set_vscode_code_path
+                return $?
+            fi
+            if [[ -n "$_code_f_skip_client_hook" ]]; then
+                printf 'code: replacement %s hook %s did not respond; reload that window%s.\n' \
+                    "$label" "$newIPCHook" "${TMUX:+ or reattach tmux}" >&2
+            elif [[ -n "$_code_f_auto_fresh" ]]; then
+                printf 'code: tmux client %s has an unverified %s hook %s; run code --fresh to verify it.\n' \
+                    "$client_pid" "$label" "$client_hook" >&2
+            else
+                printf 'code: %s CLI did not respond%s.\n' "$label" "${TMUX:+; the tmux hook was not changed}" >&2
+            fi
+            return 1
+        fi
+    fi
+    if [[ -n "$_code_f_failed_hook" && "$newIPCHook" != "$_code_f_failed_hook" ]]; then
+        printf 'code: %s did not respond; using %s.\n' "$_code_f_failed_hook" "$newIPCHook" >&2
+    fi
+    if [[ -z "$_code_f_fresh" && -z "$_code_f_auto_fresh" && -z "$_code_f_inspect" \
+        && -z "$quiet_binding" \
+        && ( "$newIPCHook" != "$VSCODE_IPC_HOOK_CLI" || "$source" == 'socket scan' ) ]]; then
+        host_start=$(ps -p "$host_pid" -o lstart= 2>/dev/null)
+        printf 'code: using %s via %s (server pid %s, started %s; %s).\n' \
+            "$newIPCHook" "$editor" "$host_pid" "$host_start" "$source" >&2
+    fi
+    # Both remote CLIs use VSCODE_IPC_HOOK_CLI to reach their own server.
+    export VSCODE_IPC_HOOK_CLI="$newIPCHook"
+    export VSCODE_BIN_PATH
+    if [[ ( -n "$_code_f_fresh" || -n "$_code_f_auto_fresh" ) && -n "$TMUX" ]] \
+        && command -v tmux > /dev/null 2>&1; then
+        if [[ -n "$client_session" ]]; then
+            tmux set-environment -t "$client_session" VSCODE_IPC_HOOK_CLI "$newIPCHook" || return 1
+        else
+            tmux set-environment VSCODE_IPC_HOOK_CLI "$newIPCHook" || return 1
+        fi
+    fi
+    if [[ "$client_pid" =~ ^[0-9]+$ && -n "$client_hook" ]]; then
+        if [[ ( -n "$_code_f_fresh" || -n "$_code_f_auto_fresh" ) && -n "$use_server_main" \
+            && "$newIPCHook" == "$client_hook" && -n "$client_inode" ]]; then
+            tmux set-option -gqu "@code_failed_$client_pid" || return 1
+            tmux set-option -gq "@code_trusted_$client_pid" "$client_hook|$client_inode" || return 1
+        fi
+        snapshot=$(_code_live_ipc_snapshot "$editor")
+        tmux set-option -gq "@code_hook_$client_pid" "$client_hook|$newIPCHook|$editor" || return 1
+        tmux set-option -gq "@code_seen_$client_pid" "$snapshot" || return 1
+    fi
+    if [[ -n "$_code_f_fresh" ]]; then
+        local green='' accent='' reset='' editor_name="$label"
+        if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
+            green=$'\033[32m'
+            reset=$'\033[0m'
+            if [[ "$editor" == cursor ]]; then accent=$'\033[35m'; else accent=$'\033[34m'; fi
+        fi
+        if [[ "$client_pid" =~ ^[0-9]+$ ]]; then
+            printf 'code: %s✓%s %s%s%s ready for tmux client %s (all its panes)\n' \
+                "$green" "$reset" "$accent" "$editor_name" "$reset" "$client_pid" >&2
+        else
+            printf 'code: %s✓%s %s%s%s ready\n' \
+                "$green" "$reset" "$accent" "$editor_name" "$reset" >&2
+        fi
+    fi
+}
+
+# Show the selected connection. Like jcl, color is for a terminal only, and
+# NO_COLOR or a pipe gets plain text that can be copied or parsed safely.
+_code_show_connection() {
+    local bold='' grey='' blue='' cyan='' magenta='' reset='' editor_name editor_color
+    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+        bold=$'\033[1m'
+        grey=$'\033[90m'
+        blue=$'\033[34m'
+        cyan=$'\033[36m'
+        magenta=$'\033[35m'
+        reset=$'\033[0m'
+    fi
+    if [[ "$_code_f_editor" == cursor ]]; then
+        editor_name='Cursor'
+        editor_color="$magenta"
+    else
+        editor_name='VS Code'
+        editor_color="$blue"
+    fi
+
+    printf '%scode%s  %s%s%s\n' "$bold" "$reset" "$editor_color" "$editor_name" "$reset"
+    printf '%s────────────────────────────────%s\n' "$grey" "$reset"
+    printf '  %-7s %s%s%s\n' 'CLI' "$blue" "$VSCODE_BIN_PATH" "$reset"
+    printf '  %-7s %s%s%s\n' 'IPC' "$cyan" "$VSCODE_IPC_HOOK_CLI" "$reset"
+    if [[ -n "$_code_f_unverified" ]]; then
+        printf '  %-7s %s\n' 'State' 'Unverified for file opens; run code --fresh'
+    fi
 }
 
 # Helper function: run VS Code command
 _code_run_cmd() {
     [[ ${#_code_f_args[@]} -eq 0 ]] && return
 
-    for _ in {1..2}; do
-        "$VSCODE_BIN_PATH" "${_code_f_args[@]}" 2>/dev/null
-        if [[ $? -eq 0 ]]; then
-            break
-        else
-            _set_vscode_code_path || break
-        fi
+    local attempt rc
+    for attempt in 1 2; do
+        "$VSCODE_BIN_PATH" "${_code_f_args[@]}"
+        rc=$?
+        [[ $rc -eq 0 ]] && return 0
+        [[ $attempt -eq 2 ]] && break
+        _set_vscode_code_path || return 1
     done
+    printf 'code: editor CLI failed with exit status %s.\n' "$rc" >&2
+    return "$rc"
 }
 
 # Helper function: remove obsolete IPC sockets
 _code_clean_obsolete_ipc_socks() {
-    _set_vscode_code_path || return 1
-
-    local removed=0 kept=0
-    while IFS= read -r -d '' sock; do
-        # Only sockets nobody listens on are safe to drop. A live socket still
-        # belongs to another window, and deleting it breaks `code` over there,
-        # so being "not the one we picked" is not a reason to remove it.
-        if _code_ipc_sock_is_live "$sock"; then
-            kept=$((kept + 1))
-        else
-            echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
-            rm -f "$sock" && removed=$((removed + 1))
-        fi
-    done < <(find "$_code_f_sys_path" -maxdepth 1 -type s -name "vscode-ipc-*.sock" -print0 2>/dev/null)
+    local removed=0 kept=0 referenced=0 skipped=0 sock dir
+    local _run_path="/run/user/$UID"
+    for dir in /tmp "$_run_path"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r -d '' sock; do
+            # The filename is shared by editors. Only touch a socket owned by
+            # the selected editor, and keep every live window.
+            if ! _code_ipc_sock_owned_by_editor "$sock" "$_code_f_editor"; then
+                skipped=$((skipped + 1))
+            elif _code_ipc_sock_used_by_tmux_client "$sock"; then
+                referenced=$((referenced + 1))
+            elif [[ "$sock" == "$VSCODE_IPC_HOOK_CLI" ]] || _code_ipc_sock_is_live "$sock" "$_code_f_editor"; then
+                kept=$((kept + 1))
+            else
+                echo -e "Removing: ${LIGHTYELLOW}$sock${RESET}"
+                if rm -f -- "$sock"; then
+                    removed=$((removed + 1))
+                else
+                    printf 'code: could not remove %s.\n' "$sock" >&2
+                    return 1
+                fi
+            fi
+        done < <(find "$dir" -maxdepth 1 -type s -uid "$UID" -name "vscode-ipc-*.sock" -print0 2>/dev/null)
+    done
 
     echo "-------------------------------------------------------"
-    echo -e "Removed $removed stale socket(s), kept $kept live one(s)"
+    echo -e "Removed $removed stale $_code_f_editor socket(s), kept $kept live and $referenced tmux-client hook(s), skipped $skipped unverified/other-editor socket(s)"
     echo -e "In use: ${MAGENTA}$VSCODE_IPC_HOOK_CLI${RESET}"
 }
 
 # Helper function: pre-check
-# Detects remote server vs local machine. On local, finds and invokes the
-# native editor binary directly (no IPC socket needed).
+# Detects a remote VS Code or Cursor server vs a local installation.
 _code_pre_check() {
-    # Remote server: VS Code/Cursor server directories exist
     if [ -d "$HOME/.vscode-server/cli/servers" ] || [ -d "$HOME/.cursor-server/bin" ]; then
         _code_f_is_remote=true
         return 0
     fi
 
-    # Local machine: find the native editor binary
-    # type -P searches PATH for executables, ignoring shell functions/aliases
+    # The PATH bootstrap sets this marker so it cannot recursively invoke itself
+    # when there is no VS Code installation on this host.
+    if [[ -n "${CODE_BOOTSTRAP_ACTIVE:-}" ]]; then
+        echo -e "${RED}Error: No VS Code or Cursor installation or remote server found.${RESET}" >&2
+        return 1
+    fi
+
+    # type -P searches PATH for executables, ignoring shell functions/aliases.
     local bin
-    bin=$(type -P cursor 2>/dev/null) || bin=$(type -P code 2>/dev/null)
+    bin=$(type -P code 2>/dev/null)
 
     # macOS: check app bundle paths as fallback
     if [[ -z "$bin" && "$(uname -s)" == "Darwin" ]]; then
         local p
-        for p in "/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
-                 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"; do
+        for p in "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"; do
             [[ -x "$p" ]] && { bin="$p"; break; }
         done
     fi
 
     if [[ -n "$bin" ]]; then
-        "$bin" "$@"
+        CODE_BOOTSTRAP_ACTIVE=1 "$bin" "$@"
         return $?
     fi
 
-    echo -e "${RED}Error: No VS Code or Cursor installation found.${RESET}" >&2
+    echo -e "${RED}Error: No VS Code or Cursor installation or remote server found.${RESET}" >&2
     return 1
 }
 
@@ -631,8 +1163,8 @@ _code_self_reload() {
     # Unset all functions defined by this script to allow for reloading
     unset -f code _code_self_reload \
              _code_usage _code_parse_options _set_vscode_code_path \
-             _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
-             _code_pre_check _code_ipc_sock_is_live _code_pick_live_ipc_sock \
+             _code_show_connection _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
+             _code_pre_check _code_ipc_sock_is_live _code_ipc_extension_host _code_ipc_server_main _code_ipc_sock_owned_by_editor _code_ipc_sock_used_by_tmux_client _code_process_editor _code_pick_live_ipc_sock _code_live_ipc_snapshot _code_pick_unseen_ipc_sock _code_extension_host_workspace_hint _code_git_handle_ipc_sock _code_choose_live_ipc_sock _code_ipc_sock_is_recent_successor _code_pick_successor_ipc_sock \
              _code_strip_cwd_prefix _code_strip_git_prefix _code_pick_in_dir
 
     # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
@@ -647,18 +1179,35 @@ _code_self_reload() {
 
 # Main code function
 code() {
-    local _code_f_is_remote=
-    _code_pre_check "$@"
-    local rc=$?
-    [[ -z "$_code_f_is_remote" ]] && return $rc
+    # Bash exports functions one at a time. An inherited code() needs to load
+    # its helpers before it can run in a child shell.
+    if ! declare -F _code_parse_options > /dev/null; then
+        if [[ ! -r "$HOME/Templates/code-function.sh" ]]; then
+            printf 'code: helper functions are unavailable; source code-function.sh.\n' >&2
+            return 1
+        fi
+        # shellcheck source=/dev/null
+        source "$HOME/Templates/code-function.sh" || return 1
+        if ! declare -F _code_parse_options > /dev/null; then
+            printf 'code: could not load helper functions from code-function.sh.\n' >&2
+            return 1
+        fi
+        code "$@"
+        return $?
+    fi
 
-    # Remote server path setup:
-    # - VS Code: ~/.vscode-server/cli/servers/<commit>/server/bin/remote-cli/code
-    # - Cursor:  ~/.cursor-server/bin/linux-x64/<commit>/bin/remote-cli/cursor
+    local _code_f_is_remote=
     local _code_f_args=()
-    local _code_f_refresh=
+    local _code_f_fresh=
+    local _code_f_auto_fresh=
+    local _code_f_skip_client_hook=
+    local _code_f_failed_hook=
+    local _code_f_clean=
     local _code_f_debug=
-    local _code_f_print=
+    local _code_f_connection=
+    local _code_f_inspect=
+    local _code_f_unverified=
+    local _code_f_editor=
     local _code_f_sys_path
     local _run_path="/run/user/$UID"
     local _newest_run _newest_tmp
@@ -676,45 +1225,49 @@ code() {
     else
         _code_f_sys_path="/tmp"
     fi
-    local _code_f_search_path
-    local _code_f_is_cursor=""
-    if [ -d "$HOME/.cursor-server/bin" ]; then
-        _code_f_search_path="$HOME/.cursor-server/bin"
-        _code_f_is_cursor="1"
-    else
-        _code_f_search_path="$HOME/.vscode-server/cli/servers"
-    fi
-
     local parse_result
     _code_parse_options "$@"
     parse_result=$?
-    if [[ $parse_result -eq 1 ]]; then # Skip the following steps silently
+    if [[ $parse_result -eq 1 ]]; then
         return 1
-    elif [[ $parse_result -eq 2 ]]; then # The function was reloaded
+    elif [[ $parse_result -eq 2 ]]; then # Help or reload already handled
         return 0
     fi
 
-    # VSCODE_BIN_PATH being set is not enough to skip detection: the exported
-    # VSCODE_IPC_HOOK_CLI a long-lived shell inherited can go stale while the
-    # binary path stays valid. A socket whose window closed keeps its listener
-    # fd open in the still-running server process, so connect() succeeds and the
-    # CLI returns 0 with no output and no file opened. rc=0 makes the retry loop
-    # in _code_run_cmd break immediately, so nothing ever re-detects. Re-run
-    # detection whenever the inherited hook has no window behind it.
-    if [ -z "$VSCODE_BIN_PATH" ] || ! _code_ipc_sock_is_live "$VSCODE_IPC_HOOK_CLI" \
-        || [ -n "$_code_f_refresh" ] || [ -n "$_code_f_print" ]; then
-        _set_vscode_code_path || return 1
+    if [[ -n "$_code_f_connection" ]]; then
+        _code_f_inspect=true
+    elif [[ ${#_code_f_args[@]} -eq 1 ]]; then
+        case "${_code_f_args[0]}" in
+            --status|--version) _code_f_inspect=true ;;
+        esac
     fi
 
-    # Handle print flag after variables are set
-    if [ -n "$_code_f_print" ]; then
-        _code_print_core_vars
+    local rc
+    _code_pre_check "$@"
+    rc=$?
+    [[ -z "$_code_f_is_remote" ]] && return $rc
+
+    # Re-evaluate the current window on every call. A cached executable plus a
+    # live socket can still point at a different editor after tmux reattachment.
+    _set_vscode_code_path || return 1
+    _code_f_auto_fresh=
+    _code_f_skip_client_hook=
+    _code_f_failed_hook=
+
+    if [[ -n "$_code_f_clean" ]]; then
+        _code_clean_obsolete_ipc_socks || return 1
+        [[ -n "$_code_f_clean" ]] && return 0
+    fi
+
+    # Show the selected connection after variables are set.
+    if [[ -n "$_code_f_connection" ]]; then
+        _code_show_connection
         return 0
     fi
 
     # Actually run the command
     _code_run_cmd
-    local rc=$?
+    rc=$?
 
     # Disable debug mode
     [ -n "$_code_f_debug" ] && set +x

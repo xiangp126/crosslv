@@ -115,7 +115,7 @@ A build date *earlier* than your clone's HEAD does not mean the code is in your 
 **MANDATORY: reproduce on the exact box from `setup_id`, with the exact command, env and steps the
 regression ran.** No other host, command, scenario/iter/ops or "cleaner" bring-up: only a bit-for-bit
 match is a valid repro; anything else can hide or fake the failure. Box held by someone else → monitor
-it and grab it the instant it frees (§3b); never swap boxes except per §3b-bis.
+it and grab it the instant it frees (§3b); never swap boxes except per the same-PSID exception in §3b.
 
 The test machine is the `<machine>` parsed from `setup_id` (e.g. `BRONCO_FW-`**`m-fwreg-029`**`_DPU_MODE_P1`).
 
@@ -128,7 +128,7 @@ confirm with `--help` where one exists.
 
 Lock mechanics — taking, extending, releasing and verifying the lock, the `not in allocation pool`
 fallback, the interactive `--reg-extend` trap, reading `TIME LEFT` — are in **skill `noga-lock`**.
-Reserve **the box named in `setup_id`**, never a substitute (exception: §3b-bis).
+Reserve **the box named in `setup_id`**, never a substitute (exception: same-PSID substitution, §3b).
 
 ### 3b. If the box is busy: monitor and grab it the instant it frees
 
@@ -153,7 +153,7 @@ locked"); at minimum this must print 0 (run it as its own `ssh` command):
 ssh <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
 ```
 
-### 3b-bis. EXCEPTION — same-PSID substitution (only with explicit user approval)
+#### Exception — same-PSID substitution (only with explicit user approval)
 
 Only when the exact box is locked long-term **and the user explicitly approves a substitution**
 ("find an idle server with same PSID"). Match the **board, not just the family**: the same **PSID**
@@ -625,98 +625,143 @@ equally valid outcome. Check which repo(s) your change touches before building.
     root-cause hypothesis exists — not deferred to "the write-up later". It is the deliverable handed
     to Peter and the code owner, produced whether or not the Gerrit commit happens in the same session.
 
-## Phase 9b — Codify the repro: write env_rebuild + per_run_reset (as soon as Phases 1–2 are decoded)
+## Phase 9b — Codify the repro: env_rebuild + per_run from the lab-box template (as soon as Phases 1–2 are decoded)
 
 **Write both scripts as soon as Phases 1–2 are decoded — do NOT wait for the box or for a confirmed
 repro.** Everything they need comes from the session tarball, not the hardware. Reserving a contended
 box can take hours: write them in that window, so you run instead of type when the lock lands and the
-first (most error-prone) attempt is already scripted. Counter false confidence with honest labelling
-and opt-in danger, not delay:
+first (most error-prone) attempt is already scripted.
 
-1. **`!!! UNVERIFIED !!!` banner** atop each script until a run reproduces the exact signature; remove
-   it in the commit that records the first confirmed repro. Correct structure is not verification: a
-   pair with a multi-factor verdict, before/after PCI snapshot + diff, pre-fix-binary guard and a hard
-   baseline gate still produced the false `REPRO SUCCESS` dissected under Verdict discipline.
-2. **Every destructive path is opt-in** — default mode is verify/read-mostly; burning, NV clearing and
-   power operations need an explicit flag plus a typed confirmation.
-3. **Ownership guard first** — both scripts refuse to touch the box unless
-   `noga_manage.py -q -n <box> -D` shows `Status.lock_owner == $USER` (query Noga, compare the owner,
-   exit non-zero). A `hostname` check is not enough: the nightly regression runs on that same box, and
-   an `mst start` / `Fwreset` inside someone else's live session corrupts it.
-4. **Gates that cannot yet be grounded start as warnings**, not hard aborts (e.g. a PCI-topology gate
-   before any real baseline has been captured — topology trap below).
+**Start from `templates/lab-box/`, never from a blank file.** Copy its four files into
+`<task dir>/tools/`:
 
-Both go in `tools/` under the ticket's working dir, `chmod +x`. The split keeps env setup (slow, once
-per lock) apart from the per-run loop (fast, runs many times).
+| File | What it is | Edit it? |
+|---|---|---|
+| `lab.conf` | everything task-specific: box, card, image, NV recipe, tool, verdict `MODE`, `count_signal`, and the hooks that replace a default step | **fill it in** |
+| `env_rebuild.sh` | from the dev box, once per lock: guards, box setup, `--cycle` / `--burn`, gates | no |
+| `per_run.sh` | on the reg box, once per attempt: guards, gates, reset, run, verdict as the exit code | no |
+| `selftest.sh` | runs both scripts against stubs, no box needed; checks every exit path | run it after any script change |
 
-### `tools/env_rebuild_<box>.sh` — run **from the dev box**, once per lock
+- Change a script only when no hook can express what the task needs, and record why in the ledger.
+  The scripts implement every rule of this phase; a hook you write must keep them too.
+- A second box or a control group is a second conf that sources `lab.conf` and overrides a few
+  values; both scripts take it with `--lab <file>` (the end of `lab.conf` shows the shape).
+- `MODE` says what exit 0 means: `repro` — the signature appeared; `fixverify` — the defect's trigger
+  was present and its signature was not; `feature` — the new path ran and the run passed (skill
+  `feature-delivery`, Phase 4). `count_signal` decides it: the defect's signature verbatim, or for
+  a feature the lines only the new code emits.
 
-Rebuilds the box environment from scratch; one script per box (topology file, entry_points and
-expected PCI bus differ per machine). Canonical shape:
+Counter false confidence with honest labelling and opt-in danger, not delay:
 
-```bash
-HOST=<reg box>
-MUX=/tmp/ssh-cm-pexiang@${HOST}
-SSH() {
-    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 \
-          -o ControlMaster=auto -o ControlPath=$MUX -o ControlPersist=28800 \
-          pexiang@$HOST "$@"
-}
-```
+1. **`VERIFIED=` in `lab.conf` stays empty until a run reproduces the exact signature** (feature:
+   produces the intended outcome); while it is empty both scripts print `!!! UNVERIFIED !!!`.
+   Correct structure is not verification: a pair with a multi-factor verdict, before/after PCI
+   snapshot + diff, pre-fix-binary guard and a hard baseline gate still produced the false
+   `REPRO SUCCESS` dissected under Verdict discipline. **Bypassing a step is not running it**:
+   burning by hand because the script's burn path is broken leaves that path unverified — keep
+   `VERIFIED=` empty and record the bypass in the ledger.
+2. **Every destructive path is opt-in** — `env_rebuild.sh` only verifies unless given `--burn`, and
+   then asks for a typed confirmation (`--yes` skips it).
+3. **Ownership guard first** — both scripts refuse to touch the box unless Noga's
+   `Status.lock_owner` is you. A `hostname` check is not enough: the nightly regression runs on that
+   same box, and an `mst start` / `Fwreset` inside someone else's live session corrupts it.
+4. **A gate that cannot be grounded yet may start as a warning, and becomes a hard gate the day the
+   first known-good environment exists** — copy that environment's values (`EXPECT_FW`,
+   `WANT_CLASSES`, `NV_RECIPE`) into `lab.conf` then. A warning nobody promotes lets a drifted box
+   through: a PF that came back as InfiniBand still passes a function-count check.
 
-Steps, in order:
-1. **Guard** — abort if utopx is already running (`SSH 'pgrep -o utopx.exe'`); `FORCE=1` to override.
-2. **ControlMaster warm-up** — one `SSH 'echo connected'` before any long-running command. The socket
-   then stays alive 28800 s (`ControlPersist`) and every later SSH/sudo/flint reuses it without
-   re-authenticating, avoiding NFS-home auth failures in the first ~30 s after boot.
-3. **Burn FW + INI** in the background on the box:
-   `SSH "sudo setsid bash -c 'mlxburn ... > /tmp/burn_<box>.log 2>&1' </dev/null &"`; poll
-   `cat /tmp/burn_<box>.log` until "Image burn completed successfully" (or a `-E-` error).
-4. **mlxconfig** — set all required NV params with `sudo mlxconfig -d <dev> -y s ...`.
-5. **Make the burn and NV changes live.** Non-DPU NIC box: `$JMAKE --power-cycle $HOST`; then wait
-   for SSH (poll `SSH 'echo UP'`). DPU/BlueField box: never a power-cycle to pivot (Phase 7) —
-   `SSH 'sudo $HOME/.usr/bin/jmake --fw-reset --device <dev>'`; power-cycle it only when
-   `SSH 'sudo mlxfwreset -d <dev> q'` answers `There is no supported reset-level` (a pending NV
-   change needs a cold boot), then wait for SSH and confirm the ARM is alive (skill
-   `bluefield-fwconfig`) before step 6.
-6. **Verify** — `flint q` for FW version + PSID; `lspci` to assert the baseline bus (≥2 functions);
-   ARM alive (BF/DPU only): a shell on the ARM, `ssh root@<arm-ip> 'uname -m'` → `aarch64`
-   (skill `bluefield-fwconfig`; `tmfifo_net0` being UP or pingable proves nothing).
-7. **Print the next step** — the `per_run_reset.sh` command, ready to paste.
+### `env_rebuild.sh` — from the dev box, once per lock
 
-**Every check must be machine-checkable** — anything you were tempted to write as a `note` for the
-human is a check you have not written yet. Assert the **property**, not the presence:
-`lsmod | grep -c udriver` answers "is a module loaded", never "is it the *right build*", and prints a
-reassuring `1` for a driver that cannot run your test (udriver `3.07` predates the
-`udriver_dma_map_v2` API the PSF feature calls; PSF needs the 2026-08-25+ build, else every run dies
-inside an ioctl). Use `grep -c <the symbol you call> <the header>`, a recorded commit hash
-(`/bin/udriver_commit_hash`), or `flint q` for the version.
+In order: Noga owner → nothing running on the box (a bounded `ps`: `/proc` blocks behind a D-state
+process, so a timeout is a diagnosis) → every check that may refuse (`--burn`: input files, the
+typed confirmation, the offline image gate) → `setup_box` → with `--burn`: `nv_restore`, detached
+`mlxburn` with its log polled, `make_live`; with `--cycle`: `make_live` only → verify gates →
+`ENV_REBUILD_RC=<rc>` as the last line, the same value as the exit code. A run that refuses must
+refuse before it changes anything: a `setup_box` install followed by a refused burn leaves the box
+half-changed. Run it again after anything that resets or re-provisions the box, your own
+power-cycles and every MARS session that took the box back included; redoing the equivalent by hand
+is how a step silently stops being part of the procedure.
 
-### `tools/per_run_reset.sh` — run **on the reg box**, once per repro attempt
+**Use the smallest mode that covers what changed**, and ask before the heavy ones on a box whose
+environment is already set up:
 
-Runs the full repro sequence without re-burning. Defaults hard-code the known-good values (seed, iter
-count, utopx path, expected FW); callers override with `--seed N` `--iter N` `-U PATH` `--any-fw`.
+| What changed | Mode |
+|---|---|
+| nothing, or not sure (start of a session, after a run that went wrong) | default: verify only |
+| something that only a cold boot loads — a kernel module `setup_box` installed, a pending NV value | `--cycle` |
+| the image, or the NV must be redone (after MARS had the box, a different build) | `--burn` |
 
-1. **Guards** — `hostname -s` check at entry (abort if called from the dev box); tool not already
-   running; **assert the tool binary is the PRE-fix commit** (`git merge-base --is-ancestor <fix> HEAD`
-   → abort if the fix is present, since a fixed tool can never trigger the defect).
-2. `sudo mst start` + kill stale tool processes.
-3. **FW gate** — `flint q` → assert the expected FW version; on mismatch abort with instructions to run
-   `env_rebuild_<box>.sh`.
-4. **PCI gate** — `lspci -D` → assert the *post-env_rebuild* topology, derived from a real captured
-   baseline, never intuition: emulation/PCI-switch nvconfig inserts bridges and **shifts endpoints to
-   a higher bus**, so the "obvious" pre-mlxconfig bus would abort every run (topology trap below).
-5. `check_arm_agent.py` (BF/DPU suites only).
-6. `Fwreset.py --next_udriver` (StartDriverAndBind).
-7. **Baseline reset/health check — MUST PASS, hard abort**, not a warning; without it a post-run
-   failure is indistinguishable from a pre-existing one.
-8. **Snapshot the observable state** *before* running the tool (`lspci -D | sort > before.txt`).
-9. **Run the pre-fix tool at the pinned seed** — `sudo ./<tool> ... --seed=$SEED ... 2>&1 | tee $LOG`.
-10. **Snapshot again + diff** (`after.txt`, `diff -u before after`) — this diff is the evidence.
-11. **Verdict — multi-factor, never single-signal** (below).
+- **Offline image gate** — `mlxburn -wrimage` + `flint -i` on the dev box: the image's PSID must be
+  the card's and its version `EXPECT_FW`. Nothing touches the card before it passes.
+- **NV is part of the environment.** Burning and power-cycling leave NV as the last user left it,
+  so `nv_restore` puts it back: `mlxconfig reset`, then `NV_RECIPE` with at most 4 parameters per
+  `mlxconfig set` and Next Boot read back after each (global hard rule 2). The known-good NV is not
+  the factory default — after `reset` the card carries no TLVs at all. On a box in a MARS rotation
+  it is that setup's own recipe: `tar -xzOf <sid>.tgz | grep -a 'running cmd: sudo mlxconfig'`.
+- **Making it live** — NIC box: `jmake --power-cycle`. DPU/BlueField box: never a power-cycle to
+  pivot (Phase 7) — `jmake --fw-reset --device <dev>`; power-cycle only when `mlxfwreset -d <dev> q`
+  answers `There is no supported reset-level` (a pending NV change needs a cold boot), and have
+  `setup_box` confirm the ARM is alive (skill `bluefield-fwconfig`; `tmfifo_net0` being up or
+  pingable proves nothing).
+- **Verify gates** — FW version (flash, and running where `flint` reports it), the PCI class codes
+  of the 15b3 functions in BDF order (`0200` Ethernet, `0207` InfiniBand, `0801` DMA controller), and
+  every `NV_RECIPE` parameter's **Current** value. The raw NV TLVs are printed for the record and never
+  gated, and neither is "no Current ≠ Next": a TLV's writer ID depends on who wrote it, TLVs carry
+  fields outside the recipe, and a known-good state can carry a pending value that never takes
+  effect.
+- **Assert the property, not the presence** — anything you were tempted to write as a `note` for the
+  human is a check you have not written yet. `lsmod | grep -c udriver` answers "is a module loaded",
+  never "is it the right build", and prints a reassuring `1` for a driver that cannot run your test
+  (udriver `3.07` predates the `udriver_dma_map_v2` API the PSF feature calls; every run then hangs
+  inside an ioctl). Check the symbol you call in the header, a recorded commit hash
+  (`/bin/udriver_commit_hash`), or `flint q` for a version.
+- **The udriver on the box must be the one utopx is built against** — `UDRIVER_VERSION` in the
+  tree's `build.sh`, an artifact under `/.autodirect/mswg/projects/fw/fw_ver/artifacts/udriver/`.
+  The official way to install it is `install_udriver` (`.fwvalias` function `install_udriver_func`):
+  it clones `hca_fw/udriver` master on **the host it runs on** — run it on the box through `SSH`
+  with `.fwvalias` sourced, not on the dev box — and runs `install.sh`, which installs the library,
+  the headers and the `.ko` and loads nothing. The new library is in use at once and the new module
+  only after `make_live`, so install, then `--cycle`, then run; a box in between runs a new library
+  on an old module. Compare `/bin/udriver_commit_hash` with the pin, and once loaded,
+  `/sys/module/udriver/srcversion` with `modinfo -F srcversion udriver`.
 
-Log to `<workdir>/per_run_seed${SEED}_$(date +%m%d_%H%M%S).log`, with the before/after/diff snapshots
-alongside. Running the case more than once also requires clearing NV between runs (Phase 10).
+#### ssh from a script, or from an agent's shell
+
+- **`-o BatchMode=yes` on every ssh, and `unset DISPLAY` at the top of a script.** A Bash tool call
+  has no TTY and inherits the user's X `DISPLAY`. When publickey auth fails — a box that has just
+  booted runs sshd before the NFS home (and with it `authorized_keys`) is mounted — ssh falls back to
+  a password, opens `ssh-askpass` on the user's desktop and blocks until someone answers.
+  `SSH_ASKPASS_REQUIRE=never` would also stop it but needs OpenSSH 8.4; the dev box runs 8.2.
+- **One ControlMaster connection** (`ControlPersist`), with `ServerAliveInterval=5
+  ServerAliveCountMax=3` so a master whose TCP connection died exits within ~15 s.
+- **Close the master before a power-cycle** (`ssh -o ControlPath=<mux> -O exit <host>`). A master
+  left behind is dead after the reboot, and an ssh that attaches to it hangs: `ConnectTimeout` does
+  not cover a multiplexed session.
+- **Wait for a new boot id over a fresh connection** — `cat /proc/sys/kernel/random/boot_id` with
+  `-o ControlMaster=no -o ControlPath=none`, BatchMode, under `timeout`, until it differs from the id
+  read before the power-cycle. `jmake --power-cycle` can return while the old boot still answers
+  ssh, and gates run then check the box as it was before the reboot. A new id means the box
+  rebooted, is up and has its NFS home mounted.
+- **A password popup appeared anyway** → `ps -eo pid,ppid,etime,cmd | grep '[s]sh-askpass'` and walk
+  the ppid chain up to the ssh and the script that started it.
+
+### `per_run.sh` — on the reg box, once per attempt
+
+In order: guards (this host, not root, Noga owner, no tool running, the tool exists; `FIX_COMMIT`
+absent for `repro`, present for `fixverify`) → identity (tree HEAD, md5 of the executable and its
+libraries) → FW gate → **baseline gate**: PCI classes and `NV_RECIPE` Current, before every run and
+not only after the rebuild — the lock is advisory, and MARS or another user can rewrite NV in between
+→ pre-run `reset_device`, a hard gate → PCI snapshot and a `/dev/kmsg` marker → EXIT trap →
+`run_tool` → PCI diff and the kernel log since the marker → verdict. Everything a run produces lands
+in `<log dir>/<RUN_NAME>_seed<seed>_<stamp>.*`.
+
+- **`reset_device`** — default `jmake --fw-reset` plus binding every 15b3 function to udriver. A
+  repro mirrors the regression's own per-case reset (`Fwreset.py --next_udriver`, i.e.
+  StartDriverAndBind); a CX8 that exposes a PSF needs the PSF-aware reset (skill
+  `fw-build-burn-utopx` section 5). `lab.conf` spells out both replacements.
+- **Kernel evidence** — a DMAR fault, `Call Trace` or soft lockup between the marker and the end of
+  the run makes the run not clean even when the tool printed `TEST PASSED`.
+- Running the case more than once also requires clearing NV between runs (Phase 10).
 
 ### Verdict discipline — the single most important part
 
@@ -725,14 +770,18 @@ downstream symptom (a later script failing) only corroborates:
 
 | Factor | Role |
 |---|---|
-| baseline PASS | **precondition** — hard-gated at step 7 |
+| baseline PASS | **precondition** — the pre-run reset is a hard gate |
 | tool actually initialised | **validity** — if it died at startup the run is VOID, not "reproduced" |
 | expected syndrome/signature present | **trigger** — proves the defect path was entered |
 | **before/after state diff non-empty** | **CORE** — proves the defect's actual effect |
 | downstream script failure | **corroborating only — NEVER decisive** |
 
-Report each factor separately and distinguish `RUN VOID` / `NOT REPRODUCED` / `PARTIAL` /
-`REPRO SUCCESS` — never collapse to pass/fail.
+Report each factor separately — never collapse to pass/fail. `per_run.sh` prints the factors and
+maps the outcome to an exit code (`RUN VOID` / `NOT REPRODUCED` / `FAILED DIFFERENTLY` /
+`REPRO SUCCESS`; the table is in its header). When the signature can appear without the defect's
+trigger or its core effect, make `count_signal` require them too (the PCI snapshots sit next to the
+log as `<stamp>.pci_before.txt` / `.pci_after.txt`): a signature without them is `PARTIAL`, not a
+repro.
 
 What a single-signal verdict hides (#5138907): a harness declared `✅ REPRO SUCCESS` on
 `post_run_fwreset_rc != 0` alone, while every independent factor said the run proved nothing:
@@ -769,6 +818,28 @@ What a single-signal verdict hides (#5138907): a harness declared `✅ REPRO SUC
 - **Check a new measurement script against one hand-run case** before believing any rate it reports:
   its first numbers may describe the script, not the system (a too-short post-power-cycle wait reports
   "box did not come back" for a box that is up and reachable).
+- **The exit code must carry the verdict.** A script that prints "did not pass cleanly" and then
+  exits 0 turns every failed run green for whatever wraps it (a batch loop, CI, a summary grep on
+  `$?`). Give each verdict class its own non-zero code — e.g. 3 RUN VOID, 4 invalid control group,
+  5 new path never entered, 6 ran but failed (tool rc != 0, no PASS marker, or FATAL > 0) — list
+  the table in the script header, and end with an explicit `exit "$VERDICT_RC"`. Check that the
+  tool's own rc is 0 on a passing run before folding it into the verdict.
+- **Reset after the run from an EXIT trap, not only before the next one.** Install
+  `trap on_exit EXIT` and `trap 'exit 130' INT TERM` just before the tool starts. `on_exit` saves
+  `$?`, waits a bounded time (e.g. 60 s) for the tool process to exit, then resets; if the reset
+  fails or cannot run (tool still alive), it reports that and turns an otherwise-0 exit into its own
+  non-zero code while keeping any earlier non-zero code. Never mark the reset done before trying it.
+  A trap does not cover SIGKILL or a wedged box, and bash runs it only after the foreground pipeline
+  ends, so keep the pre-run reset and its success gate. A local Ctrl-C reaches a remote script only
+  through `ssh -t`.
+- **Derive the log directory from the binary under test** (`LOGDIR=$(dirname "$TOOL")/logs`), so a
+  control binary passed with `-U` writes into its own worktree and its evidence never mixes with the
+  stack under test. Print the binary identity every run — the worktree's HEAD, the md5 of the
+  executable and of its libraries — so each log says which build produced it.
+- **Test the exit paths with stubs before trusting them.** `selftest.sh` runs both scripts against
+  stubbed `sudo`, `ssh`, `flint`, `mlxconfig`, `lspci`, Noga and the reset, and checks every outcome
+  (pass, fail, void, control leak, reset failure, SIGTERM, drifted baseline, busy box); extend it
+  whenever you change a script.
 - **Topology trap — an env-setup side effect can perfectly mimic the bug's signature.** On #5138907
   the signature was "PCI address changed"; it did change (81→83) — because `mlxconfig` had enabled the
   emulated PCIe switch, which inserts bridges at 81/82 and moves the endpoints to 83: expected, and
@@ -776,23 +847,15 @@ What a single-signal verdict hides (#5138907): a harness declared `✅ REPRO SUC
   before the tool runs** — never an earlier snapshot, never a bus number reasoned out rather than
   observed.
 
-### Conventions and checklist
 
-- `chmod +x tools/env_rebuild_<box>.sh tools/per_run_reset.sh` immediately after writing.
-- Both scripts: color-coded output (`hdr`/`step`/`ok`/`warn`/`err`/`note` helpers), `set -u`, early
-  exit on every failure.
-- **Bypassing a step is not running it**: burning by hand because the script's burn path is broken
-  leaves that path unverified — keep its `!!! UNVERIFIED !!!` banner and record the bypass in the
-  ledger.
-- **Re-run `env_rebuild` after anything that resets the box**, including your own power-cycles;
-  redoing the equivalent by hand is how a step silently stops being part of the procedure.
+### The box is re-provisioned daily: script the rebuild
 
-## Phase 9b-bis — The box is re-provisioned DAILY: script the rebuild
-
-The nightly regression locks and re-provisions the box, scrambling whatever you set up: rebuild the
-repro environment at the start of every session, as **one command**. A ticket's own repro steps can be
-followed exactly and still fail because **they assume an already-provisioned box** (the reporter ran
-them right after a regression, toolchain already in place).
+The nightly regression locks and re-provisions the box, scrambling whatever you set up — the
+installed tools and the NV alike (the session runs its own `mlxconfig set`, and other users' utopx
+runs randomise NV): rebuild the repro environment at the start of every session, as **one command**
+(`env_rebuild.sh --burn`). A ticket's own repro steps can be followed exactly and still fail because
+**they assume an already-provisioned box** (the reporter ran them right after a regression,
+toolchain already in place).
 
 **Find what the regression installs** — the `log.txt` of its provisioning step (`install_Tools.cap`,
 `install_Lock_Tools.cap`) prints the exact command and the pinned versions:
@@ -809,12 +872,11 @@ sub-wrappers via their shebang (system python), and the older-python lab RegTool
 imports on a newer distro — call each sub-wrapper explicitly with the lab's own python
 (`MARS_PYVERSION`, e.g. `/auto/sw_tools/OpenSource/python/INSTALLS/python_3.7.5/.../python3`).
 
-**Write `tools/provision_<box>.sh`**: idempotent (skip what is present, `--force` to redo); long steps
-launched detached, so an SSH drop cannot kill a 20-minute install; a verify block at the end. Order
-matters — a driver-stack install with `--force --all` typically **removes** other tool packages, so
-reinstall them after it, not before.
-
-**Daily:** `provision_<box>.sh` → `env_rebuild_<box>.sh` → `per_run_reset.sh`.
+**Provision from `setup_box`** — directly, or through a `tools/provision_<box>.sh` it calls:
+idempotent (skip what is present, `--force` to redo); long steps launched detached, so an SSH drop
+cannot kill a 20-minute install; a verify block at the end. Order matters — a driver-stack install
+with `--force --all` typically **removes** other tool packages, so reinstall them after it, not
+before.
 
 **A missing component masquerades as "the documented steps don't work".** Before debugging the
 procedure, check the box has what it assumes: MFT present, driver stack installed, the tool's Python
@@ -936,7 +998,7 @@ leftover golden TLV.
   never reached the bug. That is `VOID` — not "the fix worked", not "cannot reproduce".
 - **Any verification loop that runs the case more than once must clear NV between runs**:
   `clear_nv_data.sh <mst>` → **immediately** re-burn FW+INI → `--fw-reset` → bring-up → run. Build it
-  into `per_run_reset.sh` (Phase 9b), not into your memory.
+  into `per_run.sh`'s `reset_device` (Phase 9b), not into your memory.
 
 **`clear_nv_data` is safe only if you can re-burn right after.** It erases every `NV_DATA` section
 (`flint -no_fw_ctrl e <addr>` per section found via `v showitoc`), and the card cannot boot until FW

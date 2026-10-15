@@ -45,8 +45,12 @@ the Jenkins instance hosting the job):
 ```bash
 curl -s "$J/job/<job>/<build>/consoleText" -o logs/ci_<build>.log
 grep -E 'Stage: ".*" Status:' logs/ci_<build>.log | grep -v 'Status: Success'
-grep -oE '<downstream job> #[0-9]+' logs/ci_<build>.log | sort -u
+grep -oE 'Remote build URL: [^ ]+' logs/ci_<build>.log | sort -u     # downstream jobs
 ```
+
+`utopx_ci` starts its DoA as a remote job and names it only as
+`Remote build URL: http://l-jenkins-005…/job/golan_fw_minireg/<N>/`; a `golan_fw_minireg #<N>`
+grep matches nothing. No hit means no DoA ran (see "SUCCESS without a DoA" below).
 
 `Failure_ignored` is routine (`Pre FC Validation`, `Macros Guard`) — not a real stage failure.
 

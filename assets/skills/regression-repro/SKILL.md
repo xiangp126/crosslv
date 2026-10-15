@@ -87,8 +87,11 @@ replace a device A/B when the suspect landed outside the retention window.
 
 - **Success = the SAME failure signature appears locally.** A green run means you did NOT
   reproduce it; never report a pass as progress.
+- **Count a repro rate over local attempts from the case's starting state only** (`3/3`). The
+  regression's own failure is what you reproduce, not a reproduction; a priming run or a run from
+  another starting state is listed separately and not counted.
 - **Reproduce on the exact box from `setup_id`.** A substitute host needs Peter's explicit
-  approval (procedure.md §3b-bis) and must match the **PSID**, not just the chip family.
+  approval (procedure.md §3b, same-PSID exception) and must match the **PSID**, not just the chip family.
   Authoritative inventory: `noga_manage.py -q -t nic -e "psid:<PSID>"`.
 - **Mandatory platform check on any substitute — utopx setups are Supermicro-only.** Require
   `Server_Model = Supermicro` and no `noga_alloc_note:[INCOMPATIBLE_UTOPX]` in `Free_text`. An idle
@@ -105,6 +108,10 @@ replace a device A/B when the suspect landed outside the retention window.
 - **Mirror the regression's own bring-up steps** (`mlxconfig_set` / `fw_reset` /
   `modprobe udriver` / `check_arm_agent`) as read from the session tarball — not a "cleaner"
   equivalent.
+- **A pinned seed replays a case only from the case's starting NV.** Gate every attempt on the
+  `mlxconfigchecksum:<cksum> <bytes>` line the case's own log printed; after an env rebuild, one
+  priming utopx run is needed before that state exists (key-learnings → "Repro harness and
+  verdicts").
 - **The device does NOT reset itself between your runs — the regression's `clear_nv_data` does.**
   Back-to-back local runs accumulate NV state the nightly session never carries, until utopx dies
   in init (`GoldenTlv: data length exceeds maximum supported size`, 516 > 255, zero `LOG_OP` lines)

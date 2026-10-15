@@ -17,7 +17,9 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -458,7 +460,9 @@ def codex_records(pid, cwd, targets, argv):
             "origin": "desktop" if desktop else "terminal",
             "empty": empty,
             "cwd": meta.get("cwd") or cwd,
-            "name": meta.get("name") or meta.get("title") or "",
+            # Spaces as hyphens, as Claude names its own sessions: a name copied
+            # off the screen needs no quotes (2026-10-12)
+            "name": "-".join((meta.get("name") or meta.get("title") or "").split()),
             "model": meta.get("model") or "",
             "effort": meta.get("reasoning_effort") or "",
             "agent_home": evidence["home"],
@@ -671,9 +675,6 @@ def collect(include_stale=False, agent="all"):
                 "effort": data.get("effort") or "",
                 "agent_home": data.get("agent_home") or "",
                 "origin": data.get("origin") or (claude_origin(data) if agent == "claude" else "terminal"),
-                # The Codex session an agent-bridge stand-in answers for: a
-                # headless Claude named after it, to let Claude sessions reach it
-                "stand_in_for": env.get("AGENT_BRIDGE_PROXY", ""),
                 "empty": bool(data.get("empty")),
                 "alive": alive,
                 "stopped": proc_state(pid) == "T" if alive else False,
@@ -1067,6 +1068,22 @@ def _clip_path(path, width):
     return "…" + (tail[cut:] if cut > 0 else tail)
 
 
+def _home(path):
+    """path with the home directory written as ~, as a person would type it."""
+    home, path = str(Path.home()), str(path)
+    return "~" + path[len(home):] if path == home or path.startswith(home + "/") else path
+
+
+def _shown_name(rec):
+    """A record's name as jcl shows it: a Codex title's spaces as hyphens.
+
+    collect() writes Codex names so since 2026-10-12; a snapshot saved before
+    that keeps the title as Codex wrote it.
+    """
+    name = rec.get("name") or ""
+    return "-".join(name.split()) if rec.get("agent") == "codex" else name
+
+
 def _short_model(model):
     """model as a MODEL cell shows it: without claude-, cut to MODEL_WIDTH."""
     return _clip_end(model.removeprefix("claude-"), MODEL_WIDTH)
@@ -1077,7 +1094,7 @@ def _cell_colour(column, value, rec, c):
     """A cell's colour.
 
     Light yellow is waiting's alone - D took it once, and drew the eye as a
-    question does. A stand-in's row is drawn by cmd_list.
+    question does.
     """
     # A record only --all keeps is greyed out whole: it describes a process that
     # has already exited, and none of the per-column meanings apply to it.
@@ -1092,7 +1109,7 @@ def _cell_colour(column, value, rec, c):
     if column == "STATE":  # the two worth a look: a turn running, a question open
         return {"busy": c["GREEN"], "waiting": c["LIGHTYELLOW"]}.get(value.split()[0] if value else "", c["GREY"])
     if column == "NAME":  # left plain so it stands out against the rest
-        return c["GREY"] if value == "--" else ""
+        return ""
     if column == "CWD":
         return c["BLUE"]
     return c["GREY"]  # WIN, MODEL, EFFORT, UP, PID, SESSION ID
@@ -1105,13 +1122,8 @@ def _many(n, noun):
 def _list_summary(records, states, c):
     """The line under the table: what needs you first, then what there is.
 
-    states maps a session id to its STATE cell. Stand-ins are Claude processes
-    but no session anyone works in: counted on their own, next to the codex
-    sessions they stand in for, they add neither a claude nor a desktop one.
+    states maps a session id to its STATE cell.
     """
-    stand_ins = sum(1 for rec in records if rec.get("stand_in_for"))
-    records = [rec for rec in records if not rec.get("stand_in_for")]
-
     busy = sum(1 for rec in records if states.get(rec["session_id"]) == "busy")
     waiting = sum(1 for rec in records if states.get(rec["session_id"]) == "waiting")
     parts = [f"{c['BOLD']}{len(records)}{c['RESET']} {'session' if len(records) == 1 else 'sessions'}",
@@ -1121,12 +1133,7 @@ def _list_summary(records, states, c):
     for rec in records:
         agents[rec["agent"]] = agents.get(rec["agent"], 0) + 1
     for agent, n in sorted(agents.items()):
-        part = f"{n} {c['MAGENTA'] if agent == 'claude' else c['BLUE']}{agent}{c['RESET']}"
-        if agent == "codex" and stand_ins:
-            part += f" {c['GREY']}(+{_many(stand_ins, 'stand-in')}){c['RESET']}"
-        parts.append(part)
-    if stand_ins and "codex" not in agents:  # only ones whose codex is gone
-        parts.append(f"{c['GREY']}{_many(stand_ins, 'stand-in')}{c['RESET']}")
+        parts.append(f"{n} {c['MAGENTA'] if agent == 'claude' else c['BLUE']}{agent}{c['RESET']}")
     paned = sum(1 for rec in records if rec["target"])
     # Hosted by Claude/Codex Desktop: shown, never acted on -- save, restore,
     # refresh and exit-session all leave them be
@@ -1272,8 +1279,8 @@ def claude_settings(rec):
 
     What the transcript leaves open comes off the command line, --model and
     --effort: a session that has not replied yet has no transcript at all, and
-    agent-bridge's stand-ins, started with --model haiku, read "-" until their
-    first relay (2026-10-11).
+    a headless `claude -p --model haiku` - agent-bridge's stand-ins were such
+    sessions - read "-" until its first reply (2026-10-11).
     """
     path = claude_transcript(rec)
     model = effort = ""
@@ -1402,54 +1409,20 @@ def cmd_list(args):
     # Sessions in a pane first; the rest -- Claude/Codex Desktop's, which no
     # other command touches, and any that lost their pane -- below a line that
     # names them, under the same header so every column still lines up.
-    # An agent-bridge stand-in goes right below the Codex session it stands in
-    # for, whose name it carries, hung from that row by a branch in TMUX. One
-    # whose Codex session is gone has no row to hang from and comes last.
-    stand_ins = {}
-    for rec in records:
-        if rec.get("stand_in_for"):
-            stand_ins.setdefault(rec["stand_in_for"], []).append(rec)
-    branches = {}  # stand-in session id -> the corner its line to its Codex row starts with
-
-    def followed_by_stand_ins(group):
-        rows = []
-        for rec in group:
-            rows.append(rec)
-            if rec["agent"] == "codex":
-                hanging = stand_ins.pop(rec["session_id"], [])
-                for n, proxy in enumerate(hanging, 1):
-                    branches[proxy["session_id"]] = "╰" if n == len(hanging) else "├"
-                rows += hanging
-        return rows
-
-    own = [rec for rec in records if not rec.get("stand_in_for")]
-    paned = followed_by_stand_ins([rec for rec in own if rec["target"]])
-    loose = followed_by_stand_ins([rec for rec in own if not rec["target"]])
-    loose += [rec for orphans in stand_ins.values() for rec in orphans]
+    paned = [rec for rec in records if rec["target"]]
+    loose = [rec for rec in records if not rec["target"]]
     records = paned + loose
     breaks = {len(paned)} - {0, len(records)}
 
     def tmux_cell(rec):
         # app: a session Claude/Codex Desktop or an IDE runs, which no pane
-        # holds; "-": one in a terminal outside tmux. A stand-in has no pane
-        # either: its TMUX and WIN carry the line to its Codex row, drawn below.
-        # "app" took over from "D", which only a legend explained.
-        if rec.get("stand_in_for"):
-            return ""
+        # holds; "-": one in a terminal outside tmux. "app" took over from
+        # "D", which only a legend explained.
         if rec["target"]:
             return rec["target"]
         return "app" if rec.get("origin") == "desktop" else "-"
 
-    # A stand-in carries its Codex session's name, and the same name twice in
-    # a row read as two sessions: "--" says it once. A name of its own -
-    # a clash suffix, a title it has not caught up with - is shown, and -v
-    # shows them all.
-    codex_names = {rec["session_id"]: rec["name"] for rec in records if rec["agent"] == "codex"}
-
     def name_cell(rec):
-        if (rec.get("stand_in_for") and not args.verbose
-                and rec["name"] == codex_names.get(rec["stand_in_for"])):
-            return "--"
         if not rec["name"]:
             return ""
         return rec["name"] if args.verbose else _clip_end(rec["name"], NAME_WIDTH)
@@ -1483,7 +1456,7 @@ def cmd_list(args):
         (
             tmux_cell(rec),
             rec["window_name"] or "",
-            "stand-in" if rec.get("stand_in_for") else rec["agent"],
+            rec["agent"],
             activity[rec["session_id"]][0],
             name_cell(rec),
             model_cell(blank(activity[rec["session_id"]][1])),
@@ -1493,10 +1466,7 @@ def cmd_list(args):
             blank(up_cell(rec)),
             str(rec["pid"]) + ("*" if shared_server(rec) else ""),
             rec["cwd"] if args.verbose else _clip_path(rec["cwd"], CWD_WIDTH),
-            # A stand-in's own id is of no use to send to - agent-bridge knows
-            # the Codex session's - and copied off this table it went nowhere:
-            # "--", as for its name; -v and --json keep it
-            "--" if rec.get("stand_in_for") and not args.verbose else rec["session_id"],
+            rec["session_id"],
         )
         for rec in records
     ]
@@ -1510,16 +1480,6 @@ def cmd_list(args):
 
     def render(column, cell, width, rec):
         padded = justify(column, cell, width)
-        if rec.get("stand_in_for") and rec.get("alive"):
-            # A row of the Codex row above it: grey, but for what it is, for
-            # CWD, and for the name of one with no Codex row to say whose it was
-            if column == "AGENT":
-                return c["LIGHTMAGENTA"] + padded + c["RESET"]
-            if column == "NAME" and rec["session_id"] not in branches:
-                return padded
-            if column == "CWD":  # blue all the way down, as every row's is
-                return c["BLUE"] + padded + c["RESET"]
-            return c["GREY"] + padded + c["RESET"]
         colour = _cell_colour(column, cell, rec, c)
         # No reset without a colour to reset: NAME is left deliberately
         # plain, and a bare reset there is just noise in the output.
@@ -1533,27 +1493,7 @@ def cmd_list(args):
         if n in breaks:
             label = "── no tmux pane "  # what puts them here: no handle to act on
             print(c["GREY"] + label + "─" * max(0, total - _dwidth(label)) + c["RESET"])
-        cells = [render(column, cell, w, rec) for column, cell, w in zip(headers, row, widths)]
-        if not rec.get("stand_in_for"):
-            print("  ".join(cells))
-            continue
-        # A stand-in: a line from under its Codex row's first character across
-        # TMUX and WIN to the word stand-in; one whose Codex session is gone,
-        # a red cross and a broken line. "└─ S" read as a stray letter.
-        # It ends in an arrow at the stand-in: ➤, of neutral width, one column
-        # in any terminal (▶ is drawn two wide by some, as an emoji), and the
-        # one of five that sat level with the line in Peter's terminal (►, ▸,
-        # → and ⟶ sat lower: box drawing is drawn at a cell's middle, they are
-        # set as text).
-        span = widths[0] + 2 + widths[1] + 2 - 3   # less the corner, the arrow, a space
-        corner = branches.get(rec["session_id"])
-        if not rec.get("alive"):
-            line = c["GREY"] + (corner or "✗") + ("─" if corner else "┄") * span + "➤ " + c["RESET"]
-        elif corner:
-            line = c["LIGHTMAGENTA"] + corner + "─" * span + "➤ " + c["RESET"]
-        else:
-            line = c["RED"] + "✗" + c["LIGHTMAGENTA"] + "┄" * span + "➤ " + c["RESET"]
-        print(line + "  ".join(cells[2:]))
+        print("  ".join(render(column, cell, w, rec) for column, cell, w in zip(headers, row, widths)))
     # A blank line, not a closing rule, sets the summary off from the table
     print()
     print(_list_summary(records, {sid: act[0] for sid, act in activity.items()}, c))
@@ -1582,27 +1522,13 @@ def fill_settings(rec):
 def cmd_save(args):
     c, e = palette(), palette(sys.stderr)
     records = collect()
-    # A stand-in is agent-bridge's to start and stop; it would otherwise be
-    # reported below as an app session left out
-    stand_ins = [rec for rec in records if rec.get("stand_in_for")]
-    records = [rec for rec in records if not rec.get("stand_in_for")]
-    if stand_ins:
-        print(f"{c['GREY']}Not saved, {_many(len(stand_ins), 'agent-bridge stand-in')}:"
-              f" agent-bridge brings them back{c['RESET']}")
     # A session Claude/Codex Desktop hosts itself has no pane to come back to;
     # restore would invent a tmux session named after the agent to put it in.
     # Desktop threads resumed INSIDE a pane are kept, marked by their origin, so
     # restore can say why it leaves them alone.
     hosted = [rec for rec in records if rec.get("origin") == "desktop" and not rec["target"]]
     records = [rec for rec in records if rec not in hosted]
-    if hosted:
-        names = ", ".join(rec["name"] or rec["session_id"][:8] for rec in hosted)
-        print(f"{c['GREY']}Not saved, {_many(len(hosted), 'app session')}: {names}{c['RESET']}")
     empty = [rec for rec in records if rec.get("empty")]
-    if empty:
-        names = ", ".join(rec["target"] or rec["session_id"][:8] for rec in empty)
-        print(f"{c['GREY']}No conversation yet in {_many(len(empty), 'codex session')},"
-              f" so restore will skip: {names}{c['RESET']}")
     for rec in records:
         fill_settings(rec)
     if not records:
@@ -1629,16 +1555,33 @@ def cmd_save(args):
         backup = out.with_name(out.name + ".bak")
         backup.write_text(old)
     out.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")
+    # The result first, then what it left out, then what dropped out since the
+    # last save. The notes about what was left out used to come first, printed
+    # as the records were sorted, and the result read as an afterthought
+    # (2026-10-13).
     print(f"{c['GREEN']}Saved{c['RESET']} {c['BOLD']}{len(records)}{c['RESET']}"
-          f" {'session' if len(records) == 1 else 'sessions'} to {c['CYAN']}{out}{c['RESET']}")
+          f" {'session' if len(records) == 1 else 'sessions'} to {c['CYAN']}{_home(out)}{c['RESET']}")
+    if hosted:
+        names = ", ".join(_shown_name(rec) or rec["session_id"][:8] for rec in hosted)
+        print(f"{c['GREY']}Not saved: {_many(len(hosted), 'app session')} ({names}){c['RESET']}")
+    if empty:
+        names = ", ".join(rec["target"] or rec["session_id"][:8] for rec in empty)
+        print(f"{c['GREY']}Restore will skip {_many(len(empty), 'codex session')} with no"
+              f" conversation yet ({names}){c['RESET']}")
     if dropped:
-        print(f"{c['LIGHTYELLOW']}{_many(len(dropped), 'session')} of the previous snapshot"
-              f" {'is' if len(dropped) == 1 else 'are'} not in this one"
-              f"{c['RESET']} (not running now); the old file is {c['CYAN']}{backup}{c['RESET']}:")
-        for r in dropped:
-            print(f"  {c['GREY']}{r.get('target') or '-':6}{c['RESET']} {r.get('agent', 'claude'):6} "
-                  f"{r.get('name') or r.get('cwd') or '-'}  {c['GREY']}{r.get('session_id')}{c['RESET']}")
-        print(f"  {c['GREY']}jcl show -f {backup}   /   jcl restore -f {backup}{c['RESET']}")
+        print(f"{c['LIGHTYELLOW']}Dropped:{c['RESET']} {_many(len(dropped), 'session')} from the"
+              " last save, not running now")
+        # Pane (left out when none had one), agent, name, id: lined up
+        rows = [(r.get("target") or "", r.get("agent") or "claude",
+                 _shown_name(r) or r.get("cwd") or "-", r.get("session_id") or "") for r in dropped]
+        widths = [max(_dwidth(row[i]) for row in rows) for i in range(3)]
+        for pane, agent, name, sid in rows:
+            cells = [c["CYAN"] + _dljust(pane, widths[0]) + c["RESET"]] if widths[0] else []
+            cells.append((c["MAGENTA"] if agent == "claude" else c["BLUE"]) + _dljust(agent, widths[1]) + c["RESET"])
+            cells.append(_dljust(name, widths[2]))
+            cells.append(c["GREY"] + sid + c["RESET"])
+            print("  " + "  ".join(cells))
+        print(f"  {c['GREY']}kept in {_home(backup)} (jcl show -f / jcl restore -f that file){c['RESET']}")
     return 0
 
 
@@ -1667,7 +1610,7 @@ def cmd_show(args):
         age = " (" + _ago(time.mktime(time.strptime(when, "%Y-%m-%d %H:%M:%S"))) + ")"
     except ValueError:
         age = ""
-    print(f"{c['GREY']}Snapshot {args.file}, saved {when}{age} on {snapshot.get('host', '?')}{c['RESET']}")
+    print(f"{c['GREY']}Snapshot {_home(args.file)}, saved {when}{age} on {snapshot.get('host', '?')}{c['RESET']}")
     if not records:
         print(f"{e['RED']}Snapshot holds no sessions.{e['RESET']}", file=sys.stderr)
         return 1
@@ -1696,7 +1639,7 @@ def cmd_show(args):
                      rec.get("window_name") or "",
                      rec.get("agent", "claude"),
                      where,
-                     _clip_end(rec["name"], NAME_WIDTH) if rec.get("name") else "",
+                     _clip_end(_shown_name(rec), NAME_WIDTH) if rec.get("name") else "",
                      _short_model(rec.get("model") or ""),
                      rec.get("effort") or "-",
                      _clip_path(rec.get("cwd") or "", CWD_WIDTH),
@@ -2182,6 +2125,209 @@ def cmd_exit_session(args):
             parts.append(f"{c['CYAN']}jcl restore{c['RESET']} {c['GREY']}brings them back in place, if the last jcl save has them{c['RESET']}")
         print()
         print(f" {c['GREY']}·{c['RESET']} ".join(parts))
+    return 1 if failures else 0
+
+def select_for_delete(records, selectors):
+    """The sessions `delete` names, each by its id (8+ leading characters) or its pane.
+
+    (selected, errors). Every selector has to land on exactly one session: the
+    caller is about to delete it for good, so an unknown or shared one is
+    reported rather than guessed at. A pane (0:6.2) names the live session in
+    it; an id, any session `list --all` shows, an app's included.
+    """
+    selected, errors = [], []
+    for want in selectors:
+        if re.fullmatch(r"[^:\s]+:\d+\.\d+", want):
+            hits = [r for r in records if r.get("alive") and r.get("target") == want]
+        elif len(want) >= 8 and re.fullmatch(r"[0-9a-fA-F-]+", want):
+            hits = [r for r in records if r["session_id"].startswith(want.lower())]
+        else:
+            errors.append(f"{want!r} is neither a session id (8+ characters) nor a pane (0:6.2)")
+            continue
+        if not hits:
+            errors.append(f"No session {want!r}")
+        elif len({r["session_id"] for r in hits}) > 1:
+            errors.append(f"{want!r} matches {len(hits)} sessions: "
+                          + ", ".join(r["session_id"] for r in hits))
+        elif hits[0] not in selected:
+            selected.append(hits[0])
+    return selected, errors
+
+
+def claude_session_files(session_id):
+    """What Claude Code keeps of one session under CLAUDE_DIR, by its id.
+
+    Its transcript and the directory beside it (sub-agents, tool results), its
+    file checkpoints, its environment snapshots, a --debug log. Exact names
+    only: other projects' directories can contain the id too - a session
+    started inside this one's scratchpad, for one.
+    """
+    found = list(CLAUDE_DIR.glob(f"projects/*/{session_id}.jsonl"))
+    found += [d for d in CLAUDE_DIR.glob(f"projects/*/{session_id}") if d.is_dir()]
+    for path in (CLAUDE_DIR / "file-history" / session_id, CLAUDE_DIR / "session-env" / session_id,
+                 CLAUDE_DIR / "debug" / f"{session_id}.txt"):
+        if path.exists():
+            found.append(path)
+    return found
+
+
+def codex_server_running(home):
+    """Whether a shared Codex app-server answers on the control socket in `home`.
+
+    Codex Desktop's does, while it runs: a thread it has open is deleted
+    through it, so the app does not hold a thread its own files no longer have.
+    """
+    path = Path(home) / "app-server-control" / "app-server-control.sock"
+    try:
+        with socket.socket(socket.AF_UNIX) as sock:
+            sock.settimeout(2)
+            sock.connect(os.path.realpath(path))
+        return True
+    except OSError:
+        return False
+
+
+def delete_codex_session(rec):
+    """`codex delete` the thread; (ok, detail).
+
+    Through the shared app-server when one runs, else in this process
+    (--no-daemon), which starts no daemon. Non-interactive, codex wants --force
+    and the full id (2026-10-14).
+    """
+    home = rec.get("agent_home") or str(Path.home() / ".codex")
+    argv = [shutil.which("codex") or "codex"]
+    if not codex_server_running(home):
+        argv.append("--no-daemon")
+    argv += ["delete", "--force", rec["session_id"]]
+    try:
+        done = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=120, env={**os.environ, "CODEX_HOME": home})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    lines = [line for line in (done.stdout + "\n" + done.stderr).splitlines()
+             if line.strip() and not line.startswith("WARNING:")]
+    return done.returncode == 0, (lines[-1] if lines else f"codex delete exit {done.returncode}")
+
+
+def delete_claude_session(rec):
+    """Remove what Claude Code keeps of the session; (ok, detail)."""
+    paths = claude_session_files(rec["session_id"])
+    if not paths:
+        return False, f"no transcript under {_home(CLAUDE_DIR / 'projects')}"
+    for path in paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    return True, f"{len(paths)} {'path' if len(paths) == 1 else 'paths'} removed"
+
+
+def drop_from_snapshot(path, session_ids):
+    """Take deleted sessions out of a snapshot, so restore does not try them; how many."""
+    try:
+        snapshot = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return 0
+    kept = [r for r in snapshot.get("sessions", []) if r.get("session_id") not in session_ids]
+    gone = len(snapshot.get("sessions", [])) - len(kept)
+    if gone:
+        snapshot["sessions"] = kept
+        Path(path).write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n")
+    return gone
+
+
+def cmd_delete(args):
+    """Delete sessions for good: quit the live ones, then remove their history.
+
+    Codex keeps a session in its state database and rollout, which `codex
+    delete` removes; Claude keeps it in files named by its id, which are removed
+    here. A session is named by id or pane, never by agent or `all`: nothing
+    here can be undone. A live one in a pane is quit first, as exit-session
+    quits it; one outside tmux jcl cannot quit, except a Codex Desktop thread,
+    which its app-server deletes while it runs.
+    """
+    c, e = palette(), palette(sys.stderr)
+    selectors = [part for item in args.sessions for part in item.split(",") if part]
+    if not selectors:
+        print(f"{e['RED']}Name at least one SESSION: its id or its pane, as `jcl list` shows them.{e['RESET']}",
+              file=sys.stderr)
+        return 1
+    records, errors = select_for_delete(collect(include_stale=True), selectors)
+    if errors:
+        for line in errors:
+            print(f"{e['RED']}{line}{e['RESET']}", file=sys.stderr)
+        print(f"{e['GREY']}Nothing deleted. Run `jcl list --all` to see the sessions.{e['RESET']}",
+              file=sys.stderr)
+        return 1
+
+    refused = []
+    for rec in records:
+        if is_self_session(rec):
+            refused.append((rec, "the session this command runs in"))
+        elif rec.get("alive") and rec.get("stopped"):
+            refused.append((rec, "suspended (Ctrl-Z): resume it, or kill it, first"))
+        elif rec.get("alive") and not rec.get("target") and not (
+                rec["agent"] == "codex" and rec.get("origin") == "desktop"):
+            refused.append((rec, "runs outside tmux, where jcl cannot quit it: quit it first"))
+    if refused:
+        for rec, why in refused:
+            print(f"{e['RED']}Not deleting {_shown_name(rec) or rec['session_id']}{e['RESET']}: {why}",
+                  file=sys.stderr)
+        print(f"{e['GREY']}Nothing deleted.{e['RESET']}", file=sys.stderr)
+        return 1
+
+    print(f"{c['BOLD']}{len(records)}{c['RESET']} {'session' if len(records) == 1 else 'sessions'}"
+          f" will be {c['RED']}deleted for good{c['RESET']}, history and all:")
+    for rec in records:
+        where = rec.get("target") or ("app" if rec.get("origin") == "desktop" else "-") if rec.get("alive") else "exited"
+        print(f"  {c['CYAN']}{where:<7}{c['RESET']}{agent_colour(rec['agent'], c)}{rec['agent']:<7}{c['RESET']}"
+              f"{_shown_name(rec) or rec['cwd']}  {c['GREY']}{rec['session_id']}{c['RESET']}")
+    print()
+    if args.dry_run:
+        print(f"{c['GREY']}[dry-run] nothing deleted{c['RESET']}")
+        return 0
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print(f"{e['RED']}Not deleted{e['RESET']}: confirm with --yes when not at a terminal.",
+                  file=sys.stderr)
+            return 1
+        try:
+            answer = input("Delete them? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print(f"{c['GREY']}Nothing deleted.{c['RESET']}")
+            return 1
+
+    deleted, failures = [], 0
+    for rec in records:
+        label = f"{rec['agent']} {_shown_name(rec) or rec['session_id'][:8]}"
+        if rec.get("alive") and rec.get("target"):
+            target = rec["pane_id"] or rec["target"]
+            if not is_live_agent(rec["pid"], rec["agent"], rec.get("proc_start")):
+                print(f"{e['RED']}Agent process changed; not deleting {label}{e['RESET']}", file=sys.stderr)
+                failures += 1
+                continue
+            if not quit_agent(rec, target, label, args.timeout, e,
+                              f"Still running after SIGKILL; history of {label} kept"):
+                failures += 1
+                continue
+        ok, detail = (delete_codex_session if rec["agent"] == "codex" else delete_claude_session)(rec)
+        if ok:
+            deleted.append(rec["session_id"])
+            print(f"{c['GREEN']}Deleted{c['RESET']} {label}  {c['GREY']}{rec['session_id']} ({detail}){c['RESET']}")
+        else:
+            failures += 1
+            print(f"{e['RED']}Not deleted{e['RESET']} {label}: {detail}", file=sys.stderr)
+
+    dropped = drop_from_snapshot(DEFAULT_SNAPSHOT, set(deleted)) if deleted else 0
+    parts = [f"{c['BOLD']}{len(deleted)}{c['RESET']} deleted"]
+    if failures:
+        parts.append(f"{e['RED']}{failures} failed{e['RESET']}")
+    if dropped:
+        parts.append(f"{c['GREY']}taken out of {_home(DEFAULT_SNAPSHOT)} too{c['RESET']}")
+    print()
+    print(f" {c['GREY']}·{c['RESET']} ".join(parts))
     return 1 if failures else 0
 
 # The two agents share no model names at all: opus[1m] means nothing to codex,
@@ -3182,11 +3328,7 @@ def main(argv=None):
             " tmux pane come last, below a line saying so: TMUX shows app, in its"
             " agent's colour, for one Claude/Codex Desktop or an IDE runs (a Codex"
             " Desktop thread's PID*, and UP, are its shared app-server's), and - for"
-            " one in a terminal outside tmux. An agent-bridge stand-in is listed right below the Codex session it"
-            " stands in for, joined to it by a line drawn to the word stand-in, its"
-            " NAME -- where it is that session's name too, and its SESSION ID --,"
-            " being nothing to send to (-v shows both); one whose Codex session is"
-            " gone is marked ✗ and comes last."
+            " one in a terminal outside tmux."
         ),
     )
     p_list.add_argument(
@@ -3196,8 +3338,7 @@ def main(argv=None):
     p_list.add_argument("--ids-only", action="store_true", help="Print session ids only")
     p_list.add_argument(
         "-v", "--verbose", action="store_true",
-        help="Show NAME, MODEL and CWD whole, and what a stand-in's row has as --:"
-             " its name where it is its Codex session's, and its session id",
+        help="Show NAME, MODEL and CWD whole",
     )
     # No --agent: the AGENT column already tells the few rows apart, and --json
     # callers (the completion among them) filter for themselves
@@ -3292,6 +3433,37 @@ def main(argv=None):
         "-n", "--dry-run", action="store_true", help="Print what would run, kill nothing"
     )
     p_exit.set_defaults(func=cmd_exit_session)
+
+    p_delete = sub.add_parser(
+        "delete",
+        help="Delete sessions for good, history and all",
+        description=(
+            "Delete the named sessions permanently: a live one in a tmux pane is quit"
+            " first, as exit-session quits it, and then its history is removed - a Codex"
+            " session with `codex delete`, through Codex Desktop's app-server when that"
+            " runs; a Claude session's transcript and the other files Claude Code keeps"
+            " under its id. Each is also taken out of the default snapshot, so restore"
+            " does not try it. Not deleted: the calling session, a suspended one, and a"
+            " live one outside tmux, which jcl cannot quit, except a Codex Desktop"
+            " thread. Asks first at a terminal; elsewhere needs --yes."
+        ),
+    )
+    p_delete.add_argument(
+        "sessions", nargs="*", metavar="SESSION",
+        help="Sessions to delete, by session id (8+ leading characters will do) or by"
+             " tmux target (0:6.2), as `list` shows them. Several separated by spaces"
+             " or commas. No `all`: each one is named.",
+    )
+    p_delete.add_argument("-y", "--yes", action="store_true", help="Do not ask before deleting")
+    p_delete.add_argument(
+        "--timeout", type=float, default=15.0,
+        help="Seconds to wait for a live session's quit keystroke before SIGTERM, then"
+             " SIGKILL (default: 15)",
+    )
+    p_delete.add_argument(
+        "-n", "--dry-run", action="store_true", help="Show what would be deleted, delete nothing"
+    )
+    p_delete.set_defaults(func=cmd_delete)
 
 
     p_set = sub.add_parser(
@@ -3459,7 +3631,7 @@ def main(argv=None):
         description=(
             "Run agent-bridge with the rest of the line: `jcl bridge status`, `jcl"
             " bridge peers`, `jcl bridge start`, `jcl bridge stop`, `jcl bridge"
-            " restart`, `jcl bridge scan`. Not send: agent sessions send with"
+            " restart`. Not send: agent sessions send with"
             " `agent-bridge send` from their"
             " own shell. `jcl bridge -h` is agent-bridge's own help."
         ),

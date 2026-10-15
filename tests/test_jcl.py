@@ -80,7 +80,7 @@ class SessionTests(unittest.TestCase):
             with patch.object(jcl, "proc_start_marker", return_value="55"):
                 records = jcl.codex_records(42, "/old", descriptors, ["/bin/codex"])
             self.assertEqual(len(records), 1)
-            self.assertEqual(records[0]["name"], "a named task")
+            self.assertEqual(records[0]["name"], "a-named-task")   # spaces as hyphens, to copy whole
             self.assertEqual(records[0]["cwd"], "/work tree")
             self.assertEqual(records[0]["model"], "gpt-local")
             self.assertEqual(records[0]["agent_home"], f"{tmp}/custom-home")
@@ -118,7 +118,7 @@ class SessionTests(unittest.TestCase):
             rc, out = self.invoke(["save", "-o", str(path)])
             self.assertTrue(json.loads(path.read_text())["sessions"][0]["empty"])
         self.assertEqual(rc, 0, out)
-        self.assertIn("No conversation yet in 1 codex session, so restore will skip: test:1.0", out)
+        self.assertIn("Restore will skip 1 codex session with no conversation yet (test:1.0)", out)
 
     def test_exec_helper_and_subagents_are_not_interactive(self):
         paths = [f"/custom/thread-writer-locks/{SID}.lock"]
@@ -505,18 +505,28 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(any(c.args[:3] == ("send-keys", "-t", "%99") for c in tmux.call_args_list))
 
     def test_save_keeps_the_old_file_and_names_what_drops_out(self):
+        live = [record(sid="up"), record(sid="desk", name="Read PSF", target="", origin="desktop")]
         with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(jcl, "collect", return_value=[record(sid="up")]), \
+             patch.object(jcl, "collect", return_value=live), \
              patch.object(jcl, "pane_tail", return_value=""):
             path = Path(tmp) / "snap.json"
-            old = json.dumps({"sessions": [record(sid="up"), record(sid="gone", name="lost-one")]})
+            # Saved before Codex names were written with hyphens
+            old = json.dumps({"sessions": [record(sid="up"),
+                                           record(sid="gone", name="Greet the user", target="")]})
             path.write_text(old)
             rc, out = self.invoke(["save", "-o", str(path)])
             self.assertEqual(rc, 0, out)
             self.assertEqual(Path(str(path) + ".bak").read_text(), old)
             self.assertEqual([r["session_id"] for r in json.loads(path.read_text())["sessions"]], ["up"])
-        self.assertIn("1 session of the previous snapshot is not in this one", out)
-        self.assertIn("lost-one", out)
+        # The result first, then what was left out, then what dropped out
+        self.assertEqual(out.splitlines(), [
+            f"Saved 1 session to {path}",
+            "Not saved: 1 app session (Read-PSF)",
+            "Dropped: 1 session from the last save, not running now",
+            "  codex  Greet-the-user  gone",
+            f"  kept in {path}.bak (jcl show -f / jcl restore -f that file)"])
+        self.assertEqual(jcl._home(Path.home() / ".claude/snap.json"), "~/.claude/snap.json")
+        self.assertEqual(jcl._home("/tmp/x"), "/tmp/x")
 
     def test_show_marks_what_runs_here_and_what_restore_brings_back(self):
         saved = [record(sid="up", target="t:1.1"), record(sid="moved", target="t:1.3"),
@@ -734,8 +744,8 @@ class SessionTests(unittest.TestCase):
 
     def test_claude_settings_fall_back_to_the_command_line(self):
         rec = record("claude", "fresh", model="", effort="")
-        # A stand-in before its first relay: no transcript yet. An option's
-        # value that merely contains a flag is not that flag.
+        # A headless `claude -p` before its first reply: no transcript yet.
+        # An option's value that merely contains a flag is not that flag.
         argv = ["claude", "-p", "--model", "haiku", "--settings", '{"a": "--effort"}']
         with patch.object(jcl, "claude_transcript", return_value=None), \
              patch.object(jcl, "proc_argv", return_value=argv):
@@ -830,16 +840,14 @@ class SessionTests(unittest.TestCase):
 
     def test_a_full_day_still_fits_the_187_column_terminal(self):
         # Everything wide at once: a two-digit window, a waiting session, NAME
-        # past its cap and CWD at it, a long Codex model, a stand-in's AGENT,
-        # seven-digit pids, twelve days up
+        # past its cap and CWD at it, a long Codex model, seven-digit pids,
+        # twelve days up
         now = jcl.time.time()
         recs = [record("claude", "c1", target="3:12.1", window_name="Hack", status="waiting",
                        name="n" * 50, cwd="/auto/fwgwork1/pexiang/bugZilla/Page_Supplier",
                        pid=4194303),
                 record(sid=SID, target="3:9.1", window_name="U2", model="gpt-6-astra",
-                       effort="xhigh", pid=4194302),
-                record("claude", "p1", target="", pane="", window_name="", origin="desktop",
-                       pid=4194301, stand_in_for=SID, cwd="/var/tmp/agent-bridge-152126/stand-in")]
+                       effort="xhigh", pid=4194302)]
         with patch.object(jcl, "collect", return_value=recs), \
              patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")), \
              patch.object(jcl, "codex_turn", return_value=("idle", now - 600)), \
@@ -849,6 +857,14 @@ class SessionTests(unittest.TestCase):
         self.assertIn(" opus-5-5 ", out)
         self.assertIn(" gpt-6-as… ", out)
         self.assertLessEqual(max(jcl._dwidth(line) for line in out.splitlines()), 187)
+
+    def test_model_is_shown_without_its_release_date(self):
+        # The id a transcript records for Haiku made MODEL ten columns wider
+        rec = record("claude", "p1", target="", pane="")
+        with patch.object(jcl, "claude_settings", return_value=("claude-haiku-4-5-20251001", "")):
+            self.assertEqual(jcl.session_activity(rec)[1], "claude-haiku-4-5")
+        with patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")):
+            self.assertEqual(jcl.session_activity(rec)[1:], ("claude-opus-5-5", "max"))
 
     def test_shell_state_reads_idle(self):
         # Claude's "shell": the model done, a background command still running
@@ -869,103 +885,6 @@ class SessionTests(unittest.TestCase):
         # Idle for a minute but up three days: the two are not the same thing
         self.assertEqual((rows[0].split()[3], rows[0][up]), ("idle", "3d"))
         self.assertEqual((rows[1].split()[3], rows[1][up]), ("exited", "  "))   # nothing runs to time
-
-
-class StandInTests(unittest.TestCase):
-    """agent-bridge's stand-ins: headless Claude sessions named after a Codex session."""
-
-    def invoke(self, argv):
-        return SessionTests.invoke(self, argv)
-
-    def test_collect_marks_a_stand_in_with_its_codex_session(self):
-        files = [{"pid": 7, "sessionId": "real", "cwd": "/w", "name": "n", "kind": "interactive"},
-                 {"pid": 8, "sessionId": "proxy", "cwd": "/tmp/agent-bridge-1/stand-in",
-                  "name": "Explain ISSI", "kind": "interactive"}]
-        with patch.object(jcl, "sessions_from_files", return_value=files), \
-             patch.object(jcl, "codex_sessions", return_value=[]), \
-             patch.object(jcl, "pane_lookup", return_value={}), \
-             patch.object(jcl, "is_live_agent", return_value=True), \
-             patch.object(jcl, "proc_environ",
-                          side_effect=lambda pid: {"AGENT_BRIDGE_PROXY": SID} if pid == 8 else {}), \
-             patch.object(jcl, "proc_state", return_value="S"):
-            marks = {r["session_id"]: r["stand_in_for"] for r in jcl.collect()}
-        self.assertEqual(marks, {"real": "", "proxy": SID})
-
-    def test_each_stand_in_hangs_below_its_codex_session(self):
-        recs = [record("claude", "c1"),
-                record(sid=SID, name="Explain ISSI", target="test:1.2", pane="%97"),
-                record(sid="dsk", name="Read PSF", target="", pane="", origin="desktop"),
-                record("claude", "p1", name="Explain ISSI", target="", pane="", origin="desktop",
-                       stand_in_for=SID, cwd="/tmp/agent-bridge-1/stand-in"),
-                record("claude", "p2", name="Gone", target="", pane="", origin="desktop",
-                       stand_in_for="no-such-thread"),
-                record("claude", "p3", name="Read PSF", target="", pane="", origin="desktop",
-                       stand_in_for="dsk"),
-                record("claude", "p4", name="Explain ISSI (b2c3)", target="", pane="",
-                       origin="desktop", stand_in_for=SID)]
-        with patch.object(jcl, "collect", return_value=recs), \
-             patch.object(jcl, "claude_settings", return_value=("-", "-")), \
-             patch.object(jcl, "codex_turn", return_value=("idle", jcl.time.time() - 600)), \
-             patch.object(jcl, "pane_tail", return_value=""):
-            rc, out = self.invoke(["list"])
-            _, verbose = self.invoke(["list", "-v"])
-        lines = out.splitlines()
-        self.assertEqual(rc, 0)
-        # In order: c1, SID, then its stand-ins p1 and p4, dsk and its p3, the orphan p2
-        shown = [line for line in lines[2:-2] if not line.startswith("─")]
-        # The name a stand-in shares with its Codex session is said once; one
-        # of its own, or one with no Codex row above it, is shown
-        self.assertIn(" -- ", shown[2])
-        self.assertIn(" -- ", shown[5])
-        self.assertIn("Explain ISSI (b2c3)", shown[3])
-        self.assertIn("Gone", shown[6])
-        # A stand-in's own session id is nothing to send to: -- but for -v
-        self.assertEqual([shown[n].split()[-1] for n in (2, 3, 5, 6)], ["--"] * 4)
-        for proxy in ("p1", "p2", "p3", "p4"):
-            self.assertNotIn(proxy, out.split())
-            self.assertIn(proxy, verbose.split())
-        verbose_rows = {line.split()[-1]: line for line in verbose.splitlines()[2:-2]}
-        self.assertNotIn(" -- ", verbose_rows["p1"])  # -v: every stand-in's own name
-        self.assertEqual(sum("Explain ISSI  " in line for line in verbose.splitlines()), 2)
-        def lead(line):  # a TMUX handle, or the corner a stand-in's line starts with
-            token = line.split()[0]
-            return token[0] if token[0] in "├╰✗" else token
-        rows = [(lead(line), line.split()[-1]) for line in verbose.splitlines()[2:-2]
-                if not line.startswith("─")]
-        self.assertEqual(rows, [("test:1.0", "c1"), ("test:1.2", SID),
-                                ("├", "p1"), ("╰", "p4"),        # the last corner is rounded
-                                ("app", "dsk"), ("╰", "p3"),
-                                ("✗", "p2")])                    # nothing to hang from: last
-        # Each line reaches the word stand-in, under AGENT
-        for line in lines[2:-2]:
-            if line[0] in "├╰✗":
-                self.assertEqual(line.index("stand-in"), lines[0].index("AGENT"), line)
-        self.assertTrue(lines[6].startswith("── no tmux pane "))  # paned, then the rest
-        self.assertIn("/tmp/agent-bridge-1/stand-in", lines[4])  # where it really runs
-        self.assertIn("3 sessions", lines[-1])        # a stand-in is not a session of yours
-        self.assertIn("1 claude · 2 codex (+4 stand-ins)", lines[-1])
-
-    def test_model_is_shown_without_its_release_date(self):
-        # The id a transcript records for Haiku made MODEL ten columns wider
-        rec = record("claude", "p1", target="", pane="", stand_in_for=SID)
-        with patch.object(jcl, "claude_settings", return_value=("claude-haiku-4-5-20251001", "")):
-            self.assertEqual(jcl.session_activity(rec)[1], "claude-haiku-4-5")
-        with patch.object(jcl, "claude_settings", return_value=("claude-opus-5-5", "max")):
-            self.assertEqual(jcl.session_activity(rec)[1:], ("claude-opus-5-5", "max"))
-
-    def test_save_leaves_stand_ins_to_agent_bridge(self):
-        recs = [record("claude", "c1"),
-                record("claude", "p1", name="Explain ISSI", target="", pane="", origin="desktop",
-                       stand_in_for=SID)]
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(jcl, "collect", return_value=recs), \
-             patch.object(jcl, "claude_settings", return_value=("", "")):
-            path = Path(tmp) / "snap.json"
-            rc, out = self.invoke(["save", "-o", str(path)])
-            saved = [r["session_id"] for r in json.loads(path.read_text())["sessions"]]
-        self.assertEqual((rc, saved), (0, ["c1"]))
-        self.assertIn("Not saved, 1 agent-bridge stand-in:", out)
-        self.assertNotIn("app session", out)
 
 
 class BridgeTests(unittest.TestCase):
@@ -997,7 +916,134 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("Cannot run", err.getvalue())
 
 
+class DeleteTests(unittest.TestCase):
+    """jcl delete: a session gone for good, so every step refuses rather than guesses."""
+
+    def setUp(self):
+        self.env = patch.dict(os.environ, {}, clear=True)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def invoke(self, argv):
+        return SessionTests.invoke(self, argv)
+
+    def recs(self):
+        return [record("claude", "c1aaaaaa-0000-4000-8000-000000000001", target="t:1.0"),
+                record("codex", "01a139e7-7b96-7641-bd30-4772bd8af44c", target="", pane="",
+                       origin="desktop", name="Read PSF feature (2)"),
+                record("codex", "01a139e7-7c9c-7e33-bc8c-9e21edd4cb8a", target="t:2.0"),
+                record("claude", "c2bbbbbb-0000-4000-8000-000000000002", target="", pane="",
+                       origin="desktop", name="PSF app")]
+
+    def test_a_session_is_named_by_its_id_or_its_pane_and_never_guessed(self):
+        recs = self.recs()
+        picked, errors = jcl.select_for_delete(recs, ["t:1.0", "01a139e7-7b96", "c2bbbbbb"])
+        self.assertEqual(([r["session_id"][:8] for r in picked], errors), (["c1aaaaaa", "01a139e7", "c2bbbbbb"], []))
+        _, errors = jcl.select_for_delete(recs, ["01a139e7", "t:9.9", "claude", "abc"])
+        self.assertIn("matches 2 sessions", errors[0])             # a shared id head
+        self.assertEqual(errors[1], "No session 't:9.9'")
+        self.assertIn("neither a session id", errors[2])           # no keywords
+        self.assertIn("neither a session id", errors[3])           # too short to be sure
+
+    def test_what_cannot_be_deleted_stops_everything(self):
+        cases = [({"CLAUDE_CODE_SESSION_ID": "c1aaaaaa-0000-4000-8000-000000000001"}, "t:1.0",
+                  "the session this command runs in"),
+                 ({}, "c2bbbbbb", "runs outside tmux")]
+        for env, target, why in cases:
+            with patch.dict(os.environ, env), patch.object(jcl, "collect", return_value=self.recs()), \
+                 patch.object(jcl, "delete_claude_session") as delete:
+                rc, out = self.invoke(["delete", "-y", target, "01a139e7-7c9c"])
+            self.assertEqual(rc, 1, out)
+            self.assertIn(why, out)
+            self.assertIn("Nothing deleted", out)
+            delete.assert_not_called()
+
+    def test_it_asks_and_without_a_terminal_wants_yes(self):
+        with patch.object(jcl, "collect", return_value=self.recs()), \
+             patch.object(jcl, "delete_codex_session") as delete, \
+             patch("sys.stdin.isatty", return_value=False):
+            rc, out = self.invoke(["delete", "01a139e7-7b96"])
+            self.assertEqual(rc, 1)
+            self.assertIn("confirm with --yes", out)
+            rc, out = self.invoke(["delete", "-n", "01a139e7-7b96"])
+            self.assertIn("[dry-run] nothing deleted", out)
+        delete.assert_not_called()
+        with patch.object(jcl, "collect", return_value=self.recs()), \
+             patch.object(jcl, "delete_codex_session", return_value=(True, "Deleted")) as delete, \
+             patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="y"), \
+             patch.object(jcl, "DEFAULT_SNAPSHOT", Path("/nonexistent/snap.json")):
+            rc, out = self.invoke(["delete", "01a139e7-7b96"])
+        self.assertEqual(rc, 0, out)
+        delete.assert_called_once()
+        self.assertIn("Deleted codex Read-PSF-feature-(2)", out)   # the name as jcl shows it
+
+    def test_a_live_pane_is_quit_first_and_kept_if_it_will_not_go(self):
+        recs = self.recs()
+        for quit_ok, deleted in ((True, 1), (False, 0)):
+            with patch.object(jcl, "collect", return_value=recs), \
+                 patch.object(jcl, "is_live_agent", return_value=True), \
+                 patch.object(jcl, "quit_agent", return_value=quit_ok) as quit, \
+                 patch.object(jcl, "delete_codex_session", return_value=(True, "Deleted")) as delete, \
+                 patch.object(jcl, "DEFAULT_SNAPSHOT", Path("/nonexistent/snap.json")):
+                rc, _ = self.invoke(["delete", "-y", "t:2.0"])
+            quit.assert_called_once()
+            self.assertEqual((delete.call_count, rc), (deleted, 0 if quit_ok else 1))
+        # A Codex Desktop thread is not quit: its app-server deletes it while it runs
+        with patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "quit_agent") as quit, \
+             patch.object(jcl, "delete_codex_session", return_value=(True, "Deleted")), \
+             patch.object(jcl, "DEFAULT_SNAPSHOT", Path("/nonexistent/snap.json")):
+            self.assertEqual(self.invoke(["delete", "-y", "01a139e7-7b96"])[0], 0)
+        quit.assert_not_called()
+
+    def test_claude_files_go_by_exact_name_only(self):
+        sid = "c1aaaaaa-0000-4000-8000-000000000001"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(jcl, "CLAUDE_DIR", Path(tmp)):
+            mine = [Path(tmp, f"projects/-w/{sid}.jsonl"), Path(tmp, f"projects/-w/{sid}/subagents/a.jsonl"),
+                    Path(tmp, f"file-history/{sid}/f"), Path(tmp, f"session-env/{sid}/e"),
+                    Path(tmp, f"debug/{sid}.txt")]
+            decoy = Path(tmp, f"projects/-tmp-x-{sid}-scratchpad/other.jsonl")   # another session's
+            for path in mine + [decoy]:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("x")
+            ok, detail = jcl.delete_claude_session({"session_id": sid})
+            self.assertEqual((ok, detail), (True, "5 paths removed"))
+            self.assertFalse(any(path.exists() for path in mine))
+            self.assertTrue(decoy.exists())
+            self.assertFalse(jcl.delete_claude_session({"session_id": sid})[0])   # nothing left
+
+    def test_codex_goes_through_its_app_server_when_one_runs(self):
+        rec = {"session_id": "01a139e7-7b96-7641-bd30-4772bd8af44c", "agent_home": "/h/.codex"}
+        done = SimpleNamespace(returncode=0, stdout="Deleted session 01a139e7.\n", stderr="WARNING: noise\n")
+        for running, flag in ((True, False), (False, True)):
+            with patch.object(jcl, "codex_server_running", return_value=running), \
+                 patch.object(jcl.subprocess, "run", return_value=done) as run:
+                self.assertEqual(jcl.delete_codex_session(rec), (True, "Deleted session 01a139e7."))
+            argv, env = run.call_args.args[0], run.call_args.kwargs["env"]
+            self.assertEqual(argv[-3:], ["delete", "--force", rec["session_id"]])
+            self.assertEqual("--no-daemon" in argv, flag)          # no daemon started for it
+            self.assertEqual(env["CODEX_HOME"], "/h/.codex")
+
+    def test_a_deleted_session_leaves_the_snapshot_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "snap.json")
+            path.write_text(json.dumps({"saved_at": "x", "sessions": [{"session_id": "a"}, {"session_id": "b"}]}))
+            self.assertEqual(jcl.drop_from_snapshot(path, {"a"}), 1)
+            self.assertEqual([r["session_id"] for r in json.loads(path.read_text())["sessions"]], ["b"])
+            self.assertEqual(jcl.drop_from_snapshot(path, {"zzz"}), 0)
+            self.assertEqual(jcl.drop_from_snapshot(Path(tmp, "missing.json"), {"a"}), 0)
+
+
 class CompletionTests(unittest.TestCase):
+    def test_delete_completes_ids_and_panes_never_keywords(self):
+        script = ("source completion/jcl_completion.bash\n"
+                  "_jcl_delete_candidates() { printf '%s\\n' 0:6.2 01a139e7-7b96-7641-bd30-4772bd8af44c; }\n"
+                  "COMP_WORDS=(jcl delete ''); COMP_CWORD=2\n"
+                  "COMP_LINE='jcl delete '; COMP_POINT=${#COMP_LINE}\n"
+                  "_jcl_complete\nprintf '%s\\n' \"${COMPREPLY[@]}\"\n")
+        proc = subprocess.run(["bash", "-c", script], cwd=ROOT, text=True, capture_output=True, check=True)
+        self.assertEqual(sorted(proc.stdout.split()), sorted(["0:6.2", "01a139e7-7b96-7641-bd30-4772bd8af44c"]))
+
     def test_agent_completion_for_set(self):
         command = "source completion/jcl_completion.bash\nCOMP_WORDS=(jcl set --agent co)\nCOMP_CWORD=3\n_jcl_complete\nprintf '%s\\n' \"${COMPREPLY[@]}\""
         proc = subprocess.run(["bash", "-c", command], cwd=ROOT, text=True, capture_output=True, check=True)

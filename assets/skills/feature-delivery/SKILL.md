@@ -26,7 +26,7 @@ them.
 | publishing the design documents | skill `managing-confluence` | Phase 1 |
 | review ecology, merge order, propagation, PSF instances | `references/review-and-merge.md` | Phase 5–6 |
 | build / burn / run mechanics, `jmake` worktree path rules | skill `fw-build-burn-utopx` | Phase 4 |
-| `env_rebuild` + `per_run` script pair | skill `regression-repro` Phase 9b / 9b-bis, **two rules inverted** (Phase 4) | before the first lab run |
+| `env_rebuild` + `per_run` script pair | skill `regression-repro` `templates/lab-box/` (its Phase 9b), `MODE=feature` (Phase 4) | before the first lab run |
 | box reservation, waiting out `mars_reg` | skill `noga-lock` | before anything touches hardware |
 | commit message format, cherry-picks, stack push | skill `gerrit-change` | Phase 5–6 |
 | re-triggering CI | skill `utopx-ci-rerun` | Phase 5 |
@@ -126,6 +126,16 @@ unnecessary.
   owner, already written.
 - **FW side, where this is absolute**: never modify `golan_fw` carries at all — keep them
   byte-identical to the gerrit patchset and report defects instead.
+- **Once the change is yours, its defects still go into separate commits.** After taking a change
+  over, fixes for defects that testing finds in its own code stay `[Local-Only]` carries on the test
+  stack; they are not amended into the change's patchset, and they are not proposed as "fold into
+  PSn". They go up later as a separate commit, when Peter decides, so the review history keeps the
+  feature and its fixes apart.
+- **Keep lines that depend on each other in one commit, even when they cure different defects.**
+  The dependency can sit outside the diff: setting one field early can make later code skip the
+  block that sets the others, so the commit holding only some of the lines fails in a new way. Each
+  commit of a carry stack must build and run on its own; after reshuffling a stack, re-run the test
+  step of every commit whose content changed, not only the tip.
 
 ### The base is frozen too — never advance it on your own initiative
 
@@ -179,39 +189,34 @@ git -C /auto/fwgwork1/$USER/golan_fw worktree add -b <task>-track /auto/fwgwork1
   `git -C <wt> log --grep="Change-Id: I<...>" --format='%h %ci' -1`
 
 Lab environment — `mars_reg` re-provisions the regression server **daily**, so the environment is
-rebuilt every session, not once. Write the script pair specified in skill `regression-repro`
-Phase 9b / 9b-bis (`tools/env_rebuild_<box>.sh` from the dev box once per lock;
-`tools/per_run_<task>.sh` on the box per attempt) and **keep every guard it specifies** — except
-exactly these two repro rules, which are backwards for a feature:
-
-| Phase 9b rule (repro) | For a feature |
-|---|---|
-| assert the tool binary is the **PRE-fix** commit; abort if the fix is present | **drop it** — a feature run wants the new code |
-| verdict `REPRO SUCCESS` / `NOT REPRODUCED`, keyed on a defect signature | **replace it** — see below |
+rebuilt every session, not once. Copy skill `regression-repro`'s `templates/lab-box/` into
+`<task dir>/tools/` and fill in `lab.conf` (its Phase 9b explains every part); the scripts keep every
+guard. `MODE=feature` changes exactly the two repro rules that are backwards for a feature: no
+pre-fix-binary check (`FIX_COMMIT` stays empty — a feature run wants the new code), and the verdict
+asks whether the new code path ran instead of whether a defect signature appeared.
 
 **The verdict.** `TEST PASSED` answers "did the tool survive", not "was the feature exercised".
-Have the run script count the feature's own fingerprints and report them as first-class factors:
+`count_signal` in `lab.conf` counts the feature's own fingerprints. `FEATURE_GATE` names the utopx
+key that opens the new path; `per_run.sh` passes it as `-e KEY=1`, and `--feature-off` passes `KEY=0`
+for a cheap control run that must stay dark:
 
-```bash
-# `|| true`, NOT `|| echo 0`: grep -c already prints 0 on no match and exits 1, so `|| echo 0`
-# appends a SECOND line, the value becomes "0\n0", every `= 0` test below takes the else branch,
-# and the verdict flips to NEW PATH EXERCISED on a run that entered nothing.
-F_HITS=$(grep -c "<capability field>"      "$LOG" || true)   # e.g. icm_mng_global
-F_PATH=$(grep -c "<new enum / new op_mod>" "$LOG" || true)   # e.g. PROVIDE_PAGES_RANGE
-```
+| Outcome | Exit | Meaning |
+|---|---|---|
+| `RUN VOID` | 3 | tool never initialised, or did no work — says nothing either way |
+| `OLD PATH ONLY` | 5 | ran, fingerprints **0** — **proves nothing about the feature**, however green |
+| `NEW PATH EXERCISED`, run clean | 0 | only now is the result about this feature |
+| `NEW PATH EXERCISED`, run not clean | 6 | the feature ran and something failed |
+| `CONTROL INVALID` | 4 | a control run (`--feature-off`, or a conf with `CONTROL=1`) entered the new path |
 
-| Outcome | Meaning |
-|---|---|
-| `RUN VOID` | tool never initialised — says nothing either way |
-| `OLD PATH ONLY` | ran and passed, fingerprints **0** — **proves nothing about the feature** |
-| `NEW PATH EXERCISED` | fingerprints > 0 — only now is the result about this feature |
-
-- Pick fingerprints from the code you wrote (capability field, new opcode/`op_mod`, a log line
-  only the new branch emits) — never from the feature's name.
+- Pick fingerprints from the code you wrote — a new opcode / `op_mod` on executed-operation
+  (`LOG_OP`) lines, a log line only the new branch emits — never the feature's name or its config
+  key: those appear in the config dump of every run, so their count is never zero. Count with
+  `grep -c ... || true`, never `|| echo 0`: `grep -c` already prints `0`, and the second line makes
+  the value `"0\n0"`, which is not `0`.
 - **Count progress too, not just errors.** A tool hung inside a driver ioctl reports zero errors
-  forever, so `FATAL == 0` plus a long runtime reads as the best run you have had. Add a counter
-  that only moves when work happens (operations logged, iterations reached) and require it to be
-  non-zero before believing any verdict — full case in skill `regression-repro` Phase 9b.
+  forever, so `FATAL == 0` plus a long runtime reads as the best run you have had. `per_run.sh`
+  requires `LOG_OP` lines before it believes a pass — full case in skill `regression-repro`
+  Phase 9b.
 
 ## Phase 5 — Review
 

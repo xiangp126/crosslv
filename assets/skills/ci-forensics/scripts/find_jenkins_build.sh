@@ -116,7 +116,7 @@ if [ -n "$SAVE" ]; then
 
 Now read it:
   grep -E 'Stage: ".*" Status:' <log> | grep -v 'Status: Success'
-  grep -oE 'golan_fw_minireg #[0-9]+|nicx_minireg_doa/#[0-9]+' <log> | sort -u
+  grep -oE 'Remote build URL: [^ ]+' <log> | sort -u          (the downstream DoA jobs)
   grep -oE 'session_id [0-9]+ .-device [a-z0-9_]+ (.-branch [^ ]+ )?.-status [a-z]+' <log>
                               ^ .-device, never --device (grep parses a leading -- as an option)
 EOF

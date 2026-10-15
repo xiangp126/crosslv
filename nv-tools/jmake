@@ -1874,7 +1874,7 @@ runPowerCycle() {
         # RMCP+/auth failure: skip the off/wait/on dance and power-cycle in-band via ssh.
         echo -e "$NOTATION ${YELLOW}ipmi_command.sh could not establish IPMI/RMCP+ session.${RESET}"
         echo -e "$NOTATION ${CYAN}Falling back to: ${YELLOW}ssh $server sudo ipmitool power cycle${RESET}"
-        if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$server" "sudo ipmitool power cycle"; then
+        if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$server" "sudo ipmitool power cycle"; then
             echo -e "$NOTATION ${RED}Error: ssh fallback (sudo ipmitool power cycle) failed${RESET}"
             exit 1
         fi

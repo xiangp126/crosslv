@@ -209,6 +209,5 @@
       "type": "http",
       "url": "https://maas.prd.astra.nvidia.com/maas/outlook/mcp"
     }
-  },
-  "model": "opus"
+  }
 }

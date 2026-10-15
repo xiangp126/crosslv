@@ -35,7 +35,7 @@ Change-Id: I<40 hex>
   below (as merged utopx messages show). The tail is exactly:
 
   ```
-  Fix:         <last line of the fix prose>
+               <last line of the Description>
   Issue: 5257102
   Reviewed By: AI, Jinbow(+1), Yanku(+2)
                                             <- blank
@@ -43,7 +43,25 @@ Change-Id: I<40 hex>
   ```
 - **`fw_ver/golan_fw` — column 0.** Gerrit re-wraps hand-aligned text there: the first line
   wraps, padded ones don't.
-- Unsure → read a recently merged commit on that branch and copy its shape.
+- Unsure → read recently merged commits by other authors on that branch and copy the majority
+  shape.
+
+### Description shape — `fw_ver/utopx`
+
+The reference is the majority of messages other authors merged on the target branch
+(`git log --format=%B origin/<branch>`), not an outlier. That majority is:
+
+- **One paragraph, defect and fix together.** What failed and why, then what the change does,
+  in the same `Description:` block, all at the 13-column hanging indent. No separate `Fix:`
+  label (about 2% of merged messages carry one) and no blank lines inside the Description.
+- **Quote the failure inline, in double quotes, and only its decisive part** — the command and
+  syndrome, or the field mismatch: `... and FW rejected it: "status != OK is supported only in
+  error test on command CREATE_VIRTIO_NET_EMULATION syndrome : 0x69a1b7".` No `FATAL :` prefix,
+  no separate quote block.
+- **No verification narrative**: box, seeds, run counts and A/B results belong in the ticket and
+  the FINDINGS report, not in the commit message.
+- **Short**: typically 3-16 lines.
+- Title: `Title: [Test Bug] <Area> short summary`, one space after the tag.
 
 ### Line length
 
@@ -54,8 +72,8 @@ Change-Id: I<40 hex>
   (13 spaces) must be **≤ 59 chars**. Overflow triggers
   `warning: too many message lines longer than 72 characters`, and the web UI re-wraps it to
   column 0, so every second line renders flush-left even though the raw text looked aligned.
-- **A verbatim quote that cannot fit in 59** (a FATAL line, a syndrome string) stays at the
-  hanging indent: break it at a natural boundary (`;;`, `:`, `[`) across two or three lines.
+- **A quoted failure string that cannot fit in 59** (a FATAL line, a syndrome string) continues
+  at the hanging indent: break it between words or at a natural boundary (`;;`, `:`, `[`).
   Never dedent it to buy width — Peter reviews the rendered message and bounces a block that is
   not vertically aligned with the rest of the Description. Alignment beats keeping the string on
   one line.

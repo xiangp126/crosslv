@@ -44,6 +44,8 @@ jcl refresh codex --dry-run                # preview restart in the same tmux pa
 jcl refresh codex                          # every Codex pane; `all` is both agents
 jcl refresh 3:11.1                         # one exact pane, either agent
 jcl exit-session all                       # quit both agents, panes stay at the shell
+jcl delete -n 01a139e7-7b96                 # what deleting a session for good would do
+jcl delete 3:6.1 01a139e7-7b96             # quit if live, then remove its history; asks first
 jcl set --agent codex --model gpt-6-astra --effort high
 jcl set --effort xhigh --agent codex        # retain each pane's current model
 jcl bridge status                          # agent-bridge, given the rest of the line
@@ -54,6 +56,13 @@ jcl set 0:6.2 3:4.1 --model opus --effort max   # only the named panes, either a
 `restore` and `set` take `--agent` and default to both agents. `refresh` and
 `exit-session` name agents instead: `claude` or `codex` selects every pane of one
 agent, `all` every pane of both. `list`, `save`, and `show` always cover both.
+`delete` takes no keyword at all: each session is named by its id (8+ leading
+characters) or its pane. A live one in a pane is quit first; a Codex session is
+then removed with `codex delete`, through Codex Desktop's app-server when that
+runs, and a Claude session's transcript and the other files Claude Code keeps
+under its id are removed. It is also taken out of the snapshot. It refuses the
+calling session, a suspended one, and a live one outside tmux other than a Codex
+Desktop thread, and asks before deleting (`-y` outside a terminal).
 The default snapshot remains `~/.claude/tmux-snapshot.json`; use `-o` on save and
 `-f` on restore for another file. Existing Claude-only snapshots remain readable.
 
@@ -62,7 +71,9 @@ read-only state DB metadata (including a custom `sqlite_home`). Headless execs a
 subagents are excluded. This targets local TUIs; remote/shared app-server browsing
 is not a local interactive session. Codex snapshots retain known model/effort and
 custom home settings. `patch-resurrect` adds the proper resume command for either
-agent to tmux-resurrect layouts.
+agent to tmux-resurrect layouts, and every tmux-resurrect save also runs `jcl save`
+(`@resurrect-hook-post-save-all` in [tmux.conf](./track-files/tmux.conf)), so the
+snapshot is as new as the last save.
 
 `set*` sends slash commands to the TUI and clears the current input line. Codex
 effort-only changes require its model/effort footer to be visible; otherwise use
@@ -90,82 +101,90 @@ Tests: `python3 -B -m unittest discover -s tests -p 'test_*.py' -v`.
 Lets every Claude Code and Codex session on this host message every other one by
 session name. Claude-to-Claude is Claude Code's own cross-session messaging and
 is left as it is; this adds Claude-to-Codex, Codex-to-Claude and Codex-to-Codex.
-The names are the ones `jcl list` shows - a Codex session is reached by its title - and a
+The names are the ones `jcl list` shows - a Codex session is reached by its title, spaces
+written as hyphens as in Claude's own session names, so it copies whole - and a
 session id from its SESSION ID column works too (the first 8+ characters will do).
+The design, the stand-in design it replaced, and how to go back to that one are in
+[plans/agent-bridge-claude-codex-messaging.md](./plans/agent-bridge-claude-codex-messaging.md).
 
 ```bash
-agent-bridge                               # status: the daemon and its stand-ins; starts nothing
+agent-bridge                               # status: the daemon and the Codex sessions it relays for; starts nothing
 agent-bridge peers                         # who can be messaged, by name and session id
-agent-bridge send --to 'Explain ISSI in QUERY_ISSI' 'text'   # from a Codex or Claude shell
+agent-bridge send --to Explain-ISSI-in-QUERY_ISSI 'text'     # from a Codex or Claude shell
 agent-bridge send --to 01a11eb2-382c 'text'                  # the same, by session id
-agent-bridge scan                          # look for Codex sessions now, then status
-agent-bridge start                         # the daemon again after a stop; send, peers, scan start it too
-agent-bridge stop                          # the daemon and every stand-in
-agent-bridge restart                       # both, then status once the stand-ins are back
+agent-bridge start                         # the daemon again after a stop; send and peers start it too
+agent-bridge stop                          # the daemon
+agent-bridge restart                       # both, then status
 ```
 
 `jcl bridge …` runs it with the rest of the line (`jcl bridge -h` is its own help),
 all but `send`, which agent sessions run from their own shell.
-Its tables take jcl's look - the colours, the rules, the summary line. `peers` is
-an address book: a name, the agent, the session id, and whether a message gets
-there; where a session runs and on what is `jcl list`'s to show. And
+`peers` takes jcl's look - the colours, the rule, the summary line - and is an
+address book: a name, the agent and the session id, with the rare session a
+message cannot reach named in the summary; where a session runs and on what is
+`jcl list`'s to show. `status` says whether the daemon runs, its log, and the
+Codex sessions it relays for, by name and pane. And
 `completion/agent-bridge_completion.bash` completes its commands, their options
 and the session ids `--to` takes. `send` is the one command a terminal cannot
 run: a message goes out as the session whose shell sends it.
 
-- **From a Claude session**: Codex sessions appear in `/list-agents` under their
-  titles; message them with `SendMessage` like any other session. Their replies
-  arrive as `Message from @<codex title>`. By session id, `agent-bridge send`
-  queues straight into a Codex session, and for a Claude session prints the
-  `uds:` address to give `SendMessage` (a Claude session sends to Claude itself).
+- **From a Claude session**: Codex sessions are not in `/list-agents`. Reach one
+  with `agent-bridge send --to '<name or id>' '<text>'` from the Bash tool. A Codex
+  session's message arrives as `Message from @<codex title>` with a `uds:` address
+  to reply to: answer it with `SendMessage` to that address - a reply by name is
+  not found. Given another Claude session, `agent-bridge send` prints the `uds:`
+  address to hand `SendMessage` instead.
 - **From a Codex session**: `agent-bridge send --to '<name or id>' '<text>'`, run
   from its shell (it identifies the sender by `CODEX_THREAD_ID`). A message arriving
-  in Codex reads `Message from @<name> - another agent, not Peter. Reply with:
-  agent-bridge send --to ...`; `assets/codex/AGENTS.md` tells Codex to treat it
+  in Codex reads `Message from @<name> - another agent. Reply with: agent-bridge send
+  --to ...` above the sender's text; `assets/codex/AGENTS.md` tells Codex to treat it
   as a colleague's request, never as the user's approval.
 
-How it works: Claude Code offers no documented way for another program to post
-into a session (its socket protocol is internal; Channels are blocked by the org
-policy), so each Codex session gets a **stand-in**: a headless `claude -p`
-session named after it (its title, or `codex-<last 6 of its id>` when it has
-none; ` (<last 4>)` is added when another session already has that name).
-Being a real Claude session it is listed and messaged natively. Its `UserPromptSubmit` hook hands every arriving message to the
-daemon, which runs `codex queue` into the Codex session, and blocks the turn
-(no model call). To send, the daemon writes a trigger to the stand-in's stdin;
-its model calls `SendMessage`, whose input a `PreToolUse` hook replaces with the
-exact text, and a `PostToolUse` hook ends the turn at once. Codex-to-Codex skips
-the stand-ins and uses `codex queue` directly.
+How it works: into a Codex session, `codex queue`. Into a Claude session, the
+daemon writes one line into the session's inbox socket - the socket Claude Code
+documents for scripts to post into - in the form `SendMessage` itself writes it.
+That form is not documented; it was copied from `SendMessage` byte for byte. The
+reply address in it is a socket the daemon keeps for the Codex session sending,
+`/var/tmp/agent-bridge-<uid>/r/<session id>.sock`: a `SendMessage` answer to it
+comes back to the daemon and is queued into that session, and the address stays
+the same across daemon restarts. The message is signed with the Codex session's
+name (its title with spaces as hyphens, or `codex-<last 6 of its id>` when it has
+none; `-<last 4>` is added when another session already has that name; the title
+typed with its spaces still finds it). The bridge adds nothing to the
+text itself: a Claude session gets the sender's words in Claude's own envelope, and
+a Codex session gets them under that one line. After writing, `send` looks for the
+message's id in the recipient's transcript, where Claude Code records each peer
+message it delivers, and answers `delivered`, `queued` (the session is busy, or
+waiting for its user), `held` (its permission mode keeps messages from other sessions
+for its user's approval) or `not confirmed`, with the recipient's Claude Code version -
+which is how a Claude Code upgrade that changed the form would show, on its first
+message. Claude Desktop runs a Claude Code of its own that updates itself.
 
-The daemon starts on demand, from start, send, peers or scan (`agent-bridge
-start` does nothing else), and keeps one stand-in per live Codex session that has
-had a first message, renaming or stopping them as sessions change; it leaves after
-15 minutes with nothing to do. Everything it keeps is in `/var/tmp/agent-bridge-<uid>/`:
-its socket and lock, `daemon.log`, and one `stand-in-<id>.log` per stand-in. Not
-`/tmp`, whose files m-fwdev-167 deletes after two days untouched - a long-running
-daemon's socket among them. Nothing cleans `/var/tmp`, so the daemon keeps it
-small: every log - `daemon.log` and each `stand-in-<id>.log` - is turned over at
-256 KB with one `.1` generation kept, two files and 512 KB at most, and a gone
-session's logs go a day after their last line. Stand-ins run with `--no-session-persistence`, so they leave
-no transcripts under `~/.claude/projects`. `jcl list` shows each
-stand-in on a row of its own right below the Codex session it stands in for,
-joined to it by a line drawn from under it to the word `stand-in`; one whose
-Codex session is gone is marked `✗` and comes last. Its SESSION ID reads `--` -
-messages go to the Codex session's id, not the stand-in's - and `jcl list -v` shows
-it. `jcl save` leaves them to agent-bridge.
+The daemon starts on demand, from start, send or peers (`agent-bridge
+start` does nothing else), and keeps a reply socket for each live Codex session
+that has had a first message, looking every 30 s; it leaves after 15 minutes with
+no Codex session and no request. Everything it keeps is in `/var/tmp/agent-bridge-<uid>/`:
+its socket and lock, the reply sockets under `r/`, and `daemon.log`. Not `/tmp`,
+whose files m-fwdev-167 deletes after two days untouched - a long-running daemon's
+socket among them. Nothing cleans `/var/tmp`, so the daemon keeps its log small:
+turned over at 256 KB with one `.1` generation kept, two files and 512 KB at most.
 Limits:
-- each stand-in is a Claude process of about 200 MB, and each Codex-to-Claude
-  message costs one short Haiku turn;
-- a Codex session that has had no message yet cannot be queued into, and gets
-  no stand-in until it has; `codex queue` itself is not in Codex's documentation;
+- the form of the line written into a Claude inbox is Claude Code's own and not
+  documented; a change shows as `not confirmed` for an idle recipient;
+- Claude Code sends its held/refused receipts only to an address named after the
+  sending process's pid in its own socket directory, never to a reply socket here:
+  a message held by an explicit `crossSessionInbound: hold` reads `not confirmed`;
+- a Codex session that has had no message yet cannot be queued into; `codex queue`
+  itself is not in Codex's documentation;
 - a Codex session whose last turn was interrupted (Esc), in a terminal or in Codex
   Desktop, holds every queued message until its next typed one and runs them
   right after it. The sender is told: `agent-bridge send` adds a `Held:` line,
-  and a Claude sender gets one notice per interruption from the stand-in;
+  and a Claude sender gets one notice per interruption;
 - `codex queue` must reach the shared app-server (`--no-daemon` is refused for it),
   and runs one in-process when none is up - it starts no daemon of its own;
-- a stand-in prompts for permissions, so a message to a session in
-  bypass-permissions mode is held for approval, as it would be between two
-  Claude sessions;
+- the bridge tells Claude it prompts for permissions, which it does, so a message
+  to a Claude session in bypass-permissions mode is held for approval, as it would
+  be between two Claude sessions;
 - terminal Codex sessions run with `--no-daemon`, so Codex's own task tools
   between Codex sessions stay off; Codex-to-Codex goes through `agent-bridge`.
 
@@ -326,9 +345,9 @@ $ code -h
 Usage: code [options] <args>
 
 Description:
-    A wrapper script for the VS Code server CLI.
-    It finds the VS Code server CLI binary and set the correct IPC socket.
-    The reason for this script is to avoid the bug which has never been fixed by Microsoft:
+    A wrapper for the VS Code server CLI, compatible with Cursor remote sessions.
+    It finds the CLI for the current editor window and sets the correct IPC socket.
+    The reason for this function is to avoid the bug which has never been fixed by Microsoft:
     # Unable to connect to VS Code server: Error in request - ENOENT /run/user/1000/vscode-ipc-*.sock
     https://github.com/microsoft/vscode-remote-release/issues/6997#issue-1319650016
     https://github.com/microsoft/vscode-remote-release/issues/6362#issuecomment-1046458477
@@ -346,21 +365,25 @@ Description:
 
 Options:
     -h, --help                       Show this help message and exit
-    -d, --debug                      Enable debug mode (set -x)
-    -f, --force                      Force search for the code binary, ignoring $VSCODE_BIN_PATH,
-    -v, --version                    Show version information
-    -r, --remove                     Remove obsolete IPC sockets
-    -s, --status                     Print process usage and diagnostics information
-    --print                          Print core variables
-    --install-extension              Forcely install the specified extension from a .vsix file
+    --debug                          Enable debug mode (set -x)
+    --fresh                          Verify this window's hook, choose a live window if needed, and repair the tmux hook
+    --version                        Show version information
+    --status                         Print process usage and diagnostics information
+    --clean                          Clean obsolete IPC sockets for the selected editor
+    --connection                     Show the selected editor, CLI, and IPC socket
+    -r, --reload                     Reload and update this function from its source file
+
+Commands:
+    --install-extension              Install a .vsix extension, overwriting an installed version
     --list-extensions                List the installed extensions with versions
     --locate-shell-integration-path  Print the path to a terminal shell integration script
 
 Example: code --version
-         code -d
+         code --debug
          code --install-extension gitlens-13.0.2.vsix
 
 ```
+Existing shells use `code -r` to reload the function; sourcing the file again is ignored.
 
 <a id="jdecode"></a>
 #### [jdecode](./ftnt-tools/jdecode)

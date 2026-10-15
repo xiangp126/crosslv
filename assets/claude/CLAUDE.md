@@ -31,6 +31,10 @@ invoke it when the task matches; don't reconstruct the procedure from memory.
   `myssh` → `/bin/ssh`, `mypkill` → `/bin/pkill` (both take the same arguments as the original).
   Add more the same way (`ln -s /bin/<cmd> $HOME/.usr/bin/my<cmd>`) when a needed command keeps
   getting blocked.
+- **Every ssh/scp from a Bash call carries `-o BatchMode=yes`; a script also does `unset DISPLAY`.**
+  Bash calls have no TTY but inherit Peter's X `DISPLAY`: when publickey auth fails (a lab box that
+  just booted, its NFS home not mounted yet) ssh opens `ssh-askpass` on Peter's desktop and blocks
+  until someone answers. → skill `regression-repro` Phase 9b
 - **FW reset goes through `jmake --fw-reset --device <dev>`, not bare `mlxfwreset`.** jmake wraps
   `fwresetfunc`, which stops/starts the driver and re-scans PCI around the reset. Every test run
   gets its own reset. It is device-level and does not reboot the host. → skill
@@ -83,12 +87,12 @@ so a path segment must start with `golan` / `nicx` / `utopx`. → skills `fw-bui
   must be authorized by hand from `/mcp`. `jcl restore-auth` stays manual — only you know a
   logout happened, and a failing MCP call is far more often an expired token (renews itself)
   or a wrong scope (restore cannot help) than a wiped credentials file.
-- **Messaging Codex sessions**: Codex sessions on this host appear in `/list-agents` under their
-  titles (agent-bridge stand-ins), and `SendMessage` reaches them like any session; their
-  replies arrive as `Message from @<codex title>`. To reach a session by **session id** (`jcl
-  list`'s SESSION ID column; the first 8+ characters will do), run `agent-bridge send --to <id>
-  '<text>'`: a Codex session gets it directly, and for a Claude session the command prints the
-  `uds:` address to hand `SendMessage`.
+- **Messaging Codex sessions**: Codex sessions on this host are not in `/list-agents`. Reach one
+  with `agent-bridge send --to '<name or id>' '<text>'` (names and session ids as `jcl list` and
+  `agent-bridge peers` show them; the first 8+ characters of an id will do). A Codex session's
+  message arrives as `Message from @<codex title>` with a `uds:` reply address: answer it with
+  `SendMessage` to that address - a reply by name is not found. Given a Claude session,
+  `agent-bridge send` prints the `uds:` address to hand `SendMessage` instead.
 
 ## Hard rules
 
@@ -130,8 +134,9 @@ so a path segment must start with `golan` / `nicx` / `utopx`. → skills `fw-bui
 
 Rules 1 and 2 are additionally enforced by a PreToolUse hook
 (`~/myGit/crosslv/assets/claude/hooks/guard.py`), which denies the matching Bash calls outright.
-It reads the command text, so a heredoc that merely mentions `l-fwminireg` counts too — write
-such files with the Write/Edit tools, which the hook does not gate. Regression tests sit next to
+It reads the command text, so a heredoc that merely mentions `l-fwminireg` counts too, and so does
+prose quoting an `mlxconfig ... set` with `-f` or more than 8 `PARAM=value` pairs — write such files
+with the Write/Edit tools, which the hook does not gate. Regression tests sit next to
 it; run them after any change.
 
 ## Skills
