@@ -10,6 +10,12 @@ until it frees up, take it, then set it up.
 
 - **Never take `l-fwminireg-*`** — dedicated CI machines; NOGA reports them free while CI is
   running on them. See skill `regression-repro`.
+- **Lock only `fwreg` servers — `*-fwreg-*` hosts, the regression servers.** Never use an `fwdev`
+  server (`l-fwdev-*`, NOGA partition `dev` or `userdev`): do not lock it, ssh into it or set it
+  up, even when NOGA shows it `Release` — developers work on those boxes without taking a lock, so
+  `Release` there does not mean idle. The listings also carry other non-`fwreg` hosts
+  (`l-fwperf-*`, `l-fwvrt-*`, `icpe-*`); skip them too. A busy box is waited for; a substitute,
+  when one is allowed at all, is another `*-fwreg-*` box.
 - **Respect existing locks.** A Noga lock is advisory — SSH still works — so never SSH into or run
   anything (flint, mlxconfig, utopx, burn, reset) on a box whose `lock_owner` is another user; work
   only on a box you hold or one that is free, and to get a held box, wait for it to free up and take
@@ -46,10 +52,11 @@ python3 $CLI -u -t server -n $HOST                   # release (prefer jmake --r
   with a live lease: unlike `jmake --reg-malloc`, `noga_manage.py` does no owner check of its own,
   and Noga treats the call as a lock break, which takes the box from its holder wherever
   permissions allow. A refused grab is harmless — keep polling.
-- Find machines by PSID:
+- Find machines by PSID. `--where "partition reg"` keeps the list to regression servers; without
+  it the `l-fwdev-*` boxes with that card are listed too:
   ```bash
   /mswg/projects/fw/fw_ver/hca_fw_tools/noga_allocation/get_setups_info.py \
-      --team_name hca_fw --where "psid <PSID>"
+      --team_name hca_fw --where "psid <PSID>" --where "partition reg"
   ```
 
 ### jmake wrappers — the allocation pool
@@ -59,8 +66,8 @@ from any dev box. If `jmake --reg-*` is unavailable, `source` that file and call
 
 | jmake | alias | does |
 |---|---|---|
-| `jmake --reg-info` | `minfo` | full regression-server inventory |
-| `jmake --reg-idle` | `midle` | idle servers |
+| `jmake --reg-info` | `minfo` | allocation-pool inventory, every partition but `userdev` — `fwdev` and `fwperf` boxes included |
+| `jmake --reg-idle` | `midle` | idle boxes of that pool — take only the `*-fwreg-*` rows |
 | `jmake --reg-mine` | `sqme` | servers currently allocated to me, with the **TIME LEFT** column |
 | `jmake --reg-malloc <machine>` | `malloc <machine> -t 8` | allocate, default 8h (alias: `malloc <machine> -t <hours>`) |
 | `jmake --reg-extend` | `extend_my_alloc` | end time := NOW+3h — see Extend |

@@ -4,7 +4,8 @@ description: >-
   Trace a red CI job or bare verdict to its original MARS failure log (Jenkins build, session
   archive, bot mail) and tell environment from defect; also count occurrences in a session archive
   without the usual traps. Use when a CI build is red, a report only says "Failed: N", someone asks
-  which case failed and why, or you need to count how often something happened in a regression log.
+  which case failed and why, you need to count how often something happened in a regression log,
+  or you need the CI team's known-issue notices (Golan CI Channel).
 ---
 
 # Test & CI failure forensics
@@ -195,11 +196,46 @@ bash watcher cannot poll mail; it reaches only Jenkins and the gerrit API. Let t
 gerrit/Jenkins and check the mail yourself via MCP at every reporting step. A silent watcher does
 not mean nothing happened.
 
+## Phase 4 — the CI team's notices
+
+The CI team posts known issues, outages and "you can rerun now" in the Teams channel
+"Golan CI Channel" (Confluence calls it "Golan_CI Updates"). Read it before calling a failure
+yours, before a rerun, and before a CI ticket.
+
+- team id `239698a8-95fa-49b0-967c-49deda695fa4`,
+  channel id `19:5Ix884z7PuA8v4TVXQhJeAGl_gx2PqliyESFSFdjZDc1@thread.tacv2`
+- With replies: Teams MCP `teams_list_channel_messages(team_id, channel_id, include_replies=true)`.
+  Root posts only:
+  `docker exec -e AI_PIM_UTILS_TELEMETRY_DISABLED=1 pim teams-cli channel read <team-id> '<channel-id>' --limit 15 --json`.
+- Use the ids. Search does not find the channel: `teams_find_conversations` returns nothing and
+  `teams_search_messages` drops its hits under the internal-only policy, because the account is
+  not a direct member of the team.
+- Match a notice on the failure signature (the `UFATAL` text and the failing field), not on the
+  branch it names — a notice usually lists only the branch where the failure was first seen.
+- Read the Redmine ticket a notice cites: it can already be closed (e.g. `Closed (Rejected)`, with
+  the cause in a note) while the notice still says the fix is pending.
+- `teams-cli` cannot post to a channel. A reply under a notice goes through
+  `teams_send_channel_reply` with Peter's explicit confirmation, or Peter posts it himself.
+
 ## Attribution discipline
 
 - Before calling a failure "environment" or "our code", find a control sample matching on
   **branch + mode + setup**: did someone else's change pass under identical conditions? Drop any
   one of the three and the conclusion can flip.
+- **A DoA failure: check which FW the card really ran.** The DoA should test the job's baseline,
+  `LAST_STABLE_FW="<tag>"` in the `golan_fw_minireg` console; the FW that actually ran is the
+  `FW Version:` line in the session's case logs. Compare the last two numbers (`rel-12_48_6248`
+  is `<device major>.48.6248`). When they differ, the result follows the card, not the change: a
+  card left on another line's FW fails capability checks
+  (`cmd_hca_cap: <field> ... expected= 0x1 Actual 0x0`) for every change on the branch.
+
+  ```bash
+  grep -aoE 'LAST_STABLE_FW="[^"]*"' logs/minireg_<N>.log | head -1
+  grep -rhaE 'FW Version:' <unpacked session> | sort | uniq -c
+  ```
+
+  For the same reason another change's passing DoA does not show the setups are healthy again —
+  the card keeps whatever FW the previous job left. The all-clear is card FW == `LAST_STABLE_FW`.
 - Not valid evidence: log size; whether the node was taken offline (offlining is the system's
   generic response to any failure).
 - "How often / since when / is it ours" → `fsearch`, but read skill `fsearch-failures` first: new

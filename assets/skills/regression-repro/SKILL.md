@@ -94,7 +94,8 @@ replace a device A/B when the suspect landed outside the retention window.
   another starting state is listed separately and not counted.
 - **Reproduce on the exact box from `setup_id`.** A substitute host needs Peter's explicit
   approval (procedure.md §3b, same-PSID exception) and must match the **PSID**, not just the chip family.
-  Authoritative inventory: `noga_manage.py -q -t nic -e "psid:<PSID>"`.
+  Authoritative inventory: `noga_manage.py -q -t nic -e "psid:<PSID>"`. Only `*-fwreg-*` boxes
+  qualify; never an `l-fwdev-*` one (skill `noga-lock`).
 - **Mandatory platform check on any substitute — utopx setups are Supermicro-only.** Require
   `Server_Model = Supermicro` and no `noga_alloc_note:[INCOMPATIBLE_UTOPX]` in `Free_text`. An idle
   box is often idle *because* of that flag; ignoring it can hang the box in BIOS POST,

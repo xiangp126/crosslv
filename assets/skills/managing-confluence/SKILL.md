@@ -98,7 +98,6 @@ confluence-cli page restore-version 12345 --version 3 --json
   output keeps the original API timestamps.
 - Exact syntax and flags: `confluence-cli <command> --help`; full command surface:
   `confluence-cli --help`.
-- For Jira work, use `managing-jira`.
 
 ## Workflows
 

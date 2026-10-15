@@ -54,6 +54,11 @@ internal Jenkins:
 - **The failure must be environmental.** DoA uses fixed seeds, so a real code defect reproduces
   identically every time; a re-run only burns a queue slot and copies stale `Verified-1` votes onto
   a new patchset. Decide per skill `ci-forensics` (Attribution discipline).
+- **No CI notice says to wait.** If the Golan CI Channel has a notice for this failure ("we'll
+  update ... when you can rerun"), a rerun before that update fails the same way. Channel ids and
+  how to read it: skill `ci-forensics`, Phase 4. Without a notice, the all-clear for a DoA that ran
+  on the wrong FW is recent DoAs on the branch running card FW == `LAST_STABLE_FW` again, not
+  another change's green DoA.
 - **Concurrency: trigger only at ≤ 11 running `utopx_ci` builds, and re-measure 20 s later** to rule
   out a transient dip. `utopx_ci` caps at 15 concurrent and the scheduler hard-aborts the excess
   ~1 min in, at the `CI Execution Checkpoint` stage — it does not queue — and every wasted run also

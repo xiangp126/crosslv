@@ -13,7 +13,6 @@ Progressive Disclosure:
 - Level 3: workflows/ for multi-step procedures
 
 Related skills:
-- managing-sharepoint: For SharePoint documents
 - managing-confluence: For Confluence wiki pages
 -->
 

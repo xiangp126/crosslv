@@ -45,9 +45,12 @@ Other Service Type values expand different field sets; re-read the form rather t
   `~/myGit/crosslv/assets/skills/utopx-ci-rerun/scripts/ci_rerun.sh --reasons` and check every
   entry against this failure. The list is edited over time (dated entries get added and removed),
   so read it now; never rely on a remembered list.
-- **latest issues in "Golan FW"** — read the current "Known Issues" / "Golan_CI Updates" notice and
-  establish why it does not apply. Compare on **job** (NICX Mini-Regression vs golan_fw_minireg
-  Micro-DoA), **branch**, and **which test**.
+- **latest issues in "Golan FW"** — read the Golan CI Channel (ids and commands: skill
+  `ci-forensics`, Phase 4) and establish why none of its open notices applies. Compare on the
+  failure signature (`UFATAL` text, failing field), **job** (NICX Mini-Regression vs
+  golan_fw_minireg Micro-DoA) and **which test** — not on the branch a notice names. If a notice
+  matches, the box cannot be ticked: do not open a ticket. Tell Peter, and offer a reply under that
+  notice adding your branches and build links.
 
 State both comparisons in your reply, so Peter ticks the boxes knowing they were actually checked.
 

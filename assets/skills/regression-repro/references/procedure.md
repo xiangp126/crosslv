@@ -182,6 +182,8 @@ is what makes the FW expose the same caps.
    free; `Lock` by `mars_reg` = a regression is running it — **unless the box is unreachable/down,
    where it is a stale reservation**. Confirm with `ssh <cand> hostname` (using the runtime adapter)
    and the newest real session mtime.
+   - **Only `*-fwreg-*` boxes are candidates.** The PSID listing and `jmake --reg-idle` also return
+     `l-fwdev-*` developer boxes; drop them even when they show `Release` (skill `noga-lock`).
    - **MANDATORY platform check — utopx setups are Supermicro-only.** The allocation-pool health scan
      (`update_noga_resource.py` → `RegTools/is_setup_compatible_with_utopx.py`) flags a box
      `INCOMPATIBLE_UTOPX` purely on `dmidecode -s system-manufacturer` ∉ {supermicro}.
