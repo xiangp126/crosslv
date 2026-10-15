@@ -171,13 +171,18 @@ git -C $WT cherry-pick FETCH_HEAD
 ## Phase 4 — Build, lab environment, and the run verdict
 
 Workspace — feature work uses the **primary** clones (`golan_fw`, `utopx`); `*2` is the repro
-pair. One worktree per task in each repo:
+pair. One worktree per feature or ticket in each repo — not one per sub-task:
 
 ```bash
 git -C /auto/fwgwork1/$USER/utopx    worktree add -b <task>-track /auto/fwgwork1/$USER/utopx-<task>    origin/master
 git -C /auto/fwgwork1/$USER/golan_fw worktree add -b <task>-track /auto/fwgwork1/$USER/golan_fw-<task> origin/master_rc
 ```
 
+- **Sub-tasks share the feature's worktree.** Controls, A/B variants and ladder steps are commits
+  switched inside it. A utopx worktree with a build is ~9 GB of the 200 GB `/vol/fwgwork1` all
+  sessions share — check `df -h /auto/fwgwork1/$USER` before adding one.
+- **Do not delete the worktree when the feature lands or pauses** without asking; it is reused for
+  follow-ups and new patchsets. Short of space, remove its `cmakeBuild/` first.
 - **Check how stale the base ref is before branching.** A local `origin/*` can be weeks behind and
   miss already-merged changes of this very feature; reading code there produces confident, wrong
   conclusions.

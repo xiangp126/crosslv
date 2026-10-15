@@ -206,8 +206,9 @@ owner `mars_reg` by ~01:50 CST, box rebooted at 02:00 CST, then the regression i
   check the session times for your setup.
 - Takeback signature mid-flow: "MARS python not found" (python/NFS gone), flint unable to open the
   device, Fwreset failing — it looks like a broken environment. When these suddenly fail, query
-  `lock_owner` before debugging the environment. Once the box has been taken, stop touching it and
-  let `noga_wait.sh` take it back after the release.
+  `lock_owner` before debugging the environment. Once the box has been taken, stop touching it.
+  The watchdog ends the watch on this takeover (see The renewal watchdog); take the box back —
+  a new `noga_watchdog.sh`, which waits for the release — only when Peter asks again.
 
 ### Before touching any box you locked: confirm the MARS session is done with it
 
@@ -251,9 +252,10 @@ add nothing but a 30-minute wait after the session's last test.
     --then 'bash <your env_rebuild script>'
 ```
 
-The script polls every 15 s by default (never pass a larger `--poll`) and prints a heartbeat every
-20 polls — about every 5 min at 15 s — with the owner and the seconds past expiry (negative = time
-left). It grabs only when `Status.status` is `Release` or the lease expired more than `--grace`
+The script polls every 15 s by default (never pass a larger `--poll`), counted from the start of
+one poll to the start of the next: a NOGA query itself takes 2–5 s, so `query; sleep 15` would poll
+only about every 18 s. It prints a heartbeat every 20 polls — about every 5 min at 15 s — with the
+owner and the seconds past expiry (negative = time left). It grabs only when `Status.status` is `Release` or the lease expired more than `--grace`
 seconds ago (default 60); a status that is neither `Lock` nor `Release` is retried (`status unknown …`), never
 grabbed. Between heartbeats it stays silent unless a query fails (`query failed, retrying`) or the
 wait ends (`ALREADY_OURS`, `LOCK_ACQUIRED` or `GAVE_UP`).
@@ -297,9 +299,16 @@ Rules for the watch:
   malformed record. Treat an unparseable status as "unknown, retry" — never as a chance to grab,
   never as a reason to stop watching (`noga_wait.sh` does this).
 
-### The two traps in `noga_wait.sh` — each one silently kills the monitor
+### The traps in `noga_wait.sh` — each one silently kills the monitor
 
-`noga_expiry.py` prints the number *and* uses its **exit code as the verdict** (0 = expired,
+Under `set -euo pipefail`, any command whose failure is not caught ends the script without a word.
+
+**A field the record does not carry.** `field()` is `grep | awk`; when a record has no
+`Status.status =` line (a malformed reply), grep fails, `pipefail` fails the pipeline, and the
+assignment `status=$(field …)` stops the script — the "unknown, retry" branch is never reached. The
+pipeline therefore ends in `|| true`, so a missing field reads as an empty string.
+
+**The exit code of `noga_expiry.py`.** It prints the number *and* uses its **exit code as the verdict** (0 = expired,
 1 = still valid, 2 = unparseable). The consumer must take the value and discard the status:
 
 ```bash
@@ -315,14 +324,21 @@ exp=$(python3 "$EXPIRY" "$tout" 2>/dev/null | head -1) || true
   `GAVE_UP`, no message; the monitor vanishes after the banner line while you believe the box is
   being watched.
 
-Smoke-test any change to the script before trusting it:
+Smoke-test any change to the script before trusting it, against a name NOGA does not know — the
+query fails every poll, so nothing can be grabbed:
 
 ```bash
-timeout 40 bash noga_wait.sh -n <box> --hours 1 --poll 10; echo $?   # want 124
+timeout 40 bash noga_wait.sh -n nonexistent-box --hours 1; echo $?   # want 124
 ```
 
 `124` means `timeout` killed a still-running script — it survived several polls. Any other code
-means it died on its own.
+means it died on its own. The `query failed, retrying HH:MM:SS` lines must be 15 s apart.
+
+To test the grab and hold logic end to end without NOGA, point `NOGA_CLI` at a stub that answers
+`-q` with `Status.status` / `Status.lock_owner` / `Status.lock_time_out` lines from a state file
+and logs every call (both `noga_wait.sh` and `noga_watchdog.sh` honour it); drive the state file
+through: foreign live lease → `Release` → own lease near expiry → another user's live lease →
+`Release` → `mars_reg` live lease.
 
 ## Keeping a box: extend, do not ask
 
@@ -355,56 +371,33 @@ python3 "$CLI" -q -t server -n "$HOST" | grep -E 'Status\.(lock_owner|lock_time_
 
 ### The renewal watchdog (arm it for every box you hold)
 
-`noga_wait.sh` only **acquires**; it does not keep the box. Arm a renewal watchdog right after
-acquiring any box, as a background task that notifies you when it exits. The loop
-must:
-
-- poll about every **5 min**;
-- **check `lock_owner` first**; if the box is not held by you, say so loudly and re-lock at once
-  through `noga_wait.sh`, which grabs immediately when the box is takeable and otherwise waits for
-  the release — never `-l` over another user's live lease;
-- renew when TIME LEFT <= **1h**, by the path you took the box with (`VIA`): `malloc` →
-  `jmake --reg-extend` (end := NOW+3h); `noga` → `noga_manage.py -l` (lease := NOW+8h). A box
-  `noga_wait.sh` re-took is `noga`;
-- print a heartbeat about every **30 min** so a dead watchdog is obvious.
+`noga_wait.sh` only **acquires**; it does not keep the box. Arm `scripts/noga_watchdog.sh` right
+after acquiring any box — or right away for a box someone else holds that Peter wants — as a
+background task that notifies you when it exits:
 
 ```bash
-CLI=/.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py
-S=~/myGit/crosslv/assets/skills/noga-lock/scripts
-HOST=<box>
-VIA=noga      # how you took it: noga = noga_manage.py -l or noga_wait.sh; malloc = jmake --reg-malloc
-i=0
-while true; do
-  Q=$(python3 "$CLI" -q -t server -n "$HOST" 2>/dev/null)
-  st=$(echo "$Q"    | awk -F'= ' '/^Status\.status/        {print $2}' | tr -d ' ')
-  owner=$(echo "$Q" | awk -F'= ' '/^Status\.lock_owner/    {print $2}' | tr -d ' ')
-  tout=$(echo "$Q"  | awk -F'= ' '/^Status\.lock_time_out/ {print $2}')
-  if [ -z "$st" ]; then
-    echo "query failed $(date '+%F %T') -- state unknown, retrying"   # never a reason to grab
-  elif [ "$st" != Lock ] || [ "$owner" != "$USER" ]; then
-    echo "!!!!! $HOST NOT HELD: status=$st owner=${owner:-<none>} $(date '+%F %T') -- re-locking"
-    "$S/noga_wait.sh" -n "$HOST" -L 8 --hours 12 || exit 1   # grabs at once if takeable, else waits
-    VIA=noga                                                 # noga_wait.sh locks directly via Noga
-  else                                                       # renew when TIME LEFT <= 1h
-    past=$(python3 "$S/noga_expiry.py" "$tout" 2>/dev/null | head -1) || true   # negative = s left
-    if [ -n "$past" ] && [ "$past" -gt -3600 ] && [ "$VIA" = noga ]; then
-      python3 "$CLI" -l -t server -n "$HOST" -L 8 -N "hold" >/dev/null 2>&1   # lease := NOW+8h
-      echo "renewed $HOST via noga $(date '+%F %T')"
-    elif [ -n "$past" ] && [ "$past" -gt -3600 ]; then
-      n=$(jmake --reg-extend </dev/null 2>/dev/null | awk -v h="$HOST" '$4 == h {print $2}')
-      if [ -n "$n" ]; then
-        echo "$n" | jmake --reg-extend >/dev/null 2>&1       # end time := NOW+3h
-        echo "extended $HOST (menu entry $n) $(date '+%F %T')"
-      else
-        echo "!!!!! $HOST is not in the --reg-extend menu $(date '+%F %T')"
-      fi
-    fi
-  fi
-  [ $((i % 6)) -eq 0 ] && echo "heartbeat $HOST status=$st owner=${owner:-<none>} until=$tout $(date '+%F %T')"
-  i=$((i + 1))
-  sleep 300
-done
+~/myGit/crosslv/assets/skills/noga-lock/scripts/noga_watchdog.sh <box> [noga|malloc] \
+    2>&1 | tee -a <ticket dir>/logs/watchdog_<box>.log
 ```
+
+The second argument is the path you took the box with (`noga` = `noga_manage.py -l` or
+`noga_wait.sh`, the default; `malloc` = `jmake --reg-malloc`); it picks the renewal path from the
+table above. A box `noga_wait.sh` re-took is `noga`. What the watchdog does:
+
+| state | cadence | action |
+|---|---|---|
+| not held yet (start of the watch) | every **15 s** (`noga_wait.sh`) | grab as soon as the box is takeable — never `-l` over a live lease — then hold |
+| held | every **5 min** | renew when TIME LEFT <= **1h**; the 1 h margin needs no faster check |
+| held, then `Status.status = Lock` with `lock_owner = mars_reg` | — | the nightly takeover (~01:45–02:30 CST): report and **exit 2**. Do not re-grab; a new watch starts only when Peter asks again |
+| held, then lost to anyone else, or `Release` | every **15 s** (`noga_wait.sh`) | grab back as soon as the box is takeable, then hold |
+| `noga_wait.sh` ends without the lock (14 h ceiling) | — | exit 1 |
+| query fails or the record does not parse | next check | retry — never read as a loss, never a grab |
+
+It checks first and sleeps after, so a watch started on a busy box goes straight to the 15 s
+polls. It prints a heartbeat every **30 min** while it holds the box (`noga_wait.sh` prints its
+own every ~5 min while waiting), so a dead watchdog is obvious. Never point two watchers at the
+same box; stop the old one before starting a new one, and never edit a script a running watcher
+is executing — bash reads it as it goes.
 
 The watchdog itself dies: in Claude Code a persistent `Monitor` running such a loop is killed after
 roughly 1–2 hours, always with **exit 144**, whatever the sleep — the harness, not the script. That

@@ -54,10 +54,16 @@ A repro pins its worktrees to old regression commits; feature work carries long-
 worktrees. **Never run a repro in the main clone, and never
 start feature work in a `*2` clone.**
 
-Then give each task its **own worktree** off the right clone — never work in the clone's own
-checkout, which is usually on someone else's branch. `jmake` detects the repo type from the path,
-so a path segment must start with `golan` / `nicx` / `utopx`. → skills `fw-build-burn-utopx` §1.0,
-`regression-repro`
+Then give each **ticket or feature** its **own worktree** off the right clone — never work in the
+clone's own checkout, which is usually on someone else's branch. **One worktree per ticket, not per
+sub-task**: controls, variants, A/B arms and ladder steps are commits switched inside that ticket's
+worktree. A utopx worktree with a build is ~9 GB (`cmakeBuild/` ~8 GB) of the 200 GB `/vol/fwgwork1`
+that every session shares — `df -h /auto/fwgwork1/$USER` before adding one. **Never delete a
+worktree on your own** when the work ends; Peter reuses some. Short of space, drop idle trees'
+`cmakeBuild/` first and ask before removing a tree (ask the session that created it if it is not
+yours). Logs that documents cite belong in the ticket's bugZilla directory, not in a worktree.
+`jmake` detects the repo type from the path, so a path segment must start with `golan` / `nicx` /
+`utopx`. → skills `fw-build-burn-utopx` §1.0, `regression-repro`
 
 ## Tooling
 
@@ -93,6 +99,12 @@ so a path segment must start with `golan` / `nicx` / `utopx`. → skills `fw-bui
   message arrives as `Message from @<codex title>` with a `uds:` reply address: answer it with
   `SendMessage` to that address - a reply by name is not found. Given a Claude session,
   `agent-bridge send` prints the `uds:` address to hand `SendMessage` instead.
+- **Session names change; session ids do not.** When you refer to another session — in a ledger,
+  a message, a report — write `name (id prefix)`, e.g. `oci-emu-d1 (1f0e326b)`. A name that no
+  longer resolves (`SendMessage`: "No agent named …", or `agent-bridge` finds none) does not mean
+  the session ended: look its id up in `agent-bridge peers` or `jcl list` for the current name, then
+  `SendMessage` that name (Claude) or `agent-bridge send --to <id prefix>` (Codex). The session has
+  ended only when the id is gone too.
 
 ## Hard rules
 

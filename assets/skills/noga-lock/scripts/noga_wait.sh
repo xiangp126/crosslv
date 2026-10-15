@@ -12,7 +12,7 @@
 # box someone else holds is a Lock Break).
 set -euo pipefail
 
-CLI=/.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py
+CLI=${NOGA_CLI:-/.autodirect/sw_tools/Internal/Noga/RELEASE/latest/cli/noga_manage.py}   # NOGA_CLI: test stub only
 EXPIRY="$(dirname "$0")/noga_expiry.py"
 
 HOST=""
@@ -31,7 +31,8 @@ Usage: noga_wait.sh -n <host> [-L 8] [--hours 8] [--grace 60] [--poll 15] [--the
       --hours H      give up after H hours of waiting (default 8)
       --grace S      treat a lease expired by more than S seconds as free (default 60);
                      a grabbed box is not idle yet -- run the pre-touch check first
-      --poll S       seconds between polls (default 15). Do NOT raise it: the poll
+      --poll S       seconds from the start of one poll to the start of the next (default
+                     15; a NOGA query itself takes 2-5 s). Do NOT raise it: the poll
                      interval is the window in which somebody else takes the box, and
                      the malloc round-trip alone is ~6 s; 60 s loses the race.
       --then CMD     shell command to run once the lock is held
@@ -70,18 +71,25 @@ case "$HOST" in
 esac
 
 query() { python3 "$CLI" -q -t server -n "$HOST" 2>/dev/null; }
-field() { echo "$1" | grep -i "$2" | awk -F'= ' '{print $2}'; }
+# `|| true`: a record without the field must yield "", not a failed pipeline -- under
+# `set -euo pipefail` that would end the script silently instead of "unknown, retry".
+field() { echo "$1" | grep -i "$2" | awk -F'= ' '{print $2}' || true; }
+# Sleep only what is left of this poll period, so polls start every $POLL seconds
+# whatever the query took. `if`, not `&&`: a false test would be the function's
+# status and stop the script under `set -e`.
+pace() { local d=$(( POLL - ($(date +%s) - t0) )); if [ "$d" -gt 0 ]; then sleep "$d"; fi; }
 
 ITERS=$(( HOURS * 3600 / POLL ))
 echo "== waiting for $HOST (ceiling ${HOURS}h, poll ${POLL}s, grace ${GRACE}s) $(date '+%F %T')"
 
 ACQUIRED=0
 for i in $(seq 1 "$ITERS"); do
-  Q=$(query) || { echo "query failed, retrying"; sleep "$POLL"; continue; }
+  t0=$(date +%s)
+  Q=$(query) || { echo "query failed, retrying $(date '+%H:%M:%S')"; pace; continue; }
   status=$(field "$Q" 'Status\.status =' | tr -d ' ')
   case "$status" in
     Lock|Release) ;;
-    *) echo "status unknown (${status:-<empty>}), retrying $(date '+%H:%M:%S')"; sleep "$POLL"; continue ;;
+    *) echo "status unknown (${status:-<empty>}), retrying $(date '+%H:%M:%S')"; pace; continue ;;
   esac
   owner=$(field "$Q" lock_owner | tr -d ' ')
   tout=$(field "$Q" lock_time_out)
@@ -116,7 +124,7 @@ for i in $(seq 1 "$ITERS"); do
   if [ $((i % 20)) -eq 0 ]; then
     echo "heartbeat t=+$((i * POLL / 60))min owner=${owner:-<none>} expired=${exp}s $(date '+%H:%M')"
   fi
-  sleep "$POLL"
+  pace
 done
 
 if [ "$ACQUIRED" -ne 1 ]; then

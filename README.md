@@ -72,8 +72,8 @@ subagents are excluded. This targets local TUIs; remote/shared app-server browsi
 is not a local interactive session. Codex snapshots retain known model/effort and
 custom home settings. `patch-resurrect` adds the proper resume command for either
 agent to tmux-resurrect layouts, and every tmux-resurrect save also runs `jcl save`
-(`@resurrect-hook-post-save-all` in [tmux.conf](./track-files/tmux.conf)), so the
-snapshot is as new as the last save.
+and `jcl save-auth` (`@resurrect-hook-post-save-all` in [tmux.conf](./track-files/tmux.conf)),
+so the snapshot and the MCP token backup are as new as the last save.
 
 `set*` sends slash commands to the TUI and clears the current input line. Codex
 effort-only changes require its model/effort footer to be visible; otherwise use

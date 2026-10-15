@@ -35,8 +35,16 @@ BF3, `4131` for CX8. `dist/BUILD_ID` names the exact tag and commit.
 ### 1.0 Which clone to branch from
 
 Feature work → `golan_fw` / `utopx`. Repro → `golan_fw2` / `utopx2`. Never cross them; the full
-rule lives in `CLAUDE.md` → **Repos**. Give each task its **own worktree** off that clone — never
-work in the clone's own checkout, which usually sits on someone else's branch.
+rule lives in `CLAUDE.md` → **Repos**. Give each ticket or feature its **own worktree** off that
+clone — never work in the clone's own checkout, which usually sits on someone else's branch.
+
+- **One worktree per ticket, not per sub-task.** Controls, variants, A/B arms and ladder steps are
+  commits switched inside the ticket's worktree; after a switch, rebuild clean (generated files
+  survive a checkout: "Stale generated files inside a submodule" below).
+- **A utopx worktree with a build is ~9 GB**, `cmakeBuild/` alone ~8 GB, on the 200 GB
+  `/vol/fwgwork1` every session shares: check `df -h /auto/fwgwork1/$USER` before adding one.
+- **Do not delete a worktree when the work ends** without asking; it is often reused (new
+  patchsets, CI reruns). Short of space, remove idle trees' `cmakeBuild/` first.
 
 **The path must satisfy `jmake`.** It detects the repo type with
 `case "${fWorkingDir,,}" in */golan*|*/nicx*|*/utopx*)`, so a **path segment must start with**

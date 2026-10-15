@@ -38,7 +38,9 @@ The rest of this file must fire without opening any of them.
 Work off `/auto/fwgwork1/$USER/golan_fw2` + `utopx2`, never the feature pair: a repro pins repos
 to an old commit. Give the ticket its own worktree off each clone it needs
 (`golan_fw_<ticket#>` / `utopx_<ticket#>`, procedure.md Phase 4) — never work in a clone's own
-checkout. Per-ticket files go in `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/`. Full rule:
+checkout. One per ticket, not per experiment: the control, the fix and every variant are commits
+switched inside it; do not delete it when the ticket closes without asking (short of space, remove
+its `cmakeBuild/` first). Per-ticket files go in `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/`. Full rule:
 `CLAUDE.md` → **Repos**. Worktree path constraints `jmake` imposes: skill `fw-build-burn-utopx` §1.
 
 ## Phase 0 — query `fsearch` BEFORE you allocate a box

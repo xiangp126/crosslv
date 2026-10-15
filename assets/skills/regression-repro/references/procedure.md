@@ -832,10 +832,11 @@ What a single-signal verdict hides (#5138907): a harness declared `✅ REPRO SUC
   A trap does not cover SIGKILL or a wedged box, and bash runs it only after the foreground pipeline
   ends, so keep the pre-run reset and its success gate. A local Ctrl-C reaches a remote script only
   through `ssh -t`.
-- **Derive the log directory from the binary under test** (`LOGDIR=$(dirname "$TOOL")/logs`), so a
-  control binary passed with `-U` writes into its own worktree and its evidence never mixes with the
-  stack under test. Print the binary identity every run — the worktree's HEAD, the md5 of the
-  executable and of its libraries — so each log says which build produced it.
+- **Derive the log directory from the binary under test** (`LOGDIR=$(dirname "$TOOL")/logs`) and
+  print the binary identity every run — the worktree's HEAD, the md5 of the executable and of its
+  libraries — so each log says which build produced it. Build a control in the ticket's own
+  worktree (switch to the control commit, build, run, switch back) rather than in a second
+  worktree; the identity line keeps its evidence apart from the stack under test.
 - **Test the exit paths with stubs before trusting them.** `selftest.sh` runs both scripts against
   stubbed `sudo`, `ssh`, `flint`, `mlxconfig`, `lspci`, Noga and the reset, and checks every outcome
   (pass, fail, void, control leak, reset failure, SIGTERM, drifted baseline, busy box); extend it
