@@ -1,6 +1,6 @@
 ---
 name: utopx-regression-ticket
-description: Open a Redmine ticket for a UTOPX regression or CI failure (the default channel when Peter says "open a ticket"), modelled on #5273909 - field set, subject from the MAIN_FATAL line, a short description, a first comment carrying the evidence with every MARS per-case artifact attached, and the analysis attachment. Also the HTML format for ANY Redmine description or comment and how to correct a posted comment in place. Use when opening a ticket or filing a bug for a regression, CI, DoA or MARS-session failure, and whenever posting or editing a Redmine comment.
+description: Open a Redmine ticket for a UTOPX regression or CI failure (the default channel when Peter says "open a ticket"), modelled on #5273909 - field set, subject from the MAIN_FATAL line, a short description, a first comment carrying the evidence with every MARS per-case artifact attached, and the analysis attachment. Also the root cause analysis comment for an existing ticket (what Peter means by "write a root cause analysis"), the HTML format for ANY Redmine description or comment, and how to correct a posted comment in place. Use when opening a ticket or filing a bug for a regression, CI, DoA or MARS-session failure, when asked to write a root cause analysis (RCA) for a ticket, and whenever posting or editing a Redmine comment.
 ---
 
 # Opening a Redmine ticket for a UTOPX regression failure
@@ -134,9 +134,10 @@ preceded by a large empty block. Write descriptions and comments in HTML.
 | fatal lines, logs | `<pre>…</pre>` |
 | list | `<ul><li>…</li></ul>`, `<ol><li>…</li></ol>` |
 | link | `<a href="https://…">text</a>` |
+| table | `<table border="1" cellpadding="4" cellspacing="0"><tbody>`, a `<tr><th>…</th></tr>` header row, then `<tr><td>…</td></tr>` rows |
 
 - Escape `&`, `<` and `>` in text and inside `<pre>` (`&amp;`, `&lt;`, `&gt;`).
-- A table layout has not been checked on this instance; use a list instead.
+- Tables in the form above render on this instance (bordered, header row bold).
 - The MCP appends its footer in textile (`%{font-size:smaller}via YAI Redmine MCP […]%`), which
   shows raw in an HTML note. Right after posting, replace that line in place (see "Correcting")
   with `<p><span style="font-size:smaller">via YAI Redmine MCP […]</span></p>`, keeping the text
@@ -154,7 +155,8 @@ preceded by a large empty block. Write descriptions and comments in HTML.
    P=$(jskill path utopx-regression-ticket)/scripts/post_ticket.py
    $P desc --ticket <id> --subject '<subject>' --description <dir>/TICKET_<id>_description.html
    $P note --ticket <id> --note <dir>/NOTE_<id>_first_comment.html --manifest <dir>/attach/manifest.tsv
-   $P note --ticket <id> --note <dir>/NOTE_<id>_rootcause.html --manifest <dir>/rootcause.tsv
+   $P note --ticket <id> --note <dir>/NOTE_<id>_analysis.html --manifest <dir>/analysis.tsv   # new ticket
+   $P note --ticket <id> --note <dir>/redmine/NOTE_<id>_rootcause.html     # root cause analysis: no uploads
    ```
 
    - `desc` replaces subject and description and keeps the footer that `yai__create_task` put on
@@ -190,6 +192,34 @@ curl -sk -X PUT -H "X-Redmine-API-Key: $K" -H 'Content-Type: application/json' \
 - `GET /journals/<id>.json` returns 404 because there is no show route; PUT still works.
 - After posting an HTML note through the MCP, this PUT is also how the footer gets its HTML form
   (see Format).
+
+## Root cause analysis — one comment on the ticket
+
+When Peter asks for a root cause analysis (RCA) for a ticket, write one comment in this shape.
+Template: `assets/root_cause_analysis.html`. Reference:
+[#5258246 note-23](https://redmine.nvidia.com/issues/5258246#note-23); also the RCA comments on
+#5342762 and #5342798.
+
+| part | HTML | content |
+|---|---|---|
+| title | `<h3>Root cause analysis — <session or event> (<branch>, FW <ver>, <setup>)</h3>` | |
+| Summary | `<p><strong>Summary:</strong> …</p>` | one paragraph: first what it is not (a FW defect, a FW regression, the problem this ticket was opened for), then what it is and what exposed it; when fixed, the box it was verified on and the gerrit URL |
+| 1. Failure | `<h4>1. Failure</h4>`, `<pre>`, `<ul>` | the FATAL line(s) verbatim from the case log, timestamp columns dropped; then Branch (FW and utopx versions), Setup (chip, PSID, box, mode, which functions exist), Where (case, seed, iteration:op, command, VHCA/GVMI, how many failing cases in which sessions or the fsearch count), Example (the MARS view_log URL, written out in full as the link text) |
+| 2. Root cause | `<h4>2. Root cause</h4>`, `<ol>` | the causal chain, one item per link, each opening with `<strong>Label (qualifier).</strong>`: Trigger (regression config, utopx generation, a scenario); FW behaviour (by design, or unchanged/changed between versions, quoted from the FW source with file:line); utopx expectation or ordering (file:line, ending in the check that fails). Fields, functions and file:line go in `<code>` |
+| 3. Evidence | `<h4>3. Evidence (<box>, <FW + INI>, <utopx>, <case>, seed <n>, <starting state>; one variable changed per run)</h4>`, a table, `<ul>` | one row per run (reproduction, controls, fix runs), one column per variable changed, a Result column; under the table the repro rate, corroboration from the regression archives (counts over sessions, setups, branches), and what rules out each remaining variable |
+| 4. What this is not | `<h4>4. What this is not</h4>`, `<ul>` | each plausible wrong reading, with the run or fact that rules it out |
+| 5. Ownership and next steps | `<h4>5. Ownership and next steps</h4>`, `<ul>` | one item per owner, opening with `<strong>Owner (scope):</strong>` — utopx, regression config, FW / architecture: the fix with its gerrit URL, or the concrete ask; "FW: nothing needed" when so |
+
+- No attachments, and no second comment carrying files: the gerrit and MARS links are the trail.
+  The attachment rules further down apply to opening a new ticket only.
+- Write it from the ticket's `FINDINGS_<ticket#>.md` (skill `regression-repro`), not from memory.
+  Every number and timing comes from the logs and is checked on every run it is claimed for. Repro
+  rates count only local runs from the case's starting state; a priming run is listed apart.
+- Mark anything inferred from source but not run as "(from code, not run)".
+- No internal process: no agent or session names, review history, local paths or chat quotes.
+- Flow: draft `<ticket dir>/redmine/NOTE_<id>_rootcause.html` from the template; show Peter the
+  full text in the reply, rendered readably; after his approval post it unchanged with
+  `post_ticket.py note --ticket <id> --note <file>` (no manifest) and confirm the read-back.
 
 ## Description — four parts, kept short
 

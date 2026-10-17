@@ -1,0 +1,55 @@
+<h3>Root cause analysis — {{session or event}} ({{branch}}, FW {{version}}, {{setup and box}})</h3>
+
+<p><strong>Summary:</strong> {{what this is not: not a FW defect / not a FW regression / not the problem this ticket was opened for}}. It is {{what it is, in one sentence}}, {{what exposed it}}. {{When fixed: Fix verified on BOX and in review: <a href="GERRIT_URL">GERRIT_URL</a>.}}</p>
+
+<h4>1. Failure</h4>
+
+<pre>{{the FATAL line(s), verbatim, timestamp columns dropped; escape &amp; &lt; &gt;}}</pre>
+
+<ul>
+<li>Branch: {{branch}} (FW {{version}}, utopx {{commit}}).</li>
+<li>Setup: {{chip}} ({{product}}, PSID {{psid}}) {{box}}, {{mode}}, {{ECPF / sat-PF / devices present}}.</li>
+<li>Where: {{case}}, seed {{seed}}, iteration {{i}} op {{n}}: {{command}} by {{function}} (VHCA {{x}} / GVMI {{y}}); {{how many failing cases in which sessions, or the fsearch count}}.</li>
+<li>Example: <a href="MARS_VIEW_LOG_URL">MARS_VIEW_LOG_URL</a></li>
+</ul>
+
+<h4>2. Root cause</h4>
+
+<ol>
+<li><strong>Trigger ({{regression config / utopx generation / a scenario}}).</strong> {{what starts the chain; fields, functions and file:line in code tags}}</li>
+<li><strong>FW behaviour ({{by design / unchanged between X and Y / changed in Z}}).</strong> {{the FW rule, quoted from the FW source with file:line}}</li>
+<li><strong>utopx {{expectation / ordering}}.</strong> {{what utopx predicts or does, with file:line, ending in the check that fails}}</li>
+</ol>
+
+<h4>3. Evidence ({{box}}, {{FW + INI}}, utopx {{commit}}, {{case}}, seed {{seed}}, {{starting state}}; one variable changed per run)</h4>
+
+<table border="1" cellpadding="4" cellspacing="0">
+<tbody>
+<tr><th>Run</th><th>{{variable 1}}</th><th>{{variable 2}}</th><th>Result</th></tr>
+<tr><td>Reproduction</td><td>{{value}}</td><td>{{value}}</td><td>FAIL — {{same signature as the regression}}</td></tr>
+<tr><td>{{control or variant}}</td><td>{{value}}</td><td>{{value}}</td><td>{{result}}</td></tr>
+<tr><td>{{fix}}</td><td>{{value}}</td><td>{{value}}</td><td>PASS — {{what changed at the failing point}}</td></tr>
+</tbody>
+</table>
+
+<ul>
+<li>{{repro rate over local runs from the case's starting state; priming runs listed apart}}</li>
+<li>{{regression archives agree: counts over sessions, setups, branches}}</li>
+<li>{{what rules out each remaining variable}}</li>
+</ul>
+
+<h4>4. What this is not</h4>
+
+<ul>
+<li>Not {{a FW defect / regression}} ({{the run or fact that shows it}}).</li>
+<li>Not {{the ticket's original failure / another ticket's defect}} ({{evidence}}).</li>
+<li>{{a change that only hides the failure, and why it does not fix it}}</li>
+</ul>
+
+<h4>5. Ownership and next steps</h4>
+
+<ul>
+<li><strong>{{Owner}} ({{scope}}):</strong> {{the fix with its gerrit URL, or the concrete ask}}.</li>
+<li><strong>{{Owner}}:</strong> {{ask}}. Note (from code, not run): {{anything inferred from source but not run}}</li>
+<li><strong>FW:</strong> {{nothing needed / please confirm that ... is intended}}.</li>
+</ul>
