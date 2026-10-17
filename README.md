@@ -13,10 +13,9 @@
 | Search     | Bash Function | [code](#code)               | Work with `jr` to search and open code in VSCode with  powerful features                          |
 | Decode     | Python Script | [jdecode](#jdecode)         | Decode crash reports from Fortinet devices                                                         |
 | Debug      | Bash Script | [jdebug](#jdebug)           | Debugging tool for devices running gdbserver                                                         |
-| Debug      | Bash Script | [jrun](#jrun)               | Command Runner by sending commands to a tmux pane running an SSH session                             |
 | Debug      | Bash Script | [jroute](#jroute)           | Simple script to switch the default route between available gateways                                 |
 | Debug      | Bash Script | [jt](#jt)                   | Log file viewer with syntax highlighting                                                             |
-| Agents     | Python Script | [jcl](#jcl)               | List, save, restore, refresh, and configure Claude Code and Codex sessions in tmux |
+| Agents     | Python Script | [jcl](#jcl)               | List, save, restore, refresh, and configure Claude Code and Codex sessions in tmux; type a command into every idle shell pane |
 | Agents     | Python Script | [agent-bridge](#agent-bridge) | Let Claude Code and Codex sessions message each other by name or session id |
 | Agents     | Python Script | [jskill](#jskill)         | Maintain one skill source shared by Claude Code and Codex |
 | Debug      | Python Script | [gdb_tools](#gdb_tools)     | Python tools for visualizing data structures in memory while debugging with GDB                      |
@@ -43,7 +42,7 @@ jcl restore --agent codex
 jcl refresh codex --dry-run                # preview restart in the same tmux panes
 jcl refresh codex                          # every Codex pane; `all` is both agents
 jcl refresh 3:11.1                         # one exact pane, either agent
-jcl exit-session all                       # quit both agents, panes stay at the shell
+jcl exit-session all                       # save, then quit both agents; panes stay at the shell
 jcl delete -n 01a139e7-7b96                 # what deleting a session for good would do
 jcl delete 3:6.1 01a139e7-7b96             # quit if live, then remove its history; asks first
 jcl set --agent codex --model gpt-6-astra --effort high
@@ -51,7 +50,37 @@ jcl set --effort xhigh --agent codex        # retain each pane's current model
 jcl bridge status                          # agent-bridge, given the rest of the line
 jcl set --model opus --model gpt-6-astra    # route one model to each agent
 jcl set 0:6.2 3:4.1 --model opus --effort max   # only the named panes, either agent
+jcl shell -n 'source ~/.bashrc'            # preview: which shell panes would get it
+jcl shell 'source ~/.bashrc'               # every pane whose shell waits at an empty prompt (Tab completes it)
+jcl shell 'cd ~/myGit/crosslv && git pull' # any command line, quoted as one argument
+jcl resurrect                              # tmux-resurrect saves; marks the one prefix+R restores
+jcl resurrect --use 2                      # make prefix+R restore save 2 (then press prefix+R)
 ```
+
+`shell` types a command line into every tmux pane whose own shell sits idle at an
+empty prompt, then reports each one: `ok` or its exit status, how long it took,
+and the first lines it printed, or `still running` after `--timeout` (10 s). Every
+other pane is listed with the reason and left alone: one running an agent, an
+editor, ssh or a build, one in copy mode, one with text already typed. The line
+must parse in bash and goes out with a leading space, so `HISTCONTROL=ignoreboth`
+keeps it out of history, followed by `; tmux set -p -t <pane> @jcl_rc $?`, which
+hands the exit status back. The pane `jcl` runs from gets the plain line last.
+Agents only read shell setup when they start, so after `source ~/.bashrc` it
+prints the `jcl refresh` line for the agent panes it skipped.
+
+`restore` puts each session back only into the pane it was saved from, when that
+pane is still there and passes the same check, and never creates a window: a
+session whose pane is gone or busy is listed with its resume command, to run
+`restore` again once the pane is free or to resume it by hand. The saved pane id
+is trusted only while the tmux server that numbered it still runs; after a server
+restart the pane is found by its position, which tmux-resurrect brings back.
+
+`resurrect` lists the saves tmux-resurrect keeps, newest first, with their pane
+and agent counts, and marks `last`, the save `prefix+R` restores. A `prefix+S` on a
+fresh tmux after a reboot, before `prefix+R`, points `last` at a near-empty save
+(few panes, no agents) while the earlier saves stay on disk: `jcl resurrect --use N`
+(N is the number from the list, which Tab completes; a timestamp works too) points `last` back, and
+`prefix+R` restores it. `--use` only moves the `last` link; it deletes nothing.
 
 `restore` and `set` take `--agent` and default to both agents. `refresh` and
 `exit-session` name agents instead: `claude` or `codex` selects every pane of one
@@ -443,44 +472,6 @@ Example:
     jdebug fgt1 -p "123" -N1
     jdebug fgt1 -w algo -d 9229 -l "admin" -p "123"
     jdebug -h
-```
-
-<a id="jrun"></a>
-#### [jrun](./ftnt-tools/jrun)
-```bash
-$ jrun -h
-Usage: jrun -t session[:window[.pane]] [OPTIONS]
-
-This script sends commands to a specific tmux session, window, and pane.
-The target is specified with -t (or with -s/-w/-p), then it sends either a
-single command, the lines of a command file, or broadcasts a command to every pane.
-
-Options:
-    -h, --help               Print this help message
-    -t, --target             Set target as session[:window[.pane]]
-    -s, --session            Set session ID (default: )
-    -w, --window             Set window ID (default: 1)
-    -p, --pane               Set pane ID (default: 1)
-    -c, --cmd CMD            Send a single CMD to the target session/window/pane
-    -f, --file               Specify command file (default: commands.txt)
-    -d, --debug              Enable debug mode with verbose output
-    -B, --broadcast CMD      Send CMD to all panes across all tmux sessions
-
-Examples:
-    jrun -t log:2.2 --file=/home/xiangp/commands.txt
-    jrun -t log -c 'export DISPLAY=:0'        # Uses default window 1 and pane 1
-    jrun -t log:2 -c 'export DISPLAY=:0'      # Uses default pane 1
-    jrun -t log:2.3 -c 'export DISPLAY=:0'    # Specifies all parts
-    jrun --broadcast 'source ~/.bashrc'       # Send to all tmux panes (no -t needed)
-
-Note: always quote multi-word commands, e.g. -c 'export DISPLAY=:0'.
-
-Tips:
-    1. Type 'C-x, q' to view the pane number within the tmux window.
-    2. Type 'C-x, s' to view the session name in tmux.
-    3. Use // to comment out a line in the command file.
-    4. Use ! to omit the rest of the commands in the command file.
-
 ```
 
 <a id="jr"></a>

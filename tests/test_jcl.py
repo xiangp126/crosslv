@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -38,6 +39,14 @@ class SessionTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {}, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
+        # exit-session saves before it quits anything: no test may write the
+        # real ~/.claude/tmux-snapshot.json
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.snapshot = Path(tmp.name) / "tmux-snapshot.json"
+        snapshot = patch.object(jcl, "DEFAULT_SNAPSHOT", self.snapshot)
+        snapshot.start()
+        self.addCleanup(snapshot.stop)
 
     def invoke(self, argv):
         out = io.StringIO()
@@ -167,13 +176,13 @@ class SessionTests(unittest.TestCase):
             path = Path(tmp) / "sessions.json"
             path.write_text(json.dumps({"sessions": [claude, record()]}))
             rc, out = self.invoke(["restore", "-f", str(path), "--dry-run"])
-            self.assertEqual(rc, 0)
+            self.assertEqual(rc, 1)  # no pane to go back into: each is listed with its command
             self.assertIn("claude --resume old-claude", out)
             self.assertIn("codex resume " + SID, out)
             rc, out = self.invoke(["restore", "-f", str(path), "--agent", "codex", "--dry-run"])
             self.assertNotIn("claude --resume", out)
         # Reading tmux is fine (restore looks for the pane to reuse); changing it is not
-        self.assertTrue(all(c.args[0] in ("list-sessions", "list-panes") for c in tmux.call_args_list))
+        self.assertTrue(all(c.args[0] in ("list-panes", "display-message") for c in tmux.call_args_list))
 
     def test_refresh_skips_self_and_uses_stable_pane(self):
         with patch.dict(os.environ, {"CODEX_THREAD_ID": SID}), \
@@ -489,20 +498,117 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(jcl.codex_records(42, "/w", paths, server)[0]["origin"], "desktop")
             self.assertEqual(jcl.codex_records(42, "/w", paths, ["codex"])[0]["origin"], "terminal")
 
+    @contextlib.contextmanager
+    def restoring(self, panes, reasons=None, ids_valid=True):
+        """restore against these panes; yields the tmux mock, which records what is typed."""
+        reasons = reasons or {}
+        with patch.object(jcl, "collect", return_value=[]), \
+             patch.object(jcl, "list_panes", return_value=panes), \
+             patch.object(jcl, "idle_shell_reason", side_effect=lambda p: reasons.get(p["pane_id"])), \
+             patch.object(jcl, "tmux_running_since", return_value=ids_valid), \
+             patch.object(jcl, "tmux", return_value="") as tmux:
+            yield tmux
+
     def test_restore_reuses_the_idle_original_pane(self):
         with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(jcl, "collect", return_value=[]), \
-             patch.object(jcl, "free_panes", return_value={"%99": "test:1.0"}), \
-             patch.object(jcl, "tmux", return_value="test") as tmux:
+             self.restoring([self.pane("test:1.0", "%99", "101")]) as tmux:
             path = Path(tmp) / "sessions.json"
             path.write_text(json.dumps({"sessions": [record(cwd=tmp)]}))
             rc, out = self.invoke(["restore", "-f", str(path)])
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 0, out)
         self.assertIn("Restored in place", out)
-        verbs = [c.args[0] for c in tmux.call_args_list]
-        self.assertNotIn("new-window", verbs)
-        self.assertNotIn("new-session", verbs)
-        self.assertTrue(any(c.args[:3] == ("send-keys", "-t", "%99") for c in tmux.call_args_list))
+        self.assertEqual([c.args[:3] for c in tmux.call_args_list], [("send-keys", "-t", "%99")] * 2)
+
+    def test_restore_leaves_a_busy_or_gone_pane_alone_and_makes_no_window(self):
+        # A window made beside the layout put the agent where nobody looked
+        # for it; a busy pane is usually busy for a moment (2026-10-16)
+        for panes, reasons, message in (
+                ([self.pane("test:1.0", "%99", "101")], {"%99": "in copy mode"},
+                 "Skipped, its pane test:1.0 is busy (in copy mode)"),
+                ([], {}, "Skipped, its pane test:1.0 is gone")):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp, \
+                 self.restoring(panes, reasons) as tmux:
+                path = Path(tmp) / "sessions.json"
+                path.write_text(json.dumps({"sessions": [record(cwd=tmp)]}))
+                rc, out = self.invoke(["restore", "-f", str(path)])
+            self.assertEqual(rc, 1, out)
+            self.assertIn(message, out)
+            self.assertIn("codex resume " + SID, out)  # the command to run by hand
+            tmux.assert_not_called()
+
+    def test_restore_finds_the_pane_by_id_only_while_the_server_lives(self):
+        # Saved as %99 at test:1.0. Same server: %99 is that pane, even after
+        # renumbering moved it. Restarted server: ids start over, so a %99 now
+        # is some other pane, and the position is what counts.
+        panes = [self.pane("test:2.0", "%99", "101"), self.pane("test:1.0", "%5", "105")]
+        for ids_valid, pane_id in ((True, "%99"), (False, "%5")):
+            with self.subTest(ids_valid=ids_valid), tempfile.TemporaryDirectory() as tmp, \
+                 self.restoring(panes, ids_valid=ids_valid) as tmux:
+                path = Path(tmp) / "sessions.json"
+                path.write_text(json.dumps({"sessions": [record(cwd=tmp)]}))
+                rc, out = self.invoke(["restore", "-f", str(path)])
+            self.assertEqual(rc, 0, out)
+            self.assertEqual({c.args[2] for c in tmux.call_args_list}, {pane_id})
+
+    @staticmethod
+    def resurrect_saves(directory, saves, last):
+        """Write tmux-resurrect save files: stamp -> [(session, foreground command)]."""
+        for stamp, panes in saves.items():
+            Path(directory, f"tmux_resurrect_{stamp}.txt").write_text("".join(
+                f"pane\t{session}\t1\t1\t:*\t{i}\t:\t:/w\t1\t{command}\t:\n"
+                for i, (session, command) in enumerate(panes)) + "window\t0\t1\t:w\t1\t:*\tlayout\t:\n")
+        Path(directory, "last").symlink_to(f"tmux_resurrect_{last}.txt")
+
+    def test_resurrect_lists_saves_newest_first_and_marks_last(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(jcl, "resurrect_dir", return_value=Path(tmp)):
+            # The newest is what a prefix+S on a fresh tmux leaves behind
+            self.resurrect_saves(tmp, {"20261015T232108": [("0", "bash"), ("0", "claude"), ("3", "codex")],
+                                       "20261016T135200": [("0", "bash")]}, last="20261016T135200")
+            rc, out = self.invoke(["resurrect"])
+        self.assertEqual(rc, 0, out)
+        rows = [line.split() for line in out.splitlines() if line.strip()[:1].isdigit()]
+        self.assertEqual([row[0] for row in rows], ["1", "2"])
+        self.assertEqual(rows[0][1:3], ["10-16", "13:52"])
+        self.assertEqual(rows[0][-2:], ["<-", "last"])
+        self.assertEqual(rows[1][-4:], ["3", "2", "0,", "3"])  # panes, agents, sessions
+
+    def test_resurrect_use_points_last_at_the_chosen_save(self):
+        saves = {"20261015T232108": [("0", "claude")], "20261016T135200": [("0", "bash")]}
+        for pick in ("2", "20261015T232108", "tmux_resurrect_20261015T232108.txt"):
+            with self.subTest(pick=pick), tempfile.TemporaryDirectory() as tmp, \
+                 patch.object(jcl, "resurrect_dir", return_value=Path(tmp)):
+                self.resurrect_saves(tmp, saves, last="20261016T135200")
+                rc, out = self.invoke(["resurrect", "--use", pick])
+                # Relative, as resurrect links it; the restore stays prefix+R
+                self.assertEqual((rc, os.readlink(Path(tmp, "last"))), (0, "tmux_resurrect_20261015T232108.txt"))
+                self.assertIn("prefix+R", out)
+                self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()),
+                                 ["last", "tmux_resurrect_20261015T232108.txt", "tmux_resurrect_20261016T135200.txt"])
+
+    def test_resurrect_use_changes_nothing_on_a_dry_run_or_an_unknown_save(self):
+        for argv, rc_expected in ((["-n", "--use", "2"], 0), (["--use", "3"], 1), (["--use", "20990101T000000"], 1)):
+            with self.subTest(argv=argv), tempfile.TemporaryDirectory() as tmp, \
+                 patch.object(jcl, "resurrect_dir", return_value=Path(tmp)):
+                self.resurrect_saves(tmp, {"20261015T232108": [], "20261016T135200": []}, last="20261016T135200")
+                rc, out = self.invoke(["resurrect", *argv])
+                self.assertEqual(rc, rc_expected, out)
+                self.assertEqual(os.readlink(Path(tmp, "last")), "tmux_resurrect_20261016T135200.txt")
+
+    def test_resurrect_dir_follows_the_plugin(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(jcl.Path, "home", return_value=Path(tmp)):
+            with patch.object(jcl, "tmux", return_value="$HOME/saves"):
+                self.assertEqual(jcl.resurrect_dir(), Path(tmp, "saves"))
+            with patch.object(jcl, "tmux", return_value=""), patch.dict(os.environ, {"XDG_DATA_HOME": f"{tmp}/x"}):
+                self.assertEqual(jcl.resurrect_dir(), Path(tmp, "x/tmux/resurrect"))
+                Path(tmp, ".tmux/resurrect").mkdir(parents=True)
+                self.assertEqual(jcl.resurrect_dir(), Path(tmp, ".tmux/resurrect"))  # the old location wins
+
+    def test_tmux_running_since(self):
+        saved = int(time.mktime(time.strptime("2026-10-16 10:00:00", "%Y-%m-%d %H:%M:%S")))
+        for started, expected in ((saved - 60, True), (saved + 60, False), ("", False)):
+            with self.subTest(started=started), patch.object(jcl, "tmux", return_value=str(started)):
+                self.assertEqual(jcl.tmux_running_since("2026-10-16 10:00:00"), expected)
+        self.assertFalse(jcl.tmux_running_since(None))
 
     def test_save_keeps_the_old_file_and_names_what_drops_out(self):
         live = [record(sid="up"), record(sid="desk", name="Read PSF", target="", origin="desktop")]
@@ -554,9 +660,7 @@ class SessionTests(unittest.TestCase):
         for extra, reason in (({"origin": "desktop"}, "Skipped, app session"),
                               ({"empty": True}, "Skipped, no conversation to resume")):
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp, \
-                 patch.object(jcl, "collect", return_value=[]), \
-                 patch.object(jcl, "free_panes", return_value={"%99": "test:1.0"}), \
-                 patch.object(jcl, "tmux", return_value="test") as tmux:
+                 self.restoring([self.pane("test:1.0", "%99", "101")]) as tmux:
                 path = Path(tmp) / "sessions.json"
                 path.write_text(json.dumps({"sessions": [record(cwd=tmp, **extra)]}))
                 rc, out = self.invoke(["restore", "-f", str(path)])
@@ -576,11 +680,145 @@ class SessionTests(unittest.TestCase):
         self.assertIn("Exited", out)
         self.assertIn("codex resume " + SID, out)
 
+    def test_exit_session_saves_the_snapshot_before_quitting(self):
+        def quit_agent(rec, *args):
+            # restore must find the session in the snapshot once it has exited
+            saved = json.loads(self.snapshot.read_text())["sessions"]
+            self.assertEqual([r["session_id"] for r in saved], [rec["session_id"]])
+            return True
+        with patch.object(jcl, "collect", return_value=[record()]), \
+             patch.object(jcl, "is_live_agent", return_value=True), \
+             patch.object(jcl, "pane_tail", return_value=""), \
+             patch.object(jcl, "quit_agent", side_effect=quit_agent) as quit_mock:
+            rc, out = self.invoke(["exit-session", "test:1.0"])
+        self.assertEqual(rc, 0, out)
+        quit_mock.assert_called_once()
+        self.assertLess(out.index("Saved 1 session"), out.index("Exited"))
+
+    def test_exit_session_dry_run_saves_nothing(self):
+        with patch.object(jcl, "collect", return_value=[record()]), \
+             patch.object(jcl, "pane_tail", return_value=""), \
+             patch.object(jcl, "quit_agent") as quit_agent:
+            rc, out = self.invoke(["exit-session", "-n", "test:1.0"])
+        self.assertEqual(rc, 0, out)
+        quit_agent.assert_not_called()
+        self.assertFalse(self.snapshot.exists())
+        self.assertIn("would save the snapshot", out)
+
+    def test_exit_session_exits_nothing_when_the_save_fails(self):
+        with patch.object(jcl, "collect", return_value=[record()]), \
+             patch.object(jcl, "cmd_save", return_value=1), \
+             patch.object(jcl, "quit_agent") as quit_agent:
+            rc, out = self.invoke(["exit-session", "test:1.0"])
+        self.assertEqual(rc, 1)
+        quit_agent.assert_not_called()
+        self.assertIn("Snapshot not saved, so no session was exited.", out)
+
+    @staticmethod
+    def pane(target, pane_id, pid, current="bash", in_mode="0"):
+        return dict(pane_id=pane_id, pid=pid, in_mode=in_mode, current=current, target=target)
+
+    def shell(self, argv, panes, reasons, statuses=None, screens=None, comm="bash"):
+        """Run send against fake panes, which hand back statuses and show screens (both by pane id)."""
+        statuses, screens = statuses or {}, screens or {}
+
+        def tmux(*args, check=True):
+            if args[0] == "list-panes":
+                return "\n".join(f"{pane_id} {rc}" for pane_id, rc in statuses.items())
+            if args[0] == "capture-pane":
+                return screens.get(args[args.index("-t") + 1], "")
+            return ""
+
+        with patch.object(jcl, "list_panes", return_value=panes), \
+             patch.object(jcl, "idle_shell_reason", side_effect=lambda p: reasons[p["pane_id"]]), \
+             patch.object(jcl, "proc_comm", return_value=comm), \
+             patch.object(jcl, "tmux", side_effect=tmux) as mock:
+            rc, out = self.invoke(["shell", *argv])
+        return rc, out, [c.args for c in mock.call_args_list if c.args[0] == "send-keys"]
+
+    def test_shell_types_into_every_shell_at_an_empty_prompt(self):
+        panes = [self.pane("t:1.0", "%1", "101"), self.pane("t:1.1", "%2", "102", current="claude"),
+                 self.pane("t:2.0", "%3", "103", in_mode="1"), self.pane("t:3.0", "%4", "104")]
+        reasons = {"%1": None, "%2": "claude is running", "%3": "in copy mode", "%4": "has typed text"}
+        rc, out, typed = self.shell(["source ~/.bashrc"], panes, reasons, statuses={"%1": "0"})
+        self.assertEqual(rc, 0, out)
+        # A leading space keeps it out of history; the tail hands the exit
+        # status back on the pane it ran in; nothing else gets a key
+        self.assertEqual(typed, [("send-keys", "-t", "%1", "-l", " source ~/.bashrc; tmux set -p -t %1 @jcl_rc $?"),
+                                 ("send-keys", "-t", "%1", "Enter")])
+        self.assertRegex(out, r"t:1\.0\s+ok")
+        for reason in reasons.values():
+            if reason:
+                self.assertIn(f"skipped: {reason}", out)
+        # Sourcing shell setup: the agents it skipped only read it when they start
+        self.assertIn("jcl refresh t:1.1", out)
+
+    def test_shell_reports_exit_status_output_and_what_still_runs(self):
+        panes = [self.pane("t:1.0", "%1", "101"), self.pane("t:1.1", "%2", "102"), self.pane("t:1.2", "%3", "103")]
+        screen = "$  make; tmux set -p -t %1 @jcl_rc $?   \nline 1\nline 2\nline 3\nline 4\n$ \n\n"
+        rc, out, _ = self.shell(["--timeout", "0.5", "make"], panes, dict.fromkeys(("%1", "%2", "%3")),
+                               statuses={"%1": "0", "%2": "2"}, screens={"%1": screen})
+        self.assertEqual(rc, 1, out)  # one failed, one still running
+        self.assertRegex(out, r"t:1\.0\s+ok")
+        self.assertIn("| line 3", out)
+        self.assertIn("| ... 1 more line(s)", out)
+        self.assertNotIn("| $", out)  # the prompt it came back to is not output
+        self.assertRegex(out, r"t:1\.1\s+exit 2")
+        self.assertIn("t:1.2  still running after 0.5s", out)
+        self.assertIn("1 ok · 1 failed · 1 still running · 0 skipped", out)
+
+    def test_shell_types_nothing_on_a_dry_run_or_a_line_that_does_not_parse(self):
+        panes = [self.pane("t:1.0", "%1", "101")]
+        rc, out, typed = self.shell(["-n", "make"], panes, {"%1": None})
+        self.assertEqual((rc, typed), (0, []))
+        self.assertIn("would get it", out)
+        self.assertIn("nothing typed", out)
+        rc, out, typed = self.shell(["if then"], panes, {"%1": None})
+        self.assertEqual((rc, typed), (1, []))
+        self.assertIn("does not parse", out)
+
+    def test_shell_types_into_its_own_pane_last(self):
+        # Its shell waits for jcl to exit, then reads the line: nothing comes
+        # back to wait for, so it gets the plain line
+        panes = [self.pane("t:1.0", "%1", "101"), self.pane("t:1.1", "%2", "102")]
+        with patch.dict(os.environ, {"TMUX_PANE": "%1"}), patch.object(jcl.os, "getppid", return_value=101):
+            rc, out, typed = self.shell(["source ~/.bashrc"], panes, {"%2": None}, statuses={"%2": "0"})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([t[2] for t in typed], ["%2", "%2", "%1", "%1"])
+        self.assertEqual(typed[2][4], " source ~/.bashrc")
+        self.assertIn("runs once jcl exits", out)
+
+    def test_shell_hands_fish_its_own_status_variable(self):
+        rc, out, typed = self.shell(["make"], [self.pane("t:1.0", "%1", "101")], {"%1": None},
+                                   statuses={"%1": "0"}, comm="fish")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(typed[0][4].endswith(" @jcl_rc $status"), typed)
+
+    def test_idle_shell_reason(self):
+        pane = self.pane("t:1.0", "%1", "101")
+        for comm, group, mode, empty, reason in (
+                ("python3", "101", "0", True, "its shell is python3"),
+                ("bash", "202", "0", True, "bash is running"),  # a nested bash or a bash script
+                ("bash", "101", "1", True, "in copy mode"),
+                ("bash", "101", "0", False, "has typed text"),
+                ("bash", "101", "0", True, None)):
+            with self.subTest(reason=reason), \
+                 patch.object(jcl, "proc_comm", return_value=comm), \
+                 patch.object(jcl, "foreground_group", return_value=group), \
+                 patch.object(jcl, "prompt_is_empty", return_value=empty):
+                self.assertEqual(jcl.idle_shell_reason(dict(pane, in_mode=mode)), reason)
+
+    def test_prompt_is_empty(self):
+        for line, x, empty in (("pexiang@host:~/w$ ", 18, True), ("pexiang@host:~/w$ ls", 20, False),
+                               ("pexiang@host:~/w$ ls", 18, False), ("Password: ", 10, False)):
+            with self.subTest(line=line, x=x):
+                answers = {"display-message": f"{x} 3", "capture-pane": line}
+                with patch.object(jcl, "tmux", side_effect=lambda *a: answers[a[0]]):
+                    self.assertEqual(jcl.prompt_is_empty("%1"), empty)
+
     def test_restore_resumes_a_session_saved_empty_that_has_a_rollout_now(self):
         with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(jcl, "collect", return_value=[]), \
-             patch.object(jcl, "free_panes", return_value={"%99": "test:1.0"}), \
-             patch.object(jcl, "tmux", return_value="test") as tmux:
+             self.restoring([self.pane("test:1.0", "%99", "101")]) as tmux:
             rollout = Path(tmp, "sessions/2026/10/09", f"rollout-2026-10-09T10-00-00-{SID}.jsonl")
             rollout.parent.mkdir(parents=True)
             rollout.write_text("{}\n")

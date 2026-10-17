@@ -174,30 +174,117 @@ def proc_argv(pid):
 
 
 def tmux(*args, check=True):
+    # -u: without a UTF-8 locale (cron, env -i) tmux prints the tab in a -F
+    # format as "_", and every list-panes here is tab separated (2026-10-16)
     return subprocess.run(
-        ["tmux", *args], capture_output=True, text=True, check=check
+        ["tmux", "-u", *args], capture_output=True, text=True, check=check
     ).stdout.rstrip("\n")
 
 
-# Foreground commands that mean "a shell sitting at a prompt". Anything else
-# in the pane -- an editor, a pager, another agent -- would swallow the resume
-# command as keystrokes instead of running it.
+# The shells a pane can sit at a prompt in. Anything else in the pane's
+# foreground -- an editor, a pager, another agent -- would take typed keys as
+# its own input instead of running them.
 REUSABLE_SHELLS = ("bash", "zsh", "sh", "fish", "dash", "ksh")
 
 
-def free_panes():
-    """pane_id -> target, for every pane currently idle at a shell prompt."""
-    fmt = "#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{pane_current_command}"
+def list_panes():
+    """Every tmux pane: pane_id, its shell's pid, copy-mode flag, foreground command, target."""
+    fmt = ("#{pane_id}\t#{pane_pid}\t#{pane_in_mode}\t#{pane_current_command}"
+           "\t#{session_name}:#{window_index}.#{pane_index}")
     try:
         out = tmux("list-panes", "-a", "-F", fmt)
     except (OSError, subprocess.CalledProcessError):
-        return {}
-    free = {}
-    for line in out.splitlines():
-        parts = line.split("\t")
-        if len(parts) == 3 and parts[2] in REUSABLE_SHELLS:
-            free[parts[0]] = parts[1]
-    return free
+        return []
+    keys = ("pane_id", "pid", "in_mode", "current", "target")
+    return [dict(zip(keys, parts)) for parts in (line.split("\t") for line in out.splitlines())
+            if len(parts) == len(keys)]
+
+
+def proc_comm(pid):
+    """The process name of pid, without the '-' a login shell's name carries."""
+    try:
+        if HAS_PROC:
+            name = Path(f"/proc/{pid}/comm").read_text().strip()
+        else:
+            name = Path(subprocess.run(["ps", "-o", "comm=", "-p", str(pid)],
+                                       capture_output=True, text=True).stdout.strip()).name
+    except OSError:
+        return ""
+    return name.lstrip("-")
+
+
+def foreground_group(pid):
+    """The process group in the foreground of pid's terminal (tpgid), or None.
+
+    An interactive shell owns it only while it waits at its prompt: every
+    command it runs is put in a process group of its own.
+    """
+    try:
+        if not HAS_PROC:
+            out = subprocess.run(["ps", "-o", "tpgid=", "-p", str(pid)],
+                                 capture_output=True, text=True).stdout.strip()
+            return out or None
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        # comm may hold spaces; after it come state, ppid, pgrp, session, tty, tpgid
+        return stat[stat.rindex(")") + 2 :].split()[5]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def prompt_is_empty(pane_id):
+    """True when the cursor sits right after the prompt and nothing follows it."""
+    try:
+        x, y = (int(n) for n in tmux("display-message", "-p", "-t", pane_id,
+                                     "#{cursor_x} #{cursor_y}").split())
+        line = tmux("capture-pane", "-p", "-t", pane_id, "-S", str(y), "-E", str(y))
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return False
+    return bool(re.search(r"[$#>%]\s*$", line[:x])) and not line[x:].strip()
+
+
+def idle_shell_reason(pane):
+    """Why a line typed into this pane would not reach a shell at an empty prompt; None if it would.
+
+    The pane's own shell has to hold the foreground (a nested bash or a running
+    bash script does not count), the pane must not be in copy mode, where keys
+    are copy-mode commands, and nothing may be typed on the command line yet.
+    """
+    shell = proc_comm(pane["pid"])
+    if shell not in REUSABLE_SHELLS:
+        return f"its shell is {shell or 'gone'}"
+    if foreground_group(pane["pid"]) != pane["pid"]:
+        return f"{pane['current'] or 'another program'} is running"
+    if pane["in_mode"] == "1":
+        return "in copy mode"
+    if not prompt_is_empty(pane["pane_id"]):
+        return "has typed text"
+    return None
+
+
+def tmux_running_since(saved_at):
+    """True when the tmux server now running was already up at saved_at.
+
+    tmux numbers panes %0, %1, ... afresh whenever its server starts, so a
+    pane id from a snapshot names the same pane only while that server lives.
+    """
+    try:
+        started = int(tmux("display-message", "-p", "#{start_time}"))
+        saved = time.mktime(time.strptime(saved_at, "%Y-%m-%d %H:%M:%S"))
+    except (OSError, ValueError, TypeError, subprocess.CalledProcessError):
+        return False
+    return started <= saved
+
+
+def original_pane(rec, panes, ids_valid):
+    """The pane a snapshot record was saved from, if it is still there, else None.
+
+    By id while the server that numbered it still runs, since an id survives
+    the window renumbering that shifts "0:6.2". Otherwise by target, the
+    position tmux-resurrect brings back.
+    """
+    if ids_valid and rec.get("pane_id"):
+        return panes.get(rec["pane_id"])
+    return next((pane for pane in panes.values() if pane["target"] == rec.get("target")), None)
 
 
 def pane_lookup():
@@ -1687,18 +1774,13 @@ def cmd_restore(args):
           f" {c['BOLD']}{len(records)}{c['RESET']} session(s)")
 
     live_ids = {(rec["agent"], rec["session_id"]) for rec in collect(agent=args.agent)}
-    # Panes standing idle at a shell prompt, taken once up front: every
-    # successful reuse removes its entry, so two snapshot records can never be
-    # sent into the same pane.
-    idle = free_panes()
+    panes = {pane["pane_id"]: pane for pane in list_panes()}
+    ids_valid = tmux_running_since(snapshot.get("saved_at"))
+    # Every pane given a session is taken, so two snapshot records can never
+    # be sent into the same pane
+    taken = set()
 
-    existing_sessions = set()
-    try:
-        existing_sessions = set(tmux("list-sessions", "-F", "#{session_name}").split())
-    except (OSError, subprocess.CalledProcessError):
-        pass
-
-    failures = 0
+    failures = unplaced = 0
     for rec in records:
         session_id = rec["session_id"]
         agent = rec.get("agent", "claude")
@@ -1740,82 +1822,47 @@ def cmd_restore(args):
 
         command = f"cd {shell_quote(cwd)} && {resume_record(rec)}"
 
-        fmt = ("-P", "-F", "#{session_name}:#{window_index}")
-        # Reuse the pane the session came from, if it is still there and idle.
-        #
-        # The snapshot records pane_id and the full target ("0:6.2"); earlier
-        # revisions read neither and went straight to new-window, which is
-        # right only for the case the feature was written for -- a reboot,
-        # where tmux is empty. The other case is just as common: the agents
-        # were quit (to pick up a new login, a new bashrc) while every pane
-        # stayed exactly where it was. Creating windows there leaves the
-        # original panes sitting empty beside a duplicate set, and the layout
-        # the snapshot was meant to preserve is the thing that gets destroyed.
-        #
-        # Matching on pane_id first is what makes this exact: window indexes
-        # shift whenever a window is closed under `renumber-windows on`, so
-        # "0:6.2" may well name a different pane than it did at save time,
-        # while %9 is the same pane for as long as it lives.
-        reuse = None
-        if rec.get("pane_id") in idle:
-            reuse = rec["pane_id"]
-        elif rec.get("target") and rec["target"] in idle.values():
-            reuse = next(p for p, t in idle.items() if t == rec["target"])
-
-        # Reported after the decision, not before it: a dry run whose output
-        # cannot tell you whether a pane will be reused or a window created is
-        # not answering the question you ran it to answer.
-        if args.dry_run:
-            where = (f"{c['GREEN']}reuse{c['RESET']} {rec.get('target', reuse)} ({reuse})"
-                     if reuse else f"{c['LIGHTYELLOW']}new window{c['RESET']} in {tmux_session}:")
-            print(f"{c['GREY']}[dry-run]{c['RESET']} {where}{c['GREY']}: {command}{c['RESET']}")
-            if reuse:
-                idle.pop(reuse, None)
+        # Back into the pane it came from, and nowhere else. A session whose
+        # pane is gone or busy is listed with its command instead: a window
+        # made beside the layout put the agent where nobody looked for it, and
+        # a busy pane - copy mode, a half-typed line - is usually busy for a
+        # moment (2026-10-16). The same check as `shell`: keys typed into a
+        # pane go to whatever holds its foreground.
+        pane = original_pane(rec, panes, ids_valid)
+        hint = "restore again once the pane is free, or run"
+        if pane is None:
+            reason, hint = f"its pane {rec.get('target') or '-'} is gone", "to resume it elsewhere, run"
+        elif pane["pane_id"] in taken:
+            reason = f"its pane {pane['target']} already got another session"
+        else:
+            busy = idle_shell_reason(pane)
+            reason = f"its pane {pane['target']} is busy ({busy})" if busy else None
+        if reason:
+            print(f"{c['LIGHTYELLOW']}Skipped, {reason}{c['RESET']}: {label}")
+            print(f"  {c['GREY']}{hint}: {command}{c['RESET']}")
+            unplaced += 1
             continue
+        taken.add(pane["pane_id"])
 
-        if reuse:
-            try:
-                tmux("send-keys", "-t", reuse, "-l", command)
-                tmux("send-keys", "-t", reuse, "Enter")
-            except (OSError, subprocess.CalledProcessError) as exc:
-                print(f"{e['RED']}Failed{e['RESET']}: {label}: {exc}", file=sys.stderr)
-                failures += 1
-                continue
-            idle.pop(reuse, None)
-            live_ids.add((agent, session_id))
-            print(f"{c['GREEN']}Restored in place{c['RESET']} "
-                  f"{c['CYAN']}{rec.get('target', reuse)}{c['RESET']} "
-                  f"{c['GREY']}({reuse}){c['RESET']}: {label}")
+        # Reported after the decision, not before it: a dry run that cannot
+        # tell which pane a session goes to is not answering the question it
+        # was run to answer.
+        if args.dry_run:
+            print(f"{c['GREY']}[dry-run]{c['RESET']} {c['GREEN']}reuse{c['RESET']} {pane['target']}"
+                  f" ({pane['pane_id']}){c['GREY']}: {command}{c['RESET']}")
             continue
 
         try:
-            # Append to a tmux session that already exists; never touch its windows.
-            #
-            # The trailing colon is load-bearing. new-window's -t takes a
-            # TARGET-WINDOW, so a bare "3" means "window index 3 of the current
-            # session", not "session 3". With numeric session names that is
-            # silently wrong in both directions: restoring 0:Emu landed it in
-            # 3:0 because index 0 happened to be free, while every 3:* record
-            # died with "create window failed: index 3 in use". "3:" names the
-            # session and lets tmux pick the next free index.
-            if tmux_session in existing_sessions:
-                target = tmux(
-                    "new-window", "-d", "-t", f"{tmux_session}:", "-n", window_name, "-c", cwd, *fmt
-                )
-            else:
-                target = tmux(
-                    "new-session", "-d", "-s", tmux_session, "-n", window_name, "-c", cwd, *fmt
-                )
-                existing_sessions.add(tmux_session)
-            tmux("send-keys", "-t", target, "-l", command)
-            tmux("send-keys", "-t", target, "Enter")
+            tmux("send-keys", "-t", pane["pane_id"], "-l", command)
+            tmux("send-keys", "-t", pane["pane_id"], "Enter")
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"{e['RED']}Failed{e['RESET']}: {label}: {exc}", file=sys.stderr)
             failures += 1
             continue
         live_ids.add((agent, session_id))
-        print(f"{c['GREEN']}Restored{c['RESET']} {c['CYAN']}{target}{c['RESET']}: {label}")
-    return 1 if failures else 0
+        print(f"{c['GREEN']}Restored in place{c['RESET']} "
+              f"{c['CYAN']}{pane['target']}{c['RESET']} {c['GREY']}({pane['pane_id']}){c['RESET']}: {label}")
+    return 1 if failures or unplaced else 0
 
 
 def wait_for_exit(pid, timeout):
@@ -2072,13 +2119,24 @@ def cmd_exit_session(args):
     refresh with the relaunch left out. What it is for: getting agents out of
     the way of something only a fresh shell picks up -- a new ~/.bashrc, a new
     PATH -- and bringing them back afterwards with `restore`, which resumes each
-    one in the pane it came from. Every exit also prints its resume command, so
-    a session that never made it into a snapshot is not lost either.
+    one in the pane it came from. The snapshot restore reads is saved first, and
+    every exit also prints its resume command.
     """
     c, e = palette(), palette(sys.stderr)
     records = pick_live_sessions(args, c, e, "exit", "quit it from its own pane")
     if records is None:
         return 1
+
+    # restore reads the snapshot, which only holds what the last save saw: a
+    # session started since would not come back (2026-10-16). Save first, and
+    # exit nothing if that fails.
+    if args.dry_run:
+        print(f"{c['GREY']}[dry-run]{c['RESET']} would save the snapshot to"
+              f" {c['CYAN']}{_home(DEFAULT_SNAPSHOT)}{c['RESET']} first")
+    elif cmd_save(argparse.Namespace(output=str(DEFAULT_SNAPSHOT))) != 0:
+        print(f"{e['RED']}Snapshot not saved, so no session was exited.{e['RESET']}", file=sys.stderr)
+        return 1
+    print()
 
     print(f"{c['BOLD']}{len(records)}{c['RESET']} session(s) will be exited:")
     print_session_rows(records, c)
@@ -2122,10 +2180,153 @@ def cmd_exit_session(args):
         if failures:
             parts.append(f"{e['RED']}{failures} failed{e['RESET']}")
         if exited:
-            parts.append(f"{c['CYAN']}jcl restore{c['RESET']} {c['GREY']}brings them back in place, if the last jcl save has them{c['RESET']}")
+            parts.append(f"{c['CYAN']}jcl restore{c['RESET']} {c['GREY']}brings them back in place{c['RESET']}")
         print()
         print(f" {c['GREY']}·{c['RESET']} ".join(parts))
     return 1 if failures else 0
+
+
+SHELL_STATUS = "@jcl_rc"
+
+
+def shell_output(pane_id):
+    """What a line typed by send printed: the lines after it, without the prompt it came back to."""
+    try:
+        screen = tmux("capture-pane", "-p", "-J", "-t", pane_id, "-S", "-200")
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    lines = [line.rstrip() for line in screen.splitlines()]
+    starts = [i for i, line in enumerate(lines) if f" {SHELL_STATUS} " in line]
+    if not starts:
+        return []
+    out = lines[starts[-1] + 1:]
+    while out and not out[-1]:
+        out.pop()
+    if out and re.search(r"[$#>%]$", out[-1]):
+        out.pop()
+    return out
+
+
+def cmd_shell(args):
+    """Type one command line into every tmux pane whose shell waits at an empty prompt; report how it ran.
+
+    Keys typed into a pane go to whatever holds its foreground: an agent takes
+    them as a prompt, vim as edits, ssh to another host. So only a pane whose
+    own shell sits at an empty prompt gets the line, and every other one is
+    listed with the reason. The line starts with a space, which
+    HISTCONTROL=ignorespace (or ignoreboth) keeps out of each shell's history,
+    and ends in `; tmux set -p -t <pane> @jcl_rc $?`: the exit status comes
+    back as a pane option, read here together with what the command printed.
+    The pane is named because without -t tmux 3.0a sets the option on the
+    session's active pane, whichever pane ran it (2026-10-16).
+    """
+    c, e = palette(), palette(sys.stderr)
+    check = subprocess.run(["bash", "-n", "-c", args.line], capture_output=True, text=True)
+    if check.returncode:
+        print(f"{e['RED']}Nothing sent: the command does not parse.{e['RESET']} {check.stderr.strip()}",
+              file=sys.stderr)
+        return 1
+    panes = list_panes()
+    if not panes:
+        print(f"{e['RED']}No tmux panes found.{e['RESET']}", file=sys.stderr)
+        return 1
+
+    own, last, ready, skipped, agents = os.environ.get("TMUX_PANE"), None, [], {}, []
+    for pane in panes:
+        # The pane jcl runs from: its shell waits for jcl and reads the line
+        # once jcl exits. Only when that shell started jcl - an agent's tool
+        # runs jcl from a pane whose foreground is the agent.
+        if pane["pane_id"] == own and pane["pid"] == str(os.getppid()):
+            last = pane
+            continue
+        reason = idle_shell_reason(pane)
+        if reason:
+            skipped[pane["pane_id"]] = reason
+            if pane["current"] in ("claude", "codex"):
+                agents.append(pane["target"])
+        else:
+            ready.append(pane)
+
+    sent_at, done, not_sent = {}, {}, {}
+    if not args.dry_run:
+        for pane in ready:
+            status = "$status" if proc_comm(pane["pid"]) == "fish" else "$?"
+            typed = f" {args.line}; tmux set -p -t {pane['pane_id']} {SHELL_STATUS} {status}"
+            try:
+                tmux("set-option", "-pqu", "-t", pane["pane_id"], SHELL_STATUS, check=False)
+                tmux("send-keys", "-t", pane["pane_id"], "-l", typed)
+                tmux("send-keys", "-t", pane["pane_id"], "Enter")
+            except (OSError, subprocess.CalledProcessError) as exc:
+                not_sent[pane["pane_id"]] = str(exc)
+                continue
+            sent_at[pane["pane_id"]] = time.time()
+        # Each pane hands its exit status back as it finishes
+        deadline = time.time() + args.timeout
+        while len(done) < len(sent_at) and time.time() < deadline:
+            time.sleep(0.2)
+            listing = tmux("list-panes", "-a", "-F", f"#{{pane_id}} #{{{SHELL_STATUS}}}", check=False)
+            for row in listing.splitlines():
+                pane_id, _, rc = row.partition(" ")
+                if pane_id in sent_at and pane_id not in done and rc:
+                    done[pane_id] = (rc, time.time() - sent_at[pane_id])
+
+    width = max(len(pane["target"]) for pane in panes)
+    indent = " " * (width + 4)
+    ok = failed = running = 0
+    for pane in panes:
+        pane_id, target = pane["pane_id"], f"  {c['CYAN']}{pane['target']:<{width}}{c['RESET']}  "
+        if pane is last:
+            print(f"{target}{c['GREY']}{'would run' if args.dry_run else 'runs'} once jcl exits{c['RESET']}")
+        elif pane_id in skipped:
+            print(f"{target}{c['GREY']}skipped: {skipped[pane_id]}{c['RESET']}")
+        elif args.dry_run:
+            print(f"{target}would get it")
+        elif pane_id in not_sent:
+            print(f"{target}{e['RED']}not sent: {not_sent[pane_id]}{e['RESET']}")
+            failed += 1
+        elif pane_id not in done:
+            print(f"{target}{c['LIGHTYELLOW']}still running after {args.timeout:g}s{c['RESET']}")
+            running += 1
+        else:
+            rc, took = done[pane_id]
+            if rc == "0":
+                print(f"{target}{c['GREEN']}ok{c['RESET']}      {c['GREY']}{took:.1f}s{c['RESET']}")
+                ok += 1
+            else:
+                print(f"{target}{e['RED']}exit {rc:<3}{e['RESET']} {c['GREY']}{took:.1f}s{c['RESET']}")
+                failed += 1
+            output = shell_output(pane_id)
+            for text in output[:3]:
+                print(f"{indent}{c['GREY']}| {text}{c['RESET']}")
+            if len(output) > 3:
+                print(f"{indent}{c['GREY']}| ... {len(output) - 3} more line(s){c['RESET']}")
+            tmux("set-option", "-pqu", "-t", pane_id, SHELL_STATUS, check=False)
+
+    print()
+    if args.dry_run:
+        parts = [f"{c['BOLD']}{len(ready) + bool(last)}{c['RESET']} would get it"]
+    else:
+        parts = [f"{c['BOLD']}{ok}{c['RESET']} ok"]
+        if failed:
+            parts.append(f"{e['RED']}{failed} failed{e['RESET']}")
+        if running:
+            parts.append(f"{c['LIGHTYELLOW']}{running} still running{c['RESET']}")
+        if last:
+            parts.append("1 runs once jcl exits")
+    parts.append(f"{len(skipped)} skipped")
+    if args.dry_run:
+        parts.append(f"{c['GREY']}nothing typed{c['RESET']}")
+    print(f" {c['GREY']}·{c['RESET']} ".join(parts))
+    # Claude Code and Codex snapshot the shell setup when they start
+    if agents and re.match(r"\s*(source|\.)\s", args.line):
+        print(f"{c['GREY']}Agents read shell config when they start;{c['RESET']} "
+              f"jcl refresh {' '.join(agents)} {c['GREY']}restarts them in place.{c['RESET']}")
+    # Last, so the line lands after everything printed above
+    if last and not args.dry_run:
+        tmux("send-keys", "-t", last["pane_id"], "-l", " " + args.line)
+        tmux("send-keys", "-t", last["pane_id"], "Enter")
+    return 1 if failed or running else 0
+
 
 def select_for_delete(records, selectors):
     """The sessions `delete` names, each by its id (8+ leading characters) or its pane.
@@ -2585,6 +2786,114 @@ def cmd_set(args):
     # session only", so if switching model were to reset it, this order still
     # leaves the requested effort standing.
     return send_by_agent(records, args, c, e, model=args.model, effort=args.effort)
+
+
+def resurrect_dir():
+    """The directory tmux-resurrect saves into, by the plugin's own rule."""
+    try:
+        custom = tmux("show-option", "-gqv", "@resurrect-dir")
+    except (OSError, subprocess.CalledProcessError):
+        custom = ""
+    if custom:
+        home = str(Path.home())
+        return Path(custom.replace("$HOME", home).replace("$HOSTNAME", socket.gethostname()).replace("~", home))
+    legacy = Path.home() / ".tmux" / "resurrect"
+    if legacy.is_dir():
+        return legacy
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "tmux" / "resurrect"
+
+
+RESURRECT_SAVE = re.compile(r"tmux_resurrect_(\d{8}T\d{6})\.txt")
+
+
+def resurrect_saves(directory):
+    """The saves in a tmux-resurrect directory, newest first.
+
+    Each: path, stamp, panes, agents (panes running claude or codex when saved),
+    and the tmux sessions it holds. On a pane line field 1 is the session and
+    field 9 the pane's foreground command.
+    """
+    saves = []
+    for path in directory.glob("tmux_resurrect_*.txt"):
+        match = RESURRECT_SAVE.fullmatch(path.name)
+        try:
+            lines = path.read_text(errors="replace").splitlines() if match else None
+        except OSError:
+            lines = None
+        if lines is None:
+            continue
+        rows = [line.split("\t") for line in lines]
+        rows = [row for row in rows if row[0] == "pane" and len(row) > 9]
+        saves.append({
+            "path": path,
+            "stamp": match.group(1),
+            "panes": len(rows),
+            "agents": sum(row[9] in ("claude", "codex") for row in rows),
+            "sessions": list(dict.fromkeys(row[1] for row in rows)),
+        })
+    return sorted(saves, key=lambda save: save["stamp"], reverse=True)
+
+
+def cmd_resurrect(args):
+    """List the tmux-resurrect saves, or point `last` - what prefix+R restores - at one.
+
+    prefix+S on a fresh tmux, before prefix+R, moves `last` to a near-empty
+    save while the saves before it stay on disk (2026-10-16). This lists them
+    and moves `last` back; restoring stays prefix+R, in the user's hands.
+    """
+    c, e = palette(), palette(sys.stderr)
+    directory = resurrect_dir()
+    saves = resurrect_saves(directory)
+    if not saves:
+        print(f"{e['RED']}No tmux-resurrect saves in {_home(directory)}.{e['RESET']}", file=sys.stderr)
+        return 1
+    last = directory / "last"
+    try:
+        current = Path(os.readlink(last)).name
+    except OSError:
+        current = None
+
+    if args.use:
+        stamp = RESURRECT_SAVE.fullmatch(args.use)
+        stamp = stamp.group(1) if stamp else args.use
+        if args.use.isdigit() and 1 <= int(args.use) <= len(saves):
+            chosen = saves[int(args.use) - 1]
+        else:
+            chosen = next((save for save in saves if save["stamp"] == stamp), None)
+        if chosen is None:
+            print(f"{e['RED']}No save {args.use}{e['RESET']}: give its number in `jcl resurrect`"
+                  f" (1-{len(saves)}) or its timestamp, e.g. {saves[0]['stamp']}.", file=sys.stderr)
+            return 1
+        name = chosen["path"].name
+        if name == current:
+            print(f"last already points at {c['CYAN']}{name}{c['RESET']}; prefix+R restores it.")
+            return 0
+        if args.dry_run:
+            print(f"{c['GREY']}[dry-run]{c['RESET']} last: {current or '(none)'} -> {c['CYAN']}{name}{c['RESET']}")
+            return 0
+        # Relative, as resurrect links it, and swapped in by one rename
+        staged = directory / f".last.{os.getpid()}"
+        staged.unlink(missing_ok=True)
+        os.symlink(name, staged)
+        os.replace(staged, last)
+        print(f"last: {current or '(none)'} -> {c['CYAN']}{name}{c['RESET']}")
+        print(f"{c['GREY']}prefix+R restores it.{c['RESET']}")
+        return 0
+
+    shown = saves if args.all else saves[:10]
+    print(f"{c['GREY']}tmux-resurrect saves in {_home(directory)}, newest first{c['RESET']}")
+    print(f"{c['BOLD']}{'#':>3}  {'SAVED':<12} {'':<8}  {'PANES':>5}  {'AGENTS':>6}  SESSIONS{c['RESET']}")
+    for number, save in enumerate(shown, 1):
+        when = time.strptime(save["stamp"], "%Y%m%dT%H%M%S")
+        mark = f"  {c['GREEN']}<- last{c['RESET']}" if save["path"].name == current else ""
+        print(f"{number:>3}  {time.strftime('%m-%d %H:%M', when):<12} "
+              f"{c['GREY']}{_ago(time.mktime(when)):<8}{c['RESET']}  {save['panes']:>5}  "
+              f"{save['agents']:>6}  {', '.join(save['sessions'])}{mark}")
+    print()
+    if len(saves) > len(shown):
+        print(f"{c['GREY']}{len(saves) - len(shown)} older; jcl resurrect --all lists every save.{c['RESET']}")
+    print(f"{c['GREY']}jcl resurrect --use N points last at save N; prefix+R then restores it.{c['RESET']}")
+    return 0
 
 
 def cmd_patch_resurrect(args):
@@ -3305,7 +3614,8 @@ def main(argv=None):
     if argv[:1] == ["bridge"]:
         return cmd_bridge(argv[1:])
     parser = argparse.ArgumentParser(
-        description="Bring the Claude Code and Codex sessions running in tmux back after a reboot."
+        description="Keep the Claude Code and Codex sessions running in tmux panes, and type"
+                    " commands into the panes whose shell waits at a prompt."
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -3353,7 +3663,16 @@ def main(argv=None):
     p_save.set_defaults(func=cmd_save)
 
     p_restore = sub.add_parser(
-        "restore", help="Reopen snapshotted sessions that are no longer running"
+        "restore",
+        help="Reopen snapshotted sessions that are no longer running, each in the pane it came from",
+        description=(
+            "Resume each snapshotted session that is not running in the pane it was"
+            " saved from, when that pane is still there and its shell waits at an"
+            " empty prompt. No window is ever created: a session whose pane is gone"
+            " or busy is listed with the command that resumes it, to run again once"
+            " the pane is free, or anywhere by hand. After a reboot, bring the"
+            " layout back with tmux-resurrect first."
+        ),
     )
     p_restore.add_argument("-f", "--file", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
     p_restore.add_argument("--agent", choices=["claude", "codex", "all"], default="all")
@@ -3405,13 +3724,14 @@ def main(argv=None):
 
     p_exit = sub.add_parser(
         "exit-session",
-        help="Quit the named sessions, leaving their panes at the shell",
+        help="Save the snapshot, then quit the named sessions, leaving their panes at the shell",
         description=(
-            "Quit named interactive sessions with each agent's own quit key,"
-            " falling back to SIGTERM and then SIGKILL, and leave every pane at"
-            " its shell prompt. Use it before `source ~/.bashrc` or anything else"
-            " only a fresh shell picks up; `restore` then resumes each session in"
-            " the pane it came from. `codex` or `claude` selects every pane of"
+            "Save the snapshot as `save` does, then quit named interactive"
+            " sessions with each agent's own quit key, falling back to SIGTERM"
+            " and then SIGKILL, and leave every pane at its shell prompt. Use it"
+            " before `source ~/.bashrc` or anything else only a fresh shell picks"
+            " up; `restore` then resumes each session in the pane it came from."
+            " Nothing is exited if the save fails. `codex` or `claude` selects every pane of"
             " that agent, `all` every pane of both. The calling agent and"
             " suspended sessions are excluded. Run list first, or pass -n to preview."
         ),
@@ -3433,6 +3753,37 @@ def main(argv=None):
         "-n", "--dry-run", action="store_true", help="Print what would run, kill nothing"
     )
     p_exit.set_defaults(func=cmd_exit_session)
+
+    # Named for the panes it serves: set, refresh and exit-session act on the
+    # agent panes, this on the shell panes - and `send` is agent-bridge's word
+    # for messaging an agent (2026-10-17)
+    p_shell = sub.add_parser(
+        "shell",
+        help="Run a command line in every shell pane waiting at a prompt, and report how it ran",
+        description=(
+            "Type COMMAND, then Enter, into every tmux pane whose own shell sits"
+            " idle at an empty prompt, wait for each to finish, and report its exit"
+            " status, how long it took and what it printed. Any other pane is listed"
+            " with the reason and left alone: one running an agent, an editor, ssh"
+            " or a build, one in copy mode, one with text already typed. The line"
+            " goes out only if bash can parse it, with a leading space that"
+            " HISTCONTROL=ignorespace keeps out of history, followed by"
+            " `; tmux set -p -t <pane> @jcl_rc $?`, which hands the exit status back."
+            " The pane jcl runs from gets the plain line last, once jcl exits."
+            " Completion offers 'source ~/.bashrc'."
+        ),
+    )
+    p_shell.add_argument(
+        "line", metavar="COMMAND", help="The command line to type, quoted as one argument"
+    )
+    p_shell.add_argument(
+        "--timeout", type=float, default=10.0,
+        help="Seconds to wait for every pane to finish before reporting it as still running (default: 10)",
+    )
+    p_shell.add_argument(
+        "-n", "--dry-run", action="store_true", help="List where it would go; type nothing"
+    )
+    p_shell.set_defaults(func=cmd_shell)
 
     p_delete = sub.add_parser(
         "delete",
@@ -3541,6 +3892,29 @@ def main(argv=None):
         "-v", "--verbose", action="store_true", help="Report what was rewritten"
     )
     p_patch.set_defaults(func=cmd_patch_resurrect)
+
+    p_resurrect = sub.add_parser(
+        "resurrect",
+        help="List the tmux-resurrect saves, or pick the one prefix+R restores",
+        description=(
+            "List the saves tmux-resurrect keeps, newest first, with their pane and"
+            " agent counts, marking `last`: the save prefix+R restores. --use points"
+            " last at another save; restoring it is still prefix+R. A prefix+S on a"
+            " fresh tmux, before prefix+R, points last at a near-empty save, and the"
+            " saves before it are still listed here."
+        ),
+    )
+    p_resurrect.add_argument(
+        "--use", metavar="SAVE",
+        help="Point last at SAVE: its number in the list, or its timestamp (20261016T000239)",
+    )
+    p_resurrect.add_argument(
+        "--all", action="store_true", help="List every save, not only the newest 10"
+    )
+    p_resurrect.add_argument(
+        "-n", "--dry-run", action="store_true", help="With --use: say what would change, change nothing"
+    )
+    p_resurrect.set_defaults(func=cmd_resurrect)
 
     p_save_auth = sub.add_parser(
         "save-auth",

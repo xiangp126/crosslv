@@ -206,7 +206,7 @@ _jcl_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore show refresh exit-session delete set patch-resurrect save-auth restore-auth fill-auth bridge"
+    local commands="list save restore show refresh exit-session shell delete set patch-resurrect resurrect save-auth restore-auth fill-auth bridge"
     for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
         case "${COMP_WORDS[i]}" in
             --agent) agent="${COMP_WORDS[i+1]:-all}" ;;
@@ -217,7 +217,7 @@ _jcl_complete() {
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | show | refresh | exit-session | delete | set | patch-resurrect | save-auth | restore-auth | fill-auth | bridge)
+            list | save | restore | show | refresh | exit-session | shell | delete | set | patch-resurrect | resurrect | save-auth | restore-auth | fill-auth | bridge)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -264,6 +264,15 @@ _jcl_complete() {
             COMPREPLY=($(compgen -W "claude codex all" -- "$cur"))
             return 0
             ;;
+        --use)
+            # resurrect --use: the numbers `jcl resurrect` lists the saves by,
+            # newest first, kept in that order
+            local count
+            count=$(ls "$(_jcl_resurrect_dir)" 2>/dev/null | grep -c '^tmux_resurrect_[0-9]\{8\}T[0-9]\{6\}\.txt$')
+            compopt -o nosort 2>/dev/null
+            COMPREPLY=($(compgen -W "$(seq 1 "$count")" -- "$cur"))
+            return 0
+            ;;
     esac
 
     if [[ -z $cmd ]]; then
@@ -282,9 +291,11 @@ _jcl_complete() {
         show) opts="-h --help -f --file --json" ;;
         refresh) opts="-h --help --timeout -n --dry-run" ;;
         exit-session) opts="-h --help --timeout -n --dry-run" ;;
+        shell) opts="-h --help --timeout -n --dry-run" ;;
         delete) opts="-h --help -y --yes --timeout -n --dry-run" ;;
         set) opts="-h --help --agent --model --effort --delay --timeout --no-verify -n --dry-run" ;;
         patch-resurrect) opts="-h --help -n --dry-run -v --verbose" ;;
+        resurrect) opts="-h --help --use --all -n --dry-run" ;;
         save-auth) opts="-h --help -o --output --force -n --dry-run" ;;
         restore-auth) opts="-h --help -f --file --force --no-fill -n --dry-run" ;;
         fill-auth) opts="-h --help -n --dry-run" ;;
@@ -301,6 +312,25 @@ _jcl_complete() {
         local word="${line##* }"
         COMPREPLY=($(compgen -W "$(_jcl_delete_candidates "${line% *}")" -- "$word"))
         __ltrim_colon_completions "$word"
+        return 0
+    fi
+
+    # shell takes one command line, which goes to every shell waiting at its
+    # prompt. The usual one is offered whole, quoted, as the single argument it
+    # has to be; inside a quote already typed, only the text is.
+    if [[ $cmd == shell ]]; then
+        local usual="source ~/.bashrc" w
+        # One command line only: once it is on the line there is nothing more
+        for ((w = i + 1; w < COMP_CWORD; w++)); do
+            [[ ${COMP_WORDS[w]} == -* || ${COMP_WORDS[w - 1]} == --timeout ]] || return 0
+        done
+        # -o filenames (set for the whole of jcl) would escape the quotes
+        # into the argument itself
+        compopt +o filenames 2>/dev/null
+        case "$cur" in
+            \'* | \"*) [[ $usual == "${cur:1}"* ]] && COMPREPLY=("$usual") ;;
+            *) [[ $usual == "$cur"* ]] && COMPREPLY=("'$usual'") ;;
+        esac
         return 0
     fi
 
