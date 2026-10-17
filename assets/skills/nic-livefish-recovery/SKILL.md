@@ -1,6 +1,6 @@
 ---
 name: nic-livefish-recovery
-description: Recover a ConnectX/BlueField NIC that vanished from PCI (Livefish flash recovery) fully remotely using relay_controller.py plus IPMI, and restore GUID/MAC, firmware and NV config afterwards. Also carries the hard rule against bulk-applying a whole mlxconfig dump. Use when the card is already LOST or at risk - lspci shows no Mellanox device, /dev/mst is empty, a card is bricked after an mlxconfig write, or you are about to apply a bulk mlxconfig set. For ordinary per-parameter mlxconfig on a healthy BlueField, use skill bluefield-fwconfig.
+description: Recover a ConnectX/BlueField NIC that vanished from PCI (Livefish flash recovery) fully remotely using relay_controller.py plus IPMI, and restore GUID/MAC, firmware and NV config afterwards. Also carries the hard rule against bulk-applying a whole mlxconfig dump. Use when the card is already LOST or at risk - lspci shows no Mellanox device, /dev/mst is empty, a card is bricked after an mlxconfig write, a card still on PCI rejects every FW burn, or you are about to apply a bulk mlxconfig set. For ordinary per-parameter mlxconfig on a healthy BlueField, use skill bluefield-fwconfig.
 ---
 
 # Un-bricking a NIC that vanished from PCI (Livefish, fully remote)
@@ -9,6 +9,11 @@ description: Recover a ConnectX/BlueField NIC that vanished from PCI (Livefish f
 gone from `lspci` (BIOS hides a port whose link never trained). Typical cause: an mlxconfig write
 the board cannot enumerate under. Neither `mlxfwreset` nor any power cycle recovers this — the
 card never gets far enough to answer.
+
+The same sequence also recovers a card that **enumerates but cannot leave its firmware**: every
+`mlxburn` / `flint b` fails with `-E- Burning FS5 image failed: Timed out polling on the ICMD
+busy-bit to clear`, a power cycle included. In recovery mode the firmware does not run, so it
+cannot block the burn.
 
 ## Use `relay_controller.py`, not `fishme.py`
 
@@ -38,14 +43,23 @@ for D in /dev/mst/mt*_pciconf[0-9]; do
 done
 ```
 
+Base GUID / MAC read `N/A` while the card is still up (a firmware that refuses access can hide the
+device data): read the flash directly with `flint -d $D --no_fw_ctrl q full`. That can fail too
+(`MFE_NO_FLASH_DETECTED`); then take the values from an earlier `flint q` of the card in your logs.
+
 Card already dead and nothing recorded: **do NOT invent a GUID** — a made-up value can collide
 with another card in the lab. Get the original from lab inventory / VPD.
 
 ## The recovery sequence
 
+Every `flint` below runs on the box. If your own login fails there, log in as root and repair
+the home mount first: skill `lab-box-login`.
+
 Image: in livefish the device cannot report its PSID, so flint cannot pick an image out of an
 `.mfa2` archive — **a raw `.bin` is mandatory**. Pick it by PSID from the mapping file, never by
-guessing from the filename. Before erasing, run `flint ... -ocr hw query`: it prints flash
+guessing from the filename. When the environment runs a self-built image, make the `.bin` from
+the same `.mlx` and INI instead — `mlxburn -fw <mlx> -conf <ini> -wrimage <bin>`, then
+`flint -i <bin> q` must show the card's PSID — and step 2 of "A recovered card…" is already done. Before erasing, run `flint ... -ocr hw query`: it prints flash
 type/size and `Flash0.WriteProtected`; issue `hw set Flash0.WriteProtected=Disabled` only if it
 actually reads enabled.
 
@@ -55,7 +69,8 @@ python3 $R -s $LF -m enable         # short the flash-presence pins
 
 # A DC cycle is REQUIRED. A warm `reboot` does not put the card into recovery mode.
 $IPMI chassis power off; sleep 60; $IPMI chassis power on
-# Back up: lspci shows "ConnectX-9 Flash Recovery"; mst nodes become mt548_pciconf{0,1}
+# Back up: lspci shows "<family> Flash Recovery"; the mst node is mt<HwDevId>_pciconf0
+#   ConnectX-9: [15b3:...] mt548_pciconf{0,1}     ConnectX-8: [15b3:021e] mt542_pciconf0
 
 B=/mswg/release/BUILDS/fw-<devid>/fw-<devid>-rel-<ver>-build-001/etc/bin
 grep <PSID> $B/bin_files_list.csv          # -> PSID,part-number,filename,md5,path
@@ -83,6 +98,12 @@ reboot                                    # or mlxfwreset, to load it
 flint -d /dev/mst/mt4133_pciconf0 q full | grep -E '^(Base GUID|Base MAC)'   # verify
 ```
 
+- **Nothing between `sg` and the reset that loads it.** A normal burn in between drops the values:
+  Base GUID / MAC read `N/A` again after the burn and the power cycle. Order: `sg` → reset →
+  verify → only then burn or set NV config.
+- An `sg` right after boot can hang for minutes; kill it, wait a little and run it again (it then
+  takes seconds).
+
 `Orig Base GUID: N/A` afterwards is expected — the original device data is gone; what matters is
 that Base GUID / Base MAC now read the recorded values.
 
@@ -104,7 +125,11 @@ Livefish only gets it enumerating. Restore three things, **in this order**:
    board comes back as IB): re-apply `LINK_TYPE` and friends, under the rule below.
 
 **Burn FW first, set NV config second** — in the other order the new firmware's defaults overwrite
-what you just configured.
+what you just configured. The recovery burn is the one that erases NV; a normal burn (`mlxburn`,
+`flint b` through the firmware) keeps it. So set NV after the last recovery burn and after STEP N's
+reset. In a task that uses the lab-box scripts (skill `regression-repro` `templates/lab-box/`),
+`env_rebuild.sh --burn --yes` does items 2 and 3 in one go — NV reset and recipe, a normal burn of
+the task's image, a cold boot, then the FW / PCI / NV Current gates.
 
 Before a normal burn, bind one PF back to `mlx5_core`: from a udriver-only state flint warns
 `BME is not set, DMA access is not supported` and the burn takes minutes instead of seconds.
@@ -136,4 +161,6 @@ read-only parameters does not either. The failure mechanism is unknown; do not e
 ## Related
 
 - More mlxconfig read-back traps: skill `bluefield-fwconfig`.
-- Taking / releasing the box: skill `noga-lock`.
+- Taking / releasing the box: skill `noga-lock`. Logging in, root, a home that is not mounted:
+  skill `lab-box-login`.
+- Rebuilding the test environment afterwards: skill `regression-repro`, `templates/lab-box/`.

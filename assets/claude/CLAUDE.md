@@ -34,7 +34,8 @@ invoke it when the task matches; don't reconstruct the procedure from memory.
 - **Every ssh/scp from a Bash call carries `-o BatchMode=yes`; a script also does `unset DISPLAY`.**
   Bash calls have no TTY but inherit Peter's X `DISPLAY`: when publickey auth fails (a lab box that
   just booted, its NFS home not mounted yet) ssh opens `ssh-askpass` on Peter's desktop and blocks
-  until someone answers. → skill `regression-repro` Phase 9b
+  until someone answers. Root login, lab passwords, a box whose home is not mounted → skill
+  `lab-box-login`
 - **FW reset goes through `jmake --fw-reset --device <dev>`, not bare `mlxfwreset`.** jmake wraps
   `fwresetfunc`, which stops/starts the driver and re-scans PCI around the reset. Every test run
   gets its own reset. It is device-level and does not reboot the host. → skill
@@ -162,9 +163,9 @@ it; run them after any change.
 | `ci-forensics` | red build → session_id → MARS archive → the raw failure log |
 | `fsearch-failures` | the regression failure DB: how often / since when / which commit — attribution. New path + Py3.8 since 2026-09, three silent traps |
 | `regression-repro` | a bug ticket end to end: reproduce locally ("regression repro template") → root-cause in FW/utopx source → **verify the fix on the box** → `FINDINGS_<ticket>.md`. Also fires on "find the root cause", "investigate this ticket", "propose/verify a fix" |
-| `feature-delivery` | a **feature** end to end (the mirror of `regression-repro`): survey both repos' change stacks, find the on/off gates that keep the path dark, per-task worktrees, the daily-wiped reg-box env, and the verdict "did the new code path execute" instead of `TEST PASSED`. Fires on "take over this feature", "how far is X", "why is this change stuck" |
-| `task-tracking-doc` | a task that spans sessions or touches several commits/branches/tickets/boxes: build `TRACKING.md` and keep it current — update contract, evidence rows with a control, overturned conclusions struck through not deleted. **Reach for it at the START of such a task** |
+| `feature-delivery` | a **feature** end to end (the mirror of `regression-repro`): survey both repos' change stacks, find the on/off gates that keep the path dark, per-task worktrees, the daily-wiped reg-box env, and the verdict "did the new code path execute" instead of `TEST PASSED`. Also the feature's documents, created from its templates on day 0: the `TRACKING.md` status page (for people), the `TRACKING_log.md` work log, `defects.md`, test reports; any other multi-week task gets the same `TRACKING.md`. Fires on "take over this feature", "how far is X", "why is this change stuck", "update TRACKING.md" |
 | `noga-lock` | querying, locking, waiting for lab servers |
+| `lab-box-login` | getting a shell on a lab box: ssh rules (BatchMode, DISPLAY, ControlMaster, waiting for a reboot), root login and where the lab passwords are, a box whose NFS home is not mounted (autofs, an empty `/etc/auto.master`) |
 | `nic-livefish-recovery` | un-bricking a NIC that vanished from PCI; the mlxconfig rule |
 | `bluefield-fwconfig` | mlxconfig read-back traps on any BlueField DPU, ARM-liveness check |
 | `aipim-cli-env` | the ai-pim CLI container, Confluence write path |

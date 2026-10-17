@@ -38,7 +38,7 @@ Facts that hold in every session live here. Procedures live in the corresponding
 - Every ssh/scp to a lab box carries `-o BatchMode=yes`; a script also does `unset DISPLAY`. A
   shell call has no TTY, so when publickey auth fails (a box that just booted, its NFS home not
   mounted yet) ssh otherwise opens `ssh-askpass` on the user's desktop and blocks. See skill
-  `regression-repro`, Phase 9b.
+  `lab-box-login`, which also covers root login, the lab passwords and a home that is not mounted.
 - FW reset goes through `jmake --fw-reset --device <dev>`, not bare `mlxfwreset`. Every test run
   gets its own reset. See skill `fw-build-burn-utopx`.
 
@@ -127,7 +127,9 @@ command.
 | `ci-support-ticket` | Prepare the ServiceNow CI-support form when explicitly requested |
 | `fsearch-failures` | Query regression failure history and attribute occurrences to commits |
 | `regression-repro` | Reproduce a regression locally from Redmine/MARS coordinates |
+| `feature-delivery` | Drive a feature end to end across golan_fw and utopx; keep its documents (`TRACKING.md`, work log, `defects.md`, test reports) from the skill's templates, created on day 0 |
 | `noga-lock` | Query, reserve, renew, wait for, and release lab servers |
+| `lab-box-login` | ssh rules for lab boxes, root login and lab credentials, repairing a box whose NFS home is not mounted |
 | `nic-livefish-recovery` | Recover a NIC missing from PCI and avoid unsafe bulk NV writes |
 | `bluefield-fwconfig` | BlueField mlxconfig read-back and ARM-liveness traps |
 | `aipim-cli-env` | ai-pim CLI container, credentials, upgrades, and MCP/CLI split |

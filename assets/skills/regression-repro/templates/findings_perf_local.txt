@@ -1,0 +1,190 @@
+<Investigation Title> Report
+===============================================================================
+
+Date:       <YYYY-MM-DD>
+Machine:    <hostname> (executed locally on this machine)
+Device:     <device type> (<MST device path>)
+Test:       <brief test description>
+Note:       Report should be updated on the fly during execution
+Note:       All tests with fresh server power cycle between runs
+
+Redmine:    <URL>
+Issue:      <one-line issue description>
+Regression: Working at <version>, broken at <version>
+Root cause: <filled in during execution>
+
+SW environment:
+  DOCA-OFED:  <version>
+  MFT:        <version>
+  Host OS:    <version>
+  Docker:     <image tag>
+
+
+================================================================================
+PART 0: Pre-burn Firmware State (restore point)
+================================================================================
+
+Command:
+  sudo flint -d <device> q full
+
+Output:
+  <paste flint output here>
+
+
+================================================================================
+PART 1: Baseline Image -- <working version>
+================================================================================
+
+Burn command:
+  jmake --burn-official <version> --device <device> --fw-reset
+
+Firmware verification:
+  FW Version: <verified version>
+
+Pass/Fail:
+  <PASS or FAIL>
+
+Run notes:
+  <describe what happened>
+
+
+================================================================================
+PART 2: Regressed Image -- <broken version>
+================================================================================
+
+Burn command:
+  jmake --burn-official <version> --device <device> --fw-reset
+
+Firmware verification:
+  FW Version: <verified version>
+
+Pass/Fail:
+  <PASS or FAIL>
+
+Run notes:
+  <describe what happened>
+
+
+================================================================================
+PART N: Additional Test -- <version>
+================================================================================
+
+<Copy this section for each additional bisection test.>
+
+Burn command:
+  jmake --burn-official <version> --device <device> --fw-reset
+
+Firmware verification:
+  FW Version: <verified version>
+
+Pass/Fail:
+  <PASS or FAIL>
+
+Run notes:
+  <describe what happened>
+
+
+================================================================================
+Consolidated Comparison (Release-Level Bisection)
+================================================================================
+
+<Fill in as tests complete. Example format:>
+
+┌──────────────┬───────┬────────┬──────────────────────────────────────────────┐
+│ FW Version   │ Runs  │ Result │ Notes                                        │
+├──────────────┼───────┼────────┼──────────────────────────────────────────────┤
+│ <version>    │       │ PASS   │ Baseline (last known working)                │
+│ ...          │       │        │                                              │
+│ <version>    │       │ PASS   │ Last good release                            │
+│ <version>    │       │ FAIL   │ First bad release                            │
+│ ...          │       │        │                                              │
+│ <version>    │       │ FAIL   │ Reported version                             │
+└──────────────┴───────┴────────┴──────────────────────────────────────────────┘
+
+Bisection boundary: <last good> (PASS) to <first bad> (FAIL).
+Failure mode: <brief description of how the failure manifests>
+
+
+================================================================================
+Commit-Level Confirmation
+================================================================================
+
+Repo:       <path>
+Branch:     <working branch>
+Base tag:   <tag>
+
+Build Results:
+
+┌────────────┬────────────────────────────────┬──────────┬──────────────────────────────────────────┐
+│ Commit     │ Title                          │ Build    │ Archived Image                           │
+├────────────┼────────────────────────────────┼──────────┼──────────────────────────────────────────┤
+│ <commit>   │ <title>                        │ PASS     │ <path>                                   │
+│ ...        │                                │          │                                          │
+└────────────┴────────────────────────────────┴──────────┴──────────────────────────────────────────┘
+
+Test Results (git log order, newest first):
+
+┌────────────┬────────────────────────────────┬─────────┬──────────────────────────────────────────┐
+│ Commit     │ Title                          │ Overall │ Notes                                    │
+├────────────┼────────────────────────────────┼─────────┼──────────────────────────────────────────┤
+│ <commit>   │ <title>                        │    -    │ Not tested                               │
+│ <commit>   │ <title>                        │  FAIL   │ Fresh power cycle before test             │
+├────────────┼────────────────────────────────┼─────────┼──────────────────────────────────────────┤
+│ <commit>   │ <title>                        │  FAIL   │ <<< ROOT CAUSE (first bad)               │
+├────────────┼────────────────────────────────┼─────────┼──────────────────────────────────────────┤
+│ <commit>   │ <title>                        │  PASS   │ Fresh power cycle before test             │
+│ <commit>   │ <title>                        │  PASS   │ Fresh power cycle before test             │
+│ <commit>   │ <title>                        │    -    │ Not tested                               │
+└────────────┴────────────────────────────────┴─────────┴──────────────────────────────────────────┘
+
+Per-Commit Notes:
+
+Commit <id>
+-----------
+Build notes:
+  <date, build time, archived path>
+Test notes:
+  <power cycle confirmed (uptime), burn result, FW verified, test result, notes>
+
+<Repeat for each tested commit.>
+
+
+================================================================================
+Findings
+================================================================================
+
+Regression reproduced:
+  <Yes/No>
+
+Bisection result:
+  Last good release: <version>
+  First bad release: <version>
+
+Root cause commit:
+  Commit:   <hash>
+  Title:    <title>
+  Author:   <name> (<email>)
+  Issue:    <gerrit issue number>
+  Reviewers: <names>
+
+Confidence:
+  <High/Medium/Low -- explain basis>
+
+
+================================================================================
+Conclusion
+================================================================================
+
+<Summarize: root cause confirmed/not confirmed, evidence summary, next steps.>
+
+
+================================================================================
+Reassignment Email
+================================================================================
+
+To: <commit author email>
+Cc: <current assignee, manager, reviewers>
+Subject: <ticket> - <regression> root cause identified: commit <hash>
+         (reassigning to you)
+
+<Paste the final email content here for the record.>

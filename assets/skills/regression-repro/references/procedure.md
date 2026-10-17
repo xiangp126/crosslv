@@ -61,7 +61,7 @@ Extract, in order:
 5. **History** (`journals`) — who reassigned/triaged it and any analysis link (e.g. an Orion
    AI-overview URL); reassignment from the auto-filer to a dev usually marks the start of real triage.
 
-Done when the **Environment** block of `repro_plan_<ticket#>.md` (from `templates/repro_plan.md`) is
+Done when the **Environment** table of `REPRO_<ticket#>.md` (from `templates/repro.md`) is
 fully filled from the ticket alone.
 
 ## Phase 2 — Extract the exact versions from the MARS session tarball
@@ -448,10 +448,8 @@ grep -E '<failure signature>|TEST FAILED|FATAL|Test-status' "$LOG" | head
 ssh <test machine> 'ls -lt <test tool repo>/verix_test_*.log | head -1'   # full log for analysis
 ```
 
-- **One command per ssh** — in a bundled remote script, buffered `tail` hides an early FATAL until the
-  run ends, and a bundled failure aborts opaquely.
-- **Reuse one SSH connection** (`ControlMaster auto`/`ControlPath`/`ControlPersist`); after any
-  reboot/power-cycle run `ssh -O exit <box>` first to drop the stale socket.
+- **One command per ssh, one reused connection per box, closed before any reboot** — the ssh rules:
+  skill `lab-box-login` §1.
 - In an agent session, launch with the long-running-job method in `references/hosts/<runtime>.md` and
   observe that same job to completion; never start a duplicate because output is quiet.
 
@@ -729,23 +727,9 @@ environment is already set up:
 
 #### ssh from a script, or from an agent's shell
 
-- **`-o BatchMode=yes` on every ssh, and `unset DISPLAY` at the top of a script.** A Bash tool call
-  has no TTY and inherits the user's X `DISPLAY`. When publickey auth fails — a box that has just
-  booted runs sshd before the NFS home (and with it `authorized_keys`) is mounted — ssh falls back to
-  a password, opens `ssh-askpass` on the user's desktop and blocks until someone answers.
-  `SSH_ASKPASS_REQUIRE=never` would also stop it but needs OpenSSH 8.4; the dev box runs 8.2.
-- **One ControlMaster connection** (`ControlPersist`), with `ServerAliveInterval=5
-  ServerAliveCountMax=3` so a master whose TCP connection died exits within ~15 s.
-- **Close the master before a power-cycle** (`ssh -o ControlPath=<mux> -O exit <host>`). A master
-  left behind is dead after the reboot, and an ssh that attaches to it hangs: `ConnectTimeout` does
-  not cover a multiplexed session.
-- **Wait for a new boot id over a fresh connection** — `cat /proc/sys/kernel/random/boot_id` with
-  `-o ControlMaster=no -o ControlPath=none`, BatchMode, under `timeout`, until it differs from the id
-  read before the power-cycle. `jmake --power-cycle` can return while the old boot still answers
-  ssh, and gates run then check the box as it was before the reboot. A new id means the box
-  rebooted, is up and has its NFS home mounted.
-- **A password popup appeared anyway** → `ps -eo pid,ppid,etime,cmd | grep '[s]sh-askpass'` and walk
-  the ppid chain up to the ssh and the script that started it.
+The scripts follow the ssh rules of skill `lab-box-login` §1: BatchMode on every ssh and
+`unset DISPLAY`, one ControlMaster per box with ServerAlive, the master closed before a power
+cycle, and a new boot id read over a fresh connection before anything checks the rebooted box.
 
 ### `per_run.sh` — on the reg box, once per attempt
 
@@ -761,6 +745,8 @@ in `<log dir>/<RUN_NAME>_seed<seed>_<stamp>.*`.
   repro mirrors the regression's own per-case reset (`Fwreset.py --next_udriver`, i.e.
   StartDriverAndBind); a CX8 that exposes a PSF needs the PSF-aware reset (skill
   `fw-build-burn-utopx` section 5). `lab.conf` spells out both replacements.
+- **ARM agent** — a DPU / ARM-agent suite runs the regression's `check_arm_agent.py` before every
+  attempt and stops when it fails; `lab.conf` shows it as a `before_run` hook.
 - **Kernel evidence** — a DMAR fault, `Call Trace` or soft lockup between the marker and the end of
   the run makes the run not clean even when the tool printed `TEST PASSED`.
 - Running the case more than once also requires clearing NV between runs (Phase 10).

@@ -89,13 +89,9 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
   ticket's `dump_nv_data` attachment. Don't add your own nvconfig rows.
 - **Reset between every run** (`jmake --fw-reset`); device/emulation state leaks (NV clearing:
   Phase 10).
-- **One command per ssh**, reuse one SSH connection, close the ControlMaster socket before any
-  reboot. **Always fetch tags first.**
-- **Every ssh runs with `-o BatchMode=yes`; scripts also `unset DISPLAY`.** For a while after a
-  power-cycle publickey auth fails (the NFS home with `authorized_keys` is not mounted yet); without
-  BatchMode ssh then asks for a password through `ssh-askpass` on the user's desktop and blocks. Wait
-  for the box with a fresh BatchMode connection (`-o ControlMaster=no -o ControlPath=none` under
-  `timeout`), then open the master (procedure.md Phase 9b, "ssh from a script").
+- **Every ssh runs with `-o BatchMode=yes`; scripts also `unset DISPLAY`** — one command per ssh,
+  one ControlMaster per box, closed before any reboot: skill `lab-box-login` §1. **Always fetch tags
+  first.**
 - **Reuse the deployed binary.** The regression leaves its exact prebuilt `utopx.exe` + configs in
   `/tmp/mars_tests/<test-DB>/tests/` on the box — use it in place (no build; read-only, see
   `SKILL.md`) and confirm the commit via the run's "tarball git tag is: <describe>" line. Local
@@ -183,10 +179,14 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
   bridges at 81/82 and shifts endpoints to 83. Capture the baseline **after env_rebuild,
   immediately before the tool runs**, and observe the expected topology rather than reasoning it
   out — a gate written from the pre-mlxconfig layout aborts 100% of runs.
-- **Snapshot the evidence AFTER the post-run reset, not right after the tool.** Emulated-device
-  topology changes only materialise when fwreset does its PCI remove/rescan; a snapshot taken at
-  tool exit is empty and scores a real repro as `PARTIAL`. Also mine the reset log itself for a
-  direct statement of the change (`Rshim BDF changed to …`).
+- **When the defect only shows after a reset, judge after the reset.** Emulated-device topology
+  changes (a BDF that moves, as in #5138907) only materialise when fwreset does its PCI
+  remove/rescan; a PCI snapshot taken at tool exit is empty and scores a real repro as `PARTIAL`.
+  `templates/lab-box/per_run.sh` snapshots PCI when the tool exits and resets in its EXIT trap,
+  after the verdict — right for evidence in the tool log and the run's kernel log, wrong for this
+  kind. For such a ticket, move the post-run reset before the PCI snapshot and the verdict in the
+  ticket's own copy, and mine the reset log for a direct statement of the change
+  (`Rshim BDF changed to …`).
 - **A constant in the test conf can lock out half the state space.** If a precondition is constant
   in the conf, the other half has probability zero, not low probability — more rounds and more
   seeds cannot reach it. Tell: a dedicated validation env with zero hits over hundreds of
@@ -374,8 +374,8 @@ them and `utopx.exe` stays **byte-identical** (two builds with different `VHCA.c
      `IsBronco(device) ? ... : ...` pair — Bronco and non-Bronco differ). Symptom: ArmAgent scp
      fails 60 attempts. Fix: the `root` account usually still works →
      `echo 'ubuntu:<password>' | chpasswd` on the ARM, restoring what utopx expects. Values:
-     `lab-credentials.md` in this directory (local, gitignored — copy `lab-credentials.md.example`
-     if you do not have it); the source file above is authoritative.
+     skill `lab-box-login`, `references/lab-credentials.md` (local, gitignored — create it from the
+     `.example` next to it); the source file above is authoritative.
   2. **DPU-BMC stuck in OpenBMC first-login state.** Redfish returns 403 for `admin:0penBmc`
      (OpenBMC's upstream factory default, not a secret) and 401 for everything else.
      **403-not-401 is the tell**: the password is right, a first-login password change is pending.

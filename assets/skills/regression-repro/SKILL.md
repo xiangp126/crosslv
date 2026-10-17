@@ -24,12 +24,14 @@ Paths are relative to this skill's directory.
 
 | File | What it is | When to open it |
 |---|---|---|
-| `templates/repro_plan.md` | per-ticket skeleton: frontmatter, todo list, Goal, Environment table, **Investigation log (append LIVE, as findings happen)**, Run log | **first** — copy to `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/repro_plan_<ticket#>.md` and fill it in as you go |
+| `templates/repro.md` | the ticket's working document: todo list, Goal, Environment table, then the **Investigation log and Run log (appended LIVE, as findings happen)** | **first** — copy to `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/REPRO_<ticket#>.md` (`references/ticket-documents.md` §0) |
+| `references/ticket-documents.md` | the ticket's two documents, `REPRO_<ticket#>.md` and `FINDINGS_<ticket#>.md`: what each holds, what changes where on each event, what not to create, the FINDINGS rules | at step 0, and before writing either document |
 | `references/procedure.md` | Phases 1–11: decode the ticket → extract versions from the tarball → allocate the box → pin repos → burn → bring up → run → confirm → **verify the fix on the box (9.5)** → codify → commit | while working a phase; read only the phase you are on |
 | `references/key-learnings.md` | accumulated traps + a worked example (#5090131, BRONCO/BF4) | when something behaves oddly, and before declaring a verdict |
-| `references/lab-credentials.md` | shared lab credentials (ARM / BMC) — **local only, gitignored**; create it from `lab-credentials.md.example`, filled from the authoritative sources it names | when a box rejects the credentials a procedure assumes |
-| `templates/findings.md` | final-report skeleton: issue summary, root cause with code evidence + attribution, proposed fix, verification results, next steps | copy to `.../<ticket#>_<core>/FINDINGS_<ticket#>.md` as soon as a root-cause hypothesis exists; **mandatory deliverable**, kept as a living document |
-| skill `task-tracking-doc` | only when this ticket is one of several under a long-running task (weeks, several commits/branches/tickets): that task gets a `TRACKING.md`, and this ticket's `repro_plan` / `FINDINGS` are registered in it | when the ticket belongs to a bigger effort |
+| skill `lab-box-login` | ssh rules for tool calls and scripts, root login and the shared lab credentials (its `references/lab-credentials.md`, local only), a box whose NFS home is not mounted | when a box rejects your login or a procedure needs root or the ARM password |
+| `templates/findings.md` | the conclusion, in plain English: issue summary, root cause with code evidence + attribution, fix, verification results, next steps | copy to `.../<ticket#>_<core>/FINDINGS_<ticket#>.md` as soon as a root-cause hypothesis exists; **mandatory deliverable** |
+| `templates/repro_perf_{local,remote}.md`, `templates/findings_perf_{local,remote}.txt` | the same two documents for a performance-degradation ticket: bisect the release range, then confirm the commit | instead of `repro.md` / `findings.md` when the ticket is a performance regression |
+| skill `feature-delivery` | only when this ticket is one of several under a feature or another long-running task (weeks, several commits/branches/tickets): that task has a `TRACKING.md`, and this ticket's `FINDINGS` is listed in its §6 and its status kept in its §3 | when the ticket belongs to a bigger effort |
 
 The rest of this file must fire without opening any of them.
 
@@ -75,15 +77,18 @@ replace a device A/B when the suspect landed outside the retention window.
 
 ## Records and deliverables
 
-- **Write findings into `repro_plan_<ticket#>.md`'s Investigation log as you find them** — code
+- **Write findings into `REPRO_<ticket#>.md`'s Investigation log as you find them** — code
   reads, `git blame` attribution, killed hypotheses — not in a write-up reconstructed at the end.
   The chat transcript is gone next session. Keep superseded conclusions in place, marked
   `SUPERSEDED`; never delete them.
 - **`FINDINGS_<ticket#>.md` (from `templates/findings.md`) is the deliverable**, not the chat
   answer.
-- **Posting an RCA on the ticket:** draft it locally in HTML (skill `utopx-regression-ticket` →
-  "Writing to Redmine"), get Peter's approval, then post the approved text unchanged. Correct a posted comment by editing it in place (skill
-  `utopx-regression-ticket` → "Writing to Redmine").
+- **"Write a root cause analysis" for the ticket** means one Redmine comment in a fixed shape —
+  Summary, then Failure / Root cause / Evidence table / What this is not / Ownership and next
+  steps, no attachments: skill `utopx-regression-ticket` → "Root cause analysis" and its template
+  `assets/root_cause_analysis.html`. Write it from `FINDINGS_<ticket#>.md`, show Peter the full
+  text, post it unchanged after his approval. Correct a posted comment by editing it in place
+  (same skill → "Writing to Redmine").
 
 ## Reproduction fidelity
 

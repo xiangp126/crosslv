@@ -2,10 +2,13 @@
 name: feature-delivery
 description: >-
   Deliver a firmware/utopx FEATURE end to end, from scratch or taken over mid-flight - tickets and
-  HLD/MAS documents, commit shaping, coding in golan_fw and utopx, lab verification, gerrit review,
-  merge order, branch propagation. Use when starting, taking over, driving or reporting on a
-  feature (not a bug), splitting or ordering its commits, when it is stuck in review, or when a
-  test says PASSED but you cannot tell the feature ran.
+  HLD/MAS design documents, commit shaping, coding in golan_fw and utopx, lab verification, gerrit
+  review, merge order, branch propagation - and keep its documents (the TRACKING.md status page, the
+  work log, defects.md, test reports), created from this skill's templates on day 0. Use when
+  starting, taking over, driving, recording or reporting on a feature (not a bug), when asked where
+  a feature stands or to update its TRACKING.md, splitting or ordering its commits, when it is stuck
+  in review, when a test says PASSED but you cannot tell the feature ran, or for any multi-week task
+  that needs a TRACKING.md.
 ---
 
 # Feature delivery — arch request to merged, across two repos
@@ -17,11 +20,64 @@ architecture request to merged code **with evidence that the new path actually r
 Build/burn/run mechanics are not here (skill `fw-build-burn-utopx`); this is the lifecycle around
 them.
 
+## Documents — set up on day 0
+
+A feature gets one directory, `/auto/fwgwork1/$USER/bugZilla/<feature>/`, and the same file set
+every time. Create it the day the feature starts or is taken over, before the first build:
+
+```bash
+S=~/myGit/crosslv/assets/skills
+D=/auto/fwgwork1/$USER/bugZilla/<feature>
+mkdir -p $D/tools $D/logs
+cp $S/feature-delivery/templates/{TRACKING.md,TRACKING_log.md,defects.md} $D/
+cp $S/regression-repro/templates/lab-box/* $D/tools/     # then fill tools/lab.conf, MODE=feature
+```
+
+| File | What it is | Reader | Created |
+|---|---|---|---|
+| `TRACKING.md` | the status page: verdict, status per part, commits per repository (owners only), what it waits for, next steps, decisions for Peter, requirements, test campaigns, defect status, timeline, how to run | Peter, owners, reviewers | day 0, `templates/TRACKING.md` |
+| `TRACKING_log.md` | the work log: dated entries, commands, SHAs, CI and MARS ids, Peter's instructions verbatim, corrections struck through | whoever continues | day 0, `templates/TRACKING_log.md` |
+| `defects.md` | one section per defect in reproduction order: how to hit it, verbatim evidence, root cause, fix diff, rejected alternatives | owners, reviewers | day 0, `templates/defects.md` |
+| `report_<MMDD>_<box>_<sha>.md` | one test campaign, written once | Peter | end of each campaign, `templates/report.md` |
+| `tools/`, `logs/` | the lab-box scripts and `lab.conf`; logs the documents cite | — | day 0 |
+
+**Every fact has one home**; other files link to it and never copy it. What changes the current
+state goes into `TRACKING.md`, as its result; what was done, how, and where the evidence is goes
+into `TRACKING_log.md`. Most events touch both, at different depth — in the same step as the event:
+
+| Event | `TRACKING.md` (edit the section) | `TRACKING_log.md` (append an entry) |
+|---|---|---|
+| Peter gives an instruction | — | his words, verbatim |
+| a build or long command ends | only when it changes the state (§1.2: "the new FW builds") | SUCCESS / FAILED, rc, `error:` count, elapsed, log path |
+| a push, or a new patchset from the owner | the §1.1 / §1.2 row (patchset); a §4 line | change URL, patchset, what the server echoed |
+| a CI verdict | the §1 status row; §1.3 when it blocks | build URL, failed stage, downstream jobs, MARS session id and archive path |
+| a merge | the row moves to "merged", dated by the gerrit `SUBM` approval; a §4 line | the date and the SHA on the branch after landing |
+| a review comment | §1.3 only when it blocks | who, file and line, how it was resolved |
+| device runs | when a campaign ends: a §2 row linking its report; new defects into §3 | per run: box, FW, tree SHA, seed, result, the control, log paths |
+| a defect found, fixed or no longer seen | its §3 status (the defect itself: `defects.md`) | how it was found, the evidence |
+| a blocker appears or clears; an owner promises something | §1.3 / §1.4, and the verdict sentence when it changes | the source, in its own words |
+| a decision is needed / Peter decides | a §1.5 row / the row leaves §1.5 | the decision, verbatim |
+| a gate opens | the "Gates" row of §1 | how it was opened |
+| a judgement turns out wrong | simply corrected — the page shows the present | struck through in place, with the correction, its date and the criterion for next time |
+| the session is interrupted | — | what is in flight, and the next step |
+| a document, script or image is replaced; a campaign's report is written | the §6 row | delete the replaced file and the campaign's logs no document cites — nothing is archived |
+
+Two checks: `TRACKING.md` alone answers "where is it, what blocks it, what comes next" — if not, a
+section was not updated; and it holds no commands, SHA lists or per-run results outside §5 — if
+it does, that is log content in the wrong file.
+
+`TRACKING.md` is a current-state page for people: edit it in place, keep it to one or two screens
+before §2, most important first, and never put rules for agents in it. Every section in detail,
+the writing rules (language, links, code fences), what not to create, and how to move an old
+document set over: `references/documents.md`. The bar a conclusion must clear:
+`references/evidence.md`.
+
 ## Where everything lives
 
 | Thing | Where | When |
 |---|---|---|
-| the task's ledger | `TRACKING.md`, skill `task-tracking-doc` | **day 0** — a feature spans weeks and two repos, exactly that skill's trigger |
+| the feature's documents | "Documents" above; `templates/`, `references/documents.md` | **day 0** |
+| evidence rules: controls, attribution | `references/evidence.md` | before writing any conclusion |
 | documents, tickets, who approves what | `references/design-and-tickets.md` | Phase 0–1 |
 | publishing the design documents | skill `managing-confluence` | Phase 1 |
 | review ecology, merge order, propagation, PSF instances | `references/review-and-merge.md` | Phase 5–6 |
@@ -52,6 +108,12 @@ the change under review) and `ABANDONED` ones (you will hit them in the review h
 # gerrit MCP: search_changes_by_criteria(owner=<user>, limit=40)
 ```
 
+Write the result into `TRACKING.md` §1.1 / §1.2 as you go, under three rules: only the feature's
+owners' changes (current and former owners; other people's commits in the same area are not this
+feature's); "not merged" is the owner's current plan — ask them or read their own list — not every
+open change in gerrit; merged dates from the gerrit submit approval
+(`gerrit query --all-approvals`, type `SUBM`). Abandoned and stale changes stay out of the table.
+
 ## Phase 1 — Design documents before code
 
 For a feature of any size the documents come first and are reviewed on their own: Feature Request
@@ -63,8 +125,8 @@ audience, and the superseded-set trap: `references/design-and-tickets.md`.
   aligning with uArch"* + a link to the uArch page. No number of patchsets clears that comment: if
   the uArch is missing, stale or contradicts the code, fixing the document **is** the work and the
   fastest path forward.
-- Log meeting recordings/recaps in the ledger — design decisions get made there and are otherwise
-  unrecoverable.
+- Record meeting recordings and recaps in `TRACKING_log.md` — design decisions get made there and
+  are otherwise unrecoverable; a decision that changes the plan also updates `TRACKING.md` §1.
 
 ## Phase 2 — Shape the commits before writing them
 
@@ -96,9 +158,10 @@ gates open:
 
 - **The gate commit merges last**, after the implementation it switches on; opening it first ships
   a path that half-exists. Merge order: **interface → implementation → gate**.
-- State plainly in the ledger **which gates are open right now**. With either gate shut, every lab
-  run exercises the old path only — a green run proves nothing about the feature. Do not plan lab
-  time around a feature whose gates are still closed; plan the gate merge first.
+- Keep the "Gates" row of `TRACKING.md` §1 current: **which gate is open right now**, on which side,
+  and whether only locally. With either gate shut, every lab run exercises the old path only — a
+  green run proves nothing about the feature. Do not plan lab time around a feature whose gates
+  are still closed; plan the gate merge first.
 
 ## Phase 3b — Testing someone else's change: never edit it in place
 
@@ -242,13 +305,13 @@ Known instances of both: `references/review-and-merge.md` §3.
 
 - Merge in the Phase 3 order (**interface → implementation → gate**), with an FW change landing
   before the test-tool change that consumes its capability; then propagate to ES / master / GA
-  branches (skill `gerrit-change`, plus the ledger's propagation table). Reasons and details:
-  `references/review-and-merge.md` §2.
+  branches (skill `gerrit-change`; one column or table per target branch in `TRACKING.md`
+  §1.1 / §1.2). Reasons and details: `references/review-and-merge.md` §2.
 - Then close the loop against the Feature Request from Phase 0. For **each numbered Req**, find the
   assertion in the test tool that would fail if it were violated — walk the FW↔utopx interface
-  field by field — and record it with an explicit "verified?" column so the holes show. "Code
-  exists on both sides" is not "the requirement is verified"; only an assertion that can fail is
-  verification.
+  field by field — and record it in `TRACKING.md` §1.6, whose "Verified?" column makes the holes
+  show. "Code exists on both sides" is not "the requirement is verified"; only an assertion that
+  can fail is verification.
 
 ## Rules that must fire without opening a reference
 
@@ -256,5 +319,7 @@ Known instances of both: `references/review-and-merge.md` §3.
   context; later commits may have rewritten the function entirely.
 - **To decide whether someone is still working a change, read `list_patchsets`**, not `updated` —
   that field lags by minutes. And before saying "N days without activity", run `date -u`.
-- **An unrecorded action counts as not done** — keep `TRACKING.md` current in the same step as the
-  action, with overturned conclusions struck through rather than deleted.
+- **An unrecorded action counts as not done** — in the same step as the action, add the
+  `TRACKING_log.md` entry and update the `TRACKING.md` sections the event table names. An
+  overturned conclusion is struck through in the log, not deleted; `TRACKING.md` is simply
+  corrected, because it describes the present.

@@ -61,7 +61,8 @@ The reference is the majority of messages other authors merged on the target bra
 - **No verification narrative**: box, seeds, run counts and A/B results belong in the ticket and
   the FINDINGS report, not in the commit message.
 - **Short**: typically 3-16 lines.
-- Title: `Title: [Test Bug] <Area> short summary`, one space after the tag.
+- Title: `Title: [Test Bug] <Area> short summary`, one space after the tag. No `#<ticket>` in the
+  title — the ticket goes in `Issue:`.
 
 ### Line length
 

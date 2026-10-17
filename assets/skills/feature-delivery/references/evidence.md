@@ -1,7 +1,7 @@
-# Update discipline — evidence rules
+# Evidence rules
 
-The update contract (events, companions, backstop) is `SKILL.md` §4; the writing and meta rules
-are `SKILL.md` §6. This file holds the bar a conclusion must clear: **a record is not a proof.**
+The bar a conclusion must clear before it goes into `TRACKING.md`, `defects.md` or a report:
+**a record is not a proof.** What to record and where: `documents.md`.
 
 ## 1. Every conclusion points at a control
 
@@ -30,8 +30,7 @@ criterion finds on every branch.
 
 `git merge-base --is-ancestor <hash> <branch>` never works across cherry-picked branches —
 propagation changes the hash. It is the right test only where the hash survives: commits a branch
-inherited through a branch cut (`templates/parts.md` part L), checked with a control commit known
-to be absent.
+inherited through a branch cut, checked with a control commit known to be absent.
 
 ## 3. Not disproved ≠ established
 

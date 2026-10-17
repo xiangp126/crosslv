@@ -224,11 +224,12 @@ session that held the box has finished with it. Establish it once — it takes s
 waiting windows on top.
 
 1. **How did the box free up?**
-   - **`mars_reg` released it** (`Status.status` flipped to `Release`; `noga_wait.sh` grabbed on
-     `Release`): MARS releases the NOGA lock in its own teardown step
-     `Done step (2:Release The Setup)`, so the session is done with the box. Nothing more to read.
-   - **You took a lease that expired without a release**, or you cannot tell: confirm the session
-     reached that step. Newest session directory
+   - **`mars_reg` released it before its `lock_time_out`** (`Status.status` flipped to `Release`
+     while its lease still had time left): MARS releases the NOGA lock in its own teardown step
+     `Done step (2:Release The Setup)`, so the session is done with the box.
+   - **A `Release` at `mars_reg`'s `lock_time_out`, a lease that expired without a release, or you
+     cannot tell**: NOGA drops an expired lease by itself while the session can still be running and
+     starting new cases. Confirm the session reached that step. Newest session directory
      `/auto/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup>/<sid>/` — once `<sid>.tgz`
      exists (written a few minutes after the release), read `session.log` out of it:
      ```bash
@@ -237,15 +238,18 @@ waiting windows on top.
      (MARS log times are Israel time; `Teardown event: session_end` can be missing from the
      archived copy.) No `.tgz` and no release step means the session is still running or archiving:
      keep the lock, do not touch the box, look again in a few minutes.
-2. **No regression process left on the box** — must print 0. Run it as its own `ssh` command: any
+2. **No regression process left on the box** — run it after every grab, whatever item 1 found;
+   must print 0. Run it as its own `ssh` command: any
    other text in the same command line (e.g. a path under `/tmp/mars_tests`) matches the pattern
    and counts the command itself.
    ```bash
    ssh <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
    ```
 
-Both hold → start. If a process is still there, keep the lock and look again in a few minutes;
-report to Peter if it stays busy well past the expected end of the session.
+Both hold → start. If a process is still there, keep the lock, do not touch the box, and wait for it
+with a check that ends by itself — the busy count at 0 on three checks two minutes apart, or the lock
+no longer yours — then report to Peter at once. Report also if it stays busy well past the expected
+end of the session.
 
 `/tmp/mars_tests` file times (`find /tmp/mars_tests -newermt "-30 min"`) are a fallback only, for
 when the session record cannot be found (unknown setup name). Once the release is established they
@@ -255,8 +259,7 @@ add nothing but a 30-minute wait after the session's last test.
 
 ```bash
 ~/myGit/crosslv/assets/skills/noga-lock/scripts/noga_wait.sh --help
-~/myGit/crosslv/assets/skills/noga-lock/scripts/noga_wait.sh -n l-fwreg-171 -L 8 --hours 8 \
-    --then 'bash <your env_rebuild script>'
+~/myGit/crosslv/assets/skills/noga-lock/scripts/noga_wait.sh -n l-fwreg-171 -L 8 --hours 8
 ```
 
 The script polls every 15 s by default (never pass a larger `--poll`), counted from the start of
@@ -269,11 +272,18 @@ wait ends (`ALREADY_OURS`, `LOCK_ACQUIRED` or `GAVE_UP`).
 
 Running it:
 
+- **Report the grab the moment it happens** — which box, when, until when — in Claude Code and in
+  Codex alike. Wait with `noga_wait.sh` alone: it ends on `LOCK_ACQUIRED`, `ALREADY_OURS` or
+  `GAVE_UP`, and that end is the signal to report. Then run the pre-touch check, then arm the
+  watchdog. Never wait with `noga_watchdog.sh`: once it takes the box it keeps holding and never
+  ends, so the grab goes unreported.
 - **Read the current runtime adapter first**: `references/hosts/claude.md` in Claude Code,
-  `references/hosts/codex.md` in Codex. In either runtime: chain setup into the same watcher with
-  `--then`, avoid duplicate watchers, and retain a way to observe liveness.
-- **Whatever `--then` runs must start with the pre-touch check** (section above) and must not burn,
-  reset or mlxconfig the box until it passes — the grab no longer waits for the box to be idle.
+  `references/hosts/codex.md` in Codex. It says how the end of the wait reaches you. In either
+  runtime avoid duplicate watchers and keep a way to observe liveness.
+- **No `--then` when someone is waiting for the box**: the chain runs before the wait ends, so the
+  report comes only after setup. Report, then start setup. In an unattended wait, whatever `--then`
+  runs must start with the pre-touch check and must not burn, reset or mlxconfig the box until it
+  passes — the grab does not wait for the box to be idle.
 - Do not model a multi-hour wait as one blocking tool call. Do not assume `nohup` or `setsid`
   launched from a managed shell will outlive that shell.
 - **Verify liveness** with `ps` plus the output/heartbeat-log mtime (a live `noga_wait.sh` writes
@@ -379,7 +389,8 @@ python3 "$CLI" -q -t server -n "$HOST" | grep -E 'Status\.(lock_owner|lock_time_
 ### The renewal watchdog (arm it for every box you hold)
 
 `noga_wait.sh` only **acquires**; it does not keep the box. Arm `scripts/noga_watchdog.sh` right
-after acquiring any box — or right away for a box someone else holds that Peter wants — as a
+after you acquire a box and have reported it — never on a box someone else holds: it would take the
+box itself without ending, so nobody hears of the grab (see Waiting for a busy box). Run it as a
 background task that notifies you when it exits:
 
 ```bash
@@ -400,8 +411,9 @@ table above. A box `noga_wait.sh` re-took is `noga`. What the watchdog does:
 | `noga_wait.sh` ends without the lock (14 h ceiling) | — | exit 1 |
 | query fails or the record does not parse | next check | retry — never read as a loss, never a grab |
 
-It checks first and sleeps after, so a watch started on a busy box goes straight to the 15 s
-polls. It prints a heartbeat every **30 min** while it holds the box (`noga_wait.sh` prints its
+A grab back does not end the watchdog either, so it is silent too: read the `LOCK_ACQUIRED` lines
+in its log whenever you report on the box. It checks first and sleeps after, so a watch started on
+a busy box goes straight to the 15 s polls. It prints a heartbeat every **30 min** while it holds the box (`noga_wait.sh` prints its
 own every ~5 min while waiting), so a dead watchdog is obvious. Never point two watchers at the
 same box; stop the old one before starting a new one, and never edit a script a running watcher
 is executing — bash reads it as it goes.
@@ -415,19 +427,8 @@ A hold can also vanish with hours left and no `unlock` ever issued, and NOGA's C
 or audit subcommand to find out who cleared it. Only `lock_owner` shows that you still own the box
 — a `lock_time_out` in the future does not.
 
-## On the box
-
-```bash
-sshpass -p <pw> ssh -o StrictHostKeyChecking=no -o ControlMaster=auto \
-  -o ControlPath=/tmp/ssh_mux_<box> -o ControlPersist=28800 root@$HOST
-```
-
-- Give each box its **own** mux socket, otherwise concurrent work on two machines crosses wires.
-- After any power cycle the mux socket is stale — close it (`ssh -O exit`) before reconnecting.
-- **Verify the final state yourself** instead of trusting the setup script's own summary — scripts
-  have reported READY off a stale or partially-applied config.
-
 ## Related
 
+- Logging in to a box you hold — ssh rules, root, a home that is not mounted: skill `lab-box-login`.
 - Firmware config on a BlueField box once you have it: skill `bluefield-fwconfig`.
 - If a card stops enumerating: skill `nic-livefish-recovery`.
