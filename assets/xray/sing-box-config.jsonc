@@ -11,7 +11,8 @@
       {
         "type": "https",
         "tag": "dns-local",
-        "server": "223.5.5.5"
+        "server": "223.5.5.5",
+        "detour": "direct-local"
       },
       // NVIDIA intranet DNS: via corporate VPN outbound
       {
@@ -111,10 +112,11 @@
         }
       }
     },
-    // Direct: use default network interface
+    // Direct: bind to en0 (home broadband), not the default interface (GP's utun4)
     {
       "type": "direct",
-      "tag": "direct-local"
+      "tag": "direct-local",
+      "bind_interface": "en0"
     },
     // NVIDIA corporate VPN: bind to utun4 (GlobalProtect tunnel interface)
     {
@@ -165,7 +167,9 @@
             "domain_suffix": [
               "nvda.com",
               "atlassian.net",
-              "atlassian.com"
+              "atlassian.com",
+              "mtl.com",
+              "10.in-addr.arpa"
             ]
           }
         ]
@@ -285,7 +289,8 @@
         "sniffer": [
           "http",
           "tls",
-          "quic"
+          "quic",
+          "dns"
         ],
         "timeout": "100ms"
       },

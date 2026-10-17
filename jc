@@ -6969,6 +6969,28 @@ isVpnInterfaceUp() {
     grep -qE '<UP[,>]' <<<"$out"
 }
 
+vpnDnsServers() {
+    scutil --dns | awk '/nameserver\[[0-9]+\]/ {print $3}' | sort -u
+}
+
+hasVpnHostRoute() {
+    netstat -rn -f inet | awk -v ip="$1" -v ifc="$2" \
+        '$1 == ip && $3 ~ /H/ && $3 ~ /S/ && $4 == ifc {found = 1} END {exit !found}'
+}
+
+detachVpnDnsRoutes() {
+    local vpnInterface="$1" ip
+    local detached=()
+    for ip in $(vpnDnsServers); do
+        hasVpnHostRoute "$ip" "$vpnInterface" || continue
+        sudo -n route -n delete -host "$ip" >/dev/null 2>&1 && detached+=("$ip")
+    done
+    if [ ${#detached[@]} -gt 0 ]; then
+        printf '%b\r\n' "${GREEN}✔${GREY} VPN DNS ${detached[*]} now resolved through sing-box.${RESET}"
+    fi
+    return 0
+}
+
 detectVpnInterface() {
     local iface
     for iface in $(ifconfig -l); do
@@ -7114,6 +7136,7 @@ startSingboxMonitor() {
                 sudo pkill -x sing-box 2>/dev/null || true
                 break
             fi
+            detachVpnDnsRoutes "$vpnInterface"
             sleep 5
         done
     ) &
