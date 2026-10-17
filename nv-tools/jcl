@@ -28,7 +28,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
@@ -1276,9 +1276,16 @@ def jsonl_tail(path, needles, limit=8 << 20, chunk=1 << 18):
 
 
 def proc_started_at(pid):
-    """When the process started, in epoch seconds; None without /proc."""
+    """When the process started, in epoch seconds, or None.
+
+    Linux counts it in clock ticks since boot; elsewhere the marker is ps's
+    lstart, which ps_info has ps print in UTC.
+    """
     try:
-        ticks = int(proc_start_marker(pid)) if HAS_PROC else None
+        if not HAS_PROC:
+            lstart = datetime.strptime(proc_start_marker(pid), "%a %b %d %H:%M:%S %Y")
+            return lstart.replace(tzinfo=timezone.utc).timestamp()
+        ticks = int(proc_start_marker(pid))
         btime = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
                      if line.startswith("btime "))
         return btime + ticks / os.sysconf("SC_CLK_TCK")
