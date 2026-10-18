@@ -955,4 +955,14 @@
 		"command": "-workbench.action.navigateForward",
 		"when": "canNavigateForward"
 	},
+	{
+		"key": "ctrl+alt+m",
+		"command": "markdown.showPreview",
+		"when": "!notebookEditorFocused && editorLangId == 'markdown'"
+	},
+	{
+		"key": "shift+cmd+v",
+		"command": "-markdown.showPreview",
+		"when": "!notebookEditorFocused && editorLangId == 'markdown'"
+	},
 ]

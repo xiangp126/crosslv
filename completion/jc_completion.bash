@@ -86,7 +86,7 @@ _jc_complete() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define command options
-    opts="-h -n -d -f"
+    opts="-h -d -f"
     long_opts="--help --no-tools --debug --clangd --git-filters --link-clang-format --nvm --wireshark \
                --auto-remove --upgrade --docker --apps --apps-only --chinese-pinyin \
                --vnc --vnc-start --vnc-stop --vnc-restart --unlock-vnc --lock-vnc --vnclock \
@@ -190,6 +190,7 @@ _jc_complete() {
             local lo="${long_opts}"
             # --keep-443 is a modifier for --acl-block; only offer it once it is on the line
             case " ${COMP_WORDS[*]} " in *" --acl-block "*) lo="${lo} --keep-443" ;; esac
+            case " ${COMP_WORDS[*]} " in *" --cursor-backup "*) lo="${lo} --dry-run" ;; esac
             COMPREPLY=( $(compgen -W "${lo}" -- ${cur}) )
         else
             # Suggest only short options

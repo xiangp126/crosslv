@@ -16,7 +16,8 @@
     "editor.suggest.snippetsPreventQuickSuggestions": false,
     "git.openRepositoryInParentFolders": "never",
     "remote.SSH.remotePlatform": {
-        "remotedev": "linux"
+        "remotedev": "linux",
+        "jason": "linux"
     },
     "remote.SSH.connectTimeout": 20,
     "editor.inlayHints.enabled": "off",
@@ -64,7 +65,6 @@
     "terminal.integrated.focusAfterRun": "terminal",
     "terminal.integrated.ignoreBracketedPasteMode": true,
     "terminal.integrated.enablePersistentSessions": false,
-    "update.enableWindowsBackgroundUpdates": false,
     "window.autoDetectColorScheme": true,
     "workbench.colorCustomizations": {
         "inlineChat.foreground": "#b4b2b0",
@@ -430,7 +430,8 @@
     "workbench.editor.navigationScope": "editorGroup",
     "workbench.preferredLightColorTheme": "Default Dark Modern",
     "workbench.editorAssociations": {
-        "git-rebase-todo": "default"
+        "git-rebase-todo": "default",
+        "*.md": "vscode.markdown.preview.editor",
     },
     "gitlens.views.commits.showBranchComparison": false,
     "gitlens.views.commits.avatars": false,
@@ -492,8 +493,8 @@
     ],
     "bookmarks.experimental.enableNewStickyEngine": false,
     "editor.minimap.enabled": false,
-    "leetcode.defaultLanguage": "cpp",
     "markdown.preview.fontSize": 16,
+    "leetcode.defaultLanguage": "cpp",
     "leetcode.hint.commentDescription": false,
     "leetcode.hint.configWebviewMarkdown": false,
     "leetcode.hint.commandShortcut": false,
@@ -556,4 +557,6 @@
     "claudeCode.preferredLocation": "panel",
     "bookmarks.keepBookmarksOnLineDelete": true,
     "cursor.composer.textSizeScale": 1.15,
+    "update.mode": "none",
+    "markdown-preview-enhanced.previewTheme": "vscode.css",
 }

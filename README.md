@@ -276,7 +276,7 @@ This script is used to set up the coding environment in my predefined way.
 
 Options:
     -h, --help                      Print this help message
-    -n, --no-tools                  Don't install tools
+    --no-tools                      Don't install tools
     -d, --debug                     Enable debug mode
     --insecure                      Allow insecure TLS
     --link-clang-format             Link clang-format to current path

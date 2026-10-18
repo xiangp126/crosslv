@@ -45,6 +45,7 @@ fArch=
 fNoInstallTools=
 fCheckTlsConn=
 fCursorAction=
+fDryRun=
 fClaudeAction=
 fClaudeDesktopAction=
 fGitFilters=
@@ -162,7 +163,7 @@ Set up coding environment, manage VNC/Samba servers, and play RTSP camera stream
 
 Common Options:
     -h, --help                      Print this help message
-    -n, --no-tools                  Don't install tools
+    --no-tools                      Don't install tools
     -d, --debug                     Enable debug mode
     --check-tls                     Check TLS connection
     --link-clang-format             Link clang-format to current path
@@ -183,7 +184,8 @@ Update Options (installed by default on first run):
     --clangd                        Update Clangd from Github
 
 Cursor Options:
-    --cursor-backup                 Back up Cursor local, remote, and keybinding JSON files
+    --cursor-backup [--dry-run]     Back up Cursor local, remote, and keybinding JSON files
+                                    (--dry-run: show what would change without writing)
     --cursor-restore                Restore Cursor local, remote, and keybinding JSON files
 
 Samba Options:
@@ -323,7 +325,7 @@ elif command -v /usr/local/opt/gnu-getopt/bin/getopt &> /dev/null; then
     GETOPT_BIN="/usr/local/opt/gnu-getopt/bin/getopt"
 fi
 
-SHORTOPTS="hdnf"
+SHORTOPTS="hdf"
 # Two colons: The option takes an optional argument
 LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           upgrade,chinese-pinyin,apps,apps-only,vnc-restart,vnc-stop,unlock-vnc,vnclock:,\
@@ -332,7 +334,7 @@ LONGOPTS="help,debug,no-tools,clangd,docker,link-clang-format::,auto-remove,nvm\
           rtsp-ip:,rtsp-resolution:,check-tls::,swap::,gdm,text,git-filters,claude,claude-remove,\
           claude-restore,claude-desktop-backup,claude-desktop-restore,\
           codex,codex-remove,codex-restore,\
-          gemini,gemini-remove,cursor-backup,cursor-restore,\
+          gemini,gemini-remove,cursor-backup,cursor-restore,dry-run,\
           singbox,singbox-reload,singbox-config:,\
           xray,xray-port:,xray-server:,xray-remove,wg,wg-port:,wg-server:,wg-client:,wg-remove,\
           sslh,sslh-ssh-port:,sslh-xray-port:,sslh-status,sslh-rollback,sslh-remove,\
@@ -1108,7 +1110,7 @@ REMOTE
 
 while true; do
     case "$1" in
-        -n|--no-tools)
+        --no-tools)
             fNoInstallTools=true
             shift
             ;;
@@ -1448,6 +1450,10 @@ while true; do
             fCursorAction="restore"
             shift
             ;;
+        --dry-run)
+            fDryRun=true
+            shift
+            ;;
         --singbox)
             fSingbox=1
             shift
@@ -1493,6 +1499,11 @@ while true; do
             ;;
     esac
 done
+
+if [ -n "$fDryRun" ] && [ "$fCursorAction" != "backup" ]; then
+    echo -e "${RED}Error: --dry-run only works with --cursor-backup.${RESET}" >&2
+    exit 1
+fi
 
 if [ -n "$fGwAclAction" ]; then
     if [ "$fGwAclAction" = "restart" ]; then
@@ -2304,7 +2315,7 @@ syncFile() {
         return 2
     fi
 
-    if [ ! -d "$syncPath" ] && ! mkdir -p "$syncPath"; then
+    if [ -z "$fDryRun" ] && [ ! -d "$syncPath" ] && ! mkdir -p "$syncPath"; then
         echo -e "${RED}Error: Failed to create directory ${BLUE}$syncPath${RESET}"
         return 3
     fi
@@ -2320,6 +2331,20 @@ syncFile() {
     if [ -e "$dst" ] && [ "$(readlink -f "$src")" = "$(readlink -f "$dst")" ]; then
         echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Already up to date.${RESET} ${GREY}(same file, linked)${RESET}"
         return 1
+    fi
+
+    if [ -n "$fDryRun" ]; then
+        if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+            echo -e "   └─ ${GREY}Status:${RESET} ✔ ${GREEN}Already up to date.${RESET}"
+            return 1
+        fi
+        if [ ! -f "$dst" ]; then
+            echo -e "   └─ ${GREY}Status:${RESET} ${LIGHTYELLOW}Would create (dry run).${RESET}"
+            return 0
+        fi
+        echo -e "   └─ ${GREY}Status:${RESET} ${LIGHTYELLOW}Would update (dry run):${RESET}"
+        diff -u "$dst" "$src" | sed 's/^/      /'
+        return 0
     fi
 
     if ! command -v rsync &> /dev/null; then
@@ -2706,7 +2731,7 @@ backupCursorSettings() {
         echo -e "${RED}Error: --cursor-backup is only supported on macOS.${RESET}"
         return 1
     fi
-    echo -e "${COLOR}Backing up Cursor settings${RESET}"
+    echo -e "${COLOR}Backing up Cursor settings${fDryRun:+ (dry run)}${RESET}"
 
     local cursorUserDir=
     local remoteSettingsPath=
