@@ -90,6 +90,22 @@ Facts that hold in every session live here. Procedures live in the corresponding
   idle trees' `cmakeBuild/` first and ask before removing a tree.
 - Logs that documents cite go in the ticket's bugZilla directory, not in a worktree.
 
+## Markdown documents
+
+Every `.md` written for Peter — in any folder, for any purpose: tracking pages, work logs, defect
+lists, reports, REPRO / FINDINGS, code-flow write-ups, notes — follows the writing rules in skill
+`feature-delivery`, `references/documents.md` §6. The ones most often missed:
+
+- External items are short labels linked to the full URL, `[1459033](https://git-nbu…/+/1459033)`,
+  `[FR #4838395](…)`; never a bare URL or a URL as its own label; every mention of a change or
+  ticket number is linked, tables included.
+- Local files the reader opens (other documents, reports, run logs cited as evidence, `tools/`)
+  are relative links labelled with the file name; paths to type or copy and `file:line` stay in
+  backticks.
+- Headings are short titles that say what the section holds (they become the table of contents);
+  owners, timestamps, conclusions and status marks go in the first line under the heading.
+- No code block inside a list item; patches go in `diff` fences.
+
 ## Hard rules
 
 1. **Never touch `l-fwminireg-*`.** Do not lock, SSH into, burn, run `mlxconfig`, or reset these

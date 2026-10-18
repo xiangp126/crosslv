@@ -42,7 +42,7 @@ NOTE: This is the LOCAL version -- execute directly on the test server.
 <Describe what regression you are investigating, what the expected outcome is,
 and link to the Redmine/NVBugs ticket.>
 
-Redmine: <URL>
+Redmine: [<ticket#>](https://redmine.nvidia.com/issues/<ticket#>)
 
 ## Regression Info
 

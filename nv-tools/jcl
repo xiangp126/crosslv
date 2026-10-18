@@ -543,7 +543,7 @@ def codex_records(pid, cwd, targets, argv):
             # app-server as the desktop's, and was filed as desktop -- then left
             # out of every snapshot (2026-09-30, pane 3:7.1). The same daemon
             # also wrote `vscode` into a terminal thread it created, which was
-            # then skipped by refresh as well (2026-10-01, pane 3:9.1).
+            # then skipped by refresh, now restart, as well (2026-10-01, pane 3:9.1).
             "origin": "desktop" if desktop else "terminal",
             "empty": empty,
             "cwd": meta.get("cwd") or cwd,
@@ -1223,14 +1223,14 @@ def _list_summary(records, states, c):
         parts.append(f"{n} {c['MAGENTA'] if agent == 'claude' else c['BLUE']}{agent}{c['RESET']}")
     paned = sum(1 for rec in records if rec["target"])
     # Hosted by Claude/Codex Desktop: shown, never acted on -- save, restore,
-    # refresh and exit-session all leave them be
+    # restart and exit-session all leave them be
     desktop = sum(1 for rec in records if not rec["target"] and rec.get("origin") == "desktop")
     loose = len(records) - paned - desktop
     parts.append(f"{paned} in tmux")
     if desktop:
         parts.append(f"{desktop} in app")
     if loose:
-        # These are reachable by list only: refresh/set-* all drive a tmux pane
+        # These are reachable by list only: restart/set-* all drive a tmux pane
         parts.append(f"{c['GREY']}{loose} with no pane{c['RESET']}")
     dead = sum(1 for rec in records if not rec.get("alive"))
     if dead:
@@ -1242,7 +1242,7 @@ def _list_summary(records, states, c):
 
 
 # STATE / ACTIVE / MODEL are read for the table alone. collect() leaves them
-# out on purpose: refresh, save and the completion (which parses `list --json`)
+# out on purpose: restart, save and the completion (which parses `list --json`)
 # never show them, and should not pay for reading transcript tails.
 
 def jsonl_tail(path, needles, limit=8 << 20, chunk=1 << 18):
@@ -1474,7 +1474,7 @@ def session_activity(rec):
         model, effort = rec.get("model") or "", rec.get("effort") or ""
         if rec.get("target") and not rec.get("stopped"):
             # The footer is what the TUI runs right now, the source save and
-            # refresh read too; the state row is what the thread last recorded,
+            # restart read too; the state row is what the thread last recorded,
             # and a thread with no message yet has none.
             live_model, live_effort = codex_pane_settings(pane_tail(rec["pane_id"]) or "")
             if live_model:
@@ -1764,40 +1764,75 @@ def cmd_show(args):
     return 0
 
 
+def pick_snapshot_sessions(args, records, e):
+    """The snapshot records a restore invocation names, or None.
+
+    The SESSION words exit-session and restart take, so restore can be handed
+    back what exit-session was given: panes as the snapshot saved them
+    (0:6.2), `claude` / `codex` for every session of that agent, `all` for
+    every one, and no default. A pane the snapshot holds nothing for is an
+    error, and then nothing is restored. None means the reason has already
+    been printed.
+    """
+    if not args.sessions:
+        print(f"{e['RED']}Name at least one SESSION, or `all` / `claude` / `codex` for every one.{e['RESET']}",
+              file=sys.stderr)
+        print(f"{e['GREY']}Run `jcl show` to see what the snapshot holds.{e['RESET']}", file=sys.stderr)
+        return None
+    # Commas as well as spaces, as exit-session and restart take them
+    selectors = [part for item in args.sessions for part in item.split(",") if part]
+    sweep = {"claude", "codex"} if "all" in selectors else {s for s in selectors if s in ("claude", "codex")}
+    targets = [s for s in selectors if s not in ("all", "claude", "codex")]
+    saved = {rec.get("target") for rec in records}
+    unknown = [want for want in targets if want not in saved]
+    if unknown:
+        for want in unknown:
+            print(f"{e['RED']}No session at {want!r} in the snapshot{e['RESET']}", file=sys.stderr)
+        print(f"{e['GREY']}Run `jcl show` to see what the snapshot holds.{e['RESET']}", file=sys.stderr)
+        return None
+    # A pane names every session saved from it: one goes back in, and the
+    # others are listed with their commands
+    chosen = [rec for rec in records if rec.get("agent", "claude") in sweep or rec.get("target") in targets]
+    if not chosen:
+        print(f"{e['RED']}No matching sessions in the snapshot to restore.{e['RESET']}", file=sys.stderr)
+        return None
+    return chosen
+
+
 def cmd_restore(args):
+    """Resume the named snapshotted sessions that are not running, each in the pane it was saved from."""
     c, e = palette(), palette(sys.stderr)
     try:
         snapshot = json.loads(Path(args.file).read_text())
     except (OSError, ValueError) as exc:
         print(f"{e['RED']}Cannot read snapshot {args.file}{e['RESET']}: {exc}", file=sys.stderr)
         return 1
-    records = snapshot.get("sessions", [])
-    if args.agent != "all":
-        records = [r for r in records if r.get("agent", "claude") == args.agent]
-    if not records:
+    saved = snapshot.get("sessions", [])
+    if not saved:
         print(f"{e['RED']}Snapshot holds no sessions.{e['RESET']}", file=sys.stderr)
         return 1
-    print(f"{c['GREY']}Snapshot taken {snapshot.get('saved_at', 'unknown')}{c['RESET']},"
-          f" {c['BOLD']}{len(records)}{c['RESET']} session(s)")
+    records = pick_snapshot_sessions(args, saved, e)
+    if records is None:
+        return 1
+    print(f"{c['GREY']}Snapshot taken {snapshot.get('saved_at', 'unknown')}:{c['RESET']}"
+          f" {c['BOLD']}{len(records)}{c['RESET']} of its {len(saved)} session(s)")
+    print()
 
-    live_ids = {(rec["agent"], rec["session_id"]) for rec in collect(agent=args.agent)}
+    live_ids = {(rec["agent"], rec["session_id"]) for rec in collect()}
     panes = {pane["pane_id"]: pane for pane in list_panes()}
     ids_valid = tmux_running_since(snapshot.get("saved_at"))
     # Every pane given a session is taken, so two snapshot records can never
     # be sent into the same pane
     taken = set()
 
-    failures = unplaced = 0
+    restored = running = unplaced = failures = 0
     for rec in records:
-        session_id = rec["session_id"]
-        agent = rec.get("agent", "claude")
-        cwd = rec["cwd"]
-        tmux_session = rec["tmux_session"] or agent
-        window_name = rec["window_name"] or agent
-        label = f"{tmux_session}:{window_name} [{agent} {session_id}]"
+        session_id, agent, cwd = rec["session_id"], rec.get("agent", "claude"), rec["cwd"]
+        label = session_label(rec)
 
         if (agent, session_id) in live_ids:
             print(f"{c['GREY']}Skipped, already running{c['RESET']}: {label}")
+            running += 1
             continue
         if agent not in RESUME_COMMANDS:
             print(f"{c['LIGHTYELLOW']}Skipped, unknown agent {agent}{c['RESET']}: {label}")
@@ -1836,7 +1871,7 @@ def cmd_restore(args):
         # moment (2026-10-16). The same check as `shell`: keys typed into a
         # pane go to whatever holds its foreground.
         pane = original_pane(rec, panes, ids_valid)
-        hint = "restore again once the pane is free, or run"
+        hint = f"jcl restore {rec['target']} once the pane is free, or run" if rec.get("target") else "run"
         if pane is None:
             reason, hint = f"its pane {rec.get('target') or '-'} is gone", "to resume it elsewhere, run"
         elif pane["pane_id"] in taken:
@@ -1850,13 +1885,15 @@ def cmd_restore(args):
             unplaced += 1
             continue
         taken.add(pane["pane_id"])
+        # Window renumbering can move a pane while its id stays
+        moved = f" {c['GREY']}(now at {pane['target']}){c['RESET']}" if pane["target"] != rec.get("target") else ""
 
         # Reported after the decision, not before it: a dry run that cannot
         # tell which pane a session goes to is not answering the question it
         # was run to answer.
         if args.dry_run:
-            print(f"{c['GREY']}[dry-run]{c['RESET']} {c['GREEN']}reuse{c['RESET']} {pane['target']}"
-                  f" ({pane['pane_id']}){c['GREY']}: {command}{c['RESET']}")
+            print(f"{c['GREY']}[dry-run]{c['RESET']} {label}{moved}: {c['GREY']}{command}{c['RESET']}")
+            restored += 1
             continue
 
         try:
@@ -1867,8 +1904,25 @@ def cmd_restore(args):
             failures += 1
             continue
         live_ids.add((agent, session_id))
-        print(f"{c['GREEN']}Restored in place{c['RESET']} "
-              f"{c['CYAN']}{pane['target']}{c['RESET']} {c['GREY']}({pane['pane_id']}){c['RESET']}: {label}")
+        restored += 1
+        print(f"{c['GREEN']}Restored{c['RESET']} {label}{moved}")
+
+    # The summary line exit-session and restart end with; what is left was
+    # skipped before its pane was looked at
+    skipped = len(records) - restored - running - unplaced - failures
+    parts = [f"{c['BOLD']}{restored}{c['RESET']} {'would be restored' if args.dry_run else 'restored'}"]
+    if running:
+        parts.append(f"{running} already running")
+    if unplaced:
+        parts.append(f"{c['LIGHTYELLOW']}{unplaced} not put back{c['RESET']}")
+    if failures:
+        parts.append(f"{e['RED']}{failures} failed{e['RESET']}")
+    if skipped:
+        parts.append(f"{skipped} skipped")
+    if args.dry_run:
+        parts.append(f"{c['GREY']}nothing typed{c['RESET']}")
+    print()
+    print(f" {c['GREY']}·{c['RESET']} ".join(parts))
     return 1 if failures or unplaced else 0
 
 
@@ -1924,17 +1978,18 @@ def select_records(records, selectors):
 
 
 def pick_live_sessions(args, c, e, verb, own_hint):
-    """The live sessions a refresh / exit-session invocation names, or None.
+    """The live sessions a restart, exit-session or set invocation names, or None.
 
-    Shared so the two commands cannot drift apart on the rules that keep them
+    Shared so the commands cannot drift apart on the rules that keep them
     safe: nothing happens without a name or an explicit `all`, every name has to
     land on exactly one pane, and the session this command runs in is never
-    touched. `verb` and `own_hint` only word the messages. None means the
-    reason has already been printed.
+    touched. restore takes the same words, through pick_snapshot_sessions.
+    `verb` and `own_hint` only word the messages. None means the reason has
+    already been printed.
     """
     # Acting on everything is the destructive end of these commands, so it has
     # to be asked for by name. It used to be what no arguments meant, which was
-    # safe enough while that was the only thing refresh could do - but now that
+    # safe enough while that was the only thing restart could do - but now that
     # sessions can be named, forgetting to name one would quietly sweep them all.
     if not args.sessions:
         print(f"{e['RED']}Name at least one SESSION, or `all` / `claude` / `codex` for every one.{e['RESET']}", file=sys.stderr)
@@ -1944,7 +1999,7 @@ def pick_live_sessions(args, c, e, verb, own_hint):
     # Commas as well as spaces, so a list pasted from anywhere splits the same way
     selectors = [part for item in args.sessions for part in item.split(",") if part]
     # `claude` / `codex` sweep one agent; `all` sweeps whatever set's --agent
-    # says, and both agents for refresh and exit-session, which have none.
+    # says, and both agents for restart and exit-session, which have none.
     # None of the three can be mistaken for a pane: a pane is only ever named
     # in full, session:window.pane, never by a bare word. They mix with panes:
     # `codex 0:6.2` is every codex session plus that one.
@@ -2013,6 +2068,31 @@ def print_session_rows(records, c):
               f"{rec['name'] or rec['cwd']}")
 
 
+def session_label(rec):
+    """How exit-session, restart and restore name a session: by the pane it runs in or was saved from.
+
+    The pane, not the pane id (%48), because the pane is the word all three
+    take on the command line.
+    """
+    return f"{rec.get('target') or rec.get('pane_id') or '-'} [{rec.get('agent', 'claude')} {rec['session_id']}]"
+
+
+def save_snapshot_first(dry_run, done, c, e):
+    """Save the snapshot restore reads, before exit-session or restart quits anything; False stops them.
+
+    The snapshot only holds what the last save saw, so a session started since
+    would not come back (2026-10-16). `done` words the refusal.
+    """
+    if dry_run:
+        print(f"{c['GREY']}[dry-run]{c['RESET']} would save the snapshot to"
+              f" {c['CYAN']}{_home(DEFAULT_SNAPSHOT)}{c['RESET']} first")
+    elif cmd_save(argparse.Namespace(output=str(DEFAULT_SNAPSHOT))) != 0:
+        print(f"{e['RED']}Snapshot not saved, so no session was {done}.{e['RESET']}", file=sys.stderr)
+        return False
+    print()
+    return True
+
+
 def quit_agent(rec, target, label, timeout, e, stuck):
     """Make the agent in `target` exit; True once its process is gone.
 
@@ -2060,61 +2140,78 @@ def quit_agent(rec, target, label, timeout, e, stuck):
     return True
 
 
-def cmd_refresh(args):
-    """Restart selected interactive sessions to reload credentials and config."""
+def cmd_restart(args):
+    """Restart named sessions in their own panes, to pick up a new login, MCP or config.
+
+    exit-session and restore in one pass, with the SESSION words of both: the
+    snapshot is saved first, each agent quits with its own key, and its resume
+    command goes into the pane it just left. It was called refresh until
+    2026-10-18, when it took the name that lines it up with the other two.
+    """
     c, e = palette(), palette(sys.stderr)
-    records = pick_live_sessions(args, c, e, "refresh", "restart it from a terminal")
+    records = pick_live_sessions(args, c, e, "restart", "restart it from a terminal")
     if records is None:
         return 1
+    if not save_snapshot_first(args.dry_run, "restarted", c, e):
+        return 1
 
-    print(f"{c['BOLD']}{len(records)}{c['RESET']} session(s) will be restarted with a fresh login:")
+    print(f"{c['BOLD']}{len(records)}{c['RESET']} session(s) will be restarted:")
     print_session_rows(records, c)
     print()
 
-    failures = 0
+    failures = restarted = 0
     for rec in records:
-        pid, target = rec["pid"], rec["pane_id"] or rec["target"]
+        pid, pane, label = rec["pid"], rec["pane_id"] or rec["target"], session_label(rec)
+        # Read codex's model off the pane now, while it is still showing:
+        # without it the session would come back on the default
         if rec["agent"] == "codex":
-            model, effort = codex_pane_settings(pane_tail(target) or "")
+            model, effort = codex_pane_settings(pane_tail(pane) or "")
             if model:
                 rec.update(model=model, effort=effort)
         command = f"cd {shell_quote(rec['cwd'])} && {resume_record(rec)}"
-        label = f"{target} [{rec['agent']} {rec['session_id']}]"
         if args.dry_run:
             keys = QUIT_KEYS.get(rec["agent"])
             how = " then ".join(keys) if keys else f"SIGTERM {pid}"
-            print(f"{c['GREY']}[dry-run]{c['RESET']} {how} "
-                  f"{c['GREY']}(fallback: SIGTERM/SIGKILL {pid}){c['RESET']}, then "
-                  f"{c['CYAN']}{target}{c['RESET']}: {c['GREY']}{command}{c['RESET']}")
+            print(f"{c['GREY']}[dry-run]{c['RESET']} {label}: {how} "
+                  f"{c['GREY']}(fallback: SIGTERM/SIGKILL {pid}){c['RESET']}, then {c['GREY']}{command}{c['RESET']}")
             continue
 
         if not relaunch(rec, command, args.timeout, e):
             failures += 1
             continue
-        print(f"{c['GREEN']}Refreshed{c['RESET']} {label}")
+        restarted += 1
+        print(f"{c['GREEN']}Restarted{c['RESET']} {label}")
 
+    if restarted or failures:
+        # The summary line exit-session and restore end with
+        parts = [f"{c['BOLD']}{restarted}{c['RESET']} restarted"]
+        if failures:
+            parts.append(f"{e['RED']}{failures} failed{e['RESET']}")
+        print()
+        print(f" {c['GREY']}·{c['RESET']} ".join(parts))
     return 1 if failures else 0
 
 
 def relaunch(rec, command, timeout, e):
     """Quit the agent in its pane and type `command` there; True once typed.
 
-    How refresh restarts a session, and set a codex one onto another model.
-    On False the reason is already on stderr.
+    How restart brings a session back, and set a codex one onto another model.
+    On False the reason is already on stderr - with the resume command when the
+    agent did exit and only the typing failed, since nothing else runs it then.
     """
-    pid, target = rec["pid"], rec["pane_id"] or rec["target"]
-    label = f"{target} [{rec['agent']} {rec['session_id']}]"
+    pid, pane, label = rec["pid"], rec["pane_id"] or rec["target"], session_label(rec)
     if not is_live_agent(pid, rec["agent"], rec.get("proc_start")):
         print(f"{e['RED']}Agent process changed; not restarting {label}{e['RESET']}", file=sys.stderr)
         return False
-    if not quit_agent(rec, target, label, timeout, e,
+    if not quit_agent(rec, pane, label, timeout, e,
                       f"Agent still running; not typing a resume command into {label}"):
         return False
     try:
-        tmux("send-keys", "-t", target, "-l", command)
-        tmux("send-keys", "-t", target, "Enter")
+        tmux("send-keys", "-t", pane, "-l", command)
+        tmux("send-keys", "-t", pane, "Enter")
     except (OSError, subprocess.CalledProcessError) as exc:
-        print(f"{e['RED']}Failed to relaunch {label}{e['RESET']}: {exc}", file=sys.stderr)
+        print(f"{e['RED']}Exited {label}, but could not resume it{e['RESET']}: {exc}", file=sys.stderr)
+        print(f"  resume: {command}", file=sys.stderr)
         return False
     return True
 
@@ -2123,71 +2220,63 @@ def relaunch(rec, command, timeout, e):
 def cmd_exit_session(args):
     """Quit selected interactive sessions, leaving their panes at the shell.
 
-    refresh with the relaunch left out. What it is for: getting agents out of
+    restart with the relaunch left out. What it is for: getting agents out of
     the way of something only a fresh shell picks up -- a new ~/.bashrc, a new
-    PATH -- and bringing them back afterwards with `restore`, which resumes each
-    one in the pane it came from. The snapshot restore reads is saved first, and
-    every exit also prints its resume command.
+    PATH -- and bringing them back afterwards with `restore`, which takes the
+    same SESSION words and resumes each one in the pane it came from. The
+    snapshot restore reads is saved first, and every exit also prints its
+    resume command.
     """
     c, e = palette(), palette(sys.stderr)
     records = pick_live_sessions(args, c, e, "exit", "quit it from its own pane")
     if records is None:
         return 1
-
-    # restore reads the snapshot, which only holds what the last save saw: a
-    # session started since would not come back (2026-10-16). Save first, and
-    # exit nothing if that fails.
-    if args.dry_run:
-        print(f"{c['GREY']}[dry-run]{c['RESET']} would save the snapshot to"
-              f" {c['CYAN']}{_home(DEFAULT_SNAPSHOT)}{c['RESET']} first")
-    elif cmd_save(argparse.Namespace(output=str(DEFAULT_SNAPSHOT))) != 0:
-        print(f"{e['RED']}Snapshot not saved, so no session was exited.{e['RESET']}", file=sys.stderr)
+    if not save_snapshot_first(args.dry_run, "exited", c, e):
         return 1
-    print()
 
     print(f"{c['BOLD']}{len(records)}{c['RESET']} session(s) will be exited:")
     print_session_rows(records, c)
     print()
 
-    failures = exited = 0
+    failures, exited = 0, []
     for rec in records:
-        pid, target = rec["pid"], rec["pane_id"] or rec["target"]
+        pid, pane, label = rec["pid"], rec["pane_id"] or rec["target"], session_label(rec)
         # Read codex's model off the pane now, while it is still showing:
         # without it the printed resume command would come back on the default.
         if rec["agent"] == "codex":
-            model, effort = codex_pane_settings(pane_tail(target) or "")
+            model, effort = codex_pane_settings(pane_tail(pane) or "")
             if model:
                 rec.update(model=model, effort=effort)
         command = f"cd {shell_quote(rec['cwd'])} && {resume_record(rec)}"
-        label = f"{target} [{rec['agent']} {rec['session_id']}]"
         if args.dry_run:
             keys = QUIT_KEYS.get(rec["agent"])
             how = " then ".join(keys) if keys else f"SIGTERM {pid}"
-            print(f"{c['GREY']}[dry-run]{c['RESET']} {how} "
-                  f"{c['GREY']}(fallback: SIGTERM/SIGKILL {pid}){c['RESET']} "
-                  f"{c['CYAN']}{target}{c['RESET']}")
+            print(f"{c['GREY']}[dry-run]{c['RESET']} {label}: {how} "
+                  f"{c['GREY']}(fallback: SIGTERM/SIGKILL {pid}){c['RESET']}")
             continue
 
         if not is_live_agent(pid, rec["agent"], rec.get("proc_start")):
             print(f"{e['RED']}Agent process changed; not exiting {label}{e['RESET']}", file=sys.stderr)
             failures += 1
             continue
-        if not quit_agent(rec, target, label, args.timeout, e,
+        if not quit_agent(rec, pane, label, args.timeout, e,
                           f"Agent still running after SIGKILL: {label}"):
             failures += 1
             continue
-        exited += 1
+        exited.append(rec["target"])
         print(f"{c['GREEN']}Exited{c['RESET']} {label}")
         print(f"  {c['GREY']}resume: {command}{c['RESET']}")
 
     if exited or failures:
         # A summary line in the shape the other commands end with, set off by a
-        # blank line so it does not read as part of the last session's block
-        parts = [f"{c['BOLD']}{exited}{c['RESET']} exited"]
+        # blank line so it does not read as part of the last session's block.
+        # It names the panes, so the restore can be pasted as it stands.
+        parts = [f"{c['BOLD']}{len(exited)}{c['RESET']} exited"]
         if failures:
             parts.append(f"{e['RED']}{failures} failed{e['RESET']}")
         if exited:
-            parts.append(f"{c['CYAN']}jcl restore{c['RESET']} {c['GREY']}brings them back in place{c['RESET']}")
+            parts.append(f"{c['CYAN']}jcl restore {' '.join(exited)}{c['RESET']}"
+                         f" {c['GREY']}brings them back in place{c['RESET']}")
         print()
         print(f" {c['GREY']}·{c['RESET']} ".join(parts))
     return 1 if failures else 0
@@ -2214,7 +2303,7 @@ def shell_output(pane_id):
     return out
 
 
-def cmd_shell(args):
+def type_into_shells(line, timeout, dry_run):
     """Type one command line into every tmux pane whose shell waits at an empty prompt; report how it ran.
 
     Keys typed into a pane go to whatever holds its foreground: an agent takes
@@ -2228,7 +2317,7 @@ def cmd_shell(args):
     session's active pane, whichever pane ran it (2026-10-16).
     """
     c, e = palette(), palette(sys.stderr)
-    check = subprocess.run(["bash", "-n", "-c", args.line], capture_output=True, text=True)
+    check = subprocess.run(["bash", "-n", "-c", line], capture_output=True, text=True)
     if check.returncode:
         print(f"{e['RED']}Nothing sent: the command does not parse.{e['RESET']} {check.stderr.strip()}",
               file=sys.stderr)
@@ -2255,10 +2344,10 @@ def cmd_shell(args):
             ready.append(pane)
 
     sent_at, done, not_sent = {}, {}, {}
-    if not args.dry_run:
+    if not dry_run:
         for pane in ready:
             status = "$status" if proc_comm(pane["pid"]) == "fish" else "$?"
-            typed = f" {args.line}; tmux set -p -t {pane['pane_id']} {SHELL_STATUS} {status}"
+            typed = f" {line}; tmux set -p -t {pane['pane_id']} {SHELL_STATUS} {status}"
             try:
                 tmux("set-option", "-pqu", "-t", pane["pane_id"], SHELL_STATUS, check=False)
                 tmux("send-keys", "-t", pane["pane_id"], "-l", typed)
@@ -2268,7 +2357,7 @@ def cmd_shell(args):
                 continue
             sent_at[pane["pane_id"]] = time.time()
         # Each pane hands its exit status back as it finishes
-        deadline = time.time() + args.timeout
+        deadline = time.time() + timeout
         while len(done) < len(sent_at) and time.time() < deadline:
             time.sleep(0.2)
             listing = tmux("list-panes", "-a", "-F", f"#{{pane_id}} #{{{SHELL_STATUS}}}", check=False)
@@ -2283,16 +2372,16 @@ def cmd_shell(args):
     for pane in panes:
         pane_id, target = pane["pane_id"], f"  {c['CYAN']}{pane['target']:<{width}}{c['RESET']}  "
         if pane is last:
-            print(f"{target}{c['GREY']}{'would run' if args.dry_run else 'runs'} once jcl exits{c['RESET']}")
+            print(f"{target}{c['GREY']}{'would run' if dry_run else 'runs'} once jcl exits{c['RESET']}")
         elif pane_id in skipped:
             print(f"{target}{c['GREY']}skipped: {skipped[pane_id]}{c['RESET']}")
-        elif args.dry_run:
+        elif dry_run:
             print(f"{target}would get it")
         elif pane_id in not_sent:
             print(f"{target}{e['RED']}not sent: {not_sent[pane_id]}{e['RESET']}")
             failed += 1
         elif pane_id not in done:
-            print(f"{target}{c['LIGHTYELLOW']}still running after {args.timeout:g}s{c['RESET']}")
+            print(f"{target}{c['LIGHTYELLOW']}still running after {timeout:g}s{c['RESET']}")
             running += 1
         else:
             rc, took = done[pane_id]
@@ -2310,7 +2399,7 @@ def cmd_shell(args):
             tmux("set-option", "-pqu", "-t", pane_id, SHELL_STATUS, check=False)
 
     print()
-    if args.dry_run:
+    if dry_run:
         parts = [f"{c['BOLD']}{len(ready) + bool(last)}{c['RESET']} would get it"]
     else:
         parts = [f"{c['BOLD']}{ok}{c['RESET']} ok"]
@@ -2321,18 +2410,79 @@ def cmd_shell(args):
         if last:
             parts.append("1 runs once jcl exits")
     parts.append(f"{len(skipped)} skipped")
-    if args.dry_run:
+    if dry_run:
         parts.append(f"{c['GREY']}nothing typed{c['RESET']}")
     print(f" {c['GREY']}·{c['RESET']} ".join(parts))
     # Claude Code and Codex snapshot the shell setup when they start
-    if agents and re.match(r"\s*(source|\.)\s", args.line):
+    if agents and re.match(r"\s*(source|\.)\s", line):
         print(f"{c['GREY']}Agents read shell config when they start;{c['RESET']} "
-              f"jcl refresh {' '.join(agents)} {c['GREY']}restarts them in place.{c['RESET']}")
+              f"jcl restart {' '.join(agents)} {c['GREY']}restarts them in place.{c['RESET']}")
     # Last, so the line lands after everything printed above
-    if last and not args.dry_run:
-        tmux("send-keys", "-t", last["pane_id"], "-l", " " + args.line)
+    if last and not dry_run:
+        tmux("send-keys", "-t", last["pane_id"], "-l", " " + line)
         tmux("send-keys", "-t", last["pane_id"], "Enter")
     return 1 if failed or running else 0
+
+
+def x11_forwards(tcp=Path("/proc/net/tcp")):
+    """The display numbers of this user's live ssh X11 forwards, newest first.
+
+    sshd listens on 127.0.0.1:6000+N for DISPLAY=localhost:N as long as the
+    connection that asked for X11 forwarding lives. Socket inodes grow as they
+    are made, so the highest is the newest connection's.
+    """
+    try:
+        rows = [line.split() for line in tcp.read_text().splitlines()[1:]]
+    except OSError:
+        return []
+    found = []
+    for f in rows:
+        # sl, local address, remote, state (0A: listening), queues, timer, retransmits, uid, timeout, inode
+        if len(f) < 10 or f[3] != "0A" or f[7] != str(os.getuid()):
+            continue
+        address, _, port = f[1].partition(":")
+        if address == "0100007F" and 6010 <= int(port, 16) < 6100:
+            found.append((int(f[9]), int(port, 16) - 6000))
+    return [display for _, display in sorted(found, reverse=True)]
+
+
+def cmd_shell(args):
+    """jcl shell: COMMAND, or one of the lines it is mostly used for."""
+    if args.display:
+        return shell_display(args)
+    return type_into_shells("source ~/.bashrc" if args.bashrc else args.line, args.timeout, args.dry_run)
+
+
+def shell_display(args):
+    """jcl shell --display: point tmux and every shell pane at the newest live ssh X11 forward.
+
+    DISPLAY=localhost:N lives only as long as the ssh connection that opened
+    it. A reconnect gets a new N, while tmux and every pane opened before keep
+    the old one, and X clients fail with "Can't open display" (2026-10-18).
+    All the forwards reach the same X server, on the machine the connections
+    come from, so the newest is taken; the panes get it the way any other
+    line is typed, the pane jcl runs from last.
+    """
+    c, e = palette(), palette(sys.stderr)
+    displays = x11_forwards()
+    if not displays:
+        print(f"{e['RED']}No ssh X11 forward is open{e['RESET']}: connect with ssh -X"
+              " (or ForwardX11 yes) first.", file=sys.stderr)
+        return 1
+    display, live = f"localhost:{displays[0]}.0", [f"localhost:{n}.0" for n in displays]
+    current = os.environ.get("DISPLAY")
+    note = (f"this shell's {current} {'is still there' if current in live else 'has gone'}"
+            if current else "this shell has no DISPLAY")
+    print(f"X11 forwards open: {', '.join(live)}; taking the newest, {c['CYAN']}{display}{c['RESET']}"
+          f" {c['GREY']}({note}){c['RESET']}")
+    if not args.dry_run:
+        # For panes opened from now on: the global value, and each session's own
+        tmux("set-environment", "-g", "DISPLAY", display, check=False)
+        for session in tmux("list-sessions", "-F", "#{session_name}", check=False).splitlines():
+            tmux("set-environment", "-t", session, "DISPLAY", display, check=False)
+    print(f"tmux: new panes {'would get' if args.dry_run else 'get'} it; the open ones:")
+    print()
+    return type_into_shells(f"export DISPLAY={display}", args.timeout, args.dry_run)
 
 
 def select_for_delete(records, selectors):
@@ -2637,7 +2787,7 @@ def restart_codex_panes(items, model, effort, args, c, e):
     codex's /model takes no arguments: typed as `/model GPT-6-Sol max` it went
     to the model as a prompt, and both panes spent a turn explaining they could
     not switch themselves (2026-10-06). So a session is quit and resumed in its
-    pane with --model and model_reasoning_effort, the way refresh resumes it.
+    pane with --model and model_reasoning_effort, the way restart resumes it.
     One already on the pair keeps running; one in the middle of a turn is left
     alone rather than cut off. `items` holds (record, model now, effort now).
     """
@@ -2782,7 +2932,7 @@ def cmd_set(args):
         print(f"{e['RED']}Give --model, --effort, or both.{e['RESET']}", file=sys.stderr)
         return 1
     if args.sessions:
-        # Named panes go through the same selection as refresh and exit-session,
+        # Named panes go through the same selection as restart and exit-session,
         # so the three take a SESSION list the same way
         records = pick_live_sessions(args, c, e, "set", "use /model and /effort in its own pane")
     else:
@@ -3476,7 +3626,7 @@ def cmd_restore_auth(args):
         return 1
     print(f"{c['GREEN']}Restored {restored} and filled {filled}{c['RESET']} entry/entries in {c['CYAN']}{CREDENTIALS_FILE}{c['RESET']}")
     print(f"{c['GREY']}Running claude processes still hold the old credentials; run{c['RESET']}")
-    print(f"  {c['CYAN']}jcl refresh all{c['RESET']}")
+    print(f"  {c['CYAN']}jcl restart all{c['RESET']}")
     print(f"{c['GREY']}to restart them in place, then save-auth again once they have renewed:{c['RESET']}")
     print(f"{c['GREY']}a renewal rotates the refresh token and leaves this backup behind.{c['RESET']}")
     print(f"{c['GREY']}Re-saving only ever adds; it cannot lose a token the backup already holds.{c['RESET']}")
@@ -3576,7 +3726,7 @@ def cmd_fill_auth(args):
         return 1
     print(f"{c['GREEN']}Filled {filled} of {len(recipients)}{c['RESET']} entry/entries in {c['CYAN']}{CREDENTIALS_FILE}{c['RESET']}")
     if filled:
-        print(f"Run {c['CYAN']}jcl refresh all{c['RESET']} to make running sessions pick it up.")
+        print(f"Run {c['CYAN']}jcl restart all{c['RESET']} to make running sessions pick it up.")
     return 0 if filled == len(recipients) else 1
 
 
@@ -3671,18 +3821,28 @@ def main(argv=None):
 
     p_restore = sub.add_parser(
         "restore",
-        help="Reopen snapshotted sessions that are no longer running, each in the pane it came from",
+        help="Resume the named snapshotted sessions that are not running, each in the pane it came from",
         description=(
-            "Resume each snapshotted session that is not running in the pane it was"
-            " saved from, when that pane is still there and its shell waits at an"
-            " empty prompt. No window is ever created: a session whose pane is gone"
-            " or busy is listed with the command that resumes it, to run again once"
-            " the pane is free, or anywhere by hand. After a reboot, bring the"
-            " layout back with tmux-resurrect first."
+            "Resume each named session of the snapshot that is not running, in the"
+            " pane it was saved from, when that pane is still there and its shell"
+            " waits at an empty prompt. No window is ever created: a session whose"
+            " pane is gone or busy is listed with the command that resumes it, to"
+            " restore again once the pane is free, or to run anywhere by hand."
+            " Sessions are named the way exit-session and restart take them, but"
+            " looked up in the snapshot: `codex` or `claude` selects every session"
+            " of that agent, `all` every one. After a reboot, bring the layout back"
+            " with tmux-resurrect first. Run show first, or pass -n to preview."
         ),
     )
+    # No --agent, as with exit-session and restart: `claude` and `codex` name it
+    p_restore.add_argument(
+        "sessions", nargs="*", metavar="SESSION",
+        help="Panes to restore, as tmux targets (0:6.2) - the panes the snapshot saved"
+             " them from, the first column of `show`. Give several separated by spaces"
+             " or commas; `claude` or `codex` for every session of that agent, `all`"
+             " for every one. There is no default.",
+    )
     p_restore.add_argument("-f", "--file", default=str(DEFAULT_SNAPSHOT), help="Snapshot path")
-    p_restore.add_argument("--agent", choices=["claude", "codex", "all"], default="all")
     p_restore.add_argument(
         "-n", "--dry-run", action="store_true", help="Print the commands instead of running them"
     )
@@ -3696,38 +3856,41 @@ def main(argv=None):
     p_show.add_argument("--json", action="store_true", help="Print the snapshot file as is")
     p_show.set_defaults(func=cmd_show)
 
-    p_refresh = sub.add_parser(
-        "refresh",
-        help="Restart the named sessions in place to pick up a new login",
+    p_restart = sub.add_parser(
+        "restart",
+        help="Save the snapshot, then quit the named sessions and resume each in its own pane",
         description=(
-            "Restart named interactive sessions in their tmux panes using"
-            " `claude --resume ID` or `codex resume ID`, retaining history."
-            " This reloads login, MCP, and configuration changes. `codex` or"
-            " `claude` selects every pane of that agent, `all` every pane of both."
-            " The calling agent and suspended sessions are excluded."
-            " Run list first, or pass -n to preview."
+            "exit-session and restore in one go, to pick up a new login, MCP or"
+            " configuration: save the snapshot as `save` does, quit named interactive"
+            " sessions with each agent's own quit key, falling back to SIGTERM and"
+            " then SIGKILL, and resume each in the pane it ran in with"
+            " `claude --resume ID` or `codex resume ID`, history, model and effort"
+            " kept. Nothing is restarted if the save fails. `codex` or `claude`"
+            " selects every pane of that agent, `all` every pane of both. The calling"
+            " agent and suspended sessions are excluded. Run list first, or pass -n"
+            " to preview."
         ),
     )
-    # No --agent, here or on exit-session: `claude` and `codex` already name
-    # one agent, so it could only repeat them. What it did add was a default
-    # that narrowed `all` to Claude: an `exit-session all` before a move left a
-    # codex holding its thread on the old host (2026-10-09).
-    p_refresh.add_argument(
+    # No --agent, here or on exit-session and restore: `claude` and `codex`
+    # already name one agent, so it could only repeat them. What it did add was
+    # a default that narrowed `all` to Claude: an `exit-session all` before a
+    # move left a codex holding its thread on the old host (2026-10-09).
+    p_restart.add_argument(
         "sessions", nargs="*", metavar="SESSION",
         help="Panes to restart, as tmux targets (0:6.2) - the first column of"
              " `list`. Give several separated by spaces or commas; `claude` or"
              " `codex` for every live session of that agent, `all` for every one."
              " There is no default.",
     )
-    p_refresh.add_argument(
+    p_restart.add_argument(
         "--timeout", type=float, default=15.0,
         help="Seconds to wait for the quit keystroke to exit before falling back"
              " to SIGTERM, then SIGKILL (default: 15)",
     )
-    p_refresh.add_argument(
+    p_restart.add_argument(
         "-n", "--dry-run", action="store_true", help="Print what would run, kill nothing"
     )
-    p_refresh.set_defaults(func=cmd_refresh)
+    p_restart.set_defaults(func=cmd_restart)
 
     p_exit = sub.add_parser(
         "exit-session",
@@ -3743,7 +3906,7 @@ def main(argv=None):
             " suspended sessions are excluded. Run list first, or pass -n to preview."
         ),
     )
-    # No --agent, as with refresh above
+    # No --agent, as with restart above
     p_exit.add_argument(
         "sessions", nargs="*", metavar="SESSION",
         help="Panes to exit, as tmux targets (0:6.2) - the first column of"
@@ -3761,7 +3924,7 @@ def main(argv=None):
     )
     p_exit.set_defaults(func=cmd_exit_session)
 
-    # Named for the panes it serves: set, refresh and exit-session act on the
+    # Named for the panes it serves: set, restart, exit-session and restore act on the
     # agent panes, this on the shell panes - and `send` is agent-bridge's word
     # for messaging an agent (2026-10-17)
     p_shell = sub.add_parser(
@@ -3777,11 +3940,20 @@ def main(argv=None):
             " HISTCONTROL=ignorespace keeps out of history, followed by"
             " `; tmux set -p -t <pane> @jcl_rc $?`, which hands the exit status back."
             " The pane jcl runs from gets the plain line last, once jcl exits."
-            " Completion offers 'source ~/.bashrc'."
+            " Give COMMAND, --bashrc or --display."
         ),
     )
-    p_shell.add_argument(
-        "line", metavar="COMMAND", help="The command line to type, quoted as one argument"
+    what = p_shell.add_mutually_exclusive_group(required=True)
+    what.add_argument(
+        "line", nargs="?", metavar="COMMAND", help="The command line to type, quoted as one argument"
+    )
+    what.add_argument("--bashrc", action="store_true", help="Run `source ~/.bashrc`")
+    what.add_argument(
+        "--display", action="store_true",
+        help="For \"Can't open display: localhost:N\": an ssh X11 forward lives only as long as its"
+             " connection, and a reconnect gets a new number that tmux and the open panes never"
+             " learn. Take the newest live forward, set DISPLAY in tmux's environment for new"
+             " panes, and run `export DISPLAY=...` in the open ones",
     )
     p_shell.add_argument(
         "--timeout", type=float, default=10.0,
@@ -3831,7 +4003,7 @@ def main(argv=None):
             "Discover panes once and send the agent-specific commands. Claude gets"
             " /model and /effort typed in. Codex's /model takes no arguments, so a"
             " Codex session is restarted in its pane on the model and effort,"
-            " the way refresh resumes it; one already there keeps running, one"
+            " the way restart resumes it; one already there keeps running, one"
             " mid-turn is left alone. At least one of"
             " --model/--effort is required. Repeat --model for mixed-agent updates,"
             " or use --agent codex for Codex only. Name panes to set only those;"
@@ -3964,7 +4136,7 @@ def main(argv=None):
             " way fill-auth does, so restoring is one command rather than a choice"
             " between two. The merge happens at the mcpOAuth key, so an Anthropic"
             " account login living in the same file is left alone. Run"
-            " `jcl refresh` afterwards - a live process keeps the"
+            " `jcl restart` afterwards - a live process keeps the"
             " credentials it read at startup, and it can rewrite this file from memory."
         ),
     )

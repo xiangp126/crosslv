@@ -17,37 +17,41 @@ PFs take their ICM pages from that pool">
 | FW | <🟡 N changes not merged> | <...> |
 | Gates | <both closed / opened locally only / open on master> | <the switch that keeps the new path dark on each side> |
 | Device verification | <✅ main path runs> | <latest campaign, §2> |
-| Requirements (FR #<n>) | <x of y verified> | §1.6 |
+| Requirements ([FR #<n>](https://redmine.nvidia.com/issues/<n>)) | <x of y verified> | §1.6 |
 
 Status marks: ✅ done · 🟡 partial or worked around · 🔵 in progress or waiting · 🔴 blocked · ⬜ not started or not hit.
 
-### 1.1 Test-tool commits (`<project>`, owner: <owner(s)>)
+### 1.1 Test-tool commits
+
+`<project>`, owner: <owner(s)>.
 
 **Not merged** (the owner's current plan, not every open change in gerrit)
 
 | Change | Content | Owner | Now | Status |
 |---|---|---|---|---|
-| https://git-nbu.nvidia.com/r/c/<project>/+/<num> | `<title>` | <user> | PS<n>, topic `<topic>` | <CI and review state> |
+| [<num>](https://git-nbu.nvidia.com/r/c/<project>/+/<num>) | `<title>` | <user> | PS<n>, topic `<topic>` | <CI and review state> |
 
 **Merged** (by gerrit submit date)
 
 | Change | Content | Owner | Merged |
 |---|---|---|---|
-| https://git-nbu.nvidia.com/r/c/<project>/+/<num> | `<title>` | <user> | <MM-DD> |
+| [<num>](https://git-nbu.nvidia.com/r/c/<project>/+/<num>) | `<title>` | <user> | <MM-DD> |
 
-### 1.2 FW commits (`golan_fw`, owner: <owner>)
+### 1.2 FW commits
+
+`golan_fw`, <branch>, owner: <owner>.
 
 **Not merged**
 
 | Change | Content | Now | Version under test | Status |
 |---|---|---|---|---|
-| https://git-nbu.nvidia.com/r/c/golan_fw/+/<num> | `<title>` | PS<n> (<MM-DD>) | PS<m> | <...> |
+| [<num>](https://git-nbu.nvidia.com/r/c/golan_fw/+/<num>) | `<title>` | PS<n> (<MM-DD>) | PS<m> | <...> |
 
 **Merged** (by gerrit submit date)
 
 | Change | Content | Owner | Merged |
 |---|---|---|---|
-| https://git-nbu.nvidia.com/r/c/golan_fw/+/<num> | `<title>` | <user> | <MM-DD> |
+| [<num>](https://git-nbu.nvidia.com/r/c/golan_fw/+/<num>) | `<title>` | <user> | <MM-DD> |
 
 FW image under test: <base SHA (version)> + <changes and patchsets>; image `<path>` (md5 `<md5>`).
 
@@ -65,13 +69,17 @@ FW image under test: <base SHA (version)> + <changes and patchsets>; image `<pat
 |---|---|
 | <question> | <facts and options; the section with the details> |
 
-### 1.6 Requirements (FR #<n>)
+### 1.6 Requirements
+
+[FR #<n>](https://redmine.nvidia.com/issues/<n>).
 
 | Req | Requirement | Assertion in the test tool | Verified? |
 |---|---|---|---|
 | <n> | <text> | `<file>:<line>`, or none | <✅ run <MM-DD> / ⬜ no assertion yet> |
 
-## 2. Test campaigns (newest first)
+## 2. Test campaigns
+
+Newest first.
 
 | Date | Box / FW | Test-tool tree | Result | Report |
 |---|---|---|---|---|
@@ -83,9 +91,11 @@ The status of every defect lives in this table; how to hit it, the evidence and 
 
 | # | Problem | Side | Status |
 |---|---|---|---|
-| <n> | <one line> | <test tool / FW / udriver / existing code> | <✅ fixed in <change URL> / 🟡 worked around: <how> / 🔵 waiting for <who> / ⬜ not hit> |
+| <n> | <one line> | <test tool / FW / udriver / existing code> | <✅ fixed in [<num>](<change URL>) / 🟡 worked around: <how> / 🔵 waiting for <who> / ⬜ not hit> |
 
-## 4. Timeline (newest first, one line per day)
+## 4. Timeline
+
+Newest first, one line per day.
 
 | Date | Progress |
 |---|---|
@@ -116,4 +126,4 @@ The status of every defect lives in this table; how to hit it, the evidence and 
 
 Logs the documents cite are in [logs/](logs/).
 
-External: <Feature Request, HLD, MAS, FWV uArch, Redmine tickets — full URLs>
+External: <Feature Request, HLD, MAS, FWV uArch, Redmine tickets — each as `[short name](URL)`, e.g. `[FR #<n>](https://redmine.nvidia.com/issues/<n>)`>

@@ -15,7 +15,7 @@
 | Debug      | Bash Script | [jdebug](#jdebug)           | Debugging tool for devices running gdbserver                                                         |
 | Debug      | Bash Script | [jroute](#jroute)           | Simple script to switch the default route between available gateways                                 |
 | Debug      | Bash Script | [jt](#jt)                   | Log file viewer with syntax highlighting                                                             |
-| Agents     | Python Script | [jcl](#jcl)               | List, save, restore, refresh, and configure Claude Code and Codex sessions in tmux; type a command into every idle shell pane |
+| Agents     | Python Script | [jcl](#jcl)               | List, save, restore, restart, and configure Claude Code and Codex sessions in tmux; type a command into every idle shell pane |
 | Agents     | Python Script | [agent-bridge](#agent-bridge) | Let Claude Code and Codex sessions message each other by name or session id |
 | Agents     | Python Script | [jskill](#jskill)         | Maintain one skill source shared by Claude Code and Codex |
 | Debug      | Python Script | [gdb_tools](#gdb_tools)     | Python tools for visualizing data structures in memory while debugging with GDB                      |
@@ -37,12 +37,12 @@ Manage local Claude Code and Codex interactive sessions without losing their con
 jcl list                                  # both agents; --json for scripting
 jcl save                                  # snapshot both agents
 jcl show                                  # what the snapshot holds, which of it runs here
-jcl restore --agent codex --dry-run        # preview Codex recovery from the snapshot
-jcl restore --agent codex
-jcl refresh codex --dry-run                # preview restart in the same tmux panes
-jcl refresh codex                          # every Codex pane; `all` is both agents
-jcl refresh 3:11.1                         # one exact pane, either agent
 jcl exit-session all                       # save, then quit both agents; panes stay at the shell
+jcl exit-session 0:6.2 3:4.1               # only these panes; it ends with the restore to run
+jcl restore -n codex                       # preview: which Codex sessions go back into which panes
+jcl restore 0:6.2 3:4.1                    # resume these two in the panes they were saved from
+jcl restart codex                          # save, then quit and resume every Codex pane in place
+jcl restart 3:11.1                         # one exact pane, either agent
 jcl delete -n 01a139e7-7b96                 # what deleting a session for good would do
 jcl delete 3:6.1 01a139e7-7b96             # quit if live, then remove its history; asks first
 jcl set --agent codex --model gpt-6-astra --effort high
@@ -50,9 +50,10 @@ jcl set --effort xhigh --agent codex        # retain each pane's current model
 jcl bridge status                          # agent-bridge, given the rest of the line
 jcl set --model opus --model gpt-6-astra    # route one model to each agent
 jcl set 0:6.2 3:4.1 --model opus --effort max   # only the named panes, either agent
-jcl shell -n 'source ~/.bashrc'            # preview: which shell panes would get it
-jcl shell 'source ~/.bashrc'               # every pane whose shell waits at an empty prompt (Tab completes it)
+jcl shell -n --bashrc                      # preview: which shell panes would get it
+jcl shell --bashrc                         # source ~/.bashrc in every pane whose shell waits at an empty prompt
 jcl shell 'cd ~/myGit/crosslv && git pull' # any command line, quoted as one argument
+jcl shell --display                        # after "Can't open display": point tmux and the panes at a live X11 forward
 jcl resurrect                              # tmux-resurrect saves; marks the one prefix+R restores
 jcl resurrect --use 2                      # make prefix+R restore save 2 (then press prefix+R)
 ```
@@ -66,14 +67,33 @@ must parse in bash and goes out with a leading space, so `HISTCONTROL=ignoreboth
 keeps it out of history, followed by `; tmux set -p -t <pane> @jcl_rc $?`, which
 hands the exit status back. The pane `jcl` runs from gets the plain line last.
 Agents only read shell setup when they start, so after `source ~/.bashrc` it
-prints the `jcl refresh` line for the agent panes it skipped.
+prints the `jcl restart` line for the agent panes it skipped. It takes exactly one
+of a command line, `--bashrc` (`source ~/.bashrc`) or `--display`.
+
+`--display` is for `Can't open display: localhost:N`. An ssh X11 forward lives only
+as long as the connection that opened it; a reconnect gets a new number, and tmux
+and the panes opened before keep the old one. It takes the newest live forward
+(read from `/proc/net/tcp`; all of them reach the X server of the machine the
+connections come from), sets `DISPLAY` in tmux's environment for new panes, and
+runs `export DISPLAY=...` in the open shell panes like any other line, the
+current pane included.
+
+`exit-session`, `restore` and `restart` name sessions in the same words: panes as
+tmux targets (`0:6.2`, several separated by spaces or commas), `claude` or `codex`
+for every session of one agent, `all` for every one, and no default.
+`exit-session` and `restart` look the panes up among the running sessions,
+`restore` among the snapshot's (the first column of `show`), so the panes an
+`exit-session` names can be handed to `restore` as they are; it ends by printing
+that `restore`. `exit-session` and `restart` save the snapshot first, and quit
+nothing if that fails. `restart` is the two in one go, to pick up a new login, MCP
+or config: each agent quits with its own key and is resumed in the pane it left.
 
 `restore` puts each session back only into the pane it was saved from, when that
 pane is still there and passes the same check, and never creates a window: a
 session whose pane is gone or busy is listed with its resume command, to run
-`restore` again once the pane is free or to resume it by hand. The saved pane id
-is trusted only while the tmux server that numbered it still runs; after a server
-restart the pane is found by its position, which tmux-resurrect brings back.
+`jcl restore <pane>` again once the pane is free or to resume it by hand. The saved
+pane id is trusted only while the tmux server that numbered it still runs; after a
+server restart the pane is found by its position, which tmux-resurrect brings back.
 
 `resurrect` lists the saves tmux-resurrect keeps, newest first, with their pane
 and agent counts, and marks `last`, the save `prefix+R` restores. A `prefix+S` on a
@@ -82,9 +102,8 @@ fresh tmux after a reboot, before `prefix+R`, points `last` at a near-empty save
 (N is the number from the list, which Tab completes; a timestamp works too) points `last` back, and
 `prefix+R` restores it. `--use` only moves the `last` link; it deletes nothing.
 
-`restore` and `set` take `--agent` and default to both agents. `refresh` and
-`exit-session` name agents instead: `claude` or `codex` selects every pane of one
-agent, `all` every pane of both. `list`, `save`, and `show` always cover both.
+`set` takes `--agent` and defaults to both agents; `list`, `save`, and `show`
+always cover both.
 `delete` takes no keyword at all: each session is named by its id (8+ leading
 characters) or its pane. A live one in a pane is quit first; a Codex session is
 then removed with `codex delete`, through Codex Desktop's app-server when that
@@ -108,7 +127,7 @@ so the snapshot and the MCP token backup are as new as the last save.
 effort-only changes require its model/effort footer to be visible; otherwise use
 `set --agent codex --model NAME --effort LEVEL`. Unknown/refused commands and
 unconfirmed changes return nonzero. `--no-verify` reports only that keys were sent.
-The calling agent and suspended sessions are excluded from typing and refresh.
+The calling agent and suspended sessions are excluded from typing and restart.
 
 `save-auth`, `restore-auth`, and `fill-auth` continue managing Claude MCP OAuth.
 Codex MCP server entries live in `~/.codex/config.toml`. The entries contain

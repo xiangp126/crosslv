@@ -14,7 +14,7 @@
 
 ### #<n> <one line: what goes wrong, in plain words>
 
-**Side**: <test-tool change / FW change / udriver / existing code> · **Fix**: <full change URL, or "not fixed">
+**Side**: <test-tool change / FW change / udriver / existing code> · **Fix**: <`[<num>](<change URL>)`, or "not fixed">
 
 **How to hit it**: ladder step <k> (<seed, parameters>).
 
@@ -52,7 +52,9 @@ Why it works: <...>. Deliberately not covered: <...>.
 
 <Same layout, or a short entry with a link when the issue is only a question for the FW owner.>
 
-## 4. Pre-existing issues met (not this feature)
+## 4. Pre-existing issues
+
+Met during the runs, not caused by this feature.
 
 | Where it stopped | Verbatim failure | Same failure in the regression DB | Handling |
 |---|---|---|---|

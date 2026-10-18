@@ -15,8 +15,8 @@ if ! declare -F __ltrim_colon_completions &>/dev/null; then
     }
 fi
 
-# The tmux targets refresh can act on, plus the `all` / `claude` / `codex` keywords. Only targets are
-# offered: they are what `list` shows in its first column and what refresh
+# The tmux targets restart can act on, plus the `all` / `claude` / `codex` keywords. Only targets are
+# offered: they are what `list` shows in its first column and what restart
 # accepts. A second python start-up costs ~4ms against the ~700ms `list` itself
 # takes to scan tmux and /proc, so parsing the json properly is effectively free,
 # and it is what keeps pane-less background agents out of the list.
@@ -66,7 +66,38 @@ for rec in records:
 ' "$1" 2>/dev/null
 }
 
-# Complete one SESSION argument of `refresh`.
+# What `restore` takes: the pane each snapshotted session that is not running
+# now was saved from, `all`, and the agents those sessions belong to - so an
+# `exit-session` followed by `restore <Tab>` offers exactly the panes it left.
+# $2 is the snapshot named by -f, if any.
+_jcl_restore_candidates() {
+    local file=${2:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/tmux-snapshot.json}
+    jcl list --json 2>/dev/null | python3 -c '
+import json, os, sys
+used = set(sys.argv[1].replace(",", " ").split())
+try:
+    with open(os.path.expanduser(sys.argv[2])) as fh:
+        saved = json.load(fh).get("sessions", [])
+except (OSError, ValueError):
+    sys.exit(0)
+try:
+    live = {(rec.get("agent"), rec.get("session_id")) for rec in json.load(sys.stdin) if rec.get("alive")}
+except ValueError:
+    live = set()
+back = [rec for rec in saved if rec.get("target") and rec.get("origin") != "desktop"
+        and (rec.get("agent", "claude"), rec.get("session_id")) not in live]
+if not back or "all" in used:
+    sys.exit(0)
+print("all")
+for agent in sorted({rec.get("agent", "claude") for rec in back} - used):
+    print(agent)
+for rec in back:
+    if rec["target"] not in used:
+        print(rec["target"])
+' "$1" "$file" 2>/dev/null
+}
+
+# Complete one SESSION argument of `restart`, `exit-session` or `set`.
 #
 # COMP_WORDS cannot be used to find what is being typed: it has already split
 # 0:6.2 into three words and lost whether a boundary was a space or a colon. The
@@ -206,7 +237,7 @@ _jcl_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore show refresh exit-session shell delete set patch-resurrect resurrect save-auth restore-auth fill-auth bridge"
+    local commands="list save restore show restart exit-session shell delete set patch-resurrect resurrect save-auth restore-auth fill-auth bridge"
     for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
         case "${COMP_WORDS[i]}" in
             --agent) agent="${COMP_WORDS[i+1]:-all}" ;;
@@ -217,7 +248,7 @@ _jcl_complete() {
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | show | refresh | exit-session | shell | delete | set | patch-resurrect | resurrect | save-auth | restore-auth | fill-auth | bridge)
+            list | save | restore | show | restart | exit-session | shell | delete | set | patch-resurrect | resurrect | save-auth | restore-auth | fill-auth | bridge)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -287,11 +318,11 @@ _jcl_complete() {
     case "$cmd" in
         list) opts="-h --help -a --all --json --ids-only -v --verbose" ;;
         save) opts="-h --help -o --output" ;;
-        restore) opts="-h --help --agent -f --file -n --dry-run" ;;
+        restore) opts="-h --help -f --file -n --dry-run" ;;
         show) opts="-h --help -f --file --json" ;;
-        refresh) opts="-h --help --timeout -n --dry-run" ;;
+        restart) opts="-h --help --timeout -n --dry-run" ;;
         exit-session) opts="-h --help --timeout -n --dry-run" ;;
-        shell) opts="-h --help --timeout -n --dry-run" ;;
+        shell) opts="-h --help --bashrc --display --timeout -n --dry-run" ;;
         delete) opts="-h --help -y --yes --timeout -n --dry-run" ;;
         set) opts="-h --help --agent --model --effort --delay --timeout --no-verify -n --dry-run" ;;
         patch-resurrect) opts="-h --help -n --dry-run -v --verbose" ;;
@@ -315,27 +346,35 @@ _jcl_complete() {
         return 0
     fi
 
-    # shell takes one command line, which goes to every shell waiting at its
-    # prompt. The usual one is offered whole, quoted, as the single argument it
-    # has to be; inside a quote already typed, only the text is.
+    # shell takes one command line, or --bashrc / --display for the lines it is
+    # mostly used for: those two are offered until one of the three is there
     if [[ $cmd == shell ]]; then
-        local usual="source ~/.bashrc" w
-        # One command line only: once it is on the line there is nothing more
+        local w
         for ((w = i + 1; w < COMP_CWORD; w++)); do
-            [[ ${COMP_WORDS[w]} == -* || ${COMP_WORDS[w - 1]} == --timeout ]] || return 0
+            case ${COMP_WORDS[w]} in
+                --bashrc | --display) return 0 ;;
+                -*) ;;
+                *) [[ ${COMP_WORDS[w - 1]} == --timeout ]] || return 0 ;;
+            esac
         done
-        # -o filenames (set for the whole of jcl) would escape the quotes
-        # into the argument itself
-        compopt +o filenames 2>/dev/null
-        case "$cur" in
-            \'* | \"*) [[ $usual == "${cur:1}"* ]] && COMPREPLY=("$usual") ;;
-            *) [[ $usual == "$cur"* ]] && COMPREPLY=("'$usual'") ;;
-        esac
+        COMPREPLY=($(compgen -W "--bashrc --display" -- "$cur"))
         return 0
     fi
 
-    # refresh, exit-session and set take any number of SESSION arguments
-    if [[ $cmd == refresh || $cmd == exit-session || $cmd == set ]]; then
+    # restore takes the same SESSION words, looked up in the snapshot it reads
+    if [[ $cmd == restore ]]; then
+        local line="${COMP_LINE:0:$COMP_POINT}" file="" w
+        local word="${line##* }"
+        for ((w = i + 1; w < COMP_CWORD; w++)); do
+            [[ ${COMP_WORDS[w]} == -f || ${COMP_WORDS[w]} == --file ]] && file=${COMP_WORDS[w + 1]}
+        done
+        COMPREPLY=($(compgen -W "$(_jcl_restore_candidates "${line% *}" "$file")" -- "$word"))
+        __ltrim_colon_completions "$word"
+        return 0
+    fi
+
+    # restart, exit-session and set take any number of SESSION arguments
+    if [[ $cmd == restart || $cmd == exit-session || $cmd == set ]]; then
         _jcl_complete_session "$agent"
         # set also needs one of --model/--effort: offer them until one is there
         if [[ $cmd == set && " ${COMP_WORDS[*]} " != *" --model "* && " ${COMP_WORDS[*]} " != *" --effort "* ]]; then

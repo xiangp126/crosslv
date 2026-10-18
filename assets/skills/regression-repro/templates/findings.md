@@ -5,7 +5,7 @@
 
 ## 1. Issue summary
 
-- Redmine: https://redmine.nvidia.com/issues/<ticket#>
+- Redmine: [<ticket#>](https://redmine.nvidia.com/issues/<ticket#>)
 - Failure signature (verbatim):
 
 ```text
@@ -42,7 +42,7 @@
 | key_id (failing step) | <...> |
 | Test / case name | <...> |
 | Time of failure | <...> |
-| view_log | <the view_log.php URL from the ticket> |
+| view_log | [view_log](<the view_log.php URL from the ticket>) |
 
 | Repro execution | |
 |---|---|
@@ -124,7 +124,7 @@ How it was found: `REPRO_<ticket#>.md`, Investigation log §<n>–§<m>.
 
 ## 7. Next steps
 
-- [ ] Gerrit change: <full URL once pushed>
+- [ ] Gerrit change: [<num>](<change URL>), once pushed
 - [ ] Open questions for the code owner: <...>
 - [ ] Follow-up tickets: <sibling cases sharing the defect>
 - Back-port range: first affected release <tag>; <n> releases; active lines hit: <...>;

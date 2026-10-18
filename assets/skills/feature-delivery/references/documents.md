@@ -17,7 +17,7 @@ step-by-step record and no history of SHAs.
 |---|---|---|
 | header | name, Last updated, owners, 2-4 sentences on what the feature is | Last updated changes with every edit |
 | §1 one-sentence verdict + status table | one row per part (test tool, FW, gates, device verification, requirements) | the verdict is the first thing a reader sees; rewrite it whenever the situation changes |
-| §1.1 / §1.2 commits | per repository: not merged, then merged | **owners only** — the feature's owners on each side, current and former; other people's commits in the same area are not this feature's. "Not merged" is the owner's current plan (their own list, a message, the stack they are assembling), not every open change in gerrit: stale and abandoned changes are left out. Merged dates come from the gerrit submit approval (`gerrit query --all-approvals`, type `SUBM`), not from commit dates. Every change is a full URL |
+| §1.1 / §1.2 commits | per repository: not merged, then merged | **owners only** — the feature's owners on each side, current and former; other people's commits in the same area are not this feature's. "Not merged" is the owner's current plan (their own list, a message, the stack they are assembling), not every open change in gerrit: stale and abandoned changes are left out. Merged dates come from the gerrit submit approval (`gerrit query --all-approvals`, type `SUBM`), not from commit dates. Every change is its number linked to its gerrit URL (§6 Links) |
 | §1.2 tail | the FW image under test | base SHA and version + which changes and patchsets + image path and md5 |
 | §1.3 waiting for | one line per person or team | name who, what, since when, and where the draft or message is |
 | §1.4 next steps | short list | |
@@ -34,8 +34,10 @@ Status marks, one meaning each: ✅ done · 🟡 partial or worked around · �
 
 ## 2. `TRACKING_log.md` — the work log (for whoever continues)
 
-Append-only, in time order, never rewritten. One entry per event, headed with the date and time
-and a one-line conclusion; Peter's instruction verbatim when the entry starts from one. A
+Append-only, in time order, never rewritten. One entry per event: the heading is the entry number
+and a short title naming what happened (it is what the reader picks from the table of contents);
+the first line under it holds the date and time and the one-sentence conclusion; then Peter's
+instruction verbatim when the entry starts from one. A
 conclusion that turns out wrong is struck through in place, followed by the correction, its date
 and the criterion to use next time — the struck line stays, or the same mistake is re-derived.
 Entry numbers only grow; never renumber.
@@ -58,7 +60,7 @@ Two companions:
 
 One section per defect, in the order a run from the starting baseline hits them; §0 is that
 reproduction ladder (step, code under test, parameters, which defect, where it stops). Each section
-holds: side, fix (full URL), how to hit it, what happens (verbatim, in a `text` block), root cause
+holds: side, fix (linked change number), how to hit it, what happens (verbatim, in a `text` block), root cause
 (`file:line`), the final diff, why it works and what it deliberately leaves out, rejected
 alternatives with their diffs, the evidence (runs before and after, the control), open questions.
 
@@ -95,8 +97,10 @@ environment problems. Every run and every failure gets a row; nothing is summari
 
 ## 6. Writing rules for every file
 
-These rules hold for every document Peter reads, a ticket's `REPRO` and `FINDINGS` included
-(skill `regression-repro`, `references/ticket-documents.md`).
+These rules hold for every markdown file written for Peter, in any folder and for any purpose —
+this document set, a ticket's `REPRO` and `FINDINGS` (skill `regression-repro`,
+`references/ticket-documents.md`), reports, notes, code-flow write-ups. The global instructions
+(`CLAUDE.md`, `AGENTS.md`) point here.
 
 - **Language**, by reader: documents for Peter — `TRACKING.md`, the work logs, a ticket's
   `REPRO`, reports to him — in his working language, Chinese; documents that leave the team — a
@@ -106,15 +110,39 @@ These rules hold for every document Peter reads, a ticket's `REPRO` and `FINDING
   does.
 - **Failures** are described by where they stopped (`<function>`, `file:line`), never with words
   like "dead" or "killed".
-- **Links**: every `http(s)` resource (gerrit, Jenkins, Redmine, MARS) as a bare full URL, inside
-  table cells too — a markdown label renders as a bare number and hides the repo and host.
-- **Local files the reader opens** — the §6 document table, a report or log a conclusion cites,
-  each file under `tools/` — are relative markdown links, `[defects.md](defects.md)`,
-  `[env_rebuild.sh](tools/env_rebuild.sh)`, so one click opens them. Check that every target
-  exists. A path given to type or copy (a command argument, a path on a lab box) stays in bare
-  backticks. No inline HTML styling such as `<span style="color:…">`: the viewer strips it.
-- **Code fences**: `text` for log lines, `diff` for patches, `cpp` for quoted source, `bash` for
-  commands.
+- **Links**: every external resource (gerrit change, Redmine ticket or FR, Jenkins build, MARS
+  session, Confluence or SharePoint page) is a markdown link whose label is its short name and whose
+  target is the full URL. Never show the URL itself, and never use a URL as its own label.
+  - Gerrit change `[1459033](https://git-nbu.nvidia.com/r/c/fw_ver/utopx/+/1459033)`; one patchset
+    `[1519292 PS4](https://git-nbu.nvidia.com/r/c/golan_fw/+/1519292/4)`.
+  - Redmine `[5298707](https://redmine.nvidia.com/issues/5298707)`, a Feature Request
+    `[FR #4838395](https://redmine.nvidia.com/issues/4838395)`.
+  - Jenkins `[utopx_ci #25763](https://nbuprod.blsm.nvidia.com/nbu-hca-fw-jenkins/job/utopx_ci/25763/)`;
+    a page by its title, `[FWV uArch](https://nvidia.atlassian.net/wiki/spaces/FW/pages/3491039456)`.
+  - **Every mention** of a change or ticket number is linked, in running text and in table cells
+    alike — not only its first one, and not only its row in the commit table — so any number the
+    reader sees opens with one click. A number inside a code span or a code block stays plain.
+  - Check: no `http` outside a link target, and every 7-digit number outside code is a link.
+  - A Confluence page source (markdown carrying HTML and a `<!-- confluence-url: … -->` comment)
+    keeps its HTML tags, attributes and comments untouched; only visible URLs get labels. A blanket
+    URL rewrite breaks the HTML and the publishing tool's page id.
+- **Local files the reader opens** — the §6 document table, another document of the set, a report
+  or a run log cited as evidence (in text, tables and evidence lines alike, also logs under a
+  worktree's `logs/`), each file under `tools/` — are relative markdown links labelled with the file
+  name, `[defects.md](defects.md)`, `[env_rebuild.sh](tools/env_rebuild.sh)`,
+  `[psf_seed902270181_1010_140805.log](../../utopx-psf/logs/psf_seed902270181_1010_140805.log)`, so
+  one click opens them. Check that every target exists; a cited file that is gone stays in
+  backticks. A path given to type or copy (a command argument, a path on a lab box) and a source
+  location (`file:line`) stay in bare backticks. No inline HTML styling such as `<span style="color:…">`: the viewer strips it.
+- **Headings are short titles that say what the section holds**: they become the table of
+  contents, where the reader picks a section to jump to, so a title must tell them which one to
+  pick in a few words. Owners, repositories, branches, timestamps, syndromes, status marks and
+  ordering notes ("newest first") go in the first line under the heading, never in the heading;
+  no links, code spans or emoji in headings.
+- **Code fences**: `text` for log lines, `diff` for patches, `cpp` / `c` for quoted source, `bash`
+  for commands. Peter reads in VS Code's built-in Markdown preview with the `md-preview-plus`
+  extension (`crosslv/assets/cursor/md-preview-plus/`), which colours `diff` lines the way the
+  editor does (added light green, removed orange, no row background).
 - **A code block is never inside a list item.** Cursor's built-in markdown view drops the whole
   section that holds one, and every section after it. Put the block at top level, introduced by a
   bold lead line.

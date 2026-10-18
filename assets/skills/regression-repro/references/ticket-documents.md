@@ -53,7 +53,7 @@ Update in the same step as the event:
 | the root cause is accepted | §3 and the Status line | log: the deciding evidence |
 | a hypothesis turns out wrong | §3 corrected; one §4 line pointing at the log entry | log: struck through in place, with the correction and its date |
 | a fix is built, verified or rejected | §5, §6, the Status line | log: build result (rc, `error:` count, image md5); Run log: the runs |
-| the fix is pushed or merged | §7 | log: change URL, patchset, CI and MARS ids |
+| the fix is pushed or merged | §7 | log: the change as `[<num>](<URL>)`, patchset, CI and MARS ids |
 | the session is interrupted | — | log: what is in flight, and the next step |
 
 ## 3. `FINDINGS`
@@ -80,14 +80,19 @@ Update in the same step as the event:
 - Patches are named by verdict: exactly one `FIX_<topic>.patch`; a disproved candidate becomes
   `REJECTED_<vN>_<why>.patch` the moment it is superseded, and is never deleted.
 - Paths a reader copies stay in backticks: `FINDINGS` travels to Redmine and to HTML, where
-  relative links break. URLs are bare and full, inside tables too.
+  relative links break.
+- External links are a short label linked to the full URL, never the URL itself:
+  `[5298707](https://redmine.nvidia.com/issues/5298707)`, `[1530478](<gerrit change URL>)`,
+  `[utopx_ci #25763](<Jenkins build URL>)`. Every mention of a change or ticket number is linked,
+  in text and tables alike (feature-delivery `references/documents.md` §6). The plain-text
+  `findings_perf_*.txt` are the exception: there a bare URL is the only clickable form.
 
 ## 4. `REPRO`
 
 - The plan on top is edited in place and always shows the current plan.
 - The Investigation log follows the rules of a feature's work log (`feature-delivery`
-  `references/documents.md` §2): one entry per event, headed with the date, time and a one-line
-  conclusion; Peter's words verbatim; Did / Result / Next; a wrong conclusion struck through in
+  `references/documents.md` §2): one entry per event, headed with its number and a short title,
+  the date, time and one-line conclusion in the first line under it; Peter's words verbatim; Did / Result / Next; a wrong conclusion struck through in
   place with the correction; entries only appended, numbers only grow.
 - The Run log is a table, one row per run, rows only appended.
 - At the start of a session read the plan and the last few log entries, not the whole file.

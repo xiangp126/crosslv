@@ -64,15 +64,17 @@ isProject: false
 
 ## Goal
 
-Reproduce the failure of <Redmine URL> by recreating the regression run bit for bit: the same
+Reproduce the failure of [<ticket#>](https://redmine.nvidia.com/issues/<ticket#>) by recreating the regression run bit for bit: the same
 server, FW build, INI, test-tool binary, command, scenario, iterations, environment, seed and
 bring-up steps.
 
-- Redmine: <URL>
+- Redmine: [<ticket#>](https://redmine.nvidia.com/issues/<ticket#>)
 - Failure signature (verbatim): `<exact string from the subject, the FATAL or the verix log>`
 - Success: the local run prints the same signature.
 
-## Environment (decoded from the ticket)
+## Environment
+
+Decoded from the ticket.
 
 | Item | Value | Source |
 |---|---|---|
@@ -90,7 +92,9 @@ bring-up steps.
 
 ## Investigation log
 
-### 1. <YYYY-MM-DD HH:MM CST> — <what was asked or found, stated as a conclusion>
+### 1. <short title: what was found, a few words>
+
+<YYYY-MM-DD HH:MM CST> — <what was asked or found, stated as a conclusion>
 
 <Peter's instruction verbatim, when the entry starts from one>
 

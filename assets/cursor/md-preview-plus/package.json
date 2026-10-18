@@ -1,0 +1,66 @@
+{
+  "name": "md-preview-plus",
+  "displayName": "Markdown Preview Plus",
+  "description": "Built-in Markdown preview: heading sidebar, text column and diff colours; Preview / Markdown buttons in the title bar; preview tabs kept open; Cmd + double click opens the source.",
+  "version": "0.1.0",
+  "publisher": "pexiang",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "markdown.previewStyles": [
+      "./preview.css"
+    ],
+    "markdown.previewScripts": [
+      "./preview.js"
+    ],
+    "commands": [
+      {
+        "command": "mdPreviewPlus.showPreview",
+        "title": "Preview",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "mdPreviewPlus.showSource",
+        "title": "Markdown",
+        "icon": "$(markdown)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mdPreviewPlus.showPreview",
+          "group": "navigation@-100",
+          "when": "resourceLangId == markdown && activeEditor == 'workbench.editors.files.textFileEditor'"
+        },
+        {
+          "command": "mdPreviewPlus.showSource",
+          "group": "navigation@-100",
+          "when": "activeCustomEditorId == 'vscode.markdown.preview.editor'"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "mdPreviewPlus.showPreview",
+          "when": "resourceLangId == markdown"
+        },
+        {
+          "command": "mdPreviewPlus.showSource",
+          "when": "activeCustomEditorId == 'vscode.markdown.preview.editor'"
+        }
+      ]
+    }
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:mdPreviewPlus.showPreview",
+    "onCommand:mdPreviewPlus.showSource"
+  ]
+}

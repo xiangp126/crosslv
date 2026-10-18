@@ -175,33 +175,33 @@ class SessionTests(unittest.TestCase):
              patch.object(jcl, "tmux", return_value="") as tmux:
             path = Path(tmp) / "sessions.json"
             path.write_text(json.dumps({"sessions": [claude, record()]}))
-            rc, out = self.invoke(["restore", "-f", str(path), "--dry-run"])
+            rc, out = self.invoke(["restore", "all", "-f", str(path), "--dry-run"])
             self.assertEqual(rc, 1)  # no pane to go back into: each is listed with its command
             self.assertIn("claude --resume old-claude", out)
             self.assertIn("codex resume " + SID, out)
-            rc, out = self.invoke(["restore", "-f", str(path), "--agent", "codex", "--dry-run"])
+            rc, out = self.invoke(["restore", "codex", "-f", str(path), "--dry-run"])
             self.assertNotIn("claude --resume", out)
         # Reading tmux is fine (restore looks for the pane to reuse); changing it is not
         self.assertTrue(all(c.args[0] in ("list-panes", "display-message") for c in tmux.call_args_list))
 
-    def test_refresh_skips_self_and_uses_stable_pane(self):
+    def test_restart_skips_self_and_uses_stable_pane(self):
         with patch.dict(os.environ, {"CODEX_THREAD_ID": SID}), \
              patch.object(jcl, "collect", return_value=[record()]), \
              patch.object(jcl, "tmux") as tmux, patch.object(jcl.os, "kill") as kill:
-            rc, out = self.invoke(["refresh", "codex"])
+            rc, out = self.invoke(["restart", "codex"])
         self.assertEqual(rc, 1)
         tmux.assert_not_called()
         kill.assert_not_called()
         self.assertIn("Skipping the session", out)
 
-    def test_refresh_resumes_after_graceful_exit(self):
+    def test_restart_resumes_after_graceful_exit(self):
         with patch.object(jcl, "collect", return_value=[record()]), \
              patch.object(jcl, "pane_tail", return_value="gpt-live high · /tmp"), \
              patch.object(jcl, "is_live_agent", return_value=True), \
              patch.object(jcl, "wait_for_exit", return_value=True), \
              patch.object(jcl.time, "sleep"), patch.object(jcl, "tmux") as tmux, \
              patch.object(jcl.os, "kill") as kill:
-            rc, _ = self.invoke(["refresh", "test:1.0"])
+            rc, _ = self.invoke(["restart", "test:1.0"])
         self.assertEqual(rc, 0)
         kill.assert_not_called()
         self.assertEqual(tmux.call_args_list[0].args, ("send-keys", "-t", "%99", "C-d"))
@@ -210,35 +210,83 @@ class SessionTests(unittest.TestCase):
         self.assertIn("codex resume " + SID, resume[4])
         self.assertIn("--model gpt-live", resume[4])
 
-    def test_refresh_no_resume_if_process_survives(self):
+    def test_restart_no_resume_if_process_survives(self):
         with patch.object(jcl, "collect", return_value=[record()]), \
              patch.object(jcl, "pane_tail", return_value=""), \
              patch.object(jcl, "is_live_agent", return_value=True), \
              patch.object(jcl, "wait_for_exit", return_value=False), \
              patch.object(jcl.time, "sleep"), patch.object(jcl, "tmux") as tmux, \
              patch.object(jcl.os, "kill") as kill:
-            rc, _ = self.invoke(["refresh", "codex"])
+            rc, _ = self.invoke(["restart", "codex"])
         self.assertEqual(rc, 1)
         self.assertEqual(kill.call_count, 2)
         self.assertFalse(any("-l" in c.args for c in tmux.call_args_list))
 
-    def test_refresh_dry_run_never_sends_keys_or_signals(self):
+    def test_restart_dry_run_never_sends_keys_or_signals(self):
         with patch.object(jcl, "collect", return_value=[record(), record("claude", "other")]), \
              patch.object(jcl, "pane_tail", return_value=""), \
              patch.object(jcl, "tmux") as tmux, patch.object(jcl.os, "kill") as kill:
-            rc, out = self.invoke(["refresh", "codex", "-n"])
+            rc, out = self.invoke(["restart", "codex", "-n"])
             self.assertEqual(rc, 0)
             self.assertIn("codex resume", out)
             self.assertNotIn("claude --resume", out)
             # `all` is both agents; it used to be Claude unless --agent said otherwise
-            rc, out = self.invoke(["refresh", "all", "-n"])
+            rc, out = self.invoke(["restart", "all", "-n"])
             self.assertEqual(rc, 0)
             self.assertIn("codex resume", out)
             self.assertIn("claude --resume other", out)
             with self.assertRaises(SystemExit):
-                self.invoke(["refresh", "all", "--agent", "codex"])
+                self.invoke(["restart", "all", "--agent", "codex"])
         tmux.assert_not_called()
         kill.assert_not_called()
+        self.assertFalse(self.snapshot.exists())  # a dry run saves nothing either
+
+    def test_restart_saves_the_snapshot_before_quitting(self):
+        def quit_agent(rec, *args):
+            # A session that does not come back is in the snapshot for restore
+            saved = json.loads(self.snapshot.read_text())["sessions"]
+            self.assertEqual([r["session_id"] for r in saved], [rec["session_id"]])
+            return True
+        with patch.object(jcl, "collect", return_value=[record()]), \
+             patch.object(jcl, "is_live_agent", return_value=True), \
+             patch.object(jcl, "pane_tail", return_value=""), \
+             patch.object(jcl, "quit_agent", side_effect=quit_agent) as quit_mock, \
+             patch.object(jcl, "tmux") as tmux:
+            rc, out = self.invoke(["restart", "test:1.0"])
+        self.assertEqual(rc, 0, out)
+        quit_mock.assert_called_once()
+        self.assertLess(out.index("Saved 1 session"), out.index(f"Restarted test:1.0 [codex {SID}]"))
+        self.assertIn("1 restarted", out)
+        typed = [c.args for c in tmux.call_args_list if c.args[3:4] == ("-l",)]
+        self.assertEqual(typed[0][2], "%99")  # back into the pane it left
+        self.assertIn("codex resume " + SID, typed[0][4])
+
+    def test_restart_gives_the_resume_command_when_only_the_typing_failed(self):
+        def tmux(*args, check=True):
+            if "-l" in args:
+                raise subprocess.CalledProcessError(1, "tmux")
+            return ""
+        with patch.object(jcl, "collect", return_value=[record()]), \
+             patch.object(jcl, "is_live_agent", return_value=True), \
+             patch.object(jcl, "pane_tail", return_value=""), \
+             patch.object(jcl, "quit_agent", return_value=True), \
+             patch.object(jcl, "tmux", side_effect=tmux):
+            rc, out = self.invoke(["restart", "test:1.0"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"Exited test:1.0 [codex {SID}], but could not resume it", out)
+        self.assertIn(f"resume: cd '/tmp' && codex resume {SID}", out)
+        self.assertIn("0 restarted · 1 failed", out)
+
+    def test_exit_session_names_the_panes_restore_brings_back(self):
+        recs = [record("claude", sid="c1", pane="%97", target="test:1.2"), record()]
+        with patch.object(jcl, "collect", return_value=recs), \
+             patch.object(jcl, "is_live_agent", return_value=True), \
+             patch.object(jcl, "pane_tail", return_value=""), \
+             patch.object(jcl, "quit_agent", return_value=True):
+            rc, out = self.invoke(["exit-session", "all"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Exited test:1.2 [claude c1]", out)
+        self.assertIn("2 exited · jcl restore test:1.2 test:1.0 brings them back in place", out)
 
     def set_commands(self, argv, panes=None, footer="gpt-current high · /tmp", turn="idle", comes_back=True):
         """What set typed: claude's slash commands, then the resume command each
@@ -367,7 +415,7 @@ class SessionTests(unittest.TestCase):
         self.assertLess(out.index("t:1.2"), out.index("t:1.1"))
         self.assertRegex(out, r"t:1\.1\s+unconfirmed")
 
-    def test_set_takes_named_panes_like_refresh(self):
+    def test_set_takes_named_panes_like_restart(self):
         recs = [record("claude", "c1", pane="%1", target="t:1.1"),
                 record("claude", "c2", pane="%2", target="t:1.2"),
                 record(sid="cx", pane="%3", target="t:1.3")]
@@ -514,26 +562,59 @@ class SessionTests(unittest.TestCase):
              self.restoring([self.pane("test:1.0", "%99", "101")]) as tmux:
             path = Path(tmp) / "sessions.json"
             path.write_text(json.dumps({"sessions": [record(cwd=tmp)]}))
-            rc, out = self.invoke(["restore", "-f", str(path)])
+            rc, out = self.invoke(["restore", "all", "-f", str(path)])
         self.assertEqual(rc, 0, out)
-        self.assertIn("Restored in place", out)
+        self.assertIn("Restored test:1.0", out)
         self.assertEqual([c.args[:3] for c in tmux.call_args_list], [("send-keys", "-t", "%99")] * 2)
 
     def test_restore_leaves_a_busy_or_gone_pane_alone_and_makes_no_window(self):
         # A window made beside the layout put the agent where nobody looked
         # for it; a busy pane is usually busy for a moment (2026-10-16)
-        for panes, reasons, message in (
+        for panes, reasons, message, hint in (
                 ([self.pane("test:1.0", "%99", "101")], {"%99": "in copy mode"},
-                 "Skipped, its pane test:1.0 is busy (in copy mode)"),
-                ([], {}, "Skipped, its pane test:1.0 is gone")):
+                 "Skipped, its pane test:1.0 is busy (in copy mode)", "jcl restore test:1.0 once the pane is free"),
+                ([], {}, "Skipped, its pane test:1.0 is gone", "to resume it elsewhere, run")):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp, \
                  self.restoring(panes, reasons) as tmux:
                 path = Path(tmp) / "sessions.json"
                 path.write_text(json.dumps({"sessions": [record(cwd=tmp)]}))
-                rc, out = self.invoke(["restore", "-f", str(path)])
+                rc, out = self.invoke(["restore", "all", "-f", str(path)])
             self.assertEqual(rc, 1, out)
             self.assertIn(message, out)
+            self.assertIn(hint, out)
             self.assertIn("codex resume " + SID, out)  # the command to run by hand
+            self.assertIn("0 restored · 1 not put back", out)
+            tmux.assert_not_called()
+
+    def test_restore_takes_the_session_words_exit_session_takes(self):
+        saved = [record(sid="cx", pane="%1", target="t:1.0"),
+                 record("claude", "c1", pane="%2", target="t:1.1"),
+                 record("claude", "c2", pane="%3", target="t:1.2")]
+        panes = [self.pane("t:1.0", "%1", "101"), self.pane("t:1.1", "%2", "102"), self.pane("t:1.2", "%3", "103")]
+        for words, typed_into in ((["t:1.1"], ["%2"]), (["t:1.0,t:1.2"], ["%1", "%3"]),
+                                  (["claude"], ["%2", "%3"]), (["codex", "t:1.2"], ["%1", "%3"]),
+                                  (["all"], ["%1", "%2", "%3"])):
+            with self.subTest(words=words), tempfile.TemporaryDirectory() as tmp, \
+                 self.restoring(panes) as tmux:
+                path = Path(tmp) / "sessions.json"
+                path.write_text(json.dumps({"sessions": [dict(rec, cwd=tmp) for rec in saved]}))
+                rc, out = self.invoke(["restore", *words, "-f", str(path)])
+            self.assertEqual(rc, 0, out)
+            self.assertEqual([c.args[2] for c in tmux.call_args_list if c.args[-1] == "Enter"], typed_into)
+            self.assertIn(f"{len(typed_into)} restored", out)
+
+    def test_restore_types_nothing_without_a_name_or_for_one_it_does_not_hold(self):
+        for words, message in (([], "Name at least one SESSION"),
+                               (["t:9.9"], "No session at 't:9.9' in the snapshot"),
+                               (["t:1.0", "t:9.9"], "No session at 't:9.9' in the snapshot"),
+                               (["claude"], "No matching sessions in the snapshot to restore.")):
+            with self.subTest(words=words), tempfile.TemporaryDirectory() as tmp, \
+                 self.restoring([self.pane("t:1.0", "%99", "101")]) as tmux:
+                path = Path(tmp) / "sessions.json"
+                path.write_text(json.dumps({"sessions": [record(cwd=tmp, target="t:1.0")]}))
+                rc, out = self.invoke(["restore", *words, "-f", str(path)])
+            self.assertEqual(rc, 1, out)
+            self.assertIn(message, out)
             tmux.assert_not_called()
 
     def test_restore_finds_the_pane_by_id_only_while_the_server_lives(self):
@@ -546,7 +627,7 @@ class SessionTests(unittest.TestCase):
                  self.restoring(panes, ids_valid=ids_valid) as tmux:
                 path = Path(tmp) / "sessions.json"
                 path.write_text(json.dumps({"sessions": [record(cwd=tmp)]}))
-                rc, out = self.invoke(["restore", "-f", str(path)])
+                rc, out = self.invoke(["restore", "all", "-f", str(path)])
             self.assertEqual(rc, 0, out)
             self.assertEqual({c.args[2] for c in tmux.call_args_list}, {pane_id})
 
@@ -663,7 +744,7 @@ class SessionTests(unittest.TestCase):
                  self.restoring([self.pane("test:1.0", "%99", "101")]) as tmux:
                 path = Path(tmp) / "sessions.json"
                 path.write_text(json.dumps({"sessions": [record(cwd=tmp, **extra)]}))
-                rc, out = self.invoke(["restore", "-f", str(path)])
+                rc, out = self.invoke(["restore", "all", "-f", str(path)])
                 self.assertIn(reason, out)
                 self.assertFalse(any(c.args[0] in ("send-keys", "new-window") for c in tmux.call_args_list))
 
@@ -751,7 +832,7 @@ class SessionTests(unittest.TestCase):
             if reason:
                 self.assertIn(f"skipped: {reason}", out)
         # Sourcing shell setup: the agents it skipped only read it when they start
-        self.assertIn("jcl refresh t:1.1", out)
+        self.assertIn("jcl restart t:1.1", out)
 
     def test_shell_reports_exit_status_output_and_what_still_runs(self):
         panes = [self.pane("t:1.0", "%1", "101"), self.pane("t:1.1", "%2", "102"), self.pane("t:1.2", "%3", "103")]
@@ -794,6 +875,64 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertTrue(typed[0][4].endswith(" @jcl_rc $status"), typed)
 
+    def test_x11_forwards_are_ours_listening_on_localhost_newest_first(self):
+        me, other = os.getuid(), os.getuid() + 1
+        rows = [  # port in hex: 0x177A is 6010
+            ("0100007F:177A", "0A", me, 100),     # display 10
+            ("0100007F:177B", "0A", me, 300),     # display 11, the newest
+            ("0100007F:177E", "0A", me, 200),     # display 14
+            ("0100007F:177C", "0A", other, 400),  # somebody else's
+            ("0100007F:177D", "01", me, 500),     # a connection, not a listener
+            ("00000000:177F", "0A", me, 600),     # not on localhost
+            ("0100007F:0016", "0A", me, 700),     # not an X11 port
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            tcp = Path(tmp, "tcp")
+            tcp.write_text("  sl  local_address rem_address   st ...\n" + "".join(
+                f"   {i}: {local} 00000000:0000 {st} 00000000:00000000 00:00000000 00000000 {uid} 0 {inode} 1\n"
+                for i, (local, st, uid, inode) in enumerate(rows)))
+            self.assertEqual(jcl.x11_forwards(tcp), [11, 14, 10])
+
+    def test_shell_display_points_tmux_and_the_shell_panes_at_the_newest_forward(self):
+        def tmux(*args, check=True):
+            return "0\n3" if args[0] == "list-sessions" else ""
+        for dry_run in (False, True):
+            with self.subTest(dry_run=dry_run), patch.dict(os.environ, {"DISPLAY": "localhost:12.0"}), \
+                 patch.object(jcl, "x11_forwards", return_value=[11, 14]), \
+                 patch.object(jcl, "tmux", side_effect=tmux) as mock, \
+                 patch.object(jcl, "type_into_shells", return_value=0) as typed:
+                rc, out = self.invoke(["shell", "--display", *(["-n"] if dry_run else [])])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("this shell's localhost:12.0 has gone", out)
+            sets = [c.args for c in mock.call_args_list if c.args[0] == "set-environment"]
+            self.assertEqual(sets, [] if dry_run else [
+                ("set-environment", "-g", "DISPLAY", "localhost:11.0"),
+                ("set-environment", "-t", "0", "DISPLAY", "localhost:11.0"),
+                ("set-environment", "-t", "3", "DISPLAY", "localhost:11.0")])
+            self.assertEqual(typed.call_args.args, ("export DISPLAY=localhost:11.0", 10.0, dry_run))
+
+    def test_shell_display_without_a_forward_changes_nothing(self):
+        with patch.object(jcl, "x11_forwards", return_value=[]), \
+             patch.object(jcl, "tmux") as mock, patch.object(jcl, "type_into_shells") as typed:
+            rc, out = self.invoke(["shell", "--display"])
+        self.assertEqual(rc, 1)
+        self.assertIn("No ssh X11 forward is open", out)
+        mock.assert_not_called()
+        typed.assert_not_called()
+
+    def test_shell_bashrc_sources_it(self):
+        rc, out, typed = self.shell(["--bashrc"], [self.pane("t:1.0", "%1", "101")], {"%1": None},
+                                    statuses={"%1": "0"})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(typed[0][4], " source ~/.bashrc; tmux set -p -t %1 @jcl_rc $?")
+
+    def test_shell_takes_exactly_one_of_command_bashrc_display(self):
+        for argv in ([], ["--bashrc", "make"], ["--bashrc", "--display"], ["--display", "make"]):
+            with self.subTest(argv=argv), patch.object(jcl, "type_into_shells") as typed, \
+                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                jcl.main(["shell", *argv])
+            typed.assert_not_called()
+
     def test_idle_shell_reason(self):
         pane = self.pane("t:1.0", "%1", "101")
         for comm, group, mode, empty, reason in (
@@ -824,7 +963,7 @@ class SessionTests(unittest.TestCase):
             rollout.write_text("{}\n")
             path = Path(tmp) / "sessions.json"
             path.write_text(json.dumps({"sessions": [record(cwd=tmp, agent_home=tmp, empty=True)]}))
-            rc, out = self.invoke(["restore", "-f", str(path)])
+            rc, out = self.invoke(["restore", "all", "-f", str(path)])
         self.assertEqual(rc, 0, out)
         typed = [c.args[4] for c in tmux.call_args_list if c.args[:4] == ("send-keys", "-t", "%99", "-l")]
         self.assertEqual(len(typed), 1, out)
@@ -1300,13 +1439,39 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(complete("jcl", "set", ""), ["--effort", "--model", "0:6.2", "all", "claude"])
         self.assertEqual(complete("jcl", "set", "--effort", "max", ""), ["0:6.2", "all", "claude"])
 
+    def test_restore_completes_the_panes_of_snapshotted_sessions_not_running(self):
+        live = json.dumps([{"agent": "claude", "session_id": "up", "alive": True}])
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "tmux-snapshot.json").write_text(json.dumps({"sessions": [
+                {"agent": "claude", "session_id": "up", "target": "0:6.2"},    # running: nothing to restore
+                {"agent": "claude", "session_id": "gone", "target": "0:8.1"},
+                {"agent": "codex", "session_id": "cx", "target": "3:6.1"},
+                {"agent": "codex", "session_id": "desk", "target": "", "origin": "desktop"}]}))
+            other = Path(tmp, "other.json")
+            other.write_text(json.dumps({"sessions": [{"agent": "codex", "session_id": "z", "target": "1:1.1"}]}))
+
+            def complete(*words):
+                line = " ".join(words)
+                script = ("source completion/jcl_completion.bash\n"
+                          f"jcl() {{ printf '%s' {shlex.quote(live)}; }}\n"
+                          f"COMP_WORDS=({' '.join(shlex.quote(w) for w in words)}); COMP_CWORD={len(words) - 1}\n"
+                          f"COMP_LINE={shlex.quote(line)}; COMP_POINT=${{#COMP_LINE}}\n"
+                          "_jcl_complete\nprintf '%s\\n' \"${COMPREPLY[@]}\"\n")
+                proc = subprocess.run(["bash", "-c", script], cwd=ROOT, text=True, capture_output=True,
+                                      check=True, env={**os.environ, "CLAUDE_CONFIG_DIR": tmp})
+                return sorted(proc.stdout.split())
+            self.assertEqual(complete("jcl", "restore", ""), ["0:8.1", "3:6.1", "all", "claude", "codex"])
+            self.assertEqual(complete("jcl", "restore", "0:8.1", ""), ["3:6.1", "all", "claude", "codex"])
+            self.assertEqual(complete("jcl", "restore", "all", ""), [])
+            self.assertEqual(complete("jcl", "restore", "-f", str(other), ""), ["1:1.1", "all", "codex"])
+
     def test_agent_option_offered_where_the_command_has_it(self):
-        for cmd in ("list", "save", "restore", "show", "refresh", "exit-session", "set"):
+        for cmd in ("list", "save", "restore", "show", "restart", "exit-session", "set"):
             script = f"source completion/jcl_completion.bash\nCOMP_WORDS=(jcl {cmd} --a)\nCOMP_CWORD=2\n_jcl_complete\nprintf '%s\\n' \"${{COMPREPLY[@]}}\""
             proc = subprocess.run(["bash", "-c", script], cwd=ROOT, text=True, capture_output=True, check=True)
-            # refresh and exit-session name an agent with `claude` / `codex`
-            # instead; list and show have a column for it; save takes all
-            check = self.assertNotIn if cmd in ("list", "save", "show", "refresh", "exit-session") else self.assertIn
+            # restart, exit-session and restore name an agent with `claude` /
+            # `codex` instead; list and show have a column for it; save takes all
+            check = self.assertIn if cmd == "set" else self.assertNotIn
             check("--agent", proc.stdout.splitlines(), cmd)
 
     def test_bridge_completes_as_agent_bridge_does(self):

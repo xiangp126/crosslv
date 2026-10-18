@@ -107,6 +107,13 @@ flint -d /dev/mst/mt4133_pciconf0 q full | grep -E '^(Base GUID|Base MAC)'   # v
 `Orig Base GUID: N/A` afterwards is expected — the original device data is gone; what matters is
 that Base GUID / Base MAC now read the recorded values.
 
+**On a secure-FW card this is not permanent.** The manufacturing GUIDs went with `-ignore_dev_data`,
+and `flint ... smg` cannot put them back (`-E- Failed to set manufacture guids: Unsupported operation
+under Secure FW`), so **every later normal burn resets Base GUID / MAC to `N/A`** and utopx stops at
+`VHCA.cpp:654 FATAL : base_guid >= 0x10 DETAILS: Unlikely guid value: 0x0`. After each burn on such
+a card: `sg` with the recorded values, reset, verify — and record in the task's notes that the box
+needs it.
+
 ## A recovered card is not yet a usable test environment
 
 Livefish only gets it enumerating. Restore three things, **in this order**:
