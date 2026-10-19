@@ -55,7 +55,15 @@
           "when": "activeCustomEditorId == 'vscode.markdown.preview.editor'"
         }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "mdPreviewPlus.showPreview",
+        "key": "shift+ctrl+v",
+        "mac": "shift+cmd+v",
+        "when": "editorLangId == markdown && !notebookEditorFocused"
+      }
+    ]
   },
   "main": "./extension.js",
   "activationEvents": [

@@ -16,7 +16,7 @@ read -r name ver publisher < <(python3 -c 'import json,sys; d=json.load(open(sys
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/extension"
-cp "$src/package.json" "$src/extension.js" "$src/preview.js" "$src/preview.css" "$tmp/extension/"
+cp "$src/package.json" "$src/extension.js" "$src/preview_patch.js" "$src/preview.js" "$src/preview.css" "$tmp/extension/"
 cat > "$tmp/[Content_Types].xml" <<'XML'
 <?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -49,7 +49,7 @@ XML
 vsix="$tmp/$name-$ver.vsix"
 (cd "$tmp" && python3 -c 'import sys,zipfile
 with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
-    for f in sys.argv[2:]: z.write(f)' "$vsix" "[Content_Types].xml" extension.vsixmanifest extension/package.json extension/extension.js extension/preview.js extension/preview.css)
+    for f in sys.argv[2:]: z.write(f)' "$vsix" "[Content_Types].xml" extension.vsixmanifest extension/package.json extension/extension.js extension/preview_patch.js extension/preview.js extension/preview.css)
 if [ "${1:-}" = "--vsix" ]; then
     cp "$vsix" "${2:?--vsix needs an output file}" && echo "wrote ${2}"
     exit 0

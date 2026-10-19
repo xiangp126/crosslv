@@ -7,7 +7,7 @@
 
 body.vscode-body {
     font-family: 'Helvetica Neue', Helvetica, 'Segoe UI', Arial, freesans, sans-serif;
-    font-size: 13px;
+    font-size: 15px;
     line-height: 1.6;
 }
 
@@ -68,7 +68,7 @@ body.mpp-on {
     padding: 36px 0 24px;
     overflow-x: hidden;
     overflow-y: auto;
-    font-size: 13px;
+    font-size: 8px;
     line-height: 1.4;
     background: var(--vscode-sideBar-background, var(--vscode-editor-background));
     color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
