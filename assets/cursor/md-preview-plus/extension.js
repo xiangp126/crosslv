@@ -1,7 +1,7 @@
 // Preview / Markdown buttons in the editor title bar: switch the active .md tab between the
-// built-in Markdown preview and the text editor in place (open the other kind, close this one).
-// Markdown preview tabs are also kept open, so links to other .md files open new tabs. The built-in
-// preview itself is patched (preview_patch.js): covered tabs stay alive, file#L79 links jump to the line.
+// built-in Markdown preview and the text editor in place (open the other kind, close this one). The
+// built-in preview itself is patched (preview_patch.js): covered tabs stay alive, file#L79 links jump to
+// the line.
 // client/ patches the Cursor app so that a covered tab does not flash when shown again.
 const vscode = require('vscode');
 const path = require('path');
@@ -35,15 +35,6 @@ async function switchActiveTab(toPreview) {
         && (toPreview ? isText(t.input) : isPreview(t.input)) && !t.isDirty);
     if (leftovers.length > 0) {
         await vscode.window.tabGroups.close(leftovers, true);
-    }
-}
-
-// A link to another .md replaces a preview-mode (italic) tab instead of opening its own, so keep
-// every Markdown preview tab the moment it becomes active.
-function keepActivePreviewTab() {
-    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
-    if (tab && tab.isPreview && isPreview(tab.input)) {
-        vscode.commands.executeCommand('workbench.action.keepEditor');
     }
 }
 
@@ -105,9 +96,7 @@ function activate(context) {
     installClient(context);
     context.subscriptions.push(
         vscode.commands.registerCommand('mdPreviewPlus.showPreview', () => switchActiveTab(true)),
-        vscode.commands.registerCommand('mdPreviewPlus.showSource', () => switchActiveTab(false)),
-        vscode.window.tabGroups.onDidChangeTabs(keepActivePreviewTab));
-    keepActivePreviewTab();
+        vscode.commands.registerCommand('mdPreviewPlus.showSource', () => switchActiveTab(false)));
 }
 
 module.exports = { activate };

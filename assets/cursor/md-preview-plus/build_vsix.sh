@@ -10,7 +10,7 @@ set -euo pipefail
 src=$(cd "$(dirname "$0")" && pwd)
 server="$HOME/.cursor-server"
 if [ "${1:-}" = "--styles" ]; then
-    for d in "$server"/extensions/pexiang.md-preview-plus-*/; do
+    for d in "$server"/extensions/*.md-preview-plus-[0-9]*/; do
         cp "$src/preview.js" "$d" && echo "updated $d"
     done
     exit 0
@@ -87,7 +87,8 @@ fi
 "$(ls -td "$server"/bin/linux-x64/*/ | head -1)bin/cursor-server" --install-extension "$work/plus.vsix" --force
 
 IFS=$'\t' read -r name ver publisher _ < <(fields "$src/package.json")
-ln -sfn "$src/preview.css" "$server/extensions/$publisher.$name-$ver/preview.css"
+installed="$server/extensions/${publisher,,}.$name-$ver"   # the extension id in lower case
+ln -sfn "$src/preview.css" "$installed/preview.css"
 settings="$server/data/Machine/settings.json"
 repo_settings="$(cd "$src/.." && pwd)/remote.settings.json"
 if [ ! -L "$settings" ]; then
@@ -98,4 +99,4 @@ if [ ! -L "$settings" ]; then
     mkdir -p "$(dirname "$settings")"
     ln -sfn "$repo_settings" "$settings"
 fi
-echo "linked $server/extensions/$publisher.$name-$ver/preview.css and $settings to this repository"
+echo "linked $installed/preview.css and $settings to this repository"

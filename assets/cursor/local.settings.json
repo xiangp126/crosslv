@@ -558,5 +558,4 @@
     "bookmarks.keepBookmarksOnLineDelete": true,
     "cursor.composer.textSizeScale": 1.15,
     "update.mode": "none",
-    "markdown-preview-enhanced.previewTheme": "vscode.css",
 }

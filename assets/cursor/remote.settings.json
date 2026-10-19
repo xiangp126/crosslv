@@ -33,7 +33,6 @@
         "**/.usr/": true,
         "**/.bash_completion.d/": true
     },
-    "markdown-preview-enhanced.previewColorScheme": "editorColorScheme",
     "markdown.preview.openMarkdownLinks": "inEditor",
     "workbench.editorAssociations": {
         "*.md": "vscode.markdown.preview.editor"

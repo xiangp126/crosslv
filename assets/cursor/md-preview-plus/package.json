@@ -2,8 +2,8 @@
   "name": "md-preview-plus",
   "displayName": "Markdown Preview Plus",
   "description": "Built-in Markdown preview: heading sidebar, text column and diff colours; Preview / Markdown buttons in the title bar; preview tabs kept open; Cmd + double click opens the source.",
-  "version": "0.2.0",
-  "publisher": "pexiang",
+  "version": "0.2.1",
+  "publisher": "markdown-preview-plus",
   "engines": {
     "vscode": "^1.70.0"
   },
