@@ -4,11 +4,10 @@
 
 | | |
 |---|---|
-| 现状（2026-10-20） | 功能都在用；服务器和 Cursor 应用的补丁都验证过，Peter 10-19 在 Mac 上确认切回不闪；升级、重装 Cursor 后一般只需点一次 Quit Cursor 再打开。已知问题：§5 第 14 项 |
+| 现状（2026-10-20） | 功能都在用；服务器和 Cursor 应用的补丁都验证过，Peter 10-19 在 Mac 上确认切回不闪；10-20 确认 Mac 上的 client 是服务器自动装上的，标题栏按钮和 Cmd+Shift+V 也正常。升级、重装 Cursor 后一般只需点一次 Quit Cursor 再打开；Mac 上改 app 包要不要"App 管理"权限，要等下次升级才知道 |
 | 装着的版本 | 服务器：Cursor server `be4c9e5350d77747b42cd467cbd3370a753d4640`（3.24.18），扩展 `markdown-preview-plus.md-preview-plus` 0.2.1。Mac：Cursor 3.24.18（VS Code 1.128.0），client `markdown-preview-plus.md-preview-plus-client` 0.1.0 |
 | 代码 | crosslv `assets/cursor/md-preview-plus/`：服务器那一半在根目录，`client/` 是 Mac 那一半，`tools/` 是测试脚本；远程设置在 [remote.settings.json](../assets/cursor/remote.settings.json) |
-| 提交 | [0d7f44b](https://github.com/xiangp126/crosslv/commit/0d7f44b) 第一版；[24d740f](https://github.com/xiangp126/crosslv/commit/24d740f) 服务器补丁；[6b8971b](https://github.com/xiangp126/crosslv/commit/6b8971b) Cursor 应用补丁、升级后自动恢复；10-20 删 MPE 残留、删 `keepActivePreviewTab()`、作者改名、本文 |
-| 待 Peter | 确认 Mac 扩展列表里有作者为 markdown-preview-plus 的 client，作者为 pexiang 的旧 client 已卸；在 3.24.18 上看 §5 第 14 项；把 Mac 的 ctrl+alt+m 从 `markdown.showPreview` 改绑到 `mdPreviewPlus.showPreview` 或删掉 |
+| 提交 | [0d7f44b](https://github.com/xiangp126/crosslv/commit/0d7f44b) 第一版；[24d740f](https://github.com/xiangp126/crosslv/commit/24d740f) 服务器补丁；[6b8971b](https://github.com/xiangp126/crosslv/commit/6b8971b) Cursor 应用补丁、升级后自动恢复；[beb9707](https://github.com/xiangp126/crosslv/commit/beb9707) 测试脚本、本文、删 MPE 残留、删 `keepActivePreviewTab()`、作者改名 |
 
 ## 1. 名词
 
@@ -47,7 +46,7 @@
 | 左侧目录：☰ 开关，拖侧栏右边缘调宽 | [preview.js](../assets/cursor/md-preview-plus/preview.js)；内容变化时用 MutationObserver 重建，每帧最多一次 |
 | 页内搜索：Cmd+F、Enter / Shift+Enter、↑↓ 翻历史、Aa / ab、Esc | `preview.js`，在 window 的 capture 阶段截下按键，不让 Cursor 那个搜不到东西的查找框弹出（第 4 项） |
 | 正文占满宽度、字号（正文 13.5px、目录 12.5px）、表格在宽度内换行、diff 用编辑器配色 | [preview.css](../assets/cursor/md-preview-plus/preview.css) |
-| 标题栏 Preview / Markdown 按钮，Cmd+Shift+V 原地换成预览 | [extension.js](../assets/cursor/md-preview-plus/extension.js)、[package.json](../assets/cursor/md-preview-plus/package.json)；3.25.9 上不工作（第 14 项） |
+| 标题栏 Preview / Markdown 按钮，Cmd+Shift+V 原地换成预览 | [extension.js](../assets/cursor/md-preview-plus/extension.js)、[package.json](../assets/cursor/md-preview-plus/package.json)；Peter 的 3.24.18 上正常，隔离的 3.25.9 上不工作（第 14 项） |
 | 只有 Cmd+双击才跳源码 | `preview.js` 拦下没按 Cmd 的 dblclick |
 | 预览里点 md 链接开新 tab | 远程设置 `"markdown.preview.openMarkdownLinks": "inEditor"` |
 | 被盖住的 tab 不重建、`#L` 跳行 | 服务器补丁（§4.1） |
@@ -163,9 +162,9 @@ Your Cursor installation appears to be corrupt. Please reinstall.
 |---|---|---|
 | 本扩展 | `shift+cmd+v` → `mdPreviewPlus.showPreview` | 1 |
 | MPE 0.8.27（已删） | `cmd+k v` → `openPreviewToTheSide`；`cmd+shift+v` → `openPreview` | 1、2 |
-| Peter 本机 | `ctrl+alt+m` → `markdown.showPreview`；去掉了 `shift+cmd+v` → `markdown.showPreview` | 用户自己的绑定 |
+| Peter 本机 | `ctrl+alt+m` → `markdown.showPreview`（10-20 删掉）；去掉了 `shift+cmd+v` → `markdown.showPreview` | 用户自己的绑定 |
 
-按 VS Code 的源码（没在 Cursor 上实测）：扩展的每条键位权重是 400 加它在该扩展清单里的序号，自带扩展是 300 加序号（[keybindingService.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/keybinding/browser/keybindingService.ts)、[keybindingsRegistry.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/keybinding/common/keybindingsRegistry.ts)）；查找时从后往前，第一个 `when` 成立的生效（[keybindingResolver.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/keybinding/common/keybindingResolver.ts)）；用户 `keybindings.json` 的绑定总是赢。当时 MPE 的 402 压过本扩展的 401。Peter 一直按的是 ctrl+alt+m，它开的就是带前缀的面板；改没改绑没确认。
+按 VS Code 的源码（没在 Cursor 上实测）：扩展的每条键位权重是 400 加它在该扩展清单里的序号，自带扩展是 300 加序号（[keybindingService.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/keybinding/browser/keybindingService.ts)、[keybindingsRegistry.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/keybinding/common/keybindingsRegistry.ts)）；查找时从后往前，第一个 `when` 成立的生效（[keybindingResolver.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/keybinding/common/keybindingResolver.ts)）；用户 `keybindings.json` 的绑定总是赢。当时 MPE 的 402 压过本扩展的 401。Peter 一直按的是 ctrl+alt+m，它开的就是带前缀的面板；10-20 Peter 把这个键位删了。
 
 ### 13 改 publisher 等于换了扩展 ID
 
@@ -173,7 +172,7 @@ Your Cursor installation appears to be corrupt. Please reinstall.
 
 ### 14 本扩展标题栏的按钮不出现，源码里 Cmd+Shift+V 没反应
 
-还没修，在隔离的 3.25.9 上看到，Peter 的 3.24.18 上没确认。预览 tab 的标题栏上只有自带的 Show Source，没有本扩展的 Markdown 按钮；点 Show Source 打开的源码 tab 是 Cursor 自带 md 视图的 Markdown 模式（编辑区上方有 `.markdown-mode-tab`），不是普通文本编辑器，所以本扩展 Preview 按钮的条件 `activeEditor == 'workbench.editors.files.textFileEditor'` 不成立；在里面按 Ctrl+Shift+V 没反应。Markdown 按钮的条件和 Show Source 一样却没出现，快捷键为什么不触发，都没查。复现：`tools/accept.mjs` 第 5 项。
+只在隔离的 3.25.9 上看到，没修。Peter 10-20 在他的 3.24.18（远程窗口）上确认按钮都在、Cmd+Shift+V 能原地换成预览。可能是 3.25.9 改了什么，也可能和隔离环境是本地窗口有关，没查；Cursor 升级到 3.25 以后要再看一次。预览 tab 的标题栏上只有自带的 Show Source，没有本扩展的 Markdown 按钮；点 Show Source 打开的源码 tab 是 Cursor 自带 md 视图的 Markdown 模式（编辑区上方有 `.markdown-mode-tab`），不是普通文本编辑器，所以本扩展 Preview 按钮的条件 `activeEditor == 'workbench.editors.files.textFileEditor'` 不成立；在里面按 Ctrl+Shift+V 没反应。Markdown 按钮的条件和 Show Source 一样却没出现，快捷键为什么不触发，都没查。复现：`tools/accept.mjs` 第 5 项。
 
 ## 6. 安装、升级、重装
 
@@ -223,7 +222,7 @@ Your Cursor installation appears to be corrupt. Please reinstall.
 | 2 | 目录 | 点 ☰，点目录里一项，拖侧栏右边缘 | 侧栏开合；正文跳到那一节；宽度跟着变，重开后还在 |
 | 3 | 页内搜索 | 预览里 Cmd+F，输入一个词，Enter、↑、Aa、ab、Esc | 右上角出现搜索框和 `n of m`，Enter 跳下一处，↑ 翻出搜过的词，开关生效，Esc 关闭；Cursor 自己的查找框不出现 |
 | 4 | md 链接 | 点预览里指向另一个 `.md` 的链接 | 新开一个 tab，当前 tab 还在 |
-| 5 | 切换按钮和快捷键 | 看预览标题栏有没有 Markdown 按钮；打开源码看有没有 Preview 按钮，按 Cmd+Shift+V | 两个按钮都在，同一个 tab 原地换成预览。3.25.9 上不过（第 14 项） |
+| 5 | 切换按钮和快捷键 | 看预览标题栏有没有 Markdown 按钮；打开源码看有没有 Preview 按钮，按 Cmd+Shift+V | 两个按钮都在，同一个 tab 原地换成预览。Peter 的 3.24.18 上通过，隔离的 3.25.9 上不过（第 14 项） |
 | 6 | 双击 | 在预览里双击、Cmd+双击 | 双击不跳；Cmd+双击打开源码 |
 | 7 | 样式 | 看 diff 代码块和第一列是 change 号的表 | diff 增删行暗色主题 `#b5cea8`、`#ce9178`，浅色 `#098658`、`#a31515`，没有行底色；change 号一行显示 |
 | 8 | 被盖住不重建 | 长文档滚到中间，点代码链接，再点回预览；被盖住时改文件用 `covered_update.mjs` | 立即回到原位置，没有白屏；脚本输出 `rebuilt false`、`updated true`，前后滚动值相同 |
@@ -321,7 +320,7 @@ grep -c 'modified on disk' $(ls -td $W/work/user-data/logs/*/ | head -1)window1/
 | 10-17 | Peter 发现 Page_Supplier 的 TRACKING.md "少了几章"；A/B 对照证实是 Cursor 自带 md 视图吞章节；又查出它会改写文件。试 MPE，嫌白闪、慢放弃；开始在自带预览上自建目录扩展 md-preview-toc |
 | 10-18 | 目录侧栏、标题栏按钮、样式、diff 配色（试了五六版，定为编辑器的配色）、Cmd+双击、全宽和拖宽、页内搜索；md 默认用预览打开、md 链接开新 tab；改名 md-preview-plus；Peter 手动提交第一版 [0d7f44b](https://github.com/xiangp126/crosslv/commit/0d7f44b) |
 | 10-19 | 上午：被盖住的 tab 不重建、`#L` 跳行、Cmd+Shift+V 原地换成预览；14:31 交给 utopx-81。下午：样式软链接、卸 MPE、表格列宽；查清切回闪两下的根因（第 7 项），Mac 上的 agent 打上补丁，Peter 21:25 确认不闪；client 自动安装、升级后自动恢复，push 到 [6b8971b](https://github.com/xiangp126/crosslv/commit/6b8971b)；作者改名；写交接文档，psf-sanity-baseline-test 审了两轮 |
-| 10-20 | 验收脚本、照文档实测升级流程，发现第 14 项；按 Peter 的决定删 MPE 残留、删 `keepActivePreviewTab()`，文档合并成本文 |
+| 10-20 | 验收脚本、照文档实测升级流程，发现第 14 项；按 Peter 的决定删 MPE 残留、删 `keepActivePreviewTab()`，文档合并成本文；Peter 删掉 Mac 上的 ctrl+alt+m，确认 Mac 上 client 已装、标题栏按钮和 Cmd+Shift+V 正常 |
 
 走过的弯路，以及下次该用的判据：
 

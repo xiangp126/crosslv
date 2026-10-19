@@ -6,7 +6,7 @@ VS Code 自带 Markdown 预览的增强。功能：
 - 正文占满窗口宽度，宽表格在宽度内换行；
 - 正文、标题和代码的字号，代码用 Monaco 字体；
 - diff 配色，与编辑器一致；
-- 标题栏的 Preview / Markdown 切换按钮；Cmd+Shift+V 也是原地换成预览，不再开标题带 Preview 的面板（那种面板还能用 Cmd+K V 开）。在 Cursor 3.25.9 上按钮不出现、快捷键没反应，见 [md-preview-plus.md](../../../plans/md-preview-plus.md) §5 第 14 项；
+- 标题栏的 Preview / Markdown 切换按钮；Cmd+Shift+V 也是原地换成预览，不再开标题带 Preview 的面板（那种面板还能用 Cmd+K V 开）（Cursor 3.24.18 上正常；在隔离的 3.25.9 上按钮不出现、快捷键没反应，见 [md-preview-plus.md](../../../plans/md-preview-plus.md) §5 第 14 项）；
 - 点 md 链接新开 tab（靠远程设置，见[配套设置](#配套设置)）；
 - 给自带预览打补丁：tab 被别的 tab 盖住时不销毁，切回来不重新渲染、停在原处；`file#L79` 这种链接跳到那一行（见[给自带预览打的补丁](#给自带预览打的补丁)）；
 - 给 Cursor 本体打补丁：切回被盖住的预览 tab 时不闪（见[给 Cursor 本体打的补丁](#给-cursor-本体打的补丁)）；
