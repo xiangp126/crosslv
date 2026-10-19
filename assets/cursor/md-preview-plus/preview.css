@@ -7,7 +7,7 @@
 
 body.vscode-body {
     font-family: 'Helvetica Neue', Helvetica, 'Segoe UI', Arial, freesans, sans-serif;
-    font-size: 15px;
+    font-size: 13.5px;
     line-height: 1.6;
 }
 
@@ -68,7 +68,7 @@ body.mpp-on {
     padding: 36px 0 24px;
     overflow-x: hidden;
     overflow-y: auto;
-    font-size: 8px;
+    font-size: 12.5px;
     line-height: 1.4;
     background: var(--vscode-sideBar-background, var(--vscode-editor-background));
     color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
@@ -254,12 +254,11 @@ body.mpp-resizing {
     user-select: none;
 }
 
-/* Wide tables: let cells break long file names, links and code at any point, so a table is never
-   wider than the text column. */
+/* Wide tables: long paths and names in code may break at any point, so a table stays within the text
+   column. Only code: anywhere on whole cells let a short column shrink to one character. */
 .markdown-body table {
     max-width: 100%;
 }
-.markdown-body th,
-.markdown-body td {
+.markdown-body table code {
     overflow-wrap: anywhere;
 }

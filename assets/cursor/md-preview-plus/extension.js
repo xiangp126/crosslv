@@ -2,7 +2,9 @@
 // built-in Markdown preview and the text editor in place (open the other kind, close this one).
 // Markdown preview tabs are also kept open, so links to other .md files open new tabs. The built-in
 // preview itself is patched (preview_patch.js): covered tabs stay alive, file#L79 links jump to the line.
+// client/ patches the Cursor app so that a covered tab does not flash when shown again.
 const vscode = require('vscode');
+const path = require('path');
 const { setPatched } = require('./preview_patch');
 
 const PREVIEW = 'vscode.markdown.preview.editor';
@@ -69,8 +71,38 @@ function patchBuiltinPreview() {
     }
 }
 
+// client/ has to run in Cursor on the computer you sit at, which this extension does not reach from the
+// remote: install it there (client.vsix, built by build_vsix.sh), and again when the one here is newer.
+// It answers mdPreviewPlusClient.version; without it that command does not exist.
+async function installClient(context) {
+    const bundled = require('./client/package.json').version;
+    const installed = await vscode.commands.executeCommand('mdPreviewPlusClient.version').then(v => v, () => '0');
+    if (!isOlder(installed, bundled)) {
+        return;
+    }
+    try {
+        await vscode.commands.executeCommand('workbench.extensions.installExtension',
+            vscode.Uri.file(path.join(context.extensionPath, 'client.vsix')));
+        vscode.window.showInformationMessage('md-preview-plus: installed md-preview-plus-client ' + bundled
+            + ' in Cursor on this computer.');
+    } catch (e) {
+        vscode.window.showWarningMessage('md-preview-plus: could not install md-preview-plus-client: ' + e.message);
+    }
+}
+
+function isOlder(a, b) {
+    const x = a.split('.').map(Number), y = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        if ((x[i] || 0) !== (y[i] || 0)) {
+            return (x[i] || 0) < (y[i] || 0);
+        }
+    }
+    return false;
+}
+
 function activate(context) {
     patchBuiltinPreview();
+    installClient(context);
     context.subscriptions.push(
         vscode.commands.registerCommand('mdPreviewPlus.showPreview', () => switchActiveTab(true)),
         vscode.commands.registerCommand('mdPreviewPlus.showSource', () => switchActiveTab(false)),

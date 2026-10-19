@@ -1,0 +1,21 @@
+{
+  "name": "md-preview-plus-client",
+  "displayName": "Markdown Preview Plus (client)",
+  "description": "Patches Cursor on this computer so a covered Markdown preview tab does not flash when shown again. Installed by md-preview-plus.",
+  "version": "0.1.0",
+  "publisher": "pexiang",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:mdPreviewPlusClient.version"
+  ]
+}
