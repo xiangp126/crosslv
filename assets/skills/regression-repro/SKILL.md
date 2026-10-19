@@ -31,7 +31,7 @@ Paths are relative to this skill's directory.
 | skill `lab-box-login` | ssh rules for tool calls and scripts, root login and the shared lab credentials (its `references/lab-credentials.md`, local only), a box whose NFS home is not mounted | when a box rejects your login or a procedure needs root or the ARM password |
 | `templates/findings.md` | the conclusion, in plain English: issue summary, root cause with code evidence + attribution, fix, verification results, next steps | copy to `.../<ticket#>_<core>/FINDINGS_<ticket#>.md` as soon as a root-cause hypothesis exists; **mandatory deliverable** |
 | `templates/repro_perf_{local,remote}.md`, `templates/findings_perf_{local,remote}.txt` | the same two documents for a performance-degradation ticket: bisect the release range, then confirm the commit | instead of `repro.md` / `findings.md` when the ticket is a performance regression |
-| skill `feature-delivery` | only when this ticket is one of several under a feature or another long-running task (weeks, several commits/branches/tickets): that task has a `TRACKING.md`, and this ticket's `FINDINGS` is listed in its §6 and its status kept in its §3 | when the ticket belongs to a bigger effort |
+| skill `feature-delivery` | only when this ticket is one of several under a feature or another long-running task (weeks, several commits/branches/tickets): that task has a `Tracking.md`, and this ticket's `FINDINGS` is listed in its §6 and its status kept in its §3 | when the ticket belongs to a bigger effort |
 
 The rest of this file must fire without opening any of them.
 

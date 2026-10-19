@@ -1,7 +1,7 @@
 # <Feature name> — defects and fixes
 
 > For the owners and reviewers. One section per defect, in the order a run from the starting baseline hits them (the
-> reproduction ladder in §0). The current status of each defect is in `TRACKING.md` §3, not here.
+> reproduction ladder in §0). The current status of each defect is in `Tracking.md` §3, not here.
 > Last updated: <YYYY-MM-DD>
 
 ## 0. Reproduction ladder

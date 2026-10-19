@@ -6,7 +6,7 @@ files link to it and never copy it. Copies drift — the same defect list kept i
 with three different merge dates and a review document that still said "nothing pushed" after the
 push.
 
-## 1. `TRACKING.md` — the feature's status page (for people)
+## 1. `Tracking.md` — the feature's status page (for people)
 
 Readers: Peter, the owners, the reviewers. It answers "where is this feature, what is it waiting
 for, what changed". It is a **current-state** page: edit it in place, keep it short (one or two
@@ -21,7 +21,7 @@ step-by-step record and no history of SHAs.
 | §1.2 tail | the FW image under test | base SHA and version + which changes and patchsets + image path and md5 |
 | §1.3 waiting for | one line per person or team | name who, what, since when, and where the draft or message is |
 | §1.4 next steps | short list | |
-| §1.5 decisions for Peter | question + background | a decision taken moves out of this table; the log keeps the record |
+| §1.5 decisions for Peter | question + background | a decision taken moves out of this table; the ledger keeps the record |
 | §1.6 requirements | one row per Req of the Feature Request | the "Verified?" column is only ✅ when an assertion that can fail exists and a run passed it |
 | §2 test campaigns | one row per campaign, newest first | links the frozen report |
 | §3 defects | one row per defect: one-line problem, side, **status** | the only place a defect's status lives |
@@ -32,7 +32,7 @@ step-by-step record and no history of SHAs.
 Status marks, one meaning each: ✅ done · 🟡 partial or worked around · 🔵 in progress or waiting ·
 🔴 blocked · ⬜ not started or not hit.
 
-## 2. `TRACKING_log.md` — the work log (for whoever continues)
+## 2. `Ledger.md` — the step-by-step record (for whoever continues)
 
 Append-only, in time order, never rewritten. One entry per event: the heading is the entry number
 and a short title naming what happened (it is what the reader picks from the table of contents);
@@ -42,10 +42,10 @@ conclusion that turns out wrong is struck through in place, followed by the corr
 and the criterion to use next time — the struck line stays, or the same mistake is re-derived.
 Entry numbers only grow; never renumber.
 
-What each event records here, next to what it changes in `TRACKING.md`: the event table in
+What each event records here, next to what it changes in `Tracking.md`: the event table in
 `SKILL.md`, "Documents".
 
-At the start of a session read `TRACKING.md` §1 and the last few log entries, not the whole log; at
+At the start of a session read `Tracking.md` §1 and the last few ledger entries, not the whole ledger; at
 the end, or when interrupted, the last entry says what is in flight and what comes next.
 
 Two companions:
@@ -56,7 +56,7 @@ Two companions:
   the SHA on the branch after landing. They differ, and a bare hash later reads as "this commit does
   not exist".
 
-## 3. `defects.md` — defects and fixes (for owners and reviewers)
+## 3. `Defects.md` — defects and fixes (for owners and reviewers)
 
 One section per defect, in the order a run from the starting baseline hits them; §0 is that
 reproduction ladder (step, code under test, parameters, which defect, where it stops). Each section
@@ -64,7 +64,7 @@ holds: side, fix (linked change number), how to hit it, what happens (verbatim, 
 (`file:line`), the final diff, why it works and what it deliberately leaves out, rejected
 alternatives with their diffs, the evidence (runs before and after, the control), open questions.
 
-- **No status in this file** — it lives in `TRACKING.md` §3.
+- **No status in this file** — it lives in `Tracking.md` §3.
 - **Reviewer-safe from day 1**: no reviewer names, no internal process (who asked what, session
   names, the order in which the agent tried things). Owners appear only on the side line.
 - Fixes found while testing someone else's change start as `[Local-Only]` commits; their section here
@@ -86,13 +86,13 @@ environment problems. Every run and every failure gets a row; nothing is summari
 ## 5. `tools/` and `logs/`
 
 - `tools/` is skill `regression-repro`'s `templates/lab-box/` with `MODE=feature`: fill `lab.conf`
-  only; change a script only when no hook can express the need, and record why in the log. A
+  only; change a script only when no hook can express the need, and record why in the ledger. A
   control or a second box gets its own small conf that sources `lab.conf`.
 - Run logs stay in the tested worktree's `logs/`; logs a document cites are copied to the task's
   `logs/`, so deleting a worktree never deletes evidence.
 - **Delete what nothing uses, promptly** — not into an archive: a test log that neither a report,
-  `defects.md` nor `TRACKING.md` cites (once the campaign's report is written), scratch images, build
-  logs, `.bak` copies, replaced documents and scripts. A path cited only in `TRACKING_log.md` does not
+  `Defects.md` nor `Tracking.md` cites (once the campaign's report is written), scratch images, build
+  logs, `.bak` copies, replaced documents and scripts. A path cited only in `Ledger.md` does not
   keep a file. A worktree itself is deleted only when Peter agrees.
 
 ## 6. Writing rules for every file
@@ -102,7 +102,7 @@ this document set, a ticket's `REPRO` and `FINDINGS` (skill `regression-repro`,
 `references/ticket-documents.md`), reports, notes, code-flow write-ups. The global instructions
 (`CLAUDE.md`, `AGENTS.md`) point here.
 
-- **Language**, by reader: documents for Peter — `TRACKING.md`, the work logs, a ticket's
+- **Language**, by reader: documents for Peter — `Tracking.md`, `Ledger.md`, a ticket's
   `REPRO`, reports to him — in his working language, Chinese; documents that leave the team — a
   ticket's `FINDINGS`, Redmine notes — in plain English. Identifiers, log lines and error
   signatures are never translated.
@@ -129,7 +129,7 @@ this document set, a ticket's `REPRO` and `FINDINGS` (skill `regression-repro`,
 - **Local files the reader opens** — the §6 document table, another document of the set, a report
   or a run log cited as evidence (in text, tables and evidence lines alike, also logs under a
   worktree's `logs/`), each file under `tools/` — are relative markdown links labelled with the file
-  name, `[defects.md](defects.md)`, `[env_rebuild.sh](tools/env_rebuild.sh)`,
+  name, `[Defects.md](Defects.md)`, `[env_rebuild.sh](tools/env_rebuild.sh)`,
   `[psf_seed902270181_1010_140805.log](../../utopx-psf/logs/psf_seed902270181_1010_140805.log)`, so
   one click opens them. Check that every target exists; a cited file that is gone stays in
   backticks. A path given to type or copy (a command argument, a path on a lab box) and a source
@@ -148,20 +148,20 @@ this document set, a ticket's `REPRO` and `FINDINGS` (skill `regression-repro`,
   bold lead line.
 - **Dates** absolute (`10-16`, `2026-10-16 14:05 CST`); another session is written as
   `name (id prefix)` — names change, ids do not.
-- **A `§` reference into another file names the file**: `TRACKING_log.md` §42, not "§42".
+- **A `§` reference into another file names the file**: `Ledger.md` §42, not "§42".
 - **Distrust the file**: patchset numbers, tips and states written here are snapshots; re-query the
   live system before acting, and correct the file when it differs.
 - **Diagnosis and disposition are separate**: diagnosing is the agent's job; committing, pushing,
   changing a box or sending a message waits for an order. A proposal goes into §1.5 of
-  `TRACKING.md`, not into action.
+  `Tracking.md`, not into action.
 
 ## 7. What not to create
 
-- Onboarding, handoff or environment-setup documents: §1 and §5 of `TRACKING.md` already answer
+- Onboarding, handoff or environment-setup documents: §1 and §5 of `Tracking.md` already answer
   "where are we" and "how do I run it". A frozen handoff received from someone else may be kept as
   `handoff_from_<who>.md`.
 - A second document for content one of the files above owns (a separate workaround or review
-  document next to `defects.md`; a second status page).
+  document next to `Defects.md`; a second status page).
 - `.bak` copies or `archive_*` directories: a replaced file is deleted, not kept. FW images go to the
   worktree's `logs/`, and only the one under test stays.
 - Optional when the feature needs one: `code_flow.md` (how the code works, with `file:line`) and
@@ -169,17 +169,17 @@ this document set, a ticket's `REPRO` and `FINDINGS` (skill `regression-repro`,
 
 ## 8. Moving an old document set to this one
 
-1. Rename the old append-only ledger to `TRACKING_log.md`, unchanged, with one line on top saying
-   it is the old log.
-2. Write `TRACKING.md` from the template, from the live state (gerrit, boxes) — not by trimming the
+1. Rename the old append-only ledger to `Ledger.md`, unchanged, with one line on top saying
+   it is the old ledger.
+2. Write `Tracking.md` from the template, from the live state (gerrit, boxes) — not by trimming the
    old ledger.
-3. Merge overlapping defect and review documents into `defects.md`.
+3. Merge overlapping defect and review documents into `Defects.md`.
 4. Delete every replaced file and every log the new documents do not cite; repoint references in the
    remaining documents.
 
 ## 9. Other long tasks and tickets inside a feature
 
 - A long task that is not a feature (branch propagation, a multi-ticket campaign) uses the same
-  `TRACKING.md` template: §1.1 / §1.2 become one commit table per target branch.
+  `Tracking.md` template: §1.1 / §1.2 become one commit table per target branch.
 - A bug ticket worked inside a feature runs skill `regression-repro` and keeps its own
-  `FINDINGS_<ticket>.md`; list it in §6 of the feature's `TRACKING.md`.
+  `FINDINGS_<ticket>.md`; list it in §6 of the feature's `Tracking.md`.

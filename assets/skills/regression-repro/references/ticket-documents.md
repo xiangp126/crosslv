@@ -90,7 +90,7 @@ Update in the same step as the event:
 ## 4. `REPRO`
 
 - The plan on top is edited in place and always shows the current plan.
-- The Investigation log follows the rules of a feature's work log (`feature-delivery`
+- The Investigation log follows the rules of a feature's ledger (`feature-delivery`
   `references/documents.md` §2): one entry per event, headed with its number and a short title,
   the date, time and one-line conclusion in the first line under it; Peter's words verbatim; Did / Result / Next; a wrong conclusion struck through in
   place with the correction; entries only appended, numbers only grow.
@@ -107,7 +107,7 @@ sent, then deleted.
 
 ## 6. A ticket inside a feature or a long task
 
-That task's `TRACKING.md` lists this ticket's `FINDINGS` in its §6 and keeps the ticket's status
+That task's `Tracking.md` lists this ticket's `FINDINGS` in its §6 and keeps the ticket's status
 in its §3; this directory keeps everything else.
 
 ## 7. Moving an in-progress ticket to this set

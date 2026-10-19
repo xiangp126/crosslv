@@ -1,6 +1,6 @@
 # <Feature name> — test report <MMDD>, <box>, `<test-tool tree sha>`
 
-> <date and time range>. Written once and not edited afterwards; later corrections go into `TRACKING.md` or a new
+> <date and time range>. Written once and not edited afterwards; later corrections go into `Tracking.md` or a new
 > report.
 
 ## 1. Conclusion

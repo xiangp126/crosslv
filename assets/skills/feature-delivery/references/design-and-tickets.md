@@ -36,7 +36,7 @@ valid one stays `NOT_READY` even with `Code-Review+2`. (PSF: FW `#4838398`, Ver 
 
 Opening tickets: the default channel is Redmine — skill `utopx-regression-ticket` carries the
 field conventions, including that a firmware *defect* found along the way goes to the Design
-project instead. Only an explicit "open a CI ticket" means the ServiceNow form (skill
+project, while a utopx-side one, coverage gaps included, is a `Task` in Verification. Only an explicit "open a CI ticket" means the ServiceNow form (skill
 `ci-support-ticket`).
 
 ## Owners

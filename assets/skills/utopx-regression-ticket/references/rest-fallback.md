@@ -21,6 +21,7 @@ Create with `POST {U}/issues.json`. The MCP's friendly names become numeric ids:
 | `project` | `project_id` | `5581` |
 | `tracker` `Task` | `tracker_id` | **`9`** (`Bug SW` = 28) |
 | `priority` `P1: Critical` | `priority_id` | **`6`** (P2 = 5, P3 = 4) |
+| `status` | `status_id` | New `1`, In Progress `2`, Fixed `16` (`Bug SW` Assigned `12`) |
 | `scrum_type` `Story` | `scrum_type` | **`2`** |
 | `assigned_to` `Peter Xiang` | `assigned_to_id` | **`25616`** |
 | `target_version` | `fixed_version_id` | `9505` |
@@ -28,7 +29,8 @@ Create with `POST {U}/issues.json`. The MCP's friendly names become numeric ids:
 | `Chips` Bronco (BF4) | `custom_fields:[{"id":843,"value":["167"]}]` | note: **list of strings** |
 
 When something 422s, look the ids up rather than trusting this table:
-`{U}/trackers.json` · `{U}/enumerations/issue_priorities.json` ·
+`{U}/trackers.json` · `{U}/issue_statuses.json` · `{U}/projects/<id>.json?include=trackers` ·
+`{U}/enumerations/issue_priorities.json` ·
 `{U}/projects/5581/versions.json?limit=100` · `{U}/custom_fields.json` (needs admin; otherwise read
 the ids off an existing ticket's JSON).
 

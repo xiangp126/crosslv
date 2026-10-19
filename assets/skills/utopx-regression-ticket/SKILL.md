@@ -1,6 +1,6 @@
 ---
 name: utopx-regression-ticket
-description: Open a Redmine ticket for a UTOPX regression or CI failure (the default channel when Peter says "open a ticket"), modelled on #5273909 - field set, subject from the MAIN_FATAL line, a short description, a first comment carrying the evidence with every MARS per-case artifact attached, and the analysis attachment. Also the root cause analysis comment for an existing ticket (what Peter means by "write a root cause analysis"), the HTML format for ANY Redmine description or comment, and how to correct a posted comment in place. Use when opening a ticket or filing a bug for a regression, CI, DoA or MARS-session failure, when asked to write a root cause analysis (RCA) for a ticket, and whenever posting or editing a Redmine comment.
+description: Open a Redmine ticket for a UTOPX regression or CI failure (the default channel when Peter says "open a ticket"), modelled on ticket 5273909 - field set, subject from the MAIN_FATAL line, a short description, a first comment carrying the evidence with every MARS per-case artifact attached, and the analysis attachment. Also the root cause analysis comment for an existing ticket (what Peter means by "write a root cause analysis"), the HTML format for ANY Redmine description or comment, and how to correct a posted comment in place. Use when opening a ticket or filing a bug for a regression, CI, DoA or MARS-session failure, when asked to write a root cause analysis (RCA) for a ticket, when moving a misfiled ticket to another project or tracker, and whenever posting or editing a Redmine comment.
 ---
 
 # Opening a Redmine ticket for a UTOPX regression failure
@@ -22,8 +22,13 @@ Within Redmine, pick the project by subject matter:
 
 | finding | project | tracker |
 |---|---|---|
-| **utopx test defect** — wrong expected value, bad model, a UFATAL in a case that ran | **5581** `ConnectX FW Core - Verification` | Task/Story — the rest of this skill |
+| **utopx defect** — wrong expected value, bad model, a UFATAL in a case that ran, or a draw/config that keeps a feature path from running (coverage gap) | **5581** `ConnectX FW Core - Verification` | **`Task`**, scrum type Story — the rest of this skill |
 | **firmware defect** — FW returns the wrong cap/syndrome, the test is right | **5580** `ConnectX FW Core - Design` | **`Bug SW`**, with `Reported by Department` / `Detected In Version` |
+
+- A utopx-side ticket is never `Bug SW`, although 5581 enables that tracker: utopx tickets are
+  `Task`, like the ones the regression team opens.
+- A ticket found in the wrong project or tracker is moved, not re-filed: "Moving a ticket to
+  another project or tracker".
 
 ## The ticket, end to end — template [#5273909](https://redmine.nvidia.com/issues/5273909)
 
@@ -58,7 +63,7 @@ Gavrieli via the Orion auto-analyzer) and **[#5257991](https://redmine.nvidia.co
 | `tracker` | `Task` | |
 | `scrum_type` | `Story` | required for the ticket to land on the scrum board |
 | `sprint_id` | see **Sprint lookup** below | |
-| `priority` | **`P1: Critical` (id 6)** — the default, use it | do not downgrade (e.g. to P2 because the failure "only" kills one case); priority is Peter's call |
+| `priority` | **`P1: Critical` (id 6)** — the default, use it | P1 = it costs regression: a failing case, or coverage the regression no longer gets (a coverage gap is P1); P2 = an impact outside regression; P3 = no impact, an optimization. Do not downgrade (e.g. to P2 because the failure "only" kills one case); priority is Peter's call |
 | `assigned_to` | full name, e.g. `Peter Xiang`, or `me` | the author is always the authenticated user |
 | `target_version` | `9505` = `Host FW - 51.1000 GA Release (GA-October26)` | **pass the numeric id**; name resolution only checks the project's own versions |
 | `custom_fields` | `{"Chips": "<id>"}` | **numeric chip id only** — `167` = Bronco (BF4), `84` = Mustang (BF3). The `"167=Bronco"` string form is rejected |
@@ -116,6 +121,20 @@ part of the MAIN_FATAL message.
 ## Writing to Redmine — format, posting, correcting
 
 Applies to descriptions and comments.
+
+### Which path writes: MCP or REST
+
+| use | for |
+|---|---|
+| the MCP (`yai__*`) | reads, searches, `create_task`, field and status changes through `update_ticket`: it acts under the user's SSO identity, resolves and validates names (`P1: Critical`, `Fixed`, `me`), writes the plugin fields REST drops (`story_points`, `tags`), and its footer marks the change as AI-made |
+| REST (key in `~/.redmine_env`) | only what the MCP cannot do: moving a ticket to another project or tracker, editing an existing journal, a note with several uploads in one journal (`post_ticket.py`) |
+
+- Every MCP write adds a journal carrying the textile footer; a status or field change gets a
+  journal whose note is the footer alone. Replace it with its HTML form in place (see
+  "Correcting").
+- A REST write carries no AI marker: the history shows it as the user's own change.
+- Read the ticket back after every write: a REST `204` is not proof the value took.
+- Every write — note, field, status, move — needs Peter's go-ahead first.
 
 ### Format: HTML, the way the web editor stores it
 
@@ -352,6 +371,26 @@ A `PUT` returns **204** but the value never lands for:
 `sprint_id`, `priority_id`, `fixed_version_id`, `assigned_to_id`, `custom_fields[Chips]` and
 `uploads` all write fine. Always read back after writing — a 204 is not proof the value took.
 
+## Moving a ticket to another project or tracker
+
+`yai__update_ticket` cannot change the project; use REST once Peter has approved the move.
+
+1. Save the ticket as it is into the ticket directory:
+   `GET {U}/issues/<id>.json?include=journals` — the record of what the move discards.
+2. Check that the target enables the tracker: `GET {U}/projects/<target>.json?include=trackers`.
+3. Move and set the fields in one `PUT {U}/issues/<id>.json`, e.g.
+   `{"issue":{"project_id":5581,"tracker_id":9,"priority_id":6}}` → `204`.
+4. Read it back and expect two side effects:
+   - the status falls back to the new tracker's default when the old status is not in its
+     workflow (`Bug SW` `Assigned` becomes `Task` `New`);
+   - custom fields the target project or tracker does not enable are dropped (from `Bug SW`:
+     `Reported by Department`, `Detected In Version`, `Found on Cluster`, `Review Status`, the AI
+     showstopper fields).
+5. Set the status Peter wants in a second write through the MCP, so the change carries the AI
+   marker, then replace its footer (see "Which path writes").
+
+The move writes one journal of field changes and no note. Ids: `references/rest-fallback.md`.
+
 ## Firmware defect tickets (project 5580)
 
 - Project **5580** `ConnectX FW Core - Design`, tracker **`Bug SW`** (id 28) — not 5581, not 5574.
@@ -362,7 +401,8 @@ A `PUT` returns **204** but the value never lands for:
   5580; name resolution only searches the ticket's own project.
 - Sprint and `scrum_type` Story: the MCP rejects a sprint from another project, and Story without a
   sprint returns 422 — set both on the Redmine UI scrum board.
-- MCP limits on `yai__update_ticket`: it cannot move a ticket to another project (UI only);
+- MCP limits on `yai__update_ticket`: it cannot move a ticket to another project (move it over
+  REST, see "Moving a ticket to another project or tracker");
   `is_private` is not settable; `assigned_to` cannot be empty; status `Rejected` on `Bug SW`
   requires custom field 46 `Rejected reason` from its fixed list (`Other`; `Duplicate issue`
   needs a real "duplicates" relation).

@@ -1,6 +1,6 @@
-# <Feature name> — work log
+# <Feature name> — ledger
 
-> Step-by-step record of the work, for whoever continues it. Status and progress are in `TRACKING.md`.
+> Step-by-step record of the work, for whoever continues it. Status and progress are in `Tracking.md`.
 > Entries are appended in time order and never rewritten. A conclusion that turns out wrong is struck through in place,
 > followed by the correction and its date.
 

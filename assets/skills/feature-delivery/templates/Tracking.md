@@ -1,7 +1,7 @@
 # <Feature name> — feature progress
 
 > Last updated: <YYYY-MM-DD HH:MM CST> · test side: <owner> · FW side: <owner>
-> Status and progress of this feature, for Peter, the owners and the reviewers. Step-by-step records: `TRACKING_log.md`.
+> Status and progress of this feature, for Peter, the owners and the reviewers. Step-by-step records: `Ledger.md`.
 
 **What the feature is**: <2-4 plain sentences — the new behaviour, the function or command it adds, the repos
 involved; e.g. "CX8 gets a page-supplier PCI function (PSF) that hands one large host-memory range to FW, and the
@@ -87,7 +87,7 @@ Newest first.
 
 ## 3. Defects and fixes
 
-The status of every defect lives in this table; how to hit it, the evidence and the fix are in `defects.md`.
+The status of every defect lives in this table; how to hit it, the evidence and the fix are in `Defects.md`.
 
 | # | Problem | Side | Status |
 |---|---|---|---|
@@ -115,9 +115,9 @@ Newest first, one line per day.
 
 | Document | Content |
 |---|---|
-| [defects.md](defects.md) | every defect: how to hit it, verbatim evidence, root cause, fix, rejected alternatives |
+| [Defects.md](Defects.md) | every defect: how to hit it, verbatim evidence, root cause, fix, rejected alternatives |
 | [report_<MMDD>_<box>_<sha>.md](report_<MMDD>_<box>_<sha>.md) | one test campaign each |
-| [TRACKING_log.md](TRACKING_log.md) | step-by-step work log |
+| [Ledger.md](Ledger.md) | step-by-step record of the work |
 | [<document>](<relative path>) | <content> |
 | [tools/lab.conf](tools/lab.conf) | <the box, image, INI, NV recipe and hooks of this task> |
 | [tools/env_rebuild.sh](tools/env_rebuild.sh) | rebuilds the lab-box environment (run on the dev box) |

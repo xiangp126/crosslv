@@ -143,7 +143,7 @@ command.
 | `ci-support-ticket` | Prepare the ServiceNow CI-support form when explicitly requested |
 | `fsearch-failures` | Query regression failure history and attribute occurrences to commits |
 | `regression-repro` | Reproduce a regression locally from Redmine/MARS coordinates |
-| `feature-delivery` | Drive a feature end to end across golan_fw and utopx; keep its documents (`TRACKING.md`, work log, `defects.md`, test reports) from the skill's templates, created on day 0 |
+| `feature-delivery` | Drive a feature end to end across golan_fw and utopx; keep its documents (`Tracking.md`, `Ledger.md`, `Defects.md`, test reports) from the skill's templates, created on day 0 |
 | `noga-lock` | Query, reserve, renew, wait for, and release lab servers |
 | `lab-box-login` | ssh rules for lab boxes, root login and lab credentials, repairing a box whose NFS home is not mounted |
 | `nic-livefish-recovery` | Recover a NIC missing from PCI and avoid unsafe bulk NV writes |

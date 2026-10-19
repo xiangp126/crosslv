@@ -280,7 +280,7 @@ verdict() {
     shift
     echo
     if [ "$rc" = 0 ]; then ok "$*"; else err "$*"; fi
-    note "record it in $TASK_DIR/TRACKING.md with $BASE.*"
+    note "record it in $TASK_DIR/Tracking.md with $BASE.*"
     exit "$rc"
 }
 [ "$INIT" = YES ] || verdict 3 "RUN VOID - the tool never initialised; this run says nothing either way"

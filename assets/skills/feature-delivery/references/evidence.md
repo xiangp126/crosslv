@@ -1,6 +1,6 @@
 # Evidence rules
 
-The bar a conclusion must clear before it goes into `TRACKING.md`, `defects.md` or a report:
+The bar a conclusion must clear before it goes into `Tracking.md`, `Defects.md` or a report:
 **a record is not a proof.** What to record and where: `documents.md`.
 
 ## 1. Every conclusion points at a control
