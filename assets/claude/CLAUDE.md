@@ -110,7 +110,7 @@ yours). Logs that documents cite belong in the ticket's bugZilla directory, not 
 ## Markdown documents
 
 Every `.md` written for Peter — in any folder, for any purpose: tracking pages, work logs, defect
-lists, reports, REPRO / FINDINGS, code-flow write-ups, notes — follows the writing rules in skill
+lists, reports, a ticket's Repro / Rc, code-flow write-ups, notes — follows the writing rules in skill
 `feature-delivery`, `references/documents.md` §6. The ones most often missed:
 
 - External items are short labels linked to the full URL, `[1459033](https://git-nbu…/+/1459033)`,
@@ -178,7 +178,7 @@ it; run them after any change.
 | `utopx-ci-rerun` | re-triggering utopx / golan_fw CI, concurrency and vote preconditions |
 | `ci-forensics` | red build → session_id → MARS archive → the raw failure log |
 | `fsearch-failures` | the regression failure DB: how often / since when / which commit — attribution. New path + Py3.8 since 2026-09, three silent traps |
-| `regression-repro` | a bug ticket end to end: reproduce locally ("regression repro template") → root-cause in FW/utopx source → **verify the fix on the box** → `FINDINGS_<ticket>.md`. Also fires on "find the root cause", "investigate this ticket", "propose/verify a fix" |
+| `regression-repro` | a bug ticket end to end: reproduce locally ("regression repro template") → root-cause in FW/utopx source → **verify the fix on the box** → `Rc_<ticket>.md`. Also fires on "find the root cause", "investigate this ticket", "propose/verify a fix" |
 | `feature-delivery` | a **feature** end to end (the mirror of `regression-repro`): survey both repos' change stacks, find the on/off gates that keep the path dark, per-task worktrees, the daily-wiped reg-box env, and the verdict "did the new code path execute" instead of `TEST PASSED`. Also the feature's documents, created from its templates on day 0: the `Tracking.md` status page (for people), the `Ledger.md` step-by-step record, `Defects.md`, test reports; any other multi-week task gets the same `Tracking.md`. Fires on "take over this feature", "how far is X", "why is this change stuck", "update Tracking.md" |
 | `noga-lock` | querying, locking, waiting for lab servers |
 | `lab-box-login` | getting a shell on a lab box: ssh rules (BatchMode, DISPLAY, ControlMaster, waiting for a reboot), root login and where the lab passwords are, a box whose NFS home is not mounted (autofs, an empty `/etc/auto.master`) |

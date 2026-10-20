@@ -3,15 +3,16 @@ name: regression-repro
 description: >-
   Work a firmware/utopx bug ticket end to end - reproduce a regression, CI or DoA failure locally
   from a Redmine URL or MARS session id, root-cause it in golan_fw or utopx, verify a fix on the
-  lab box, and write the FINDINGS report; what Peter calls the "regression repro template", and
-  home of the rule never to touch l-fwminireg-* boxes. Use to repro a failure, investigate a
-  ticket, find or explain a root cause, say why a test or case fails, or propose or verify a fix.
+  lab box, and write the ticket's root-cause document (Rc); what Peter calls the "regression
+  repro template", and home of the rule never to touch l-fwminireg-* boxes. Use to repro a
+  failure, investigate a ticket, find or explain a root cause, say why a test or case fails, or
+  propose or verify a fix.
 ---
 
 # Regression repro
 
 Turn a single Redmine URL (or MARS session id) into a bit-for-bit local reproduction, root-cause
-it, verify the fix on the box, and deliver `FINDINGS_<ticket#>.md`. When Peter says
+it, verify the fix on the box, and deliver `Rc_<ticket#>.md` (Rc: root cause). When Peter says
 **"regression repro template"**, he means this skill.
 
 Before opening SSH sessions or starting long-running work, read the runtime adapter:
@@ -24,14 +25,14 @@ Paths are relative to this skill's directory.
 
 | File | What it is | When to open it |
 |---|---|---|
-| `templates/repro.md` | the ticket's working document: todo list, Goal, Environment table, then the **Investigation log and Run log (appended LIVE, as findings happen)** | **first** — copy to `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/REPRO_<ticket#>.md` (`references/ticket-documents.md` §0) |
-| `references/ticket-documents.md` | the ticket's two documents, `REPRO_<ticket#>.md` and `FINDINGS_<ticket#>.md`: what each holds, what changes where on each event, what not to create, the FINDINGS rules | at step 0, and before writing either document |
+| `templates/Repro.md` | the ticket's working document: todo list, Goal, Environment table, then the **Investigation log and Run log (appended LIVE, as findings happen)** | **first** — copy to `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/Repro_<ticket#>.md` (`references/ticket-documents.md` §0) |
+| `references/ticket-documents.md` | the ticket's two documents, `Repro_<ticket#>.md` and `Rc_<ticket#>.md`: what each holds, what changes where on each event, what not to create, the `Rc` rules | at step 0, and before writing either document |
 | `references/procedure.md` | Phases 1–11: decode the ticket → extract versions from the tarball → allocate the box → pin repos → burn → bring up → run → confirm → **verify the fix on the box (9.5)** → codify → commit | while working a phase; read only the phase you are on |
 | `references/key-learnings.md` | accumulated traps + a worked example (#5090131, BRONCO/BF4) | when something behaves oddly, and before declaring a verdict |
 | skill `lab-box-login` | ssh rules for tool calls and scripts, root login and the shared lab credentials (its `references/lab-credentials.md`, local only), a box whose NFS home is not mounted | when a box rejects your login or a procedure needs root or the ARM password |
-| `templates/findings.md` | the conclusion, in plain English: issue summary, root cause with code evidence + attribution, fix, verification results, next steps | copy to `.../<ticket#>_<core>/FINDINGS_<ticket#>.md` as soon as a root-cause hypothesis exists; **mandatory deliverable** |
-| `templates/repro_perf_{local,remote}.md`, `templates/findings_perf_{local,remote}.txt` | the same two documents for a performance-degradation ticket: bisect the release range, then confirm the commit | instead of `repro.md` / `findings.md` when the ticket is a performance regression |
-| skill `feature-delivery` | only when this ticket is one of several under a feature or another long-running task (weeks, several commits/branches/tickets): that task has a `Tracking.md`, and this ticket's `FINDINGS` is listed in its §6 and its status kept in its §3 | when the ticket belongs to a bigger effort |
+| `templates/Rc.md` | the conclusion, in plain English: issue summary, root cause with code evidence + attribution, fix, verification results, next steps | copy to `.../<ticket#>_<core>/Rc_<ticket#>.md` as soon as a root-cause hypothesis exists; **mandatory deliverable** |
+| `templates/Repro_perf_{local,remote}.md`, `templates/Rc_perf_{local,remote}.txt` | the same two documents for a performance-degradation ticket: bisect the release range, then confirm the commit | instead of `Repro.md` / `Rc.md` when the ticket is a performance regression |
+| skill `feature-delivery` | only when this ticket is one of several under a feature or another long-running task (weeks, several commits/branches/tickets): that task has a `Tracking.md`, and this ticket's `Rc` is listed in its §6 and its status kept in its §3 | when the ticket belongs to a bigger effort |
 
 The rest of this file must fire without opening any of them.
 
@@ -77,16 +78,16 @@ replace a device A/B when the suspect landed outside the retention window.
 
 ## Records and deliverables
 
-- **Write findings into `REPRO_<ticket#>.md`'s Investigation log as you find them** — code
+- **Write findings into `Repro_<ticket#>.md`'s Investigation log as you find them** — code
   reads, `git blame` attribution, killed hypotheses — not in a write-up reconstructed at the end.
   The chat transcript is gone next session. Keep superseded conclusions in place, marked
   `SUPERSEDED`; never delete them.
-- **`FINDINGS_<ticket#>.md` (from `templates/findings.md`) is the deliverable**, not the chat
+- **`Rc_<ticket#>.md` (from `templates/Rc.md`) is the deliverable**, not the chat
   answer.
 - **"Write a root cause analysis" for the ticket** means one Redmine comment in a fixed shape —
   Summary, then Failure / Root cause / Evidence table / What this is not / Ownership and next
   steps, no attachments: skill `utopx-regression-ticket` → "Root cause analysis" and its template
-  `assets/root_cause_analysis.html`. Write it from `FINDINGS_<ticket#>.md`, show Peter the full
+  `assets/root_cause_analysis.html`. Write it from `Rc_<ticket#>.md`, show Peter the full
   text, post it unchanged after his approval. Correct a posted comment by editing it in place
   (same skill → "Writing to Redmine").
 

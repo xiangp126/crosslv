@@ -93,7 +93,7 @@ Facts that hold in every session live here. Procedures live in the corresponding
 ## Markdown documents
 
 Every `.md` written for Peter — in any folder, for any purpose: tracking pages, work logs, defect
-lists, reports, REPRO / FINDINGS, code-flow write-ups, notes — follows the writing rules in skill
+lists, reports, a ticket's Repro / Rc, code-flow write-ups, notes — follows the writing rules in skill
 `feature-delivery`, `references/documents.md` §6. The ones most often missed:
 
 - External items are short labels linked to the full URL, `[1459033](https://git-nbu…/+/1459033)`,

@@ -59,7 +59,7 @@ The reference is the majority of messages other authors merged on the target bra
   error test on command CREATE_VIRTIO_NET_EMULATION syndrome : 0x69a1b7".` No `FATAL :` prefix,
   no separate quote block.
 - **No verification narrative**: box, seeds, run counts and A/B results belong in the ticket and
-  the FINDINGS report, not in the commit message.
+  its root-cause document (`Rc_<ticket#>.md`), not in the commit message.
 - **Short**: typically 3-16 lines.
 - Title: `Title: [Test Bug] <Area> short summary`, one space after the tag. No `#<ticket>` in the
   title — the ticket goes in `Issue:`.

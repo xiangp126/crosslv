@@ -231,7 +231,7 @@ Template: `assets/root_cause_analysis.html`. Reference:
 
 - No attachments, and no second comment carrying files: the gerrit and MARS links are the trail.
   The attachment rules further down apply to opening a new ticket only.
-- Write it from the ticket's `FINDINGS_<ticket#>.md` (skill `regression-repro`), not from memory.
+- Write it from the ticket's `Rc_<ticket#>.md` (skill `regression-repro`), not from memory.
   Every number and timing comes from the logs and is checked on every run it is claimed for. Repro
   rates count only local runs from the case's starting state; a priming run is listed apart.
 - Mark anything inferred from source but not run as "(from code, not run)".

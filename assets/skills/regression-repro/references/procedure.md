@@ -61,7 +61,7 @@ Extract, in order:
 5. **History** (`journals`) — who reassigned/triaged it and any analysis link (e.g. an Orion
    AI-overview URL); reassignment from the auto-filer to a dev usually marks the start of real triage.
 
-Done when the **Environment** table of `REPRO_<ticket#>.md` (from `templates/repro.md`) is
+Done when the **Environment** table of `Repro_<ticket#>.md` (from `templates/Repro.md`) is
 fully filled from the ticket alone.
 
 ## Phase 2 — Extract the exact versions from the MARS session tarball
@@ -523,7 +523,7 @@ equally valid outcome. Check which repo(s) your change touches before building.
      same seed must give the same signature, count and `LOG_OP` depth (#5285522: official `0290` →
      `0xac5816` x4, GoldenTlv 0, `LOG_OP` 252; local unpatched `0291` → `0xac5816` x4, GoldenTlv 0,
      `LOG_OP` 253 — equivalent).
-   - Record the version correspondence in `FINDINGS_<ticket#>.md` section 2: which artifacts are
+   - Record the version correspondence in `Rc_<ticket#>.md` section 2: which artifacts are
      byte-identical to the ticket's, which single one deviates and why ("did you actually run what
      the ticket ran" is a reviewer's first question — answer it in the document, not in chat).
    - **A locally built image is not the official release image**: even at an identical source tag it
@@ -582,7 +582,7 @@ equally valid outcome. Check which repo(s) your change touches before building.
    - **anything else** (traffic, steering, an unrelated checker) = unrelated failure ⇒ still a fix.
 
    Encode this in the run script's verdict rather than eyeballing it, and state in
-   `FINDINGS_<ticket#>.md` §6 which remaining failures you judged unrelated and why.
+   `Rc_<ticket#>.md` §6 which remaining failures you judged unrelated and why.
 
    Signs you loosened a check **too far**:
    - **`LOG_OP` *below* the unpatched control** — the test now fails *earlier*; a real fix moves the
@@ -621,7 +621,7 @@ equally valid outcome. Check which repo(s) your change touches before building.
       one named copy per candidate with its md5, since `jmake` overwrites the same output file every
       build.
 
-11. **Write / finish `FINDINGS_<ticket#>.md`** (from `templates/findings.md`), starting as soon as a
+11. **Write / finish `Rc_<ticket#>.md`** (from `templates/Rc.md`), starting as soon as a
     root-cause hypothesis exists — not deferred to "the write-up later". It is the deliverable handed
     to Peter and the code owner, produced whether or not the Gerrit commit happens in the same session.
 

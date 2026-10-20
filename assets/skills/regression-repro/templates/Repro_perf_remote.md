@@ -3,7 +3,7 @@ name: <Title of the investigation>
 overview: <One-line summary of what this plan covers>
 todos:
   - id: preflight
-    content: Verify test environment (device, interfaces, docker image)
+    content: Verify test environment (machine, device, interfaces, docker image)
     status: pending
   - id: capture-preburn
     content: Capture current firmware state as restore point
@@ -31,11 +31,11 @@ isProject: false
 
 # <Title of the Investigation>
 
-NOTE: This is the LOCAL version -- execute directly on the test server.
-      No SSH wrappers needed -- all commands run locally.
-      Use this version when no power cycle is needed between test runs.
-      If the test requires power cycling between runs, use the REMOTE version
-      instead (execute from a dev machine, SSH into the test server).
+NOTE: This is the REMOTE version -- execute from a local dev machine, SSH into
+      the test server. Use this version when the test requires power cycling
+      the server between runs (you cannot power cycle from the server itself
+      and maintain the session).
+      If no power cycle is needed between runs, use the LOCAL version instead.
 
 ## Goal
 
@@ -54,7 +54,7 @@ Redmine: [<ticket#>](https://redmine.nvidia.com/issues/<ticket#>)
 
 ## Environment
 
-- Test machine: <hostname> (this machine)
+- Test machine: <hostname>
 - DUT: <device type, e.g. ConnectX-7 (Chimera)>
 - MST device: <e.g. /dev/mst/mt4129_pciconf0>
 - Interfaces: <e.g. eth22, eth23>
@@ -65,15 +65,35 @@ Redmine: [<ticket#>](https://redmine.nvidia.com/issues/<ticket#>)
 - Firmware workspace: <path to golan_fw repo>
 - Private image archive: <path, e.g. /auto/fwgwork1/pexiang/mLX>
 - Plan location: <path to this file>
-- Report: `FINDINGS_<ticket#>.txt` in the ticket dir, from `templates/findings_perf_local.txt`
+- Report: `Rc_<ticket#>.txt` in the ticket dir, from `templates/Rc_perf_remote.txt`
+
+## SSH Session Management
+
+Establish a persistent SSH control socket once, then reuse for all commands:
+
+```bash
+# Open persistent connection (run once at start)
+ssh -fNM -S /tmp/<hostname>.sock pexiang@<hostname>
+
+# All subsequent commands use the control socket
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> '<command>'
+
+# Close when done
+ssh -S /tmp/<hostname>.sock -O exit pexiang@<hostname>
+```
+
+Note: If the server is power-cycled, the control socket will break.
+Re-establish it after the server comes back online.
 
 ## Pre-burn: Capture Current Firmware State
 
 Before burning any image, record the current firmware info as a restore point:
 
 ```bash
-sudo flint -d <device> q full
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q full'
 ```
+
+Note: `sudo` is required for `flint` and all firmware operations.
 
 ## Release-Level Bisection
 
@@ -81,12 +101,14 @@ sudo flint -d <device> q full
 
 Official release:
 ```bash
-jmake --burn-official <version> --device <device> --fw-reset
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> \
+  '$HOME/.usr/bin/jmake --burn-official <version> --device <device> --fw-reset'
 ```
 
-Private image (must specify -w for golan_fw directory):
+Private image:
 ```bash
-jmake --burn --firmware <image_path> --device <device> --fw-reset -w <golan_fw_path>
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> \
+  '$HOME/.usr/bin/jmake --burn --firmware <image_path> --device <device> --fw-reset -w <golan_fw_path>'
 ```
 
 ### Per-Run Procedure
@@ -96,68 +118,37 @@ For each firmware version:
 1. If previous run left device stuck, power cycle first:
 
 ```bash
-sudo ipmitool power cycle
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo ipmitool power cycle'
 ```
 
-Wait for server to come back, then verify uptime to confirm reboot:
+Wait for server to come back, then verify uptime to confirm reboot.
+
+2. Re-establish SSH control socket if power-cycled.
+
+3. Verify device is healthy:
 
 ```bash
-uptime
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> \
+  'uptime && sudo mst restart && sudo flint -d <device> q | head -3'
 ```
 
-2. Restart MST and verify device is healthy:
+4. Burn the firmware image.
+
+5. Verify the running firmware version matches expected:
 
 ```bash
-sudo mst restart
-sudo flint -d <device> q | head -3
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q | head -3'
 ```
 
-3. Burn the firmware image.
+6. Run the repro test.
 
-4. Verify the running firmware version matches expected:
-
-```bash
-sudo flint -d <device> q | head -3
-```
-
-5. Run the repro test.
-
-6. After the test window, check for errors and device health:
-
-```bash
-sudo docker logs <container_id> 2>&1 | grep -iE "CRITICAL|ERROR|Failed|TIMEOUT"
-sudo flint -d <device> q | head -3
-```
-
-7. Stop the container:
-
-```bash
-sudo docker stop <container_id>
-```
+7. After the test window, check for errors and device health.
 
 8. Record the result in the report immediately.
 
-9. Power cycle the server before the next test:
-
-```bash
-sudo ipmitool power cycle
-```
+9. Power cycle the server before the next test.
 
 ### Repro Test Command
-
-Start in detached mode for non-interactive testing:
-```bash
-sudo docker run --rm -d --privileged --net=host \
-  <all repro flags here> \
-  <docker_image> /entrypoint.sh
-```
-
-Or run interactively (Ctrl+C to stop):
-```bash
-sudo docker run --privileged --net=host \
-  <all repro flags here> \
-  -it <docker_image> /entrypoint.sh
-```
 
 <Paste the exact repro command here. Do not modify it across runs.>
 
@@ -176,34 +167,24 @@ If the test leaves the device stuck:
 1. Confirm device is stuck:
 
 ```bash
-sudo flint -d <device> q | head -3
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q | head -3'
 ```
 
 2. Power cycle:
 
 ```bash
-sudo ipmitool power cycle
+ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo ipmitool power cycle'
 ```
 
-3. After reboot, verify uptime confirms actual reboot:
+3. Wait for server, verify uptime confirms actual reboot.
 
-```bash
-uptime
-```
+4. Re-establish SSH control socket.
 
-4. Verify device is accessible before proceeding:
-
-```bash
-sudo mst restart
-sudo flint -d <device> q | head -3
-```
+5. Verify device is accessible before proceeding.
 
 ## Commit-Level Confirmation
 
 ### Build Workflow
-
-Build must be done on a build machine with access to the golan_fw repo.
-The built images are shared via NFS so the test server can access them.
 
 For each commit under test:
 
@@ -236,37 +217,13 @@ and worktrees add unnecessary complexity.
 
 ### Test Workflow
 
-For each private image (run on the test server):
+For each private image:
 
-1. Power cycle the server (fresh boot for every test):
-
-```bash
-sudo ipmitool power cycle
-```
-
-2. After reboot, verify uptime and burn the image:
-
-```bash
-uptime
-sudo mst restart
-jmake --burn --firmware <image_path> --device <device> --fw-reset -w <golan_fw_path>
-```
-
-3. Verify running firmware version:
-
-```bash
-sudo flint -d <device> q | head -3
-```
-
+1. Power cycle the server (fresh boot for every test).
+2. Burn the image.
+3. Verify running firmware version.
 4. Run the repro test.
-
-5. Check results:
-
-```bash
-sudo docker logs <container_id> 2>&1 | grep -iE "CRITICAL|ERROR|Failed|TIMEOUT"
-sudo flint -d <device> q | head -3
-```
-
+5. Check results.
 6. Record in report immediately before proceeding.
 
 ### Decision Rule

@@ -3,7 +3,7 @@ name: <Reproduce Redmine bug #NNNNN locally>
 overview: <Given only a Redmine bug URL, recreate the regression's exact env and reproduce the SAME failure signature locally>
 todos:
   - id: setup-dir
-    content: Create the ticket dir /auto/fwgwork1/$USER/bugZilla/<ticket#>_<core> (references/ticket-documents.md §0) and save this plan there as REPRO_<ticket#>.md
+    content: Create the ticket dir /auto/fwgwork1/$USER/bugZilla/<ticket#>_<core> (references/ticket-documents.md §0) and save this plan there as Repro_<ticket#>.md
     status: pending
   - id: decode-ticket
     content: Decode the Redmine URL → failure signature, test tool, MARS coordinates (results_dir/setup_id/session_id/key_id), machine, device, MST dev, FW version
@@ -44,8 +44,8 @@ todos:
   - id: verify-fix
     content: 'Once a candidate fix exists (golan_fw2 and/or utopx2 - never assume FW-only): build, deploy (reburn FW / rebuild+redeploy utopx), rerun the EXACT pinned command + seed, confirm the signature is gone AND the run ended cleanly, then run a control with the patch removed. Record the verdict in the Run log + Investigation log. Only a VERIFIED fix proceeds to commit-fix (Phase 9.5)'
     status: pending
-  - id: write-findings
-    content: 'Copy templates/findings.md to FINDINGS_<ticket#>.md in the ticket dir and fill it in: issue summary, branch/tag, root cause with code evidence + attribution, proposed fix (diff), verification results, next steps. Start it as soon as a root-cause hypothesis exists; MANDATORY deliverable whether or not commit-fix runs this session'
+  - id: write-rc
+    content: 'Copy templates/Rc.md to Rc_<ticket#>.md in the ticket dir and fill it in: issue summary, branch/tag, root cause with code evidence + attribution, proposed fix (diff), verification results, next steps. Start it as soon as a root-cause hypothesis exists; MANDATORY deliverable whether or not commit-fix runs this session'
     status: pending
   - id: release-box
     content: 'Only when Peter says to release the box: jmake --reg-free <machine> (jk = jmake) after stopping your own watchdog / noga_wait for it. Never jmake --reg-cancel, which releases every box you hold'
@@ -59,7 +59,7 @@ isProject: false
 # Redmine #<ticket#> — <short title>
 
 > The plan, edited in place, then the Investigation log and the Run log, only appended. The
-> conclusion is `FINDINGS_<ticket#>.md`. Procedure: skill `regression-repro`,
+> conclusion is `Rc_<ticket#>.md`. Procedure: skill `regression-repro`,
 > `references/procedure.md`.
 
 ## Goal

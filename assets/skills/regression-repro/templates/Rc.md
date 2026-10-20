@@ -1,4 +1,4 @@
-# Redmine #<ticket#> — Findings
+# Redmine #<ticket#> — Root cause
 
 > `<one-line failure signature>` — `<branch/tag>` / `<device family>` / `<box>`
 > **Status:** `<IN PROGRESS | ROOT-CAUSE FOUND | FIX VERIFIED | VOID | COMMITTED>` · Last updated: `<YYYY-MM-DD>`
@@ -89,7 +89,7 @@ wrong, and where (`file:line`). Name the commit and author when a change introdu
 when it is a latent defect rather than a regression.>
 
 Evidence: <`file:line`; attribution (`git blame` → commit, author, date); the deciding run>.
-How it was found: `REPRO_<ticket#>.md`, Investigation log §<n>–§<m>.
+How it was found: `Repro_<ticket#>.md`, Investigation log §<n>–§<m>.
 
 ## 4. Rejected hypotheses and dead ends
 
@@ -134,8 +134,8 @@ How it was found: `REPRO_<ticket#>.md`, Investigation log §<n>–§<m>.
 
 | File | What it is |
 |---|---|
-| `REPRO_<ticket#>.md` | the plan, the Investigation log and the Run log |
-| `FINDINGS_<ticket#>.md` | this document |
+| `Repro_<ticket#>.md` | the plan, the Investigation log and the Run log |
+| `Rc_<ticket#>.md` | this document |
 | `regression_ini/` | the regression's burned INI, the release default, and their diff |
 | `tools/` | `lab.conf`, `env_rebuild.sh`, `per_run.sh`, `selftest.sh` |
 | `FIX_<topic>.patch` | the fix |

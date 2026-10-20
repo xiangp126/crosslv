@@ -98,13 +98,13 @@ environment problems. Every run and every failure gets a row; nothing is summari
 ## 6. Writing rules for every file
 
 These rules hold for every markdown file written for Peter, in any folder and for any purpose —
-this document set, a ticket's `REPRO` and `FINDINGS` (skill `regression-repro`,
+this document set, a ticket's `Repro` and `Rc` (skill `regression-repro`,
 `references/ticket-documents.md`), reports, notes, code-flow write-ups. The global instructions
 (`CLAUDE.md`, `AGENTS.md`) point here.
 
 - **Language**, by reader: documents for Peter — `Tracking.md`, `Ledger.md`, a ticket's
-  `REPRO`, reports to him — in his working language, Chinese; documents that leave the team — a
-  ticket's `FINDINGS`, Redmine notes — in plain English. Identifiers, log lines and error
+  `Repro`, reports to him — in his working language, Chinese; documents that leave the team — a
+  ticket's `Rc`, Redmine notes — in plain English. Identifiers, log lines and error
   signatures are never translated.
 - **Plain speech**: short sentences, no rhetoric. Explain a mechanism by what it is before what it
   does.
@@ -182,4 +182,4 @@ this document set, a ticket's `REPRO` and `FINDINGS` (skill `regression-repro`,
 - A long task that is not a feature (branch propagation, a multi-ticket campaign) uses the same
   `Tracking.md` template: §1.1 / §1.2 become one commit table per target branch.
 - A bug ticket worked inside a feature runs skill `regression-repro` and keeps its own
-  `FINDINGS_<ticket>.md`; list it in §6 of the feature's `Tracking.md`.
+  `Rc_<ticket>.md`; list it in §6 of the feature's `Tracking.md`.
