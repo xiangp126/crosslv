@@ -15,6 +15,7 @@ fRgPattern=
 fRgLiteral=
 fNoClipboard=
 fXselTimeout=10
+fXsel=xsel        # or jxsel, see setXsel
 fQueryFromClipboard=
 fAllFiles=        # Search all files (ignore type filters)
 fAddTypes=()      # --add-type values, may repeat
@@ -204,6 +205,17 @@ checkDepends() {
     exit 0
 }
 
+# xsel interns some fifteen atoms, one X round trip each, before it reads or
+# clears a selection: over ssh X forwarding to a Mac that took 7.6 s to read and
+# 6.4 s to clear on 2026-10-20. jxsel, next to this script, does the same in
+# 1.7 s and 1.3 s, and runs xsel itself for whatever it cannot do.
+setXsel() {
+    local jxsel
+    jxsel="$(dirname "$(readlink -f "$0")")/jxsel"
+    [[ -x "$jxsel" ]] && command -v python3 &> /dev/null && fXsel="$jxsel"
+    return 0
+}
+
 # Clipboard notes:
 #
 # macOS:
@@ -232,11 +244,12 @@ GetClipboardContent() {
             fi
             [ -n "$fQuery" ] && fQueryFromClipboard=true
         elif [ -n "$DISPLAY" ]; then
+            setXsel
             # Linux with X11 - try CLIPBOARD first (Cmd+C on Mac), then PRIMARY (selection)
-            fQuery=$(timeout $fXselTimeout xsel -o -b 2>/dev/null)
+            fQuery=$(timeout $fXselTimeout "$fXsel" -o -b 2>/dev/null)
             if [[ -z "$fQuery" ]]; then
                 # Fallback to PRIMARY selection
-                fQuery=$(timeout $fXselTimeout xsel -o -p 2>/dev/null)
+                fQuery=$(timeout $fXselTimeout "$fXsel" -o -p 2>/dev/null)
             fi
             [ -n "$fQuery" ] && fQueryFromClipboard=true
         elif [ -n "$SSH_CONNECTION" ]; then
@@ -260,8 +273,8 @@ ClearClipboard() {
                 echo -e "${COLOR}Warning: Failed to clear clipboard content${RESET}" >&2
             fi
         elif [ -n "$DISPLAY" ]; then
-            # Linux with X11 - use xsel
-            if ! timeout $fXselTimeout xsel -c -p 2> /dev/null; then
+            # Linux with X11 - use xsel, or jxsel (setXsel)
+            if ! timeout $fXselTimeout "$fXsel" -c -p 2> /dev/null; then
                 echo -e "${COLOR}Warning: Failed to clear PRIMARY clipboard content${RESET}" >&2
             fi
         fi
@@ -308,7 +321,7 @@ buildFuzzyPattern() {
 # hits, since a wider gap pulls in far more unrelated lines.
 # Takes the rg arguments assembled so far; sets fRgPattern and fRgLiteral.
 resolveRgPattern() {
-    local gap candidate
+    local i patterns=() pids=()
     fRgPattern="$fQuery"
     fRgLiteral=
     [ -n "$fQuery" ] && [ -z "$fREMatching" ] && fRgLiteral=true
@@ -316,14 +329,32 @@ resolveRgPattern() {
     # Only plain identifiers are worth fuzzing; anything else is likely a literal
     # phrase or already carries punctuation that would need escaping.
     [[ $fQuery =~ ^[A-Za-z0-9_]{3,40}$ ]] || return
-    rg --quiet "$@" --fixed-strings "$fQuery" 2> /dev/null && return
 
-    for gap in 2 ""; do
-        candidate=$(buildFuzzyPattern "$fQuery" "$gap")
-        if rg --quiet "$@" "$candidate" 2> /dev/null; then
-            fRgPattern="$candidate"
-            fRgLiteral=
-            fFuzzyFallback=true
+    # The literal search and both fuzzy ones run at once, and the first of them in
+    # that order to hit wins. A miss reads the whole tree, 2 s in golan_fw, so
+    # one after another they kept a query that only matches fuzzily, or not at
+    # all, waiting 4-6 s on 2026-10-20; at once it waits 2.5 s. A script's
+    # background jobs ignore Ctrl-C, so each search gets it back: Ctrl-C stops
+    # them along with jr, as it did when they ran in the foreground.
+    patterns=("$fQuery" "$(buildFuzzyPattern "$fQuery" 2)" "$(buildFuzzyPattern "$fQuery" "")")
+    (trap - INT QUIT; exec rg --quiet "$@" --fixed-strings "${patterns[0]}" 2> /dev/null) &
+    pids+=($!)
+    for i in 1 2; do
+        (trap - INT QUIT; exec rg --quiet "$@" "${patterns[i]}" 2> /dev/null) &
+        pids+=($!)
+    done
+    for i in 0 1 2; do
+        if wait "${pids[i]}"; then
+            # The searches behind the winner no longer matter
+            if (( i < 2 )); then
+                kill "${pids[@]:i+1}" 2> /dev/null
+                wait "${pids[@]:i+1}" 2> /dev/null
+            fi
+            if (( i > 0 )); then
+                fRgPattern="${patterns[i]}"
+                fRgLiteral=
+                fFuzzyFallback=true
+            fi
             return
         fi
     done

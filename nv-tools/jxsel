@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""Read or clear an X selection the way xsel does, in far fewer round trips.
+
+    jxsel -o [-b|-p]    print the CLIPBOARD (-b) or PRIMARY (-p, default) selection
+    jxsel -c [-b|-p]    clear it
+
+Before xsel does anything it interns about fifteen atoms, one round trip each.
+Over ssh X forwarding to a Mac a round trip took 0.32 s on 2026-10-20, so jr
+waited 7.6 s for `xsel -o -b` and 6.4 s for `xsel -c -p`. jxsel sends together
+every request that does not wait on an earlier answer: 1.7 s and 1.3 s.
+
+It follows xsel 1.2.0 step by step: an unmapped window, a timestamp from a
+zero-length property append, UTF8_STRING and then STRING, INCR transfers, the
+text cut at its first NUL. Any other command line, and a display it cannot open
+itself, it hands to xsel by exec-ing it with the same arguments, in the same
+process, so a caller's `timeout` covers xsel as well.
+"""
+
+import os
+import signal
+import socket
+import struct
+import sys
+
+
+# Predefined atoms, event codes and masks of the X11 core protocol
+PRIMARY, STRING, WM_NAME = 1, 31, 39
+PROPERTY_NOTIFY, SELECTION_NOTIFY = 28, 31
+PROPERTY_NEW_VALUE = 0
+PROPERTY_CHANGE_MASK = 1 << 22
+CW_EVENT_MASK = 1 << 11
+FAMILY_INTERNET, FAMILY_LOCAL, FAMILY_WILD = 0, 256, 65535
+
+
+class CannotOpen(Exception):
+    """jxsel cannot open the display; xsel, with all of Xlib, may still."""
+
+
+class XError(Exception):
+    pass
+
+
+def pad(data):
+    return data + b"\0" * (-len(data) % 4)
+
+
+def parse_args(args):
+    """Return (mode, clipboard) for a command line jxsel handles, else None."""
+    mode, clipboard = None, False
+    for arg in args:
+        if arg in ("-b", "--clipboard"):
+            clipboard = True
+        elif arg in ("-p", "--primary"):
+            pass  # xsel too takes CLIPBOARD whenever -b is given, before or after -p
+        elif arg in ("-o", "--output", "-c", "--clear"):
+            this = "output" if arg in ("-o", "--output") else "clear"
+            if mode not in (None, this):
+                return None
+            mode = this
+        else:
+            return None
+    return (mode, clipboard) if mode else None
+
+
+def xauthority_cookie(family, address, number):
+    """The cookie libxcb sends: the first matching MIT-MAGIC-COOKIE-1 entry."""
+    path = os.environ.get("XAUTHORITY")
+    if path is None:
+        home = os.environ.get("HOME")
+        if home is None:
+            return b"", b""
+        path = os.path.join(home, ".Xauthority")
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return b"", b""
+    found = None
+    pos = 0
+
+    def field():
+        nonlocal pos
+        size, = struct.unpack_from(">H", data, pos)
+        pos += 2 + size
+        return data[pos - size:pos]
+
+    while pos < len(data):
+        entry_family, = struct.unpack_from(">H", data, pos)
+        pos += 2
+        entry_address, entry_number, name, cookie = field(), field(), field(), field()
+        if pos > len(data):
+            break  # a truncated entry, which libXau drops too
+        if entry_family != FAMILY_WILD and (entry_family != family or entry_address != address):
+            continue
+        if entry_number and entry_number != number:
+            continue
+        if name == b"XDM-AUTHORIZATION-1":
+            raise CannotOpen  # libxcb would prefer it, and it needs DES
+        if name == b"MIT-MAGIC-COOKIE-1" and found is None:
+            found = name, cookie
+    return found or (b"", b"")
+
+
+def open_socket(host, number):
+    """Connect as libxcb does; return the socket, and the family and address that
+    the display's cookie is filed under."""
+    try:
+        if host in ("", "unix"):
+            path = "/tmp/.X11-unix/X%d" % number
+            for where in ("\0" + path, path):  # libxcb tries the abstract socket first
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    sock.connect(where)
+                    return sock, FAMILY_LOCAL, socket.gethostname().encode()
+                except OSError:
+                    sock.close()
+            raise CannotOpen
+        sock = socket.create_connection((host, 6000 + number))
+        peer = sock.getpeername()[0]
+        if peer in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+            return sock, FAMILY_LOCAL, socket.gethostname().encode()
+        if sock.family == socket.AF_INET:
+            return sock, FAMILY_INTERNET, socket.inet_aton(peer)
+    except OSError:
+        pass
+    raise CannotOpen
+
+
+class Connection:
+    """One X connection, with the event queue and output buffer that Xlib keeps."""
+
+    def __init__(self, display):
+        host, colon, rest = display.rpartition(":")
+        number, _, screen = rest.partition(".")
+        if not colon or host.endswith(":") or "/" in host or not number.isdigit() \
+                or not (screen == "" or screen.isdigit()):
+            raise CannotOpen
+        number, screen = int(number), int(screen or 0)
+        self.sock, family, address = open_socket(host, number)
+        self.data = bytearray()
+        self.out = b""
+        self.events = []
+        name, cookie = xauthority_cookie(family, address, str(number).encode())
+        self.send(struct.pack("<cxHHHH2x", b"l", 11, 0, len(name), len(cookie)) + pad(name) + pad(cookie))
+        try:
+            head = self.read(8)
+            body = self.read(4 * struct.unpack_from("<H", head, 6)[0])
+        except (OSError, EOFError):
+            raise CannotOpen
+        if head[0] != 1:
+            raise CannotOpen
+        id_base, id_mask = struct.unpack_from("<II", body, 4)
+        vendor_size, = struct.unpack_from("<H", body, 16)
+        screens, formats = body[20], body[21]
+        if screen >= screens:
+            raise CannotOpen
+        pos = 32 + vendor_size + (-vendor_size % 4) + 8 * formats
+        for _ in range(screen):
+            depths = body[pos + 39]
+            pos += 40
+            for _ in range(depths):
+                pos += 8 + 24 * struct.unpack_from("<H", body, pos + 2)[0]
+        self.root, = struct.unpack_from("<I", body, pos)
+        self.window = id_base | (id_mask & -id_mask)
+
+    def send(self, data):
+        self.sock.sendall(data)
+
+    def buffer(self, request):
+        """Hold a request that nothing waits on, as Xlib does until it next reads."""
+        self.out += request
+
+    def flush(self, *requests):
+        self.send(self.out + b"".join(requests))
+        self.out = b""
+
+    def read(self, size):
+        while len(self.data) < size:
+            chunk = self.sock.recv(max(1 << 16, size - len(self.data)))
+            if not chunk:
+                raise EOFError("the X server closed the connection")
+            self.data += chunk
+        result = bytes(self.data[:size])
+        del self.data[:size]
+        return result
+
+    def packet(self):
+        if self.out:
+            self.flush()
+        head = self.read(32)
+        if head[0] == 0:
+            raise XError("X error %d on request %d" % (head[1], head[10]))
+        if head[0] == 1:
+            return head + self.read(4 * struct.unpack_from("<I", head, 4)[0])
+        return head
+
+    def reply(self):
+        """The next reply; events that arrive first wait in the queue."""
+        while True:
+            packet = self.packet()
+            if packet[0] == 1:
+                return packet
+            self.events.append(packet)
+
+    def next_event(self, wanted):
+        """The first event wanted() accepts; xsel's XNextEvent loops drop the ones before it."""
+        while True:
+            event = self.events.pop(0) if self.events else self.packet()
+            if event[0] == 1:
+                raise XError("a reply where an event was expected")
+            if wanted(event):
+                return event
+
+    def start(self, names):
+        """Create the window, take a timestamp and intern names, all in one round trip."""
+        requests = [
+            struct.pack("<BBHIIhhHHHHII", 1, 0, 9, self.window, self.root, 0, 0, 1, 1, 0, 1, 0,
+                        CW_EVENT_MASK) + struct.pack("<I", PROPERTY_CHANGE_MASK),
+            struct.pack("<BBHIIIB3xI", 18, 2, 6, self.window, WM_NAME, STRING, 8, 0),
+        ]
+        for name, only_if_exists in names:
+            requests.append(struct.pack("<BBHH2x", 16, only_if_exists, 2 + (len(name) + 3) // 4,
+                                        len(name)) + pad(name))
+        self.flush(*requests)
+        atoms = [struct.unpack_from("<I", self.reply(), 8)[0] for _ in names]
+        event = self.next_event(lambda e: e[0] & 0x7F == PROPERTY_NOTIFY)
+        self.time, = struct.unpack_from("<I", event, 12)
+        return atoms
+
+    def get_property(self, window, prop, delete):
+        """Type, format, item count and value, the value laid out as XGetWindowProperty returns it."""
+        self.flush(struct.pack("<BBHIIIII", 20, delete, 6, window, prop, 0, 0, 1000000))
+        reply = self.reply()
+        fmt = reply[1]
+        type_, _, items = struct.unpack_from("<III", reply, 8)
+        value = reply[32:32 + items * fmt // 8]
+        if fmt == 32:
+            # C longs, sign-extended
+            value = b"".join(value[i:i + 4] + (b"\xff" * 4 if value[i + 3] & 0x80 else b"\0" * 4)
+                             for i in range(0, len(value), 4))
+        return type_, fmt, items, value
+
+    def delete_property(self, window, prop):
+        self.buffer(struct.pack("<BxHII", 19, 3, window, prop))
+
+
+def get_selection(conn, selection, target, prop, incr, texts):
+    """xsel's get_selection(): the text, or None if the owner refuses or sends no text."""
+    conn.flush(struct.pack("<BxHIIIII", 24, 6, conn.window, selection, target, prop, conn.time))
+    event = conn.next_event(lambda e: e[0] & 0x7F == SELECTION_NOTIFY
+                            and struct.unpack_from("<I", e, 12)[0] == selection)
+    requestor, _, _, got = struct.unpack_from("<IIII", event, 8)
+    if not got:
+        return None
+    type_, _, _, value = conn.get_property(requestor, got, False)
+    if type_ == incr:
+        text = bytearray()
+        conn.delete_property(requestor, got)
+        while True:
+            conn.next_event(lambda e: e[0] & 0x7F == PROPERTY_NOTIFY and e[16] == PROPERTY_NEW_VALUE)
+            type_, fmt, items, value = conn.get_property(requestor, got, True)
+            if type_ not in texts:
+                text = None
+                break
+            if items == 0:
+                break
+            if fmt == 8:
+                text += value
+        conn.delete_property(requestor, got)
+    elif type_ in texts:
+        text = value
+    else:
+        text = None
+    conn.delete_property(requestor, got)
+    return None if text is None else bytes(text).split(b"\0", 1)[0]
+
+
+def output(conn, clipboard):
+    names = [(b"UTF8_STRING", True), (b"XSEL_DATA", False), (b"INCR", False),
+             (b"COMPOUND_TEXT", False)]
+    if clipboard:
+        names.append((b"CLIPBOARD", False))
+    atoms = conn.start(names)
+    utf8, prop, incr, compound = atoms[:4]
+    utf8 = utf8 or STRING
+    selection = atoms[4] if clipboard else PRIMARY
+    texts = (utf8, STRING, compound)
+    text = get_selection(conn, selection, utf8, prop, incr, texts)
+    if text is None:
+        text = get_selection(conn, selection, STRING, prop, incr, texts)
+    if text:
+        sys.stdout.buffer.write(text)
+        if not text.endswith(b"\n") and os.isatty(1):
+            sys.stdout.flush()
+            sys.stderr.write("\n\\ No newline at end of selection\n")
+
+
+def clear(conn, clipboard):
+    atoms = conn.start([(b"CLIPBOARD", False)] if clipboard else [])
+    selection = atoms[0] if clipboard else PRIMARY
+    conn.flush(struct.pack("<BxHIII", 22, 4, 0, selection, conn.time), struct.pack("<BxH", 43, 1))
+    conn.reply()
+
+
+def exec_xsel():
+    try:
+        os.execvp("xsel", ["xsel"] + sys.argv[1:])
+    except OSError as e:
+        sys.stderr.write("jxsel: cannot run xsel: %s\n" % e)
+    return 127
+
+
+def main():
+    # Die on these as xsel does, without a traceback
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
+        summary, usage = __doc__.split("\n\n")[:2]
+        sys.stdout.write("%s\n\n%s\n\nAny other command line runs xsel.\n" % (summary, usage))
+        return 0
+    parsed = parse_args(sys.argv[1:])
+    if parsed is None:
+        return exec_xsel()
+    try:
+        conn = Connection(os.environ.get("DISPLAY", ""))
+    except (CannotOpen, OSError, EOFError, struct.error, IndexError, ValueError):
+        return exec_xsel()
+    try:
+        if parsed[0] == "output":
+            output(conn, parsed[1])
+        else:
+            clear(conn, parsed[1])
+    except (XError, OSError, EOFError) as e:
+        sys.stderr.write("jxsel: %s\n" % e)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
