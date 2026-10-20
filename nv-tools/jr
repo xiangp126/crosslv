@@ -15,7 +15,7 @@ fRgPattern=
 fRgLiteral=
 fNoClipboard=
 fXselTimeout=10
-fXsel=xsel        # or jxsel, see setXsel
+fJxsel=           # jxsel next to this script, see setJxsel
 fQueryFromClipboard=
 fAllFiles=        # Search all files (ignore type filters)
 fAddTypes=()      # --add-type values, may repeat
@@ -40,15 +40,15 @@ This script requires the following dependencies:
 - rg (ripgrep)
 - fzf (fuzzy finder)
 - bat (cat replacement)
-- xsel (clipboard manager, Linux with X11) or pbpaste/pbcopy (macOS)
+- python3 for jxsel, next to this script (clipboard, Linux with X11) or pbpaste/pbcopy (macOS)
 - code/vim
 
 Run this script with the --check-depends option to check if these dependencies are installed.
 
 Clipboard support:
 - macOS (local): Uses pbpaste/pbcopy natively
-- macOS -> Linux (SSH): Use XQuartz with X11 forwarding (ssh -X) for xsel support
-- Windows -> Linux (SSH): Use XLaunch/VcXsrv with X11 forwarding for xsel support
+- macOS -> Linux (SSH): Use XQuartz with X11 forwarding (ssh -X) for clipboard support
+- Windows -> Linux (SSH): Use XLaunch/VcXsrv with X11 forwarding for clipboard support
 
 Options:
     -h, --help               Print this help message
@@ -166,7 +166,8 @@ checkDepends() {
     if [[ "$OSType" == "Darwin" ]]; then
         depends+=("pbpaste" "pbcopy")
     else
-        depends+=("xsel")
+        setJxsel
+        depends+=("python3" "$fJxsel")
     fi
 
     echo -e "${COLOR}Checking dependencies...${RESET}"
@@ -178,6 +179,8 @@ checkDepends() {
             # pbpaste/pbcopy don't support --version
             if [[ "$dep" == "pbpaste" || "$dep" == "pbcopy" ]]; then
                 depVersion="(macOS built-in)"
+            elif [[ "$dep" == "$fJxsel" ]]; then
+                depVersion="(ships with $SCRIPTNAME)"
             else
                 depVersion=$($dep --version 2>&1 | head -n 1)
                 if [[ $? -ne 0 || -z "$depVersion" ]]; then
@@ -205,15 +208,12 @@ checkDepends() {
     exit 0
 }
 
-# xsel interns some fifteen atoms, one X round trip each, before it reads or
-# clears a selection: over ssh X forwarding to a Mac that took 7.6 s to read and
-# 6.4 s to clear on 2026-10-20. jxsel, next to this script, does the same in
-# 1.7 s and 1.3 s, and runs xsel itself for whatever it cannot do.
-setXsel() {
-    local jxsel
-    jxsel="$(dirname "$(readlink -f "$0")")/jxsel"
-    [[ -x "$jxsel" ]] && command -v python3 &> /dev/null && fXsel="$jxsel"
-    return 0
+# X selections go through jxsel, next to this script, not xsel. xsel interns some
+# fifteen atoms, one X round trip each, before it reads or clears a selection:
+# over ssh X forwarding to a Mac that took 7.6 s to read and 6.4 s to clear on
+# 2026-10-20. jxsel does the same in 1.7 s and 1.3 s.
+setJxsel() {
+    fJxsel="$(dirname "$(readlink -f "$0")")/jxsel"
 }
 
 # Clipboard notes:
@@ -244,12 +244,12 @@ GetClipboardContent() {
             fi
             [ -n "$fQuery" ] && fQueryFromClipboard=true
         elif [ -n "$DISPLAY" ]; then
-            setXsel
+            setJxsel
             # Linux with X11 - try CLIPBOARD first (Cmd+C on Mac), then PRIMARY (selection)
-            fQuery=$(timeout $fXselTimeout "$fXsel" -o -b 2>/dev/null)
+            fQuery=$(timeout $fXselTimeout "$fJxsel" -o -b 2>/dev/null)
             if [[ -z "$fQuery" ]]; then
                 # Fallback to PRIMARY selection
-                fQuery=$(timeout $fXselTimeout "$fXsel" -o -p 2>/dev/null)
+                fQuery=$(timeout $fXselTimeout "$fJxsel" -o -p 2>/dev/null)
             fi
             [ -n "$fQuery" ] && fQueryFromClipboard=true
         elif [ -n "$SSH_CONNECTION" ]; then
@@ -273,8 +273,8 @@ ClearClipboard() {
                 echo -e "${COLOR}Warning: Failed to clear clipboard content${RESET}" >&2
             fi
         elif [ -n "$DISPLAY" ]; then
-            # Linux with X11 - use xsel, or jxsel (setXsel)
-            if ! timeout $fXselTimeout "$fXsel" -c -p 2> /dev/null; then
+            # Linux with X11 - use jxsel (setJxsel)
+            if ! timeout $fXselTimeout "$fJxsel" -c -p 2> /dev/null; then
                 echo -e "${COLOR}Warning: Failed to clear PRIMARY clipboard content${RESET}" >&2
             fi
         fi
