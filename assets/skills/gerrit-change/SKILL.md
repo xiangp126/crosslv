@@ -12,77 +12,107 @@ description: >-
 
 ## Commit message format
 
+`fw_ver/golan_fw` and `fw_ver/utopx` share one layout, the one most messages merged on both use;
+only the title differs (next section). Reference message:
+
 ```
-Title: [<Tag>]<Area> short summary
+Title: [Test Bug] <EMU> Order emu-manager handover across GVMIs
 
-Description: first line of prose starts right after the label
-continuation lines start at column 0 — NOT indented to align under
-"Description:"
-
-Issue: 5149895
+Description: FW keeps one virtio-net emulation manager until its last
+             object is destroyed. Create waited for destroy only on
+             the same GVMI, so the ECPF's create ran before the
+             sat-PF's last destroy and FW rejected it. Order emulation
+             create and destroy across all GVMIs.
+Issue: 5342762
 Reviewed By: AI, Jinbow(+1), Yanku(+2)
-
-(cherry picked from commit <full 40-char sha>)
 
 Change-Id: I<40 hex>
 ```
 
-### Continuation lines are per project — never carry one project's style to another
+Unsure about a detail → read recently merged messages by other authors on the target branch
+(`git log --format=%B origin/<branch>`) and copy the majority shape.
 
-- **`fw_ver/utopx` — hanging indent.** Continuation lines align under the text after
-  `Description: ` (13 spaces). `Issue:` and `Reviewed By:` form one block (no blank line between
-  them) that follows the last body line directly; a blank line separates it from `Change-Id:`
-  below (as merged utopx messages show). The tail is exactly:
+### Title — per project
 
-  ```
-               <last line of the Description>
-  Issue: 5257102
-  Reviewed By: AI, Jinbow(+1), Yanku(+2)
-                                            <- blank
-  Change-Id: I...
-  ```
-- **`fw_ver/golan_fw` — column 0.** Gerrit re-wraps hand-aligned text there: the first line
-  wraps, padded ones don't.
-- Unsure → read recently merged commits by other authors on that branch and copy the majority
-  shape.
+The forms most merged titles on each project use:
 
-### Description shape — `fw_ver/utopx`
+- **`fw_ver/golan_fw`**: `Title:[<Type>][<Group>] <Area> summary` — no space after `Title:`, the
+  type tag, then the group tag; `<Area>` in angle brackets is optional and usually follows a
+  space: `Title:[Feature][CORE] <RCX> Finalize 8K MTU`. Types: `Feature`, `Bug`, `Cosmetic`,
+  `Auto` (`[Auto][CI]`). Groups, most used first: `CORE`, `MNG`, `PHY_XDR`, `SERDES`,
+  `SYS_MODULES`, `CI`, `PCI`, `INI`, `PHY_NDR`.
+- **`fw_ver/utopx`**: `Title: [<Tag>] <Area> summary` — one space after `Title:` and one after the
+  tag: `Title: [Test Bug] <EMU> Order emu-manager handover across GVMIs`. Tags, most used first:
+  `Test Bug`, `Feature`, `Bug`, `FW Bug Patch`, `Integration`, `Cosmetic`, `Test Bug Patch`.
+- Both: no `#<ticket>` in the title — the ticket goes in `Issue:`.
 
-The reference is the majority of messages other authors merged on the target branch
-(`git log --format=%B origin/<branch>`), not an outlier. That majority is:
+### Description
 
-- **One paragraph, defect and fix together.** What failed and why, then what the change does,
-  in the same `Description:` block, all at the 13-column hanging indent. No separate `Fix:`
-  label (about 2% of merged messages carry one) and no blank lines inside the Description.
-- **Quote the failure inline, in double quotes, and only its decisive part** — the command and
-  syndrome, or the field mismatch: `... and FW rejected it: "status != OK is supported only in
-  error test on command CREATE_VIRTIO_NET_EMULATION syndrome : 0x69a1b7".` No `FATAL :` prefix,
-  no separate quote block.
+- **Layout**: the text starts right after `Description: `, and every later line of the
+  Description starts at column 13, under that first word (a list item's continuation lines at
+  15) — never at column 0. No blank lines inside the Description.
+- **One paragraph of plain sentences**, as most merged messages are. When there are several
+  separate points to make, a dash list instead: every `-` at column 13, each item's text and
+  continuation lines at column 15, no nested lists. The first `-` follows `Description: `
+  directly, unless a one-sentence lead-in comes first.
+- **The tail**: `Issue:` (one line per ticket) and `Reviewed By:` follow the last Description line
+  directly; then a blank line and `Change-Id:`.
+
+A dash-list Description:
+
+```
+Description: - FW: one virtio-net/NVMe emulation manager per device,
+               freed only when its last object is destroyed.
+             - The sat-PF (0xd) destroyed its last object; a later
+               create in the same iteration, seeing none in GenDB,
+               picked the ECPF (0xc) as manager. Fine if the destroy
+               runs first.
+             - But create waits for destroy only on the same GVMI, so
+               both got pool index 0, where single-op pools run by
+               ascending GVMI: the create went first.
+             - FW rejected it: "status != OK is supported only in error
+               test on command CREATE_VIRTIO_NET_EMULATION syndrome :
+               0x69a1b7".
+             - Order virtio-net/NVMe emulation create and destroy across
+               all GVMIs, like RCX config objects: the create moves to
+               the next pool index; other ops keep theirs.
+Issue: 5342762
+```
+
+What goes in it:
+
+- **Fewest words, still an explanation.** Each sentence or item carries one point and the reason
+  it matters, readable on its own: the first item above, not `FW: one manager`. Cut every word
+  the point survives without; keep the ones that make it an explanation instead of a keyword.
+- **Order**: what the reader needs to follow the defect — usually the FW rule, what the tool did,
+  why, the failure as FW reported it — then the fix.
+- **The fix comes last**: the last sentence or item, starting with an imperative verb (`Order`,
+  `Gate`, `Add`); say what stays unchanged when a reviewer would ask. No separate `Fix:` label.
+- **A quoted failure goes inline**, in double quotes, and only its decisive part — the command and
+  syndrome, or the field mismatch, as in the fourth item above. No `FATAL :` prefix, no separate
+  quote block.
 - **No verification narrative**: box, seeds, run counts and A/B results belong in the ticket and
   its root-cause document (`Rc_<ticket#>.md`), not in the commit message.
-- **Short**: typically 3-16 lines.
-- Title: `Title: [Test Bug] <Area> short summary`, one space after the tag. No `#<ticket>` in the
-  title — the ticket goes in `Issue:`.
+- **Short**: a few sentences, or typically 2-5 items.
 
 ### Line length
 
 - **Every line ≤ 72 chars, except the `Title:` line.** Gerrit never rejects a message for line
   length, it only warns: `subject >50 characters` on the title (harmless) and the body warning
-  below. Wrap prose yourself; do not rely on the renderer.
-- **Hanging-indent projects: the budget is 72 minus the indent** — prose under `Description: `
-  (13 spaces) must be **≤ 59 chars**. Overflow triggers
+  below. Wrap the text yourself; do not rely on the renderer.
+- **The budget is 72 minus the indent**: Description text at column 13 gets **≤ 59 chars** per
+  line, a list item's text at column 15 **≤ 57**. Overflow triggers
   `warning: too many message lines longer than 72 characters`, and the web UI re-wraps it to
   column 0, so every second line renders flush-left even though the raw text looked aligned.
-- **A quoted failure string that cannot fit in 59** (a FATAL line, a syndrome string) continues
-  at the hanging indent: break it between words or at a natural boundary (`;;`, `:`, `[`).
-  Never dedent it to buy width — Peter reviews the rendered message and bounces a block that is
-  not vertically aligned with the rest of the Description. Alignment beats keeping the string on
-  one line.
+- **A quoted failure string that does not fit** (a FATAL line, a syndrome string) continues at the
+  same indent: break it between words or at a natural boundary (`;;`, `:`, `[`). Never dedent it
+  to buy width — Peter reviews the rendered message and bounces a block that is not vertically
+  aligned with the rest of the Description. Alignment beats keeping the string on one line.
 
 ### Block rules
 
-- **`Issue:` and `Reviewed By:` are one block — no blank line between them — in both
-  `fw_ver/golan_fw` and `fw_ver/utopx`**, as merged messages on both show.
+- **`Issue:` and `Reviewed By:` are one block**: no blank line between them, and none between the
+  Description and that block.
 - **Several tickets → one `Issue:` line each, never a comma-separated list**
   (`Issue: 4690480, 4284608` is wrong). They stay in that block:
 
@@ -101,9 +131,8 @@ The reference is the majority of messages other authors merged on the target bra
   `AI` credits this session. `(+1)` / `(+2)` are the votes those reviewers are expected to give,
   so the line goes in from the first push, before anyone has voted. Deviate only when Peter names
   different reviewers for that change.
-- **Blank line between every block**: Title / Description / `Issue:` + `Reviewed By:` /
-  cherry-pick note / Change-Id. Exception, `fw_ver/utopx`: the `Issue:` block follows the last
-  body line directly (see the utopx tail above).
+- **Blank lines only between these blocks**: the title / the Description with its `Issue:` and
+  `Reviewed By:` lines / a cherry-pick note / `Change-Id:`.
 - **`Change-Id` is the last block.** A `(cherry picked from …)` line goes in its own block
   **before** it, or gerrit stops parsing the footer.
 - Take the cherry-pick sha from `git rev-parse <short>` — never hand-type it.
@@ -123,6 +152,32 @@ git log -1 --format=%B | awk '!/^Title:/ && length($0)>72 {print length($0), $0}
 git log -1 --format=%B | grep -c '^Change-Id'                         # must print 1
 ```
 
+### Message-only amend — a new patchset with the same code
+
+Needs no checkout: build the commit from the old one's tree and parent, keep its author, and move
+the branch only if it still points at the old commit. `commit-tree` runs no commit-msg hook, which
+neither appends a second Change-Id nor adds a missing one, so start the message file from the old
+message and keep its `Change-Id:` line. A file written for a first commit, which leaves the
+Change-Id to the hook, gives a commit without one, which gerrit cannot attach to this change.
+
+```bash
+OLD=$(git rev-parse <branch>)
+MSG=/path/to/commit_msg.txt
+git log -1 --pretty=format:%B "$OLD" > "$MSG"      # exact old message, Change-Id included
+# edit $MSG: rewrite the text above the Change-Id line, keep that line as it is
+NEW=$(GIT_AUTHOR_NAME="$(git log -1 --format=%an $OLD)" \
+      GIT_AUTHOR_EMAIL="$(git log -1 --format=%ae $OLD)" \
+      GIT_AUTHOR_DATE="$(git log -1 --format=%ad --date=raw $OLD)" \
+      git commit-tree "$OLD^{tree}" -p "$OLD^" -F "$MSG")
+diff <(git log -1 --format=%B "$OLD" | grep '^Change-Id') \
+     <(git log -1 --format=%B "$NEW" | grep '^Change-Id')     # must print nothing
+git update-ref refs/heads/<branch> "$NEW" "$OLD"
+git push origin <branch>:refs/for/<target>
+```
+
+Run the commit checks above on `$NEW` (`git log -1 --format=%B $NEW`) before the push. Gerrit
+answers `no files changed, message updated`; without that line the patchset changed code.
+
 ## What goes in the message, not in the code
 
 Peter reviews the rendered message, not comments in the diff.
@@ -130,7 +185,7 @@ Peter reviews the rendered message, not comments in the diff.
 - **No explanatory comments in the code change.** Which FW function the fix mirrors, which
   syndrome it stops, why a field was added — all of it goes in `Description:`. Ship the diff as
   pure logic.
-- **Write the Description in plain prose, not in implementation terms.** Say what the tool did,
+- **Write the Description in plain words, not in implementation terms.** Say what the tool did,
   what FW wanted instead, and why it used to work. Do not transcribe the code (naming the
   functions on both sides, saying one "ANDs that group with" the other). Keep verbatim
   FATAL/syndrome text and real cap field names — reviewers grep for those; drop internal function
@@ -326,10 +381,11 @@ per branch for propagation work.
 ### Naming the private branch — the track must be readable off the name
 
 ```
-fix_<ticket>_<topic>_<track>          fix_5273244_emuhost_ES
+fix_<ticket#>_<topic>_<track>         fix_5273244_emuhost_ES
                                       fix_5273244_emuhost_June
                                       fix_5273244_emuhost_master
-xcheck_<ticket>_<what>                a branch for investigating, not for pushing
+<ticket#>_<topic>                     a ticket's investigation (pin) branch, never pushed
+                                      (skill regression-repro, Phase 4)
 ```
 
 `<track>` is **copied out of the target branch name** — the one token that identifies it, and
@@ -359,10 +415,11 @@ nothing else. It is already in the `refs/for/<target>` you are about to type:
   ```
 
   Ambiguous month token → append the baseline (`June1642`). If one of the two is frozen, say so in
-  the ledger rather than silently ignoring it. "Which branches does this fix belong on" is a
-  separate question from naming; a frozen branch usually answers itself — check whether the recent
-  fixes are on it (a branch missing the last two is not being maintained).
-- **Do not name the branch after the shape of the fix** (`5285522_macro_shape`,
+  the work log — `Ledger.md`, or for a ticket the Investigation log of `Repro_<ticket#>.md` —
+  rather than silently ignoring it. "Which branches does this fix belong on" is a separate question
+  from naming; a frozen branch usually answers itself — check whether the recent fixes are on it (a
+  branch missing the last two is not being maintained).
+- **Do not name a branch you push after the shape of the fix** (`5285522_macro_shape`,
   `5285522_satpf_macro_guard`): that says which variant you tried, never which branch it lands on —
   and the landing branch is what you need with several in flight. Variants are what `git log` and
   gerrit patchsets are for; if two candidate approaches must coexist, they go in `<topic>`, with
@@ -379,9 +436,9 @@ N-deep stack costs up to N CI rounds spread over days.
 
 ```bash
 for c in <lower changes>; do
-  ssh -p 12023 git-nbu.nvidia.com gerrit set-topic $c --topic IGNORE
+  ssh -o BatchMode=yes -p 12023 git-nbu.nvidia.com gerrit set-topic $c --topic IGNORE
 done
-ssh -p 12023 git-nbu.nvidia.com gerrit set-topic <top change> --topic RELATED_CHANGES
+ssh -o BatchMode=yes -p 12023 git-nbu.nvidia.com gerrit set-topic <top change> --topic RELATED_CHANGES
 ```
 
 Setting a topic creates no patchset and outdates no vote. With the topics set, the whole stack goes
