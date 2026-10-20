@@ -428,21 +428,41 @@ _code_process_editor() {
     return 1
 }
 
+# Print the pids of list $2 (whitespace-separated, as pgrep and ps print them)
+# that hold an fd on socket inode $1, in list order; status 1 when none does.
+# One find reads every fd link: a readlink fork per fd costs ~1.3 ms, an
+# extension host holds 80+ fds, and on 2026-10-20 those forks were most of the
+# 1.5 s `code <file>` spent choosing a window. `command` keeps a shell function
+# named find (an agent shell's bfs) out of it.
+_code_socket_holders() {
+    local inode="$1" pid line seen=' ' dirs=()
+    for pid in $2; do
+        dirs+=("/proc/$pid/fd")
+    done
+    (( ${#dirs[@]} )) || return 1
+    while IFS= read -r line; do
+        pid="${line#/proc/}"
+        pid="${pid%%/*}"
+        [[ "$seen" == *" $pid "* ]] && continue
+        seen+="$pid "
+        printf '%s\n' "$pid"
+    done < <(command find "${dirs[@]}" -mindepth 1 -maxdepth 1 -lname "socket:\[$inode\]" -printf '%h\n' 2>/dev/null)
+    [[ "$seen" != ' ' ]]
+}
+
 _code_ipc_extension_host() {
-    local sock="$1" want="${2:-}" pid inode fd editor
+    local sock="$1" want="${2:-}" pid inode editor
     [[ -n "$sock" && -S "$sock" ]] || return 1
     command -v pgrep > /dev/null 2>&1 || return 1
     inode=$(awk -v s="$sock" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
     [[ -n "$inode" ]] || return 1
-    for pid in $(pgrep -f -- '--type=extensionHost' 2>/dev/null); do
+    # Holders keep pgrep's order, so the first one that passes is the host the
+    # editor test would have reached first.
+    for pid in $(_code_socket_holders "$inode" "$(pgrep -f -- '--type=extensionHost' 2>/dev/null)"); do
         editor=$(_code_process_editor "$pid") || continue
         [[ -n "$want" && "$editor" != "$want" ]] && continue
-        for fd in /proc/"$pid"/fd/*; do
-            if [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$inode]" ]]; then
-                printf '%s %s\n' "$pid" "$editor"
-                return 0
-            fi
-        done
+        printf '%s %s\n' "$pid" "$editor"
+        return 0
     done
     return 1
 }
@@ -452,38 +472,33 @@ _code_ipc_sock_is_live() {
 }
 
 # A terminal's own CLI hook can be served by server-main without an extension
-# host fd. Trust that hook only after an explicit --fresh CLI probe; a server-main
-# listener alone can outlive the window it used to serve.
+# host fd. Trust that hook only after _code_probe_hook has seen a window answer
+# through it; a server-main listener alone can outlive the window it used to serve.
 _code_ipc_server_main() {
-    local sock="$1" inode pid fd editor
+    local sock="$1" inode pid editor
     [[ -n "$sock" && -S "$sock" ]] || return 1
     inode=$(awk -v s="$sock" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
     [[ -n "$inode" ]] || return 1
-    for pid in $(pgrep -f -- '/out/server-main[.]js' 2>/dev/null); do
+    for pid in $(_code_socket_holders "$inode" "$(pgrep -f -- '/out/server-main[.]js' 2>/dev/null)"); do
         editor=$(_code_process_editor "$pid") || continue
-        for fd in /proc/"$pid"/fd/*; do
-            if [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$inode]" ]]; then
-                printf '%s %s\n' "$pid" "$editor"
-                return 0
-            fi
-        done
+        printf '%s %s\n' "$pid" "$editor"
+        return 0
     done
     return 1
 }
 
 # A dead socket is safe to clean only when the selected editor's server still
 # owns its listener. Both editors use the same vscode-ipc-* filename pattern.
+# Finding the holders first leaves the editor test to them alone, instead of to
+# every process of this user.
 _code_ipc_sock_owned_by_editor() {
-    local sock="$1" want="$2" inode pid fd editor
+    local sock="$1" want="$2" inode pid editor
     [[ -n "$sock" && -S "$sock" ]] || return 1
     inode=$(awk -v s="$sock" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
     [[ -n "$inode" ]] || return 1
-    for pid in $(ps -u "$UID" -o pid= 2>/dev/null); do
+    for pid in $(_code_socket_holders "$inode" "$(ps -u "$UID" -o pid= 2>/dev/null)"); do
         editor=$(_code_process_editor "$pid") || continue
-        [[ "$editor" == "$want" ]] || continue
-        for fd in /proc/"$pid"/fd/*; do
-            [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$inode]" ]] && return 0
-        done
+        [[ "$editor" == "$want" ]] && return 0
     done
     return 1
 }
@@ -506,16 +521,51 @@ _code_pick_live_ipc_sock() {
 
 # Record the live sockets seen while a tmux client's target still works. A
 # later editor reload creates a new path even if its old socket was removed.
+# Each socket gets the _code_ipc_sock_is_live test, from one read of
+# /proc/net/unix and one fd scan of the extension hosts: testing the sockets
+# one by one ran pgrep and an fd scan for each, 0.8 s for 27 sockets on
+# 2026-10-20.
 _code_live_ipc_snapshot() {
-    local editor="$1" dir sock snapshot=''
+    local editor="$1" dir sock pid link inode path snapshot=''
+    local socks=() dirs=()
+    local -A inode_of=() holders=() owner=()
     for dir in /tmp "/run/user/$UID"; do
         [[ -d "$dir" ]] || continue
         while IFS= read -r -d '' sock; do
-            if _code_ipc_sock_is_live "$sock" "$editor"; then
-                snapshot+="${snapshot:+|}$sock"
-            fi
+            socks+=("$sock")
         done < <(find "$dir" -maxdepth 1 -type s -uid "$UID" -name 'vscode-ipc-*.sock' -print0 2>/dev/null)
     done
+    if (( ${#socks[@]} )) && command -v pgrep > /dev/null 2>&1; then
+        # The first inode listed for a path, as the one-socket lookup takes it
+        while read -r inode path; do
+            inode_of["$path"]="$inode"
+        done < <(awk '$NF ~ /vscode-ipc-.*\.sock$/ && !($NF in seen) { seen[$NF]; print $(NF-1), $NF }' /proc/net/unix 2>/dev/null)
+        for pid in $(pgrep -f -- '--type=extensionHost' 2>/dev/null); do
+            dirs+=("/proc/$pid/fd")
+        done
+        # inode -> the hosts holding it, in pgrep order
+        if (( ${#dirs[@]} )); then
+            while read -r dir link; do
+                pid="${dir#/proc/}"
+                pid="${pid%%/*}"
+                inode="${link#socket:[}"
+                inode="${inode%]}"
+                [[ " ${holders[$inode]-} " == *" $pid "* ]] || holders[$inode]+=" $pid"
+            done < <(command find "${dirs[@]}" -mindepth 1 -maxdepth 1 -lname 'socket:*' -printf '%h %l\n' 2>/dev/null)
+        fi
+        for sock in "${socks[@]}"; do
+            [[ -S "$sock" ]] || continue
+            inode="${inode_of[$sock]-}"
+            [[ -n "$inode" ]] || continue
+            for pid in ${holders[$inode]-}; do
+                [[ -n "${owner[$pid]+set}" ]] || owner[$pid]=$(_code_process_editor "$pid")
+                [[ -n "${owner[$pid]}" ]] || continue
+                [[ -n "$editor" && "${owner[$pid]}" != "$editor" ]] && continue
+                snapshot+="${snapshot:+|}$sock"
+                break
+            done
+        done
+    fi
     printf '%s' "$snapshot"
 }
 
@@ -586,7 +636,7 @@ _code_extension_host_workspace_hint() {
 # nothing listens on any more. Only a live socket counts: when exactly one
 # candidate's extension host holds it, that host's CLI socket is the window's.
 _code_git_handle_ipc_sock() {
-    local git_sock="$1" editor="$2" git_inode current sock info pid owner fd matched='' matches=0
+    local git_sock="$1" editor="$2" git_inode current sock info pid owner matched='' matches=0
     local sockets=()
     [[ -n "$git_sock" && -S "$git_sock" ]] || return 1
     git_inode=$(awk -v s="$git_sock" '$NF==s{print $(NF-1); exit}' /proc/net/unix 2>/dev/null)
@@ -597,13 +647,11 @@ _code_git_handle_ipc_sock() {
     for sock in "${sockets[@]}"; do
         info=$(_code_ipc_extension_host "$sock") || continue
         read -r pid owner <<< "$info"
-        for fd in /proc/"$pid"/fd/*; do
-            if [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$git_inode]" ]]; then
-                matched="$sock"
-                matches=$((matches + 1))
-                break
-            fi
-        done
+        # stdout is this function's answer: the holder pid must not reach it
+        if _code_socket_holders "$git_inode" "$pid" > /dev/null; then
+            matched="$sock"
+            matches=$((matches + 1))
+        fi
     done
     (( matches == 1 )) || return 1
     printf '%s\n' "$matched"
@@ -713,6 +761,22 @@ _code_ipc_sock_used_by_tmux_client() {
         done < "/proc/$pid/environ"
     done
     return 1
+}
+
+# Ask the window behind a hook to answer. An open request cannot tell: the CLI
+# server replies to it without waiting for the window, so through a server-main
+# hook whose terminal no window shows any more, `code file` exits 0 and opens
+# nothing. status and extensionManagement requests do wait for the window, and
+# an extensionManagement request with nothing to list or install does no work
+# there: 0.33 s. --status, the probe until 2026-10-20, also walks the workspace
+# for its diagnostics; that day it took 1-10 s and timed out on a window that
+# was fine.
+_code_probe_hook() {
+    local status
+    status=$(command curl -s -o /dev/null -w '%{http_code}' --noproxy '*' --max-time 8 \
+        --unix-socket "$1" -H 'content-type: application/json' \
+        -d '{"type":"extensionManagement"}' http://localhost/ 2>/dev/null)
+    [[ "$status" == 200 ]]
 }
 
 _set_vscode_code_path() {
@@ -974,7 +1038,12 @@ _set_vscode_code_path() {
     fi
 
     if [[ -n "$_code_f_fresh" || -n "$_code_f_auto_fresh" ]]; then
-        if ! timeout 8s env VSCODE_IPC_HOOK_CLI="$newIPCHook" "$VSCODE_BIN_PATH" --status > /dev/null 2>&1; then
+        if ! _code_probe_hook "$newIPCHook"; then
+            # Without curl the hook was never asked, so it is not to blame.
+            if ! command -v curl > /dev/null 2>&1; then
+                printf 'code: curl is not installed, so no hook can be verified; install curl.\n' >&2
+                return 1
+            fi
             if [[ -n "$use_server_main" && -z "$_code_f_skip_client_hook" ]] \
                 && [[ "$newIPCHook" == "$client_hook" || "$source" == 'terminal hook' ]]; then
                 if [[ "$newIPCHook" == "$client_hook" ]]; then
@@ -1165,6 +1234,7 @@ _code_self_reload() {
              _code_usage _code_parse_options _set_vscode_code_path \
              _code_show_connection _code_print_core_vars _code_run_cmd _code_clean_obsolete_ipc_socks \
              _code_pre_check _code_ipc_sock_is_live _code_ipc_extension_host _code_ipc_server_main _code_ipc_sock_owned_by_editor _code_ipc_sock_used_by_tmux_client _code_process_editor _code_pick_live_ipc_sock _code_live_ipc_snapshot _code_pick_unseen_ipc_sock _code_extension_host_workspace_hint _code_git_handle_ipc_sock _code_choose_live_ipc_sock _code_ipc_sock_is_recent_successor _code_pick_successor_ipc_sock \
+             _code_socket_holders _code_probe_hook \
              _code_strip_cwd_prefix _code_strip_git_prefix _code_pick_in_dir
 
     # Re-source the script file. BASH_SOURCE[0] refers to the file being sourced.
