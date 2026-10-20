@@ -51,7 +51,7 @@ todos:
     content: 'Only when Peter says to release the box: jmake --reg-free <machine> (jk = jmake) after stopping your own watchdog / noga_wait for it. Never jmake --reg-cancel, which releases every box you hold'
     status: pending
   - id: commit-fix
-    content: 'Commit the verified fix on the fix branch fix_<ticket#>_<topic>_<line> (Phase 11); write the commit message per skill gerrit-change; author Peter Xiang <pexiang@nvidia.com>. Commit/push only when the user asks'
+    content: 'Commit the verified fix on the fix branch fix_<ticket#>_<topic>_<track> (Phase 11); write the commit message per skill gerrit-change; author Peter Xiang <pexiang@nvidia.com>. Commit/push only when the user asks'
     status: pending
 isProject: false
 ---
@@ -59,7 +59,7 @@ isProject: false
 # Redmine #<ticket#> — <short title>
 
 > The plan, edited in place, then the Investigation log and the Run log, only appended. The
-> conclusion is `Rc_<ticket#>.md`. Procedure: skill `regression-repro`,
+> conclusion is [Rc_<ticket#>.md](Rc_<ticket#>.md). Procedure: skill `regression-repro`,
 > `references/procedure.md`.
 
 ## Goal
@@ -98,7 +98,8 @@ Decoded from the ticket.
 
 <Peter's instruction verbatim, when the entry starts from one>
 
-- **Did**: <source read (`file:line`); commands; build (rc, `error:` count, image md5, log path)>
+- **Did**: <source read ([<file>:<line>](<path>#L<line>)); commands; build (rc, `error:` count,
+  image md5, log path)>
 - **Result**: <the finding and its evidence — `git blame` / `git log --author` attribution, the
   verbatim signature, log paths; verdict: confirmed / refuted / open>
 - **Next**: <one line>
@@ -107,4 +108,4 @@ Decoded from the ticket.
 
 | # | Date | Box | FW / tool pin | Seed | Signature | Ended how | Log |
 |---|---|---|---|---|---|---|---|
-| 1 | <date> | <box> | <version / sha> | <seed> | <same / diverged / none> | <TEST FAILED / PASSED / VOID> | `<path>` |
+| 1 | <date> | <box> | <version / sha> | <seed> | <same / diverged / none> | <TEST FAILED / PASSED / VOID> | [<log file>](<relative path>) |

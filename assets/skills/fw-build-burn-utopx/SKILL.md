@@ -35,8 +35,9 @@ BF3, `4131` for CX8. `dist/BUILD_ID` names the exact tag and commit.
 ### 1.0 Which clone to branch from
 
 Feature work → `golan_fw` / `utopx`. Repro → `golan_fw2` / `utopx2`. Never cross them; the full
-rule lives in `CLAUDE.md` → **Repos**. Give each ticket or feature its **own worktree** off that
-clone — never work in the clone's own checkout, which usually sits on someone else's branch.
+rule lives in `CLAUDE.md` → **Repos** (in Codex, `AGENTS.md` → **Worktrees**). Give each ticket or
+feature its **own worktree** off that clone — never work in the clone's own checkout, which
+usually sits on someone else's branch.
 
 - **One worktree per ticket, not per sub-task.** Controls, variants, A/B arms and ladder steps are
   commits switched inside the ticket's worktree; after a switch, rebuild clean (generated files
@@ -215,7 +216,7 @@ Check by timestamp against the deployed tree, then let the build regenerate:
 
 ```bash
 ls -la --time-style=+%m-%d hca_fwv_shared/autogen/*.cpp | head -3
-ssh <box> 'ls -la --time-style=+%m-%d /tmp/mars_tests/<test-DB>/tests/hca_fwv_shared/autogen/*.cpp | head -3'
+ssh -o BatchMode=yes <box> 'ls -la --time-style=+%m-%d /tmp/mars_tests/<test-DB>/tests/hca_fwv_shared/autogen/*.cpp | head -3'
 ```
 
 #### Wipe by `git clean`, never by a glob — and wipe **all four** trees
@@ -405,7 +406,7 @@ device and strings db shown for CX8:
 
 ```bash
 # 0) strings db from the SAME build as the image on the card, staged on LOCAL disk
-scp <wt>/gilboa_fw_strings.db <box>:/tmp/
+scp -o BatchMode=yes <wt>/gilboa_fw_strings.db <box>:/tmp/
 
 # 1) open the back door — THE FW TRACER IS OFF BY DEFAULT
 sudo mcra /dev/mst/mt4131_pciconf0 0x3ffffffc 0x80000000
@@ -474,7 +475,8 @@ true. No FW change, no reburn.
 
 - Global hard rules 2 (no bulk mlxconfig), 4 (even/odd versions), 5 (reboot approval).
 - Card gone from PCI / `/dev/mst` empty → skill `nic-livefish-recovery`.
-- Matching a failure against CI history → skill `ci-forensics`.
+- How often a failure happened before, since when, after which commit → skill `fsearch-failures`;
+  one red CI build to its raw failure log → skill `ci-forensics`.
 - Dumping an STE or capturing the steering chain a packet took → skill `steering-capture`
   (capture it while the run is still alive — freeze it with `--wait_on_err`).
 - Reproducing a specific regression bit-for-bit → skill `regression-repro`.

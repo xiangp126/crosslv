@@ -1,7 +1,7 @@
 # <Feature name> — feature progress
 
 > Last updated: <YYYY-MM-DD HH:MM CST> · test side: <owner> · FW side: <owner>
-> Status and progress of this feature, for Peter, the owners and the reviewers. Step-by-step records: `Ledger.md`.
+> Status and progress of this feature, for Peter, the owners and the reviewers. Step-by-step records: [Ledger.md](Ledger.md).
 
 **What the feature is**: <2-4 plain sentences — the new behaviour, the function or command it adds, the repos
 involved; e.g. "CX8 gets a page-supplier PCI function (PSF) that hands one large host-memory range to FW, and the
@@ -75,7 +75,7 @@ FW image under test: <base SHA (version)> + <changes and patchsets>; image `<pat
 
 | Req | Requirement | Assertion in the test tool | Verified? |
 |---|---|---|---|
-| <n> | <text> | `<file>:<line>`, or none | <✅ run <MM-DD> / ⬜ no assertion yet> |
+| <n> | <text> | [<file>:<line>](<path>#L<line>), or none | <✅ run <MM-DD> / ⬜ no assertion yet> |
 
 ## 2. Test campaigns
 
@@ -83,15 +83,15 @@ Newest first.
 
 | Date | Box / FW | Test-tool tree | Result | Report |
 |---|---|---|---|---|
-| <MM-DD> | <box> / <FW version> | `<sha>` | <n of m PASS; failures attributed> | `report_<MMDD>_<box>_<sha>.md` |
+| <MM-DD> | <box> / <FW version> | `<sha>` | <n of m PASS; failures attributed> | [report_<MMDD>_<box>_<sha>.md](report_<MMDD>_<box>_<sha>.md) |
 
 ## 3. Defects and fixes
 
-The status of every defect lives in this table; how to hit it, the evidence and the fix are in `Defects.md`.
+The status of every defect lives in this table; how to hit it, the evidence and the fix are in [Defects.md](Defects.md), or for a defect worked as a ticket in its `Rc` (§6).
 
 | # | Problem | Side | Status |
 |---|---|---|---|
-| <n> | <one line> | <test tool / FW / udriver / existing code> | <✅ fixed in [<num>](<change URL>) / 🟡 worked around: <how> / 🔵 waiting for <who> / ⬜ not hit> |
+| <n> | <one line> | <test tool / FW / udriver / existing code> | <✅ fixed in [<num>](<change URL>) / 🔵 fixed in local commit `<sha>`, not pushed / 🟡 worked around: <how> / 🔵 waiting for <who> / ⬜ not hit> |
 
 ## 4. Timeline
 
@@ -104,7 +104,7 @@ Newest first, one line per day.
 ## 5. Environment and how to run
 
 - **Boxes**: <box(es) and their constraints, e.g. nightly takeover times>
-- **FW, INI and NV**: <image, INI, NV recipe; the single source is `tools/lab.conf`>
+- **FW, INI and NV**: <image, INI, NV recipe; the single source is [tools/lab.conf](tools/lab.conf)>
 - **Code**: <worktree paths and branches>
 - **Rebuild the box**: `bash <task dir>/tools/env_rebuild.sh --burn --yes`
 - **One run**: `ssh -o BatchMode=yes <box> 'bash <task dir>/tools/per_run.sh --seed <N> <-e args>'` — exit 0 means the

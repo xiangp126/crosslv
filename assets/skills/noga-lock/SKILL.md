@@ -243,7 +243,7 @@ waiting windows on top.
    other text in the same command line (e.g. a path under `/tmp/mars_tests`) matches the pattern
    and counts the command itself.
    ```bash
-   ssh <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
+   ssh -o BatchMode=yes <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
    ```
 
 Both hold → start. If a process is still there, keep the lock, do not touch the box, and wait for it

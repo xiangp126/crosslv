@@ -37,11 +37,12 @@ listing, one `tar` extract of the sibling nodes (no full unpack), the renames, a
 `dump_file`, `fw_reset step`, `mstdump N`, `oplist`, `NV config dump`,
 `Failing case log (<case_name>, session <id>)`). It warns about any of the ten that is missing.
 The archive is `/.autodirect/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results/<setup_id>/<session_id>/<session_id>.tgz`;
-MARS keeps it about 12 days, so extract before it ages out.
+it stays for months, but the MARS API forgets the session in about two weeks: record the archive
+path as soon as you have it (skill `ci-forensics`).
 
 ### Also attach your own work
 
-- the local root-cause markdown
+- `Rc_<ticket#>.md`, as `ROOTCAUSE_analysis.md` in its own comment (above)
 - every arm of an A/B experiment, named so the arm is obvious
   (`AB_arm_A_as_is.log` / `AB_arm_B_*.log` / `AB_arm_C_candidate_fix.log`)
 - the candidate patch **and** any patch used only to build an experiment arm — label the latter

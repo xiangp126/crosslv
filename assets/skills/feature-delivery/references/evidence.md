@@ -34,8 +34,8 @@ inherited through a branch cut, checked with a control commit known to be absent
 
 ## 3. Not disproved ≠ established
 
-Finding no counter-example only means none was found. Until there is positive evidence, mark the
-conclusion `🟡 unproven` and **do not use it in any external reply**.
+Finding no counter-example only means none was found. Until there is positive evidence, write
+"unproven" next to the conclusion and **do not use it in any external reply**.
 
 ## 4. Attribution needs content evidence and timeline evidence
 

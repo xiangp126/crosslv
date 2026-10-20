@@ -6,7 +6,7 @@ Machine:    <hostname> (executed locally on this machine)
 Device:     <device type> (<MST device path>)
 Test:       <brief test description>
 Note:       Report should be updated on the fly during execution
-Note:       All tests with fresh server power cycle between runs
+Note:       No power cycle between runs; a run that needs one uses the remote templates
 
 Redmine:    <URL>
 Issue:      <one-line issue description>
@@ -128,12 +128,12 @@ Test Results (git log order, newest first):
 │ Commit     │ Title                          │ Overall │ Notes                                    │
 ├────────────┼────────────────────────────────┼─────────┼──────────────────────────────────────────┤
 │ <commit>   │ <title>                        │    -    │ Not tested                               │
-│ <commit>   │ <title>                        │  FAIL   │ Fresh power cycle before test             │
+│ <commit>   │ <title>                        │  FAIL   │ <notes>                                  │
 ├────────────┼────────────────────────────────┼─────────┼──────────────────────────────────────────┤
 │ <commit>   │ <title>                        │  FAIL   │ <<< ROOT CAUSE (first bad)               │
 ├────────────┼────────────────────────────────┼─────────┼──────────────────────────────────────────┤
-│ <commit>   │ <title>                        │  PASS   │ Fresh power cycle before test             │
-│ <commit>   │ <title>                        │  PASS   │ Fresh power cycle before test             │
+│ <commit>   │ <title>                        │  PASS   │ <notes>                                  │
+│ <commit>   │ <title>                        │  PASS   │ <notes>                                  │
 │ <commit>   │ <title>                        │    -    │ Not tested                               │
 └────────────┴────────────────────────────────┴─────────┴──────────────────────────────────────────┘
 
@@ -144,7 +144,7 @@ Commit <id>
 Build notes:
   <date, build time, archived path>
 Test notes:
-  <power cycle confirmed (uptime), burn result, FW verified, test result, notes>
+  <burn result, FW verified, test result, notes>
 
 <Repeat for each tested commit.>
 

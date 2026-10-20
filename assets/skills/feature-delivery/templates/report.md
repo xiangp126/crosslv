@@ -1,6 +1,6 @@
-# <Feature name> — test report <MMDD>, <box>, `<test-tool tree sha>`
+# <Feature name> — test report <MMDD>, <box>, <test-tool tree sha>
 
-> <date and time range>. Written once and not edited afterwards; later corrections go into `Tracking.md` or a new
+> <date and time range>. Written once and not edited afterwards; later corrections go into [Tracking.md](Tracking.md) or a new
 > report.
 
 ## 1. Conclusion
@@ -27,13 +27,13 @@
 
 | # | Seed | Result | <fingerprint 1> | <fingerprint 2> | Kernel errors | Log |
 |---|---|---|---|---|---|---|
-| R1 | <seed> | <PASS / FAIL> | <...> | <...> | <0> | `<log base>` |
+| R1 | <seed> | <PASS / FAIL> | <...> | <...> | <0> | [<log file>](logs/<log file>) |
 
 ## 4. Failures
 
 | # | Where it stopped | Verbatim failure | Attribution |
 |---|---|---|---|
-| R<k> | <operation, function, file:line> | `<FATAL line>` | <pre-existing: setup and date of the same failure in the regression DB / new defect #n> |
+| R<k> | <operation, function>, [<file>:<line>](<path>#L<line>) | `<FATAL line>` | <pre-existing: setup and date of the same failure in the regression DB / new defect #n> |
 
 ## 5. Not covered
 

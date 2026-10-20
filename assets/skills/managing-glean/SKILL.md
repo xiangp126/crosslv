@@ -6,15 +6,6 @@ description: >-
   first). Then use glean-cli to search enterprise content across all datasources, ask Glean AI
   questions, and read document content.
 ---
-<!--
-Progressive Disclosure:
-- Level 1 (YAML front matter): Skill metadata
-- Level 2 (This file): Overview, quick start, key patterns
-- Level 3: workflows/ for multi-step procedures
-
-Related skills:
-- managing-confluence: For Confluence wiki pages
--->
 
 # Glean Enterprise Search
 

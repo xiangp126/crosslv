@@ -68,7 +68,7 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
   `noga_manage.py -q -t nic -e "psid:<PSID>"` (e.g. `psid:MT_0000000704`). MARS-results /
   INI-name scans only see boxes that ran this suite and FALSELY report "no other same-PSID box".
 - **A `mars_reg` lock on a box that is down/unreachable is a stale reservation, not a live run** —
-  verify with `ssh <box> hostname` (using the runtime adapter) + the newest real session mtime.
+  verify with `ssh -o BatchMode=yes <box> hostname` (using the runtime adapter) + the newest real session mtime.
 - **Health-check a substitute before grabbing it:** burn-step `status.txt` (RC) +
   `summary_results.json` (PASSED count) from its recent status-only tgz archives; the ini_files
   filename gives session → FW version / PSID with no tarball at all. A box that cannot burn FW is

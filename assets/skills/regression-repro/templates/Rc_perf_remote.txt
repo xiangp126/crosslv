@@ -25,7 +25,7 @@ PART 0: Pre-burn Firmware State (restore point)
 ================================================================================
 
 Command:
-  ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q full'
+  ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q full'
 
 Output:
   <paste flint output here>

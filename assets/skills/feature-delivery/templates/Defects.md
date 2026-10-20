@@ -1,20 +1,20 @@
 # <Feature name> — defects and fixes
 
 > For the owners and reviewers. One section per defect, in the order a run from the starting baseline hits them (the
-> reproduction ladder in §0). The current status of each defect is in `Tracking.md` §3, not here.
+> reproduction ladder in §0). The current status of each defect is in [Tracking.md](Tracking.md) §3, not here.
 > Last updated: <YYYY-MM-DD>
 
 ## 0. Reproduction ladder
 
 | Step | Code under test | Run parameters | Hits | Where it stops |
 |---|---|---|---|---|
-| <k> | <change + local commits, SHA> | <seed, -e args> | #<n> | `<file>:<line>` / <command> |
+| <k> | <change + local commits, SHA> | <seed, -e args> | #<n> | [<file>:<line>](<path>#L<line>) / <command> |
 
 ## 1. Defects in ladder order
 
 ### #<n> <one line: what goes wrong, in plain words>
 
-**Side**: <test-tool change / FW change / udriver / existing code> · **Fix**: <`[<num>](<change URL>)`, or "not fixed">
+**Side**: <test-tool change / FW change / udriver / existing code> · **Fix**: [<num>](<change URL>), or local commit `<sha>` ([Local-Only]), or none yet
 
 **How to hit it**: ladder step <k> (<seed, parameters>).
 
@@ -24,7 +24,7 @@
 <FATAL / syndrome / kernel lines exactly as logged>
 ```
 
-**Root cause**: <plain explanation, starting with what the thing is>; `<file>:<line>`.
+**Root cause**: <plain explanation, starting with what the thing is>; [<file>:<line>](<path>#L<line>).
 
 **Fix**:
 

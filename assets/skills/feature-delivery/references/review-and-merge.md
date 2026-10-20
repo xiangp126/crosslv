@@ -40,9 +40,10 @@ in the ledger; it decides what can be tested when.
 ### Propagation
 
 Cherry-picking to ES / master / GA branches: skill `gerrit-change` — the footer and Change-Id
-rules, and pushing a dependent series atomically. Keep a propagation table in the ledger — which
-change reached which branch, with the landed SHA per branch (looked up by Change-Id, SKILL.md
-Phase 4). A zero-conflict cherry-pick does **not** mean it compiles there.
+rules, and pushing a dependent series atomically. Which change reached which branch is kept in
+`Tracking.md` §1.1 / §1.2, one table per target branch; the SHA each one landed as (looked up by
+Change-Id, SKILL.md Phase 4) goes into `Ledger.md` when it lands. A zero-conflict cherry-pick does
+**not** mean it compiles there.
 
 ## 3. PSF instances (`ICM Page supplier: support global pool delegation`)
 

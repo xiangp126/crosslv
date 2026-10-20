@@ -40,7 +40,7 @@ The host's own `tmfifo_net0` is `192.168.100.2`, so pinging `.2` **always succee
 pinging yourself.** The only valid liveness test is a shell on the ARM:
 
 ```bash
-ssh root@<arm-ip> 'uname -m'           # must print aarch64
+ssh -o BatchMode=yes root@<arm-ip> 'uname -m'           # must print aarch64
 ```
 
 `UP_TIME` climbing with a silent console and no `DPU is ready` / `Linux up` means the ARM eMMC has

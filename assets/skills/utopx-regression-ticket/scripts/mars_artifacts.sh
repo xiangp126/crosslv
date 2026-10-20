@@ -29,7 +29,7 @@ EOF
 SETUP=$1; SES=$2; KEY=$3; OUT=$4
 ARCHIVE=/.autodirect/sw_regression/host_fw/HCA_CORE_FWV/MARS/conf/results
 T="$ARCHIVE/$SETUP/$SES/$SES.tgz"
-[ -f "$T" ] || { echo "no archive: $T (MARS keeps about 12 days)" >&2; exit 2; }
+[ -f "$T" ] || { echo "no archive: $T (check setup_id and session_id: skill ci-forensics)" >&2; exit 2; }
 case "$KEY" in
   *.6.1) ;;
   *) echo "key_id must be the run_case node, ending in .6.1: $KEY" >&2; exit 2 ;;

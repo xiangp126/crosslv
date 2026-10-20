@@ -62,7 +62,8 @@ merge:
    belongs to; if it must carry a number, renumber and update every reference to it in the skills
    tree (`grep -rn '<old number>' ~/myGit/crosslv/assets/skills`).
 7. Run `jskill sync`, then `jskill check`; also run the skill's own tests or scripts when they
-   changed.
+   changed. When what the skill covers changes, update its row in both skills tables
+   (`~/myGit/crosslv/assets/claude/CLAUDE.md`, `~/myGit/crosslv/assets/codex/AGENTS.md`).
 
 ## Add a skill
 
@@ -76,6 +77,8 @@ jskill add <lowercase-hyphen-name> \
 - Replace the scaffold with concise, imperative workflow text. Keep `SKILL.md` focused: detailed
   tables and background go to `references/`, deterministic automation to `scripts/`, reusable
   output material to `assets/`.
+- Add its row to the skills table at the end of `~/myGit/crosslv/assets/claude/CLAUDE.md`, and the
+  same row to the one at the end of `~/myGit/crosslv/assets/codex/AGENTS.md`.
 - Finish with:
 
 ```bash

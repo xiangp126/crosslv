@@ -93,17 +93,8 @@ jmake --burn --firmware <image_path> --device <device> --fw-reset -w <golan_fw_p
 
 For each firmware version:
 
-1. If previous run left device stuck, power cycle first:
-
-```bash
-sudo ipmitool power cycle
-```
-
-Wait for server to come back, then verify uptime to confirm reboot:
-
-```bash
-uptime
-```
+1. If the previous run left the device stuck, it needs a power cycle, which this server cannot do
+   to itself and keep the session: continue with the REMOTE version (`Repro_perf_remote.md`).
 
 2. Restart MST and verify device is healthy:
 
@@ -136,12 +127,6 @@ sudo docker stop <container_id>
 ```
 
 8. Record the result in the report immediately.
-
-9. Power cycle the server before the next test:
-
-```bash
-sudo ipmitool power cycle
-```
 
 ### Repro Test Command
 
@@ -179,24 +164,8 @@ If the test leaves the device stuck:
 sudo flint -d <device> q | head -3
 ```
 
-2. Power cycle:
-
-```bash
-sudo ipmitool power cycle
-```
-
-3. After reboot, verify uptime confirms actual reboot:
-
-```bash
-uptime
-```
-
-4. Verify device is accessible before proceeding:
-
-```bash
-sudo mst restart
-sudo flint -d <device> q | head -3
-```
+2. It needs a power cycle, which this server cannot do to itself and keep the session: continue
+   with the REMOTE version (`Repro_perf_remote.md`), which recovers it from the dev machine.
 
 ## Commit-Level Confirmation
 
@@ -230,44 +199,37 @@ mv <build_output>.mlx <archive_dir>/fw-<device>-<commit_id>.mlx
 
 4. Build one commit at a time. Do not batch builds.
 
-Important: Do not use /tmp or create separate worktrees for builds. Always
-build in the current golan_fw working directory. /tmp may have limited space
-and worktrees add unnecessary complexity.
+Important: build in the ticket's own worktree off `golan_fw2` (skill
+`regression-repro`, Phase 4), never in a clone's own checkout and never in /tmp
+(limited space).
 
 ### Test Workflow
 
 For each private image (run on the test server):
 
-1. Power cycle the server (fresh boot for every test):
+1. Burn the image:
 
 ```bash
-sudo ipmitool power cycle
-```
-
-2. After reboot, verify uptime and burn the image:
-
-```bash
-uptime
 sudo mst restart
 jmake --burn --firmware <image_path> --device <device> --fw-reset -w <golan_fw_path>
 ```
 
-3. Verify running firmware version:
+2. Verify running firmware version:
 
 ```bash
 sudo flint -d <device> q | head -3
 ```
 
-4. Run the repro test.
+3. Run the repro test.
 
-5. Check results:
+4. Check results:
 
 ```bash
 sudo docker logs <container_id> 2>&1 | grep -iE "CRITICAL|ERROR|Failed|TIMEOUT"
 sudo flint -d <device> q | head -3
 ```
 
-6. Record in report immediately before proceeding.
+5. Record in report immediately before proceeding.
 
 ### Decision Rule
 

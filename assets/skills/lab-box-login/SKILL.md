@@ -28,7 +28,7 @@ skill is how to get a shell once you may.
   `-o ControlMaster=auto -o ControlPath=/tmp/ssh_mux_<box> -o ControlPersist=28800
   -o ServerAliveInterval=5 -o ServerAliveCountMax=3`. A master whose TCP connection died then exits
   within ~15 s; a socket shared by two boxes crosses wires.
-- **Close the master before a power cycle** (`ssh -o ControlPath=<mux> -O exit <host>`). A master
+- **Close the master before a power cycle** (`ssh -o BatchMode=yes -o ControlPath=<mux> -O exit <host>`). A master
   left behind is dead after the reboot, and an ssh that attaches to it hangs: `ConnectTimeout` does
   not cover a multiplexed session.
 - **After a power cycle, wait for a new boot id over a fresh connection**:
@@ -84,7 +84,7 @@ Seen on reg boxes right after a MARS session. Log in as root (§2), then in this
 
 ## 4. BlueField ARM
 
-- `ssh root@<arm-ip>`; `uname -m` must print `aarch64` (skill `bluefield-fwconfig`).
+- `ssh -o BatchMode=yes root@<arm-ip>`; `uname -m` must print `aarch64` (skill `bluefield-fwconfig`).
 - utopx logs in to the ARM as the user `GetArmUserName()` returns, with `GetArmPassword()`
   (`utopx: src/arm_agent_api/ArmAgentApiOS.cpp`; Bronco and non-Bronco differ) — the values are in
   `references/lab-credentials.md`. If that password was changed on the box (ArmAgent scp fails 60

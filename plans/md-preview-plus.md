@@ -36,7 +36,6 @@
 | 只把正文居中的扩展 md-preview-layout | 没人要，Peter："自带的直接就能用啊"，当即删掉 |
 | `keepActivePreviewTab()`：把斜体的预览 tab 转成常驻 | Peter 的设置 `workbench.editor.enablePreview: false` 下不起作用；10-20 Peter 定删掉 |
 | 给 microsoft/vscode 报第 7 项的 bug | Peter 10-20 定不报 |
-| 把 `file:line` 的写法改成 `#L` 链接 | Peter 10-20 定不改，仍写在反引号里 |
 
 ## 3. 功能和实现
 
@@ -96,7 +95,7 @@
 
 ### 1 自带 md 视图吞掉章节
 
-文档 6 章只显示 4 章，文件本身完整。Cursor 自带 md 视图遇到嵌在列表项里的 fenced 代码块，把这一章连同后面的章节都丢掉（3.24.18）。机理看不到，10-17 用单变量对照证实：两份文档只差 §5 的两个代码块在不在列表项里，Peter："A全部显示,B只到第4章"。修法：不用这个视图；写 md 时代码块不放进列表项（skill feature-delivery `references/documents.md` §6）。引用块里的代码块没做对照。查一份文档：用 markdown-it 解析，看 `fence` token 的 `level` 是否大于 0。
+文档 6 章只显示 4 章，文件本身完整。Cursor 自带 md 视图遇到嵌在列表项里的 fenced 代码块，把这一章连同后面的章节都丢掉（3.24.18）。机理看不到，10-17 用单变量对照证实：两份文档只差 §5 的两个代码块在不在列表项里，Peter："A全部显示,B只到第4章"。修法：不用这个视图；写 md 时代码块不放进列表项（skill `markdown-docs` 的 Structure 一节）。引用块里的代码块没做对照。查一份文档：用 markdown-it 解析，看 `fence` token 的 `level` 是否大于 0。
 
 ### 2 自带 md 视图改写文件
 
@@ -320,7 +319,7 @@ grep -c 'modified on disk' $(ls -td $W/work/user-data/logs/*/ | head -1)window1/
 | 10-17 | Peter 发现 Page_Supplier 的 TRACKING.md "少了几章"；A/B 对照证实是 Cursor 自带 md 视图吞章节；又查出它会改写文件。试 MPE，嫌白闪、慢放弃；开始在自带预览上自建目录扩展 md-preview-toc |
 | 10-18 | 目录侧栏、标题栏按钮、样式、diff 配色（试了五六版，定为编辑器的配色）、Cmd+双击、全宽和拖宽、页内搜索；md 默认用预览打开、md 链接开新 tab；改名 md-preview-plus；Peter 手动提交第一版 [0d7f44b](https://github.com/xiangp126/crosslv/commit/0d7f44b) |
 | 10-19 | 上午：被盖住的 tab 不重建、`#L` 跳行、Cmd+Shift+V 原地换成预览；14:31 交给 utopx-81。下午：样式软链接、卸 MPE、表格列宽；查清切回闪两下的根因（第 7 项），Mac 上的 agent 打上补丁，Peter 21:25 确认不闪；client 自动安装、升级后自动恢复，push 到 [6b8971b](https://github.com/xiangp126/crosslv/commit/6b8971b)；作者改名；写交接文档，psf-sanity-baseline-test 审了两轮 |
-| 10-20 | 验收脚本、照文档实测升级流程，发现第 14 项；按 Peter 的决定删 MPE 残留、删 `keepActivePreviewTab()`，文档合并成本文；Peter 删掉 Mac 上的 ctrl+alt+m，确认 Mac 上 client 已装、标题栏按钮和 Cmd+Shift+V 正常 |
+| 10-20 | 验收脚本、照文档实测升级流程，发现第 14 项；按 Peter 的决定删 MPE 残留、删 `keepActivePreviewTab()`，文档合并成本文；Peter 删掉 Mac 上的 ctrl+alt+m，确认 Mac 上 client 已装、标题栏按钮和 Cmd+Shift+V 正常；Peter 定文档里的代码位置默认写成 `#L` 链接（skill `markdown-docs`） |
 
 走过的弯路，以及下次该用的判据：
 

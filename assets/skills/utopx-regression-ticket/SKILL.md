@@ -40,7 +40,7 @@ first comment, attachments, analysis comment. A ticket is not opened until all o
 | 1 | subject | `[UTOPX]` + the quoted MAIN_FATAL message | Subject |
 | 2 | description | MAIN_FATAL line, MARS URL, Root cause paragraph, "See the first comment for …" — nothing else | Description |
 | 3 | first comment | the evidence in `== … ==` sections, **with every MARS per-case artifact attached in the same journal** (10 files) plus your own repro logs, probe scripts and candidate patch | What the first comment needs, Attachments |
-| 4 | analysis comment | one line pointing at the local analysis file, with that file attached as `ROOTCAUSE_analysis.md` | Attachments |
+| 4 | analysis comment | one line pointing at the analysis, with `Rc_<ticket#>.md` attached under the name `ROOTCAUSE_analysis.md` | Attachments |
 
 Draft all four locally, show them to Peter, and post them together after he approves:
 
@@ -127,7 +127,7 @@ Applies to descriptions and comments.
 | use | for |
 |---|---|
 | the MCP (`yai__*`) | reads, searches, `create_task`, field and status changes through `update_ticket`: it acts under the user's SSO identity, resolves and validates names (`P1: Critical`, `Fixed`, `me`), writes the plugin fields REST drops (`story_points`, `tags`), and its footer marks the change as AI-made |
-| REST (key in `~/.redmine_env`) | only what the MCP cannot do: moving a ticket to another project or tracker, editing an existing journal, a note with several uploads in one journal (`post_ticket.py`) |
+| REST (key in `~/.redmine_env`) | what the MCP cannot do: moving a ticket to another project or tracker, editing an existing journal, a note with several uploads in one journal; and posting a drafted description or comment with `post_ticket.py`, which compares the read-back (Posting) |
 
 - Every MCP write adds a journal carrying the textile footer; a status or field change gets a
   journal whose note is the footer alone. Replace it with its HTML form in place (see
@@ -182,7 +182,7 @@ preceded by a large empty block. Write descriptions and comments in HTML.
      the ticket, converted to its HTML form.
    - `note` uploads every manifest row and attaches them to the comment in **one journal**.
      Manifest rows: `<file><TAB><description>[<TAB><upload name>]`, paths relative to the
-     manifest. Upload the analysis as `ROOTCAUSE_analysis.md` with the third column.
+     manifest. Upload `Rc_<ticket#>.md` as `ROOTCAUSE_analysis.md` with the third column.
    - Notes posted this way carry no MCP footer.
    - `verify --ticket <id> [--subject …] [--description <file>] [--journal <id> --note <file>]`
      re-checks a posted ticket read-only.
@@ -324,7 +324,7 @@ The full root cause goes into the first comment, not the description:
 - **Anything NOT verified, labelled as such**: write "Leading hypothesis, NOT yet verified:". A
   hypothesis presented as fact gets the ticket bounced.
 - **Whether reverting the suspect is an option**, if the suspect fixed something real.
-- A pointer to the full local analysis file.
+- A pointer to the full analysis, `Rc_<ticket#>.md`, which the analysis comment attaches.
 
 ## Attachments
 
@@ -343,8 +343,9 @@ $S/mars_artifacts.sh <setup_id> <session_id> <key_id> <dir>/attach
   `dmesg`, `dump_file`, `fw_reset`, `mstdump_1..3`, `oplist`, `query_mlxconfig`, `run_case`), then
   your repro logs, probe scripts and candidate patch. [#5273909](https://redmine.nvidia.com/issues/5273909)
   carries twelve.
-- Then a separate comment, one line pointing at the local analysis file, with that file attached as
-  `ROOTCAUSE_analysis.md`. A corrected version goes up later as `ROOTCAUSE_analysis_v2.md`.
+- Then a separate comment, one line pointing at the analysis, with `Rc_<ticket#>.md` attached as
+  `ROOTCAUSE_analysis.md` (the upload name only; no local file has that name). A corrected version
+  goes up later as `ROOTCAUSE_analysis_v2.md`.
 - Every upload gets a `description`.
 - A ticket with zero attachments is not opened yet.
 
@@ -410,4 +411,5 @@ The move writes one journal of field changes and no note. Ids: `references/rest-
 ## Related
 
 - session_id → the archive → the actual UFATAL and node path: skill `ci-forensics`.
-- If the MCP is down, `redmine-cli` fallback: skill `tracking-redmine`.
+- If the MCP is down: the REST fallback above (`references/rest-fallback.md`), not the `redmine-cli`
+  path of skill `tracking-redmine`.

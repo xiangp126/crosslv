@@ -37,7 +37,7 @@ cp $S/regression-repro/templates/lab-box/* $D/tools/     # then fill tools/lab.c
 |---|---|---|---|
 | `Tracking.md` | the status page: verdict, status per part, commits per repository (owners only), what it waits for, next steps, decisions for Peter, requirements, test campaigns, defect status, timeline, how to run | Peter, owners, reviewers | day 0, `templates/Tracking.md` |
 | `Ledger.md` | the step-by-step record: dated entries, commands, SHAs, CI and MARS ids, Peter's instructions verbatim, corrections struck through | whoever continues | day 0, `templates/Ledger.md` |
-| `Defects.md` | one section per defect in reproduction order: how to hit it, verbatim evidence, root cause, fix diff, rejected alternatives | owners, reviewers | day 0, `templates/Defects.md` |
+| `Defects.md` | one section per defect in reproduction order: how to hit it, verbatim evidence, root cause, fix diff, rejected alternatives | Peter, owners, reviewers | day 0, `templates/Defects.md` |
 | `report_<MMDD>_<box>_<sha>.md` | one test campaign, written once | Peter | end of each campaign, `templates/report.md` |
 | `tools/`, `logs/` | the lab-box scripts and `lab.conf`; logs the documents cite | — | day 0 |
 
@@ -60,25 +60,26 @@ into `Ledger.md`. Most events touch both, at different depth — in the same ste
 | a gate opens | the "Gates" row of §1 | how it was opened |
 | a judgement turns out wrong | simply corrected — the page shows the present | struck through in place, with the correction, its date and the criterion for next time |
 | the session is interrupted | — | what is in flight, and the next step |
-| a document, script or image is replaced; a campaign's report is written | the §6 row | delete the replaced file and the campaign's logs no document cites — nothing is archived |
+| a document, script or image is replaced; a campaign's report is written | the §6 row | delete the replaced file and the campaign's logs that neither the report, `Defects.md` nor `Tracking.md` cites — nothing is archived |
 
 Two checks: `Tracking.md` alone answers "where is it, what blocks it, what comes next" — if not, a
 section was not updated; and it holds no commands, SHA lists or per-run results outside §5 — if
 it does, that is ledger content in the wrong file.
 
 `Tracking.md` is a current-state page for people: edit it in place, keep it to one or two screens
-before §2, most important first, and never put rules for agents in it. Every section in detail,
-the writing rules (language, links, code fences), what not to create, and how to move an old
-document set over: `references/documents.md`. The bar a conclusion must clear:
-`references/evidence.md`.
+before §2, most important first, and never put rules for agents in it. Every section in detail and
+how to move an old document set over: `references/documents.md`. How to write and keep any of
+these files — language, links, code blocks, log entries, corrections, what not to create, what to
+delete: skill `markdown-docs`. The bar a conclusion must clear: `references/evidence.md`.
 
 ## Where everything lives
 
 | Thing | Where | When |
 |---|---|---|
 | the feature's documents | "Documents" above; `templates/`, `references/documents.md` | **day 0** |
+| how every document is written and kept | skill `markdown-docs` | before writing any document |
 | evidence rules: controls, attribution | `references/evidence.md` | before writing any conclusion |
-| documents, tickets, who approves what | `references/design-and-tickets.md` | Phase 0–1 |
+| design documents and tickets, and who reads each | `references/design-and-tickets.md` | Phase 0–1 |
 | publishing the design documents | skill `managing-confluence` | Phase 1 |
 | review ecology, merge order, propagation, PSF instances | `references/review-and-merge.md` | Phase 5–6 |
 | build / burn / run mechanics, `jmake` worktree path rules | skill `fw-build-burn-utopx` | Phase 4 |

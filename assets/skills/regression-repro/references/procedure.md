@@ -150,7 +150,7 @@ first burn/reset, however you got the lock (skill `noga-lock` → "Before touchi
 locked"); at minimum this must print 0 (run it as its own `ssh` command):
 
 ```bash
-ssh <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
+ssh -o BatchMode=yes <box> 'ps -eo cmd | grep -cE "[u]topx\.exe|[R]egTools|[m]ars_tests|[F]wreset|[m]lxburn"'
 ```
 
 #### Exception — same-PSID substitution (only with explicit user approval)
@@ -180,7 +180,7 @@ is what makes the FW expose the same caps.
 2. **Pick idle candidates**: `jmake --reg-idle` and/or
    `noga_manage.py -q -n <cand> -D | grep -E 'Status\.(status|lock_owner)'`. `Release`/empty owner =
    free; `Lock` by `mars_reg` = a regression is running it — **unless the box is unreachable/down,
-   where it is a stale reservation**. Confirm with `ssh <cand> hostname` (using the runtime adapter)
+   where it is a stale reservation**. Confirm with `ssh -o BatchMode=yes <cand> hostname` (using the runtime adapter)
    and the newest real session mtime.
    - **Only `*-fwreg-*` boxes are candidates.** The PSID listing and `jmake --reg-idle` also return
      `l-fwdev-*` developer boxes; drop them even when they show `Release` (skill `noga-lock`).
@@ -197,7 +197,7 @@ is what makes the FW expose the same caps.
      `topo/<orig>/topology_<mode>.xml` + `<orig>_<mode>.xml` and swap BASE_IP / CONNECTION IP, the
      `rocep*` SUB_DEVICE names, PCI_BUS and the per-port data-plane IPs (20.x/21.x) for the
      substitute's, discovered with
-     `ssh <cand> "ip -br addr; sudo mst status; rdma link; lspci | grep -i mellanox"` (runtime adapter).
+     `ssh -o BatchMode=yes <cand> "ip -br addr; sudo mst status; rdma link; lspci | grep -i mellanox"` (runtime adapter).
 
 3. **Confirm same PSID + healthy** from the candidate's latest session tarball
    (`<results_dir>/<sibling_setup>/<latest_sid>/<sid>.tgz`), `new_burn_fw` log: `psid:` == the
@@ -227,12 +227,12 @@ is what makes the FW expose the same caps.
 
 ```bash
 # Capture current FW state as a restore point before touching anything.
-ssh <machine> 'sudo flint -d <MST device> q full'
+ssh -o BatchMode=yes <machine> 'sudo flint -d <MST device> q full'
 
 # STALE-PROCESS CHECK (esp. boxes that fell out of rotation) - a leftover test daemon from a
 # prior session can still hold the device. Find & kill it:
-ssh <machine> 'sudo fuser -v /dev/udriver_* 2>&1; ps -eo pid,etime,cmd | grep -E "[u]topx.exe.*--daemon"'
-ssh <machine> 'sudo kill -9 <pid> <ppid>'   # the leftover utopx + its sudo parent; then re-check fuser
+ssh -o BatchMode=yes <machine> 'sudo fuser -v /dev/udriver_* 2>&1; ps -eo pid,etime,cmd | grep -E "[u]topx.exe.*--daemon"'
+ssh -o BatchMode=yes <machine> 'sudo kill -9 <pid> <ppid>'   # the leftover utopx + its sudo parent; then re-check fuser
 ```
 
 - A leftover daemon makes fw_reset fail later with `udriver cannot be unloaded, file /dev/udriver_* is opened, possibly by utopx` / `Device is busy`.
@@ -248,7 +248,7 @@ on the test box (the `<test-DB>` from `get_last_commit`). If that tree still exi
 the regression's exact binary — no clone/build, the cleanest pin (perfect three-way match). Verify:
 
 ```bash
-ssh <machine> 'ls -lL /tmp/mars_tests/<test-DB>/tests/utopx.exe;
+ssh -o BatchMode=yes <machine> 'ls -lL /tmp/mars_tests/<test-DB>/tests/utopx.exe;
   ls /tmp/mars_tests/<test-DB>/tests/{conf.xml,config/<scenario>.conf}'
 # cross-check commit vs Phase-2 get_last_commit (and the run prints "tarball git tag is: <describe>")
 ```
@@ -268,13 +268,14 @@ regression silently runs your binary and nothing in the archive points back at y
 
 Every source edit — a candidate fix *or* a read-only debug probe — goes on a **named private branch
 in a per-ticket worktree off the repro clone**, never in the clone's own checkout. The fix branch is
-`fix_<ticket#>_<topic>_<line>`, off `origin/<full-branch-name>`:
+`fix_<ticket#>_<topic>_<track>`, off `origin/<full-branch-name>`; `<track>` is the token copied out of
+the target branch name (skill `gerrit-change`, "Naming the private branch"):
 
 ```bash
 C=/auto/fwgwork1/$USER/utopx2              # FW: golan_fw2, worktree golan_fw_<ticket#>
 W=/auto/fwgwork1/$USER/utopx_<ticket#>     # jmake needs a path segment starting utopx/golan/nicx
 git -C $C fetch origin <full-branch-name>
-git -C $C worktree add -b fix_<ticket#>_<topic>_<line> $W origin/<full-branch-name>
+git -C $C worktree add -b fix_<ticket#>_<topic>_<track> $W origin/<full-branch-name>
 cd $W
 git submodule update --init --recursive    # MANDATORY - see below
 # edit, then build in place (a copied tree will not build - cmake caches absolute paths)
@@ -282,7 +283,7 @@ jmake -c -o                                # clean build; then read the log, not
 ```
 
 The ticket already has a worktree in that repo (the §4c pin)? Switch inside it instead of adding a
-second one — `git -C $W checkout -b fix_<ticket#>_<topic>_<line> origin/<full-branch-name>` — then
+second one — `git -C $W checkout -b fix_<ticket#>_<topic>_<track> origin/<full-branch-name>` — then
 run the same submodule update and wipe every autogen tree before the clean build: a checkout leaves
 the previous branch's generated files behind (SKILL.md, "A branch checkout does not give you a clean
 tree"). Worktree traps: skill `fw-build-burn-utopx` §1.
@@ -299,7 +300,7 @@ an untracked `compile_commands.json` inside = harmless build residue (diff shows
 Run that binary on the test box over NFS (`/auto/fwgwork1/...` is mounted there, no copying):
 
 ```bash
-ssh <box> 'cd /auto/fwgwork1/$USER/utopx_<ticket#>/<artifacts path> && sudo ./utopx.exe --device=... '
+ssh -o BatchMode=yes <box> 'cd /auto/fwgwork1/$USER/utopx_<ticket#>/<artifacts path> && sudo ./utopx.exe --device=... '
 ```
 
 ### 4c. Pin each repo to the failing version
@@ -352,10 +353,10 @@ branch-naming conventions, so never assume a shared branch name:
 ## Phase 5 — Reproduce the regression's INI
 
 ```bash
-mkdir -p <repo>/regression_ini
-cp <default_ini path>  <repo>/regression_ini/default_<name>.ini      # reference
-cp <new_ini_file path> <repo>/regression_ini/burned_<session>.ini    # the one you burn
-diff <repo>/regression_ini/default_*.ini <repo>/regression_ini/burned_*.ini
+mkdir -p <ticket dir>/regression_ini     # <ticket dir>: /auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>
+cp <default_ini path>  <ticket dir>/regression_ini/default_<name>.ini      # reference
+cp <new_ini_file path> <ticket dir>/regression_ini/burned_<session>.ini    # the one you burn
+diff <ticket dir>/regression_ini/default_*.ini <ticket dir>/regression_ini/burned_*.ini
 ```
 
 Understand the diff: `BurnFw.py` appends device-specific overrides (BAR/PCIe/DDR-mapping, emulation
@@ -370,12 +371,12 @@ predict and produce look-alike failures. Burned INI == the regression's, exactly
 `BurnFw.py`):
 
 ```bash
-ssh <test machine> 'cd <FW source repo> && \
+ssh -o BatchMode=yes <test machine> 'cd <FW source repo> && \
   $HOME/.usr/bin/jmake --burn --device <MST device> \
-      --firmware <official .mlx> --ini <repo>/regression_ini/burned_<session>.ini'
+      --firmware <official .mlx> --ini <ticket dir>/regression_ini/burned_<session>.ini'
 # Do NOT chain --fw-reset here. If jmake hits a root-squashed-NFS "Permission denied"
 # writing image.bin into the repo, burn with direct mlxburn instead:
-ssh <test machine> 'sudo -E env MFT_ICMD_TIMEOUT=60000 \
+ssh -o BatchMode=yes <test machine> 'sudo -E env MFT_ICMD_TIMEOUT=60000 \
     mlxburn -d <MST device> -fw <abs .mlx> -conf <abs INI> -force'
 ```
 
@@ -390,9 +391,9 @@ The ticket's `fw_reset_*.log` / `modprobe_udriver_*.log` / `print_mst_devs_*.log
 authoritative bring-up sequence. Generic shape:
 
 ```bash
-ssh <test machine> 'sudo $HOME/.usr/bin/jmake --device <MST device> --fw-reset'   # pivot flash→running
-ssh <test machine> 'sudo flint -d <MST device> q | head -5'                       # verify flash==running
-ssh <test machine> 'sudo modprobe <driver>'                                       # e.g. udriver
+ssh -o BatchMode=yes <test machine> 'sudo $HOME/.usr/bin/jmake --device <MST device> --fw-reset'   # pivot flash→running
+ssh -o BatchMode=yes <test machine> 'sudo flint -d <MST device> q | head -5'                       # verify flash==running
+ssh -o BatchMode=yes <test machine> 'sudo modprobe <driver>'                                       # e.g. udriver
 # Device-specific gotchas to mirror from the logs, e.g.:
 #   - clear any management-channel "drop"/safety mode before the test uses it
 #   - restart the management daemon if --fw-reset left it down
@@ -407,9 +408,9 @@ the end.
 `fw_reset_<key>` step's `log.txt` (`Executing cmd: …`). For HCA-core:
 
 ```bash
-ssh <machine> 'sudo /auto/mswg/projects/fw/fw_ver/hca_fw_tools/fw_reset/fwreset.py \
+ssh -o BatchMode=yes <machine> 'sudo /auto/mswg/projects/fw/fw_ver/hca_fw_tools/fw_reset/fwreset.py \
     --debug --next_driver <driver> -d 0000:<pci>'   # e.g. --next_driver udriver -d 0000:ca:00.0
-ssh <machine> 'sudo modprobe <driver>'              # the separate modprobe_udriver step
+ssh -o BatchMode=yes <machine> 'sudo modprobe <driver>'              # the separate modprobe_udriver step
 ```
 
 - Success prints `FW reset successful: uptime was reset. Before: N, After: ~15` and rebinds the driver.
@@ -438,14 +439,15 @@ only surfaces at the original count). Run from the regression's working dir. **P
 `run_case` (`To rerun use seed <N>`):
 
 ```bash
-LOG="$HOME/repro_<NNNNN>_$(date +%Y%m%d_%H%M%S).log"
-ssh <test machine> 'cd <test tool repo> && \
+LOG="/auto/fwgwork1/$USER/utopx_<NNNNN>/logs/repro_<NNNNN>_$(date +%Y%m%d_%H%M%S).log"   # the tree under test keeps its logs
+mkdir -p "$(dirname "$LOG")"
+ssh -o BatchMode=yes <test machine> 'cd <test tool repo> && \
     sudo ./<test binary> <exact args from run_case> --seed=<N> 2>&1 | tail -300' \
     > "$LOG" 2>&1 &
 wait $!
 # Look for the SAME signature (success = it reproduces):
 grep -E '<failure signature>|TEST FAILED|FATAL|Test-status' "$LOG" | head
-ssh <test machine> 'ls -lt <test tool repo>/verix_test_*.log | head -1'   # full log for analysis
+ssh -o BatchMode=yes <test machine> 'ls -lt <test tool repo>/verix_test_*.log | head -1'   # full log for analysis
 ```
 
 - **One command per ssh, one reused connection per box, closed before any reboot** — the ssh rules:
@@ -502,8 +504,9 @@ test-tool defect (a stale expectation, a check that no longer matches intended H
 equally valid outcome. Check which repo(s) your change touches before building.
 
 1. **Before building, write the hypothesis and the diff into the Investigation log** — root-cause
-   statement, code evidence (`file:line`), attribution (`git blame` / `git log --author`), and the
-   exact diff under test. Written afterwards, "it passed" is unauditable.
+   statement, code evidence (links to the source lines), attribution (`git blame` /
+   `git log --author`), and the exact diff under test. Written afterwards, "it passed" is
+   unauditable.
 
 2. **Build the candidate** on the ticket's named private branch (Phase 4 pin), clean: `jmake -c -o`.
    **Read the build log — not the exit code**: jmake prints `BUILD SUCCESS` and exits 0 even when a
@@ -596,8 +599,8 @@ equally valid outcome. Check which repo(s) your change touches before building.
 
    **A gate added by a named bug fix is a strong prior that its strictness is deliberate**: check
    `git log -S` on the line before relaxing it, settle it with one build rather than an argument, and
-   accept the answer when the run says the gate was right. Record the failed experiment in §5 as a
-   rejected attempt with the evidence, so nobody re-runs it.
+   accept the answer when the run says the gate was right. Record the failed experiment in
+   `Rc_<ticket#>.md` §5 as a rejected attempt with the evidence, so nobody re-runs it.
 
 8. **Adjacent-case sanity pass** — a handful of neighbouring cases/ops, to catch a regression the fix
    itself introduces; a fix that kills the target signature while breaking its neighbours is not done.
@@ -642,8 +645,9 @@ first (most error-prone) attempt is already scripted.
 | `per_run.sh` | on the reg box, once per attempt: guards, gates, reset, run, verdict as the exit code | no |
 | `selftest.sh` | runs both scripts against stubs, no box needed; checks every exit path | run it after any script change |
 
-- Change a script only when no hook can express what the task needs, and record why in the ledger.
-  The scripts implement every rule of this phase; a hook you write must keep them too.
+- Change a script only when no hook can express what the task needs, and record why in the task's
+  log (`Repro`'s Investigation log, or a feature's `Ledger.md`). The scripts implement every rule
+  of this phase; a hook you write must keep them too.
 - A second box or a control group is a second conf that sources `lab.conf` and overrides a few
   values; both scripts take it with `--lab <file>` (the end of `lab.conf` shows the shape).
 - `MODE` says what exit 0 means: `repro` — the signature appeared; `fixverify` — the defect's trigger
@@ -659,7 +663,7 @@ Counter false confidence with honest labelling and opt-in danger, not delay:
    snapshot + diff, pre-fix-binary guard and a hard baseline gate still produced the false
    `REPRO SUCCESS` dissected under Verdict discipline. **Bypassing a step is not running it**:
    burning by hand because the script's burn path is broken leaves that path unverified — keep
-   `VERIFIED=` empty and record the bypass in the ledger.
+   `VERIFIED=` empty and record the bypass in the task's log.
 2. **Every destructive path is opt-in** — `env_rebuild.sh` only verifies unless given `--burn`, and
    then asks for a typed confirmation (`--yes` skips it).
 3. **Ownership guard first** — both scripts refuse to touch the box unless Noga's
@@ -999,7 +1003,7 @@ Script: `/auto/mswg/projects/fw/fw_ver/regression/clear_nv_data.sh` (takes the m
 
 Precondition: the fix (in `golan_fw2` / `utopx2`) is **verified on the test server (Phase 9.5)** —
 signature gone, control still failing, run ended cleanly. **Commit/push only when the user asks.**
-Commit on the fix branch `fix_<ticket#>_<topic>_<line>` in the ticket's worktree (§4b), and **write
+Commit on the fix branch `fix_<ticket#>_<topic>_<track>` in the ticket's worktree (§4b), and **write
 the commit message per skill `gerrit-change`** — it owns the format, the message checks and pushing
 a dependent stack.
 
@@ -1016,7 +1020,8 @@ git log -1 --format='%an <%ae>%n%n%B'    # verify author + message + auto Change
 
 - **Author** = Peter Xiang `<pexiang@nvidia.com>`.
 - **`Change-Id:`** is appended by the Gerrit `commit-msg` hook — never write it by hand; on amend, keep
-  the existing one.
+  the existing one (a message-only amend starts its message file from the old message, Change-Id
+  line included: skill `gerrit-change`, "Message-only amend").
 
 ## jmake / build-&-burn command reference (generic)
 
@@ -1030,7 +1035,7 @@ device/feature-agnostic — substitute `<MST device>`, `<.mlx>`, `<INI>`, `<host
 | **Burn FW + INI (no rebuild)** | `cd <fw repo> && jmake --burn --device <MST device> --firmware <.mlx> --ini <INI>` | replicates regression `BurnFw.py`. ~8 min. **Do NOT chain `--fw-reset`** (triggers a heavier reset that times out). |
 | **Burn — NFS-permission fallback** | `sudo -E env MFT_ICMD_TIMEOUT=60000 mlxburn -d <MST device> -fw <abs .mlx> -conf <abs INI> -force` | when `jmake --burn` hits `Permission denied` writing `image.bin` into a root-squashed NFS repo. |
 | **Pivot flash → running** | `jmake --device <MST device> --fw-reset` | ~20s. The default between-runs reset; clears emulated-device state; lockfile + udriver-aware. |
-| **Power cycle the box** | `jmake --power-cycle <host>` | ~3 min. Non-DPU NIC box: last resort — `--fw-reset` itself hangs, D-state zombie, `rev ff` lspci. DPU/BlueField box: only for a pending NV change that needs a cold boot (Phase 7). Run `ssh -O exit <host>` first to drop the stale ControlMaster socket. |
+| **Power cycle the box** | `jmake --power-cycle <host>` | ~3 min. Non-DPU NIC box: last resort — `--fw-reset` itself hangs, D-state zombie, `rev ff` lspci. DPU/BlueField box: only for a pending NV change that needs a cold boot (Phase 7). Run `ssh -o BatchMode=yes -O exit <host>` first to drop the stale ControlMaster socket. |
 | **Upgrade MFT** | `sudo jmake --mft-install` | wraps `/mswg/release/mft/last_stable/install.sh`; needed when a tool/symbol isn't recognized by the box's old MFT. |
 
 - **`jmake --fw-reset` ≠ bare `mlxfwreset`.** It wraps `fwreset.py`, adding `/tmp/fwreset_lock` +

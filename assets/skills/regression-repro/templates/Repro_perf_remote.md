@@ -73,13 +73,13 @@ Establish a persistent SSH control socket once, then reuse for all commands:
 
 ```bash
 # Open persistent connection (run once at start)
-ssh -fNM -S /tmp/<hostname>.sock pexiang@<hostname>
+ssh -o BatchMode=yes -fNM -S /tmp/<hostname>.sock pexiang@<hostname>
 
 # All subsequent commands use the control socket
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> '<command>'
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> '<command>'
 
 # Close when done
-ssh -S /tmp/<hostname>.sock -O exit pexiang@<hostname>
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock -O exit pexiang@<hostname>
 ```
 
 Note: If the server is power-cycled, the control socket will break.
@@ -90,7 +90,7 @@ Re-establish it after the server comes back online.
 Before burning any image, record the current firmware info as a restore point:
 
 ```bash
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q full'
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q full'
 ```
 
 Note: `sudo` is required for `flint` and all firmware operations.
@@ -101,13 +101,13 @@ Note: `sudo` is required for `flint` and all firmware operations.
 
 Official release:
 ```bash
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> \
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> \
   '$HOME/.usr/bin/jmake --burn-official <version> --device <device> --fw-reset'
 ```
 
 Private image:
 ```bash
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> \
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> \
   '$HOME/.usr/bin/jmake --burn --firmware <image_path> --device <device> --fw-reset -w <golan_fw_path>'
 ```
 
@@ -118,7 +118,7 @@ For each firmware version:
 1. If previous run left device stuck, power cycle first:
 
 ```bash
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo ipmitool power cycle'
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo ipmitool power cycle'
 ```
 
 Wait for server to come back, then verify uptime to confirm reboot.
@@ -128,7 +128,7 @@ Wait for server to come back, then verify uptime to confirm reboot.
 3. Verify device is healthy:
 
 ```bash
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> \
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> \
   'uptime && sudo mst restart && sudo flint -d <device> q | head -3'
 ```
 
@@ -137,7 +137,7 @@ ssh -S /tmp/<hostname>.sock pexiang@<hostname> \
 5. Verify the running firmware version matches expected:
 
 ```bash
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q | head -3'
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q | head -3'
 ```
 
 6. Run the repro test.
@@ -167,13 +167,13 @@ If the test leaves the device stuck:
 1. Confirm device is stuck:
 
 ```bash
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q | head -3'
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo flint -d <device> q | head -3'
 ```
 
 2. Power cycle:
 
 ```bash
-ssh -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo ipmitool power cycle'
+ssh -o BatchMode=yes -S /tmp/<hostname>.sock pexiang@<hostname> 'sudo ipmitool power cycle'
 ```
 
 3. Wait for server, verify uptime confirms actual reboot.
@@ -211,9 +211,9 @@ mv <build_output>.mlx <archive_dir>/fw-<device>-<commit_id>.mlx
 
 4. Build one commit at a time. Do not batch builds.
 
-Important: Do not use /tmp or create separate worktrees for builds. Always
-build in the current golan_fw working directory. /tmp may have limited space
-and worktrees add unnecessary complexity.
+Important: build in the ticket's own worktree off `golan_fw2` (skill
+`regression-repro`, Phase 4), never in a clone's own checkout and never in /tmp
+(limited space).
 
 ### Test Workflow
 

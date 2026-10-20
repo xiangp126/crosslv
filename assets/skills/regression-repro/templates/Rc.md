@@ -6,7 +6,8 @@
 ## 1. Issue summary
 
 - Redmine: [<ticket#>](https://redmine.nvidia.com/issues/<ticket#>)
-- Failure signature (verbatim):
+
+**Failure signature** (verbatim):
 
 ```text
 <exact fatal / UFATAL / mismatch string>
@@ -70,7 +71,7 @@
 |---|---|---|---|
 | `/auto/fwgwork1/$USER/golan_fw_<ticket#>` | `<ticket#>_<topic>` | `<tag> @ <sha>` | root-cause analysis at the ticket's version |
 | `/auto/fwgwork1/$USER/golan_fw_<ticket#>` | `<ticket#>_<topic>_<oddver>` | `<next odd tag>` | the branch the patch lives on |
-| `/auto/fwgwork1/$USER/utopx_<ticket#>` | `fix_<ticket#>_<topic>_<line>` | `origin/<full-branch-name> @ <sha>` | test tool — modified or not |
+| `/auto/fwgwork1/$USER/utopx_<ticket#>` | `fix_<ticket#>_<topic>_<track>` | `origin/<full-branch-name> @ <sha>` | test tool — modified or not |
 
 **Local artifacts** (under the ticket dir)
 
@@ -93,7 +94,7 @@ How it was found: `Repro_<ticket#>.md`, Investigation log §<n>–§<m>.
 
 ## 4. Rejected hypotheses and dead ends
 
-- <looked like …; ruled out by …> (Investigation log §<n>)
+- <looked like …; ruled out by …> (`Repro_<ticket#>.md`, Investigation log §<n>)
 
 ## 5. Fix
 

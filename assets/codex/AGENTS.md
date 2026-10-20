@@ -88,20 +88,24 @@ Facts that hold in every session live here. Procedures live in the corresponding
   every session shares: check `df -h /auto/fwgwork1/$USER` before adding one.
 - Never delete a worktree on your own when the work ends; Peter reuses some. Short of space, drop
   idle trees' `cmakeBuild/` first and ask before removing a tree.
-- Logs that documents cite go in the ticket's bugZilla directory, not in a worktree.
+- Logs that a page or a report cites are copied into the ticket's bugZilla directory, which
+  outlives the worktree.
 
 ## Markdown documents
 
 Every `.md` written for Peter — in any folder, for any purpose: tracking pages, work logs, defect
-lists, reports, a ticket's Repro / Rc, code-flow write-ups, notes — follows the writing rules in skill
-`feature-delivery`, `references/documents.md` §6. The ones most often missed:
+lists, reports, a ticket's Repro / Rc, code-flow write-ups, notes — follows skill `markdown-docs`:
+which document set the work gets, how each kind of document is kept, and the writing rules. The
+ones most often missed:
 
 - External items are short labels linked to the full URL, `[1459033](https://git-nbu…/+/1459033)`,
   `[FR #4838395](…)`; never a bare URL or a URL as its own label; every mention of a change or
   ticket number is linked, tables included.
 - Local files the reader opens (other documents, reports, run logs cited as evidence, `tools/`)
-  are relative links labelled with the file name; paths to type or copy and `file:line` stay in
-  backticks.
+  are relative links labelled with the file name — except in a ticket's `Rc`, which goes to
+  Redmine. Source lines are links too, `[VHCA.cpp:3264](../../utopx-psf/src/hca/VHCA.cpp#L3264)`;
+  a line of a gerrit patchset links gerrit's file view, `…/+/<change>/<ps>/<path>#<line>` (the
+  only form in `Rc`). Paths to type or copy stay in backticks.
 - Headings are short titles that say what the section holds (they become the table of contents);
   owners, timestamps, conclusions and status marks go in the first line under the heading.
 - No code block inside a list item; patches go in `diff` fences.
@@ -133,24 +137,28 @@ command.
 
 ## Skill routing
 
-| Skill | Use it for |
+| skill | covers |
 |---|---|
-| `fw-build-burn-utopx` | Build FW, burn a local card, bring drivers up, and run utopx |
-| `steering-capture` | Freeze a live utopx run and capture STE / steering-chain state (`--wait_on_err`, `stedmp.sh`, `--hwtrace`). |
-| `gerrit-change` | Commit-message format, Change-Id rules, cherry-picks and backports |
-| `utopx-ci-rerun` | Re-trigger utopx/golan_fw CI with vote and concurrency checks |
-| `ci-forensics` | Jenkins failure to session id, MARS archive, and raw failure log |
-| `ci-support-ticket` | Prepare the ServiceNow CI-support form when explicitly requested |
-| `fsearch-failures` | Query regression failure history and attribute occurrences to commits |
-| `regression-repro` | Reproduce a regression locally from Redmine/MARS coordinates |
-| `feature-delivery` | Drive a feature end to end across golan_fw and utopx; keep its documents (`Tracking.md`, `Ledger.md`, `Defects.md`, test reports) from the skill's templates, created on day 0 |
-| `noga-lock` | Query, reserve, renew, wait for, and release lab servers |
-| `lab-box-login` | ssh rules for lab boxes, root login and lab credentials, repairing a box whose NFS home is not mounted |
-| `nic-livefish-recovery` | Recover a NIC missing from PCI and avoid unsafe bulk NV writes |
-| `bluefield-fwconfig` | BlueField mlxconfig read-back and ARM-liveness traps |
-| `aipim-cli-env` | ai-pim CLI container, credentials, upgrades, and MCP/CLI split |
-| `regression-report-mail` | Nightly regression and coverage reports in Outlook |
-| `managing-confluence` | Confluence discovery, exact reads, exports, and publishing |
-| `tracking-redmine` | redmine-cli fallback when nvidia-redmine MCP is unavailable |
-| `utopx-regression-ticket` | File the standard Redmine ticket for a regression failure |
-| `skill-maintainer` | Add or modify canonical skills shared with Claude; repair and check links |
+| `fw-build-burn-utopx` | build FW from golan_fw, burn it to a local card, run utopx against it; even/odd version gate, jmake worktree path rules, OFED↔udriver hand-over, failure signatures |
+| `steering-capture` | capture steering state from a **live** utopx run: freeze with `--wait_on_err`, dump one entry with `stedmp.sh`, or take the whole chain with `--hwtrace`. Also the `--wait_cycle` pause and the segfault-dump trick |
+| `gerrit-change` | getting a change onto gerrit: commit message format, cherry-picks and back-ports, Change-Id rules, private branch names, **and pushing a dependent stack** (RELATED_CHANGES / IGNORE topics) |
+| `utopx-ci-rerun` | re-triggering utopx / golan_fw CI, concurrency and vote preconditions |
+| `ci-forensics` | red build → session_id → MARS archive → the raw failure log |
+| `ci-support-ticket` | a CI support request on the ServiceNow "Host Firmware Automation Support" form, only when Peter says "open a CI ticket"; its description reports the failure, never the root cause |
+| `fsearch-failures` | the regression failure DB: how often / since when / which commit — attribution. New path + Py3.8 since 2026-09, three silent traps |
+| `regression-repro` | a bug ticket end to end: reproduce locally ("regression repro template") → root-cause in FW/utopx source → **verify the fix on the box** → `Rc_<ticket>.md`. Also fires on "find the root cause", "investigate this ticket", "propose/verify a fix" |
+| `utopx-regression-ticket` | a Redmine ticket for a UTOPX regression, CI or DoA failure (what "open a ticket" means): fields, subject, description, the evidence comment with every MARS artifact; the root cause analysis comment ("write a root cause analysis"); the HTML of any Redmine comment, and correcting one in place |
+| `feature-delivery` | a **feature** end to end (the mirror of `regression-repro`): survey both repos' change stacks, find the on/off gates that keep the path dark, per-task worktrees, the daily-wiped reg-box env, and the verdict "did the new code path execute" instead of `TEST PASSED`. Also the feature's documents, created from its templates on day 0: the `Tracking.md` status page (for people), the `Ledger.md` step-by-step record, `Defects.md`, test reports; any other multi-week task gets the same `Tracking.md` and `Ledger.md` (crosslv tool work gets one `plans/` document instead: skill `markdown-docs`). Fires on "take over this feature", "how far is X", "why is this change stuck", "update Tracking.md" |
+| `markdown-docs` | every `.md` written for Peter: which document set the work gets (feature or long task, bug ticket, crosslv `plans/`), how pages and logs are kept, what not to create or keep, the writing rules (language, links, headings, code blocks) |
+| `noga-lock` | querying, locking, renewing, waiting for and releasing lab servers |
+| `lab-box-login` | getting a shell on a lab box: ssh rules (BatchMode, DISPLAY, ControlMaster, waiting for a reboot), root login and where the lab passwords are, a box whose NFS home is not mounted (autofs, an empty `/etc/auto.master`) |
+| `nic-livefish-recovery` | un-bricking a NIC that vanished from PCI; the mlxconfig rule |
+| `bluefield-fwconfig` | mlxconfig read-back traps on any BlueField DPU, ARM-liveness check |
+| `aipim-cli-env` | the ai-pim CLI container: credentials, upgrades, what the MCP covers and what needs the CLI; the Confluence write path |
+| `managing-confluence` | Confluence reads, search, exports and publishing (the write itself: `aipim-cli-env`) |
+| `managing-glean` | glean-cli, when the nvidia-glean MCP tools are missing or failing |
+| `tracking-redmine` | redmine-cli, when the nvidia-redmine MCP tools are missing or failing |
+| `tracking-nvbugs` | nvbugs-cli: every NVBugs write (the MCP is read-only) and the reads the MCP lacks |
+| `regression-report-mail` | nightly UtopX / NICX regression + coverage mails: subjects, senders, branch-pointer table, Outlook MCP limits |
+| `creating-nvidia-github-repo` | a new private repository under github.com/NVIDIA: the OSRB bug, module assignment, the onboarding form |
+| `skill-maintainer` | add or modify the canonical skills shared by Claude Code and Codex; link repair and validation |

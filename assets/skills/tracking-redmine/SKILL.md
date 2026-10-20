@@ -40,6 +40,11 @@ redmine-cli auth status
 
 For automations, use a dedicated service user (request via ServiceNow).
 
+Check `redmine-cli auth status` before relying on this path. `Authenticated: false` means it cannot
+be used until a token is set — ask Peter before setting one; meanwhile skill
+`utopx-regression-ticket` has a REST path with the key in `~/.redmine_env`
+(its `references/rest-fallback.md`).
+
 **API host:** since the 2026-10-05 domain migration the API lives at
 `https://redmine-api.nvidia.com`, but redmine-cli still defaults to the retired
 `https://redmine-api.mellanox.com`. Check `redmine-cli auth status` and set it once; it is kept

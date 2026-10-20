@@ -27,6 +27,7 @@ Paths are relative to this skill's directory.
 |---|---|---|
 | `templates/Repro.md` | the ticket's working document: todo list, Goal, Environment table, then the **Investigation log and Run log (appended LIVE, as findings happen)** | **first** — copy to `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/Repro_<ticket#>.md` (`references/ticket-documents.md` §0) |
 | `references/ticket-documents.md` | the ticket's two documents, `Repro_<ticket#>.md` and `Rc_<ticket#>.md`: what each holds, what changes where on each event, what not to create, the `Rc` rules | at step 0, and before writing either document |
+| skill `markdown-docs` | how both documents are written and kept: language, links, log entries, corrections, what not to create, what to delete | before writing either document |
 | `references/procedure.md` | Phases 1–11: decode the ticket → extract versions from the tarball → allocate the box → pin repos → burn → bring up → run → confirm → **verify the fix on the box (9.5)** → codify → commit | while working a phase; read only the phase you are on |
 | `references/key-learnings.md` | accumulated traps + a worked example (#5090131, BRONCO/BF4) | when something behaves oddly, and before declaring a verdict |
 | skill `lab-box-login` | ssh rules for tool calls and scripts, root login and the shared lab credentials (its `references/lab-credentials.md`, local only), a box whose NFS home is not mounted | when a box rejects your login or a procedure needs root or the ARM password |
@@ -44,7 +45,8 @@ to an old commit. Give the ticket its own worktree off each clone it needs
 checkout. One per ticket, not per experiment: the control, the fix and every variant are commits
 switched inside it; do not delete it when the ticket closes without asking (short of space, remove
 its `cmakeBuild/` first). Per-ticket files go in `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/`. Full rule:
-`CLAUDE.md` → **Repos**. Worktree path constraints `jmake` imposes: skill `fw-build-burn-utopx` §1.
+`CLAUDE.md` → **Repos** (in Codex, `AGENTS.md` → **Worktrees**). Worktree path constraints `jmake`
+imposes: skill `fw-build-burn-utopx` §1.
 
 ## Phase 0 — query `fsearch` BEFORE you allocate a box
 
@@ -80,8 +82,9 @@ replace a device A/B when the suspect landed outside the retention window.
 
 - **Write findings into `Repro_<ticket#>.md`'s Investigation log as you find them** — code
   reads, `git blame` attribution, killed hypotheses — not in a write-up reconstructed at the end.
-  The chat transcript is gone next session. Keep superseded conclusions in place, marked
-  `SUPERSEDED`; never delete them.
+  The chat transcript is gone next session. A conclusion that turns out wrong is struck through in
+  place, with the correction, its date and the criterion for next time (skill `markdown-docs`);
+  never delete it.
 - **`Rc_<ticket#>.md` (from `templates/Rc.md`) is the deliverable**, not the chat
   answer.
 - **"Write a root cause analysis" for the ticket** means one Redmine comment in a fixed shape —
@@ -196,7 +199,7 @@ Examples and the peer-analysis rules: `references/key-learnings.md` → "Evidenc
 
 - **Before reading source for analysis** (not just before building): `git status` /
   `git diff --stat`. A rejected patch left in the tree becomes "the code" days later. When a patch
-  is rejected, save it as `REJECTED_<what>.patch`, `git checkout --` the files the same day, and
+  is rejected, save it as `REJECTED_<vN>_<why>.patch`, `git checkout --` the files the same day, and
   rename anything still called `FIX_*`.
 - **Before committing a verified fix, close the chain source → binary → run → commit**; each link
   needs its own evidence:
