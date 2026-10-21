@@ -64,7 +64,7 @@
     "terminal.integrated.altClickMovesCursor": false,           // disable Alt+click cursor move, stops bash from cycling history
     "terminal.integrated.focusAfterRun": "terminal",
     "terminal.integrated.ignoreBracketedPasteMode": true,
-    "terminal.integrated.enablePersistentSessions": false,
+    "terminal.integrated.enablePersistentSessions": true,
     "window.autoDetectColorScheme": true,
     "workbench.colorCustomizations": {
         "inlineChat.foreground": "#b4b2b0",
@@ -558,4 +558,5 @@
     "bookmarks.keepBookmarksOnLineDelete": true,
     "cursor.composer.textSizeScale": 1.15,
     "update.mode": "none",
+    "markdown-preview-enhanced.previewTheme": "vscode.css",
 }

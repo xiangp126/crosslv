@@ -246,11 +246,6 @@
 	},
 	{
 		"key": "ctrl+shift+v",
-		"command": "-markdown.showPreview",
-		"when": "!notebookEditorFocused && editorLangId == 'markdown'"
-	},
-	{
-		"key": "ctrl+shift+v",
 		"command": "-notebook.cell.pasteAbove",
 		"when": "notebookEditorFocused && !inputFocus"
 	},
@@ -954,15 +949,5 @@
 		"key": "ctrl+shift+-",
 		"command": "-workbench.action.navigateForward",
 		"when": "canNavigateForward"
-	},
-	{
-		"key": "ctrl+alt+m",
-		"command": "markdown.showPreview",
-		"when": "!notebookEditorFocused && editorLangId == 'markdown'"
-	},
-	{
-		"key": "shift+cmd+v",
-		"command": "-markdown.showPreview",
-		"when": "!notebookEditorFocused && editorLangId == 'markdown'"
-	},
+	}
 ]
