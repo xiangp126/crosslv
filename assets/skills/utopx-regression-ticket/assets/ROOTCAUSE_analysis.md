@@ -1,7 +1,7 @@
-# Redmine #<ticket#> — Root cause
+# Redmine #<ticket#> — Root cause analysis
 
 > `<one-line failure signature>` — `<branch/tag>` / `<device family>` / `<box>`
-> **Status:** `<IN PROGRESS | ROOT-CAUSE FOUND | FIX VERIFIED | VOID | COMMITTED>` · Last updated: `<YYYY-MM-DD>`
+> **Status at upload:** `<ROOT-CAUSE FOUND | FIX VERIFIED | COMMITTED>` · `<YYYY-MM-DD>`
 
 ## 1. Issue summary
 
@@ -65,19 +65,23 @@
 | Regression per-case reset script | `/mswg/projects/fw/fw_ver/regression/HcaCoreRegression/RegTools/Fwreset.py` |
 | Topology file | `/auto/mswg/projects/fw/fw_ver/MARS_HCA_CORE/MARS_conf/topo/<box>/topology_<mode>.xml` |
 
-**Private branches** (per-ticket worktrees off `golan_fw2` / `utopx2`)
+**Private branches**
 
 | Worktree path | Branch | Based on | Purpose |
 |---|---|---|---|
-| `/auto/fwgwork1/$USER/golan_fw_<ticket#>` | `<ticket#>_<topic>` | `<tag> @ <sha>` | root-cause analysis at the ticket's version |
-| `/auto/fwgwork1/$USER/golan_fw_<ticket#>` | `<ticket#>_<topic>_<oddver>` | `<next odd tag>` | the branch the patch lives on |
-| `/auto/fwgwork1/$USER/utopx_<ticket#>` | `fix_<ticket#>_<topic>_<track>` | `origin/<full-branch-name> @ <sha>` | test tool — modified or not |
+| `/auto/fwgwork1/<user>/golan_fw_<ticket#>` | `<ticket#>_<topic>` | `<tag> @ <sha>` | root-cause analysis at the ticket's version |
+| `/auto/fwgwork1/<user>/golan_fw_<ticket#>` | `<ticket#>_<topic>_<oddver>` | `<next odd tag>` | the branch the patch lives on |
+| `/auto/fwgwork1/<user>/utopx_<ticket#>` | `fix_<ticket#>_<topic>_<track>` | `origin/<full-branch-name> @ <sha>` | test tool — modified or not |
 
-**Local artifacts** (under the ticket dir)
+**Local artifacts** (under `/auto/fwgwork1/<user>/bugZilla/<ticket#>_<core>/`)
 
 | Artifact | Path | md5 |
 |---|---|---|
-| <control build / patched build / candidate> | `<path>` | `<md5>` |
+| <control build / patched build> | `fw/fw_archive_<MMDD>_<sha>/<image>` | `<md5>` |
+| the fix | `patches/FIX_<topic>.patch` | |
+| a candidate that was tried and disproved | `patches/REJECTED_<vN>_<why>.patch` | |
+| the regression's burned INI, the release default, their diff | `ini/` | |
+| repro, control and verification run logs | `logs/` | |
 
 - Regression window (fsearch): <first occurrence, sessions and setups affected, the suspect
   commit>
@@ -86,24 +90,23 @@
 ## 3. Root cause
 
 <The accepted root cause, stated once in a short paragraph: what the thing is, what it does
-wrong, and where (`file:line`). Name the commit and author when a change introduced it; say so
-when it is a latent defect rather than a regression.>
+wrong, and where (`file:line`, or a link to gerrit's file view or gitiles). Name the commit and author when a
+change introduced it; say so when it is a latent defect rather than a regression.>
 
 Evidence: <`file:line`; attribution (`git blame` → commit, author, date); the deciding run>.
-How it was found: `Repro_<ticket#>.md`, Investigation log §<n>–§<m>.
 
 ## 4. Rejected hypotheses and dead ends
 
-- <looked like …; ruled out by …> (`Repro_<ticket#>.md`, Investigation log §<n>)
+- <looked like …; ruled out by …>
 
 ## 5. Fix
 
 - Repo(s): <`golan_fw2` and/or `utopx2`>
 - Branch: <the private branch the fix lives on>
-- Diff:
+- Gerrit: [<num>](<change URL>), or not pushed
 
 ```diff
-<the patch, or the path of FIX_<topic>.patch>
+<the patch>
 ```
 
 - Why it fixes §3: <each hunk tied back to the root cause>
@@ -125,20 +128,7 @@ How it was found: `Repro_<ticket#>.md`, Investigation log §<n>–§<m>.
 
 ## 7. Next steps
 
-- [ ] Gerrit change: [<num>](<change URL>), once pushed
-- [ ] Open questions for the code owner: <...>
-- [ ] Follow-up tickets: <sibling cases sharing the defect>
+- Open questions for the code owner: <...>
+- Follow-up tickets: <sibling cases sharing the defect>
 - Back-port range: first affected release <tag>; <n> releases; active lines hit: <...>;
   <whether carrying the defect means failing>
-
-## 8. Artifact inventory
-
-| File | What it is |
-|---|---|
-| `Repro_<ticket#>.md` | the plan, the Investigation log and the Run log |
-| `Rc_<ticket#>.md` | this document |
-| `regression_ini/` | the regression's burned INI, the release default, and their diff |
-| `tools/` | `lab.conf`, `env_rebuild.sh`, `per_run.sh`, `selftest.sh` |
-| `FIX_<topic>.patch` | the fix |
-| `REJECTED_<vN>_<why>.patch` | a candidate that was tried and disproved |
-| `logs/` | repro, control and verification run logs |

@@ -34,6 +34,38 @@ const SITES = [
         at: /let (\w+)=await this\._client\.resolveLinkTarget\(\w+,\w+\);/g,
         add: m => `${m[1]}&&(${m[1]}.position??=${m[1]}.positionOrRange?.start??${m[1]}.positionOrRange);`,
     },
+    // A link clicked in a preview goes to md-preview-plus first (command mdPreviewPlus.openLink in
+    // extension.js, given the link as written and the preview's file), which opens a link to a source line
+    // as of a commit, file?v=<commit>#L<line>, where that line is now. True means it opened the link; false,
+    // an error, or md-preview-plus not running leaves the link to the preview as before.
+    {
+        name: 'preview links go to md-preview-plus first',
+        at: /async _onDidClickPreviewLink\((\w+)\)\{/g,
+        add: m => `if(await require("vscode").commands.executeCommand("mdPreviewPlus.openLink",${m[1]},this.resource).then(h=>h===!0,()=>!1))return;`,
+    },
+    // A link to file.md#anchor (a heading or an <a id>) opens that file's preview tab where it was last
+    // left: the language server resolves the anchor to a line, the code that opens links hands the line to
+    // vscode.open as a text selection, and a preview tab ignores the selection. The preview manager's line
+    // monitor is what scrolls previews to a line when the editor scrolls; give it to the code that opens
+    // links ...
+    {
+        name: 'link opener reaches the previews',
+        at: /this\._topmostLineMonitor=new \w+;/g,
+        add: () => 'this._opener._topmostLineMonitor=this._topmostLineMonitor;',
+    },
+    // ... so that a preview tab the link opens starts at the anchor's line (position, which the #L<line>
+    // patch fills in) ...
+    {
+        name: 'links to file#anchor open a new preview there',
+        at: /if\(!(\w+)\)return;let (\w+)=\w+\.Uri\.from\(\1\.uri\);/g,
+        add: m => `${m[1]}.position&&this._topmostLineMonitor?.setPreviousStaticEditorLine({uri:${m[2]},line:${m[1]}.position.line});`,
+    },
+    // ... and one already open scrolls there, in place, once vscode.open has shown it.
+    {
+        name: 'links to file#anchor scroll an open preview',
+        at: /return (\w+)\.commands\.executeCommand\("vscode\.open",(\w+),\{selection:(\w+)\.position\?[^;]*?\}\)/g,
+        add: m => `.then(()=>${m[3]}.position&&this._topmostLineMonitor?.updateLine(${m[2]},${m[3]}.position.line))`,
+    },
 ];
 
 // on: true applies the patches, false takes them out. Returns the names of the sites changed now and

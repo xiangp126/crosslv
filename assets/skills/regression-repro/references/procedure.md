@@ -61,8 +61,8 @@ Extract, in order:
 5. **History** (`journals`) — who reassigned/triaged it and any analysis link (e.g. an Orion
    AI-overview URL); reassignment from the auto-filer to a dev usually marks the start of real triage.
 
-Done when the **Environment** table of `Repro_<ticket#>.md` (from `templates/Repro.md`) is
-fully filled from the ticket alone.
+Done when the **Environment** table of the ticket's `Tracking.md` (from `templates/Tracking.md`)
+is fully filled from the ticket alone.
 
 ## Phase 2 — Extract the exact versions from the MARS session tarball
 
@@ -119,26 +119,26 @@ it and grab it the instant it frees (§3b); never swap boxes except per the same
 
 The test machine is the `<machine>` parsed from `setup_id` (e.g. `BRONCO_FW-`**`m-fwreg-029`**`_DPU_MODE_P1`).
 
-**Unsure of a reg-server / reservation / lab-tooling command or flag** (malloc options, querying a
+**Unsure of a reg-server / reservation / lab-tooling command or flag** (NOGA options, querying a
 queue, what a Noga field means)? Ask the **nvidia-glean** MCP (`glean_search` or `glean_chat`, e.g.
-"how to malloc a regression server fwreg / extend allocation / noga lock") before inventing one;
+"how to lock a regression server fwreg with noga") before inventing one;
 confirm with `--help` where one exists.
 
 ### 3a. Reserve the box
 
-Lock mechanics — taking, extending, releasing and verifying the lock, the `not in allocation pool`
-fallback, the interactive `--reg-extend` trap, reading `TIME LEFT` — are in **skill `noga-lock`**.
+Lock mechanics — taking, renewing, releasing and verifying the lock, reading `lock_time_out` — are
+in **skill `noga-lock`**.
 Reserve **the box named in `setup_id`**, never a substitute (exception: same-PSID substitution, §3b).
 
 ### 3b. If the box is busy: monitor and grab it the instant it frees
 
-When `jmake --reg-malloc <machine>` reports `Resource locked by <holder> until <ts>`, do not switch
-hosts or re-type malloc by hand — first malloc wins, so use the unattended loop. It already handles
-what a hand-written `until` loop gets wrong: heartbeat with owner + seconds-to-expiry, chaining the
-provisioning step with `--then`, and the two failure modes that silently kill a monitor.
+When the box is locked by someone else, do not switch hosts or retry by hand — the first lock
+wins, so use the unattended loop. It already handles what a hand-written `until` loop gets wrong:
+heartbeat with owner + seconds-to-expiry, chaining the provisioning step with `--then`, and the two
+failure modes that silently kill a monitor.
 
 ```bash
-~/myGit/crosslv/assets/skills/noga-lock/scripts/noga_wait.sh -n <machine> -L 8 --hours 8 \
+~/myGit/crosslv/assets/skills/noga-lock/scripts/noga_watchdog.sh <machine> --until-locked -L 8 --hours 8 \
     --then '<provisioning command>'
 ```
 
@@ -220,7 +220,7 @@ is what makes the FW expose the same caps.
    regression hit the SAME fatal, the bug is systemic to that board/FW and the substitute is
    high-confidence.
 
-5. Lock the substitute (direct Noga lock if it lacks the malloc-pool label — §3a / skill `noga-lock`),
+5. Lock the substitute (with NOGA — skill `noga-lock`),
    record the substitution + approval in the run log, and leave the original box untouched.
 
 ### 3c. Preflight (once you hold the lock)
@@ -353,10 +353,10 @@ branch-naming conventions, so never assume a shared branch name:
 ## Phase 5 — Reproduce the regression's INI
 
 ```bash
-mkdir -p <ticket dir>/regression_ini     # <ticket dir>: /auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>
-cp <default_ini path>  <ticket dir>/regression_ini/default_<name>.ini      # reference
-cp <new_ini_file path> <ticket dir>/regression_ini/burned_<session>.ini    # the one you burn
-diff <ticket dir>/regression_ini/default_*.ini <ticket dir>/regression_ini/burned_*.ini
+mkdir -p <ticket dir>/ini     # <ticket dir>: /auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>
+cp <default_ini path>  <ticket dir>/ini/default_<name>.ini      # reference
+cp <new_ini_file path> <ticket dir>/ini/burned_<session>.ini    # the one you burn
+diff <ticket dir>/ini/default_*.ini <ticket dir>/ini/burned_*.ini
 ```
 
 Understand the diff: `BurnFw.py` appends device-specific overrides (BAR/PCIe/DDR-mapping, emulation
@@ -373,7 +373,7 @@ predict and produce look-alike failures. Burned INI == the regression's, exactly
 ```bash
 ssh -o BatchMode=yes <test machine> 'cd <FW source repo> && \
   $HOME/.usr/bin/jmake --burn --device <MST device> \
-      --firmware <official .mlx> --ini <ticket dir>/regression_ini/burned_<session>.ini'
+      --firmware <official .mlx> --ini <ticket dir>/ini/burned_<session>.ini'
 # Do NOT chain --fw-reset here. If jmake hits a root-squashed-NFS "Permission denied"
 # writing image.bin into the repo, burn with direct mlxburn instead:
 ssh -o BatchMode=yes <test machine> 'sudo -E env MFT_ICMD_TIMEOUT=60000 \
@@ -503,7 +503,7 @@ verified run. The fix may live in `golan_fw2`, in `utopx2`, or in **both** — n
 test-tool defect (a stale expectation, a check that no longer matches intended HW behaviour) is an
 equally valid outcome. Check which repo(s) your change touches before building.
 
-1. **Before building, write the hypothesis and the diff into the Investigation log** — root-cause
+1. **Before building, write the hypothesis and the diff into the ticket's `Ledger.md`** — root-cause
    statement, code evidence (links to the source lines), attribution (`git blame` /
    `git log --author`), and the exact diff under test. Written afterwards, "it passed" is
    unauditable.
@@ -526,7 +526,7 @@ equally valid outcome. Check which repo(s) your change touches before building.
      same seed must give the same signature, count and `LOG_OP` depth (#5285522: official `0290` →
      `0xac5816` x4, GoldenTlv 0, `LOG_OP` 252; local unpatched `0291` → `0xac5816` x4, GoldenTlv 0,
      `LOG_OP` 253 — equivalent).
-   - Record the version correspondence in `Rc_<ticket#>.md` section 2: which artifacts are
+   - Record the version correspondence in `Defects.md` §2: which artifacts are
      byte-identical to the ticket's, which single one deviates and why ("did you actually run what
      the ticket ran" is a reviewer's first question — answer it in the document, not in chat).
    - **A locally built image is not the official release image**: even at an identical source tag it
@@ -585,7 +585,7 @@ equally valid outcome. Check which repo(s) your change touches before building.
    - **anything else** (traffic, steering, an unrelated checker) = unrelated failure ⇒ still a fix.
 
    Encode this in the run script's verdict rather than eyeballing it, and state in
-   `Rc_<ticket#>.md` §6 which remaining failures you judged unrelated and why.
+   `Defects.md` §6 which remaining failures you judged unrelated and why.
 
    Signs you loosened a check **too far**:
    - **`LOG_OP` *below* the unpatched control** — the test now fails *earlier*; a real fix moves the
@@ -600,14 +600,15 @@ equally valid outcome. Check which repo(s) your change touches before building.
    **A gate added by a named bug fix is a strong prior that its strictness is deliberate**: check
    `git log -S` on the line before relaxing it, settle it with one build rather than an argument, and
    accept the answer when the run says the gate was right. Record the failed experiment in
-   `Rc_<ticket#>.md` §5 as a rejected attempt with the evidence, so nobody re-runs it.
+   `Defects.md` §5 as a rejected attempt with the evidence, so nobody re-runs it.
 
 8. **Adjacent-case sanity pass** — a handful of neighbouring cases/ops, to catch a regression the fix
    itself introduces; a fix that kills the target signature while breaking its neighbours is not done.
 
-9. **Record every run** in BOTH the Run log table (one row per run, note which build) and the
-   Investigation log (before/after signature, control result, explicit verdict). Verdicts:
-   `VERIFIED` / `VOID - <reason>` / `NOT REPRODUCED` / `PARTIAL` — never a bare pass/fail.
+9. **Record every run** in `Ledger.md`: a Run log row per run (which build), and an entry for what
+   the runs showed (before/after signature, control result, explicit verdict). Verdicts:
+   `VERIFIED` / `VOID - <reason>` / `NOT REPRODUCED` / `PARTIAL` — never a bare pass/fail. Copy the
+   logs of the deciding runs into the ticket's `logs/` in the same step.
 
 10. **Only a VERIFIED fix proceeds to Phase 11.** If verification fails, go back to root-cause work and
     **keep the failed attempt in the log** — the record stops the next attempt repeating it.
@@ -618,15 +619,17 @@ equally valid outcome. Check which repo(s) your change touches before building.
       `vhca->GetDevice()->GetMaxNumNonSmartNicHosts()` (also covers non-ECPF mode) — mismatch still 0,
       but it **segfaulted**; only the control (unmodified deployed binary, same seed: 6 mismatches, no
       segfault) showed the crash was self-inflicted.
-    - **Name patches by verdict the moment it is in:** `FIX_<topic>.patch` for the one that passed
-      (exactly one file), `REJECTED_<vN>_<why>.patch` for each disproved candidate — a superseded
+    - **Name patches by verdict the moment it is in**, in the ticket's `patches/`:
+      `FIX_<topic>.patch` for the one that passed (exactly one file), `REJECTED_<vN>_<why>.patch`
+      for each disproved candidate — a superseded
       attempt still called `fix_*` is indistinguishable from the deliverable. Built images likewise:
       one named copy per candidate with its md5, since `jmake` overwrites the same output file every
       build.
 
-11. **Write / finish `Rc_<ticket#>.md`** (from `templates/Rc.md`), starting as soon as a
-    root-cause hypothesis exists — not deferred to "the write-up later". It is the deliverable handed
-    to Peter and the code owner, produced whether or not the Gerrit commit happens in the same session.
+11. **Write / finish the ticket's `Defects.md`**, starting as soon as a root-cause hypothesis
+    exists — not deferred to "the write-up later". It is the deliverable handed to Peter, and the
+    source of what goes to the code owner and to Redmine, produced whether or not the Gerrit commit
+    happens in the same session.
 
 ## Phase 9b — Codify the repro: env_rebuild + per_run from the lab-box template (as soon as Phases 1–2 are decoded)
 
@@ -646,7 +649,7 @@ first (most error-prone) attempt is already scripted.
 | `selftest.sh` | runs both scripts against stubs, no box needed; checks every exit path | run it after any script change |
 
 - Change a script only when no hook can express what the task needs, and record why in the task's
-  log (`Repro`'s Investigation log, or a feature's `Ledger.md`). The scripts implement every rule
+  `Ledger.md`. The scripts implement every rule
   of this phase; a hook you write must keep them too.
 - A second box or a control group is a second conf that sources `lab.conf` and overrides a few
   values; both scripts take it with `--lab <file>` (the end of `lab.conf` shows the shape).

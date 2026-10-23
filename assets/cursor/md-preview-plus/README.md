@@ -1,22 +1,26 @@
 # Markdown Preview Plus
 
 VS Code 自带 Markdown 预览的增强。功能：
-- 左侧目录侧栏，☰ 开关，拖动侧栏右边缘调宽度；
+- 左侧目录侧栏，☰ 开关，拖动侧栏右边缘调宽度，长标题折行显示；
 - 页内搜索：Cmd+F 打开，Enter / Shift+Enter 跳到下一个 / 上一个，↑ / ↓ 翻以前搜过的词，Aa / ab 切换区分大小写 / 全字匹配（⌥⌘C / ⌥⌘W），Esc 关闭。Cursor 自带的查找在预览里不能用；
 - 正文占满窗口宽度，宽表格在宽度内换行；
 - 正文、标题和代码的字号，代码用 Monaco 字体；
 - diff 配色，与编辑器一致；
-- 标题栏的 Preview / Markdown 切换按钮；Cmd+Shift+V 也是原地换成预览，不再开标题带 Preview 的面板（那种面板还能用 Cmd+K V 开）（Cursor 3.24.18 上正常；在隔离的 3.25.9 上按钮不出现、快捷键没反应，见 [md-preview-plus.md](../../../plans/md-preview-plus.md) §5 第 14 项）；
+- 代码块右上角的 Copy：鼠标移到代码块上时出现，点一下复制整块代码（diff 带 `+` / `-`，不带最后一行后面的换行），按钮显示 Copied；
+- 标题栏的 Preview / Markdown 切换按钮；Cmd+Shift+V 也是原地换成预览，不再开标题带 Preview 的面板（那种面板还能用 Cmd+K V 开）（Cursor 3.24.18 上正常；在隔离的 3.25.9 上按钮不出现、快捷键没反应，见 [md-preview-plus.md §5 第 14 项](../../../plans/md-preview-plus.md#14-本扩展标题栏的按钮不出现源码里-cmdshiftv-没反应)）；
 - 点 md 链接新开 tab（靠远程设置，见[配套设置](#配套设置)）；
-- 给自带预览打补丁：tab 被别的 tab 盖住时不销毁，切回来不重新渲染、停在原处；`file#L79` 这种链接跳到那一行（见[给自带预览打的补丁](#给自带预览打的补丁)）；
+- 链接上右键（正文里的链接、侧边栏的目录项）：Copy Link Address（网页链接复制网址，本地文件复制绝对路径，`?v=` 和 `#` 后面的部分照带；目录项复制本文件的路径加 `#<标题的 id>`）、Copy Link Text，选中了文字时还有 Copy；别处右键仍是自带的 Cut / Copy / Paste；
+- 带 commit 的源码行链接：`[VHCA.cpp:5149](../../utopx-psf/src/hca/VHCA.cpp?v=6faa4de858#L5149)`，`?v=` 后面是行号所指的 commit，一段行写 `#L5149-L5160`。点开时在当前编辑组打开 worktree 里的文件，停在这几行现在所在的行，行号变了状态栏说一声；这几行改了、删了，也打开 worktree 里的文件，选中现在顶替它们的行（全删了就停在删掉的地方）并弹通知，通知上的 Show as of <commit> 打开那个 commit 时的文件（只读）；文件不在 worktree 里了，直接打开那个 commit 时的文件；commit 里没有这个文件（或者没有这个 commit）就打开 worktree 的文件、停在原行号并警告；
+- 给自带预览打补丁：tab 被别的 tab 盖住时不销毁，切回来不重新渲染、停在原处；`file#L79` 这种链接跳到那一行；别的 md 的 `xxx.md#锚点` 链接打开时滚到锚点；带 `?v=` 的链接交给本扩展（见[给自带预览打的补丁](#给自带预览打的补丁)）；
 - 给 Cursor 本体打补丁：切回被盖住的预览 tab 时不闪（见[给 Cursor 本体打的补丁](#给-cursor-本体打的补丁)）；
+- 页内跳转（点 `#锚点` 链接或侧边栏的目录项，按着 Cmd 点也算）之后能返回：按 ⌃⌥←（[keybindings.json](../keybindings.json) 里 Go Back 的键；Linux、Windows 上是 Ctrl+Alt+←），或编辑器默认的 Go Back 键（Mac 上 ⌃-，Linux 上 Ctrl+Alt+-，Windows 上 Alt+←），或点右下角的 ↩ Back，一次退一步；从另一个 md 点链接过来的，同样能退回那个 md 的 tab，停在点链接的地方；
 - Cmd+双击跳到源码。
 
 渲染仍由自带预览完成，本扩展只加样式和小脚本，所以打开时不闪。
 
 ## 给自带预览打的补丁
 
-[preview_patch.js](preview_patch.js) 在 Cursor server 自带的 Markdown 扩展里（`~/.cursor-server/bin/linux-x64/<commit>/extensions/markdown-language-features/dist/extension.js`，`<commit>` 就是 Mac 上那个 Cursor 的 commit，About 里能看到）就地改四处。名字是脚本打印的名字：
+[preview_patch.js](preview_patch.js) 在 Cursor server 自带的 Markdown 扩展里（`~/.cursor-server/bin/linux-x64/<commit>/extensions/markdown-language-features/dist/extension.js`，`<commit>` 就是 Mac 上那个 Cursor 的 commit，About 里能看到）就地改八处。名字是脚本打印的名字：
 
 | 处 | 名字 | 改了什么 | 为什么 |
 |---|---|---|---|
@@ -24,6 +28,10 @@ VS Code 自带 Markdown 预览的增强。功能：
 | 2 | `keep Open Preview panels` | Open Preview 面板也要求保留页面 | 同上 |
 | 3 | `update covered tabs in place` | 被保留的 tab 在盖住期间文件改了，就地更新 | 原来盖住期间文件一改就整页重载 |
 | 4 | `links to #L<line> jump to the line` | 点 `file#L79` 这种链接跳到第 79 行 | 语言服务把行号放在 `positionOrRange` 里返回，这一版打开文件的代码读的是 `position`，所以只打开文件、不跳行。上游 VS Code 已经改成读 `positionOrRange` |
+| 5 | `preview links go to md-preview-plus first` | 预览里点的链接先交给本扩展的命令 `mdPreviewPlus.openLink`；它只接带 `?v=<commit>` 的源码行链接，其余照原来的走 | 带 commit 的源码行链接要换算到现在的行；自带的预览把 `?` 后面的部分丢掉，打开 worktree 的文件，停在原来的行号 |
+| 6 | `link opener reaches the previews` | 打开链接的代码拿到预览管理器按行号滚动预览的监视器 | 别的 md 的 `xxx.md#锚点`：语言服务把锚点解析成行号，打开链接的代码却只把它当文本选区交给 `vscode.open`，预览不认，只打开、不滚动 |
+| 7 | `links to file#anchor open a new preview there` | 新开的预览从锚点那一行开始 | 同上 |
+| 8 | `links to file#anchor scroll an open preview` | 已经开着的预览原地滚到锚点那一行，不重新渲染 | 同上 |
 
 - Cursor 升级会换成没改过的新副本。扩展每次启动都检查一遍，没改的就改上，并弹窗提示 Reload Window。每一处各自独立，新版本里找不到的那处只弹警告、不动。
 - 打补丁之前开的 Open Preview 面板（标题是 `Preview xxx.md` 的那种）不受影响：reload 时 Cursor 按它创建时的设置恢复，恢复后改不了，要关掉重开一次。.md 预览 tab 没有这个问题。
@@ -66,7 +74,7 @@ bash ~/myGit/crosslv/assets/cursor/md-preview-plus/build_vsix.sh
 | Cursor 升级，或者卸载后重装 | 可能同时弹出 Reload Window（自带预览的补丁）和 Quit Cursor（client）两个提示。点 Quit Cursor，再打开 Cursor，两边都生效。如果第一次启动就报了"安装已损坏"（client 打补丁赶在了完整性检查之前），也是退出再开就好 |
 | 本机连 `~/.cursor` 一起删了 | 同上，client 由 md-preview-plus 自动装回 |
 | 服务器上的 `~/.cursor-server` 被清掉，或者换了一台服务器 | 执行一次[安装](#安装)里的命令，再 Reload Window |
-| 新版 Cursor 改了补丁对应的代码 | 弹 `not found …` 警告，对应的修复暂时失效，其他照常。要按新版本改 [preview_patch.js](preview_patch.js) 或 [client/webview_patch.js](client/webview_patch.js)，步骤见 [md-preview-plus.md](../../../plans/md-preview-plus.md) §7.5。括号里是 `EACCES`、`EPERM` 的话是没有写权限，不是代码变了 |
+| 新版 Cursor 改了补丁对应的代码 | 弹 `not found …` 警告，对应的修复暂时失效，其他照常。要按新版本改 [preview_patch.js](preview_patch.js) 或 [client/webview_patch.js](client/webview_patch.js)，步骤见 [md-preview-plus.md §7.5](../../../plans/md-preview-plus.md#75-新版-cursor-补丁对不上)。括号里是 `EACCES`、`EPERM` 的话是没有写权限，不是代码变了 |
 
 ## 只改了样式或预览页脚本
 
@@ -101,14 +109,15 @@ bash ~/myGit/crosslv/assets/cursor/md-preview-plus/build_vsix.sh --vsix ~/md-pre
 
 | 文件 | 内容 |
 |---|---|
-| [package.json](package.json) | 扩展声明：预览样式和脚本、标题栏按钮 |
-| [extension.js](extension.js) | Preview / Markdown 按钮；启动时给自带预览打补丁，并把 client 装进本机 Cursor |
-| [preview_patch.js](preview_patch.js) | 给自带预览打的补丁：被盖住的 tab 不销毁、文件改动时不重载、`#L` 行号链接跳到那一行 |
-| [preview.js](preview.js) | 预览页里的脚本：目录侧栏和拖宽、页内搜索、只有 Cmd+双击才跳源码 |
+| [package.json](package.json) | 扩展声明：预览样式和脚本、标题栏按钮、链接的右键菜单 |
+| [extension.js](extension.js) | Preview / Markdown 按钮；链接右键菜单的三条复制命令；打开带 commit 的源码行链接（命令 `mdPreviewPlus.openLink`，commit 时的文件用只读的 `mpp-commit:` 打开）；启动时给自带预览打补丁，并把 client 装进本机 Cursor |
+| [preview_patch.js](preview_patch.js) | 给自带预览打的补丁：被盖住的 tab 不销毁、文件改动时不重载、`#L` 行号链接跳到那一行、点的链接先交给本扩展、别的 md 的锚点滚到锚点 |
+| [line_map.js](line_map.js) | 带 commit 的源码行链接：用 `git diff -U0` 算出这几行现在在第几行，或者已经变了；取 commit 时的文件 |
+| [preview.js](preview.js) | 预览页里的脚本：目录侧栏和拖宽、页内搜索、只有 Cmd+双击才跳源码、右键链接时把链接交给菜单 |
 | [preview.css](preview.css) | 版面、字号、表格、目录、搜索框、diff 颜色 |
 | [client/package.json](client/package.json) | client 的扩展声明：只在本机 Cursor 里运行 |
 | [client/extension.js](client/extension.js) | client 启动时给 Cursor 本体打补丁，提示退出重开；注册命令 `mdPreviewPlusClient.version`，md-preview-plus 靠它判断装没装、要不要重装 |
 | [client/webview_patch.js](client/webview_patch.js) | 给 Cursor 本体打的补丁，连同校验值一起改；也能在命令行手动改、撤销 |
 | [build_vsix.sh](build_vsix.sh) | 打包（连同 client）、安装、把样式和远程设置链到仓库；`--styles` 只更新预览页脚本 `preview.js` |
-| [tools/](tools/) | 在隔离的 Cursor 里复测的脚本，用法见 [md-preview-plus.md](../../../plans/md-preview-plus.md) §8 |
+| [tools/](tools/) | 在隔离的 Cursor 里复测的脚本，用法见 [md-preview-plus.md §8](../../../plans/md-preview-plus.md#8-怎么测) |
 | [plans/md-preview-plus.md](../../../plans/md-preview-plus.md) | 设计和维护记录：为什么这样做、每个问题的根因、怎么查、怎么测、经过 |

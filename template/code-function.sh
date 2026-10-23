@@ -296,7 +296,13 @@ _code_parse_options() {
     # position suffix has to come off before checking - but only while the path
     # does not exist, so a file whose name really ends in :<digits> still wins.
     local arg path pos stripped note picked line rejected= resolved=() missing=() notfile=()
-    for arg in "$@"; do
+    local tok taken lined=() other=() args=("$@") i=0
+    # By index rather than `for arg in "$@"`: a path taken out of a piece of
+    # text (the last resort at the end of the loop) goes in right after the
+    # argument it came from, and every step below runs on it as on a typed one.
+    while [[ $i -lt ${#args[@]} ]]; do
+        arg="${args[i]}"
+        i=$((i + 1))
         path="$arg"
         pos=
         note=
@@ -361,7 +367,54 @@ _code_parse_options() {
                     done <<< "$picked"
                     ;;
                 1) ;;  # escaped the picker on purpose: open nothing, say nothing
-                *) missing+=("$path") ;;
+                *)
+                    # Last resort, so nothing that resolves above is touched: text
+                    # with a path in it. A double-click in a Chinese reply runs on
+                    # through full-width brackets and CJK words to the next space:
+                    # DISABLED_HCA（src/hca/CmdTeardownFlow.cpp:69），于是报. It is
+                    # text when it holds a space, bracket, quote, comma, full-width
+                    # punctuation or the like (CJK letters are [:alnum:], so CJK
+                    # file names are not), or ends in . or :.
+                    taken=
+                    if [[ "$arg" == *[![:alnum:]._/~+@:-]* || "$arg" == *[.:] ]]; then
+                        # Pieces: runs of ASCII path characters, less a dot that
+                        # ends a sentence, plus up to two :<digits>; LC_ALL=C makes
+                        # every non-ASCII byte a separator, `command` keeps the
+                        # grep alias out. Candidates have a :<line>, a / or an
+                        # extension; those with a line go first, the first that
+                        # exists wins, else the first goes on to the fallbacks.
+                        lined=()
+                        other=()
+                        while IFS= read -r tok; do
+                            # Never taken: a piece that starts with a dot and has no
+                            # / - what is left of a non-ASCII name, .md out of
+                            # 文档.md, and with it a bare dotfile - and one with no
+                            # letter or digit, such as / or ../, whose directory
+                            # listing would be the whole tree under it.
+                            [[ "${tok%%:*}" == .* && "$tok" != */* || "${tok%%:*}" != *[A-Za-z0-9]* ]] && continue
+                            if [[ "$tok" =~ :[0-9]+$ ]]; then
+                                lined+=("$tok")
+                            elif [[ "$tok" == */* || "$tok" == *.[A-Za-z]* ]]; then
+                                other+=("$tok")
+                            fi
+                        done <<< "$(printf '%s\n' "$arg" | LC_ALL=C command grep -oE '[A-Za-z0-9._/~+@-]*[A-Za-z0-9_/~+@-](:[0-9]+){0,2}')"
+                        for tok in "${lined[@]}" "${other[@]}"; do
+                            if [[ -e "${tok%%:*}" ]]; then
+                                taken="$tok"
+                                break
+                            fi
+                        done
+                        [[ -z "$taken" ]] && taken="${lined[0]:-${other[0]}}"
+                    fi
+                    if [[ -n "$taken" ]]; then
+                        # The piece is never text itself, so it cannot come back
+                        # here; said at once, so a later error names a known path.
+                        echo -e "${LIGHTYELLOW}Stripped to:${RESET} $taken" >&2
+                        args=("${args[@]:0:i}" "$taken" "${args[@]:i}")
+                    else
+                        missing+=("$path")
+                    fi
+                    ;;
             esac
         fi
     done

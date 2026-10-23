@@ -13,14 +13,17 @@ ps / lsof where it does not.
 """
 
 import argparse
+import fcntl
 import json
 import os
 import re
+import select
 import shlex
 import shutil
 import signal
 import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import time
@@ -438,16 +441,24 @@ def codex_state_databases(home):
     moves it (here to /var/tmp/pexiang-codex-sqlite).
     """
     dirs = [Path(home)]
+    sqlite_home = codex_sqlite_home(home)
+    if sqlite_home:
+        dirs.insert(0, sqlite_home)
+    return [str(p) for d in dirs for p in sorted(d.glob("state_*.sqlite"))]
+
+
+def codex_sqlite_home(home):
+    """The sqlite_home config.toml sets, the directory codex keeps its SQLite files in, or None."""
     try:
         for line in (Path(home) / "config.toml").read_text().splitlines():
             if line.lstrip().startswith("["):
                 break
             match = re.match(r'\s*sqlite_home\s*=\s*"([^"]+)"', line)
             if match:
-                dirs.insert(0, Path(os.path.expanduser(match[1])))
+                return Path(os.path.expanduser(match[1]))
     except OSError:
         pass
-    return [str(p) for d in dirs for p in sorted(d.glob("state_*.sqlite"))]
+    return None
 
 
 def codex_records(pid, cwd, targets, argv):
@@ -671,7 +682,9 @@ def resume_command(agent, session_id):
     return RESUME_COMMANDS[agent].format(session_id=shlex.quote(session_id))
 
 
-def resume_record(rec):
+def resume_record(rec, preflight=False):
+    """The command that resumes rec. preflight: for a restore, which can be on
+    another host, put `jcl codex-preflight ID &&` ahead of a codex resume."""
     # A codex session nothing was ever sent in left no rollout to resume; what
     # it did hold, a model and an effort, comes back in a new one.
     if rec.get("agent") == "codex" and rec.get("empty"):
@@ -684,8 +697,12 @@ def resume_record(rec):
             command += " --model " + shlex.quote(codex_model_slug(rec["model"]))
         if rec.get("effort"):
             command += " -c " + shlex.quote("model_reasoning_effort=" + json.dumps(rec["effort"]))
+        env = ""
         if rec.get("agent_home") and rec["agent_home"] != str(CODEX_DIR):
-            command = "env CODEX_HOME=" + shlex.quote(rec["agent_home"]) + " " + command
+            env = "env CODEX_HOME=" + shlex.quote(rec["agent_home"]) + " "
+        command = env + command
+        if preflight and not rec.get("empty"):
+            command = f"{env}jcl codex-preflight {shlex.quote(rec['session_id'])} && {command}"
     elif rec.get("agent", "claude") == "claude":
         # What save read off the transcript; without these a resumed session
         # comes back on the defaults, effort included (/effort is per session)
@@ -1799,6 +1816,311 @@ def pick_snapshot_sessions(args, records, e):
     return chosen
 
 
+# One codex warm-up stands for every restore started this soon after it
+CODEX_WARM_FRESH_SECONDS = 600
+
+
+def flock_wait(fh, timeout):
+    """Take an exclusive flock on the open file fh, waiting at most timeout seconds; False if it never came."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+
+
+def local_lock_holders():
+    """{"<major>:<minor>:<inode>": pid} for the locks processes on this host hold; None without /proc/locks."""
+    try:
+        lines = Path("/proc/locks").read_text().splitlines()
+    except OSError:
+        return None
+    holders = {}
+    for line in lines:
+        fields = line.split()
+        # "1: FLOCK  ADVISORY  WRITE 2060855 00:2e:9259177933762783686 0 EOF"; a
+        # waiter is listed with "->" in front and holds nothing
+        if len(fields) >= 6 and fields[1] != "->":
+            holders.setdefault(fields[5], int(fields[4]))
+    return holders
+
+
+def codex_lock_holder(path):
+    """Who holds a codex lock file: ("free", None), ("here", pid) or ("elsewhere", None).
+
+    Asking takes nothing. F_GETLK's pid cannot tell here from elsewhere on NFS:
+    codex locks with flock(), which Linux carries out as a lock on the server,
+    and the server's answer comes back as a negative pid even when the holder
+    runs on this host (2026-10-23: a `claude mcp list` here, holding
+    ~/.claude/.codex-mcp-refresh.lock, read as -203621). /proc/locks lists this
+    host's locks only, so a holder missing from it is on another host. A local
+    disk keeps flock() apart from the fcntl() locks F_GETLK sees, which is why
+    /proc/locks is read whatever F_GETLK says.
+    """
+    try:
+        fh = open(path, "rb")
+    except FileNotFoundError:
+        return "free", None
+    with fh:
+        holders = local_lock_holders()
+        if holders is None or not sys.platform.startswith("linux"):
+            # macOS: a local disk, where trying the lock for an instant is the probe
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return "here", None
+            fcntl.flock(fh, fcntl.LOCK_UN)
+            return "free", None
+        st = os.fstat(fh.fileno())
+        key = f"{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}"
+        if key in holders:
+            return "here", holders[key]
+        probe = struct.pack("@hhqqi4x", fcntl.F_WRLCK, 0, 0, 0, 0)
+        kind = struct.unpack("@hhqqi4x", fcntl.fcntl(fh, fcntl.F_GETLK, probe))[0]
+        return ("free", None) if kind == fcntl.F_UNLCK else ("elsewhere", None)
+
+
+def snapshot_host(session_id):
+    """The host the snapshot last saw session_id running on, or None when it holds no such session."""
+    try:
+        snapshot = json.loads(DEFAULT_SNAPSHOT.read_text())
+    except (OSError, ValueError):
+        return None
+    if any(rec.get("session_id") == session_id for rec in snapshot.get("sessions", [])):
+        return snapshot.get("host") or None
+    return None
+
+
+def host_answers(host, timeout=2):
+    """True when host takes a connection on port 22 or answers a ping, False when
+    neither, None when its name does not resolve, which settles nothing."""
+    try:
+        socket.getaddrinfo(host, 22)
+    except OSError:
+        return None
+    try:
+        socket.create_connection((host, 22), timeout=timeout).close()
+        return True
+    except OSError:
+        pass
+    try:
+        return subprocess.run(["ping", "-c", "1", "-W", str(timeout), host], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=timeout + 3).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def move_stale_codex_lock(session_id, host):
+    """Move the writer lock a dead host left on a codex session out of codex's way; the new path, or None.
+
+    Codex will not resume a thread whose lock file another process holds. On NFS
+    the lock lives on the server, and a host that died holding it keeps it until
+    that host boots again and its statd tells the server: m-fwdev-167 went down
+    on 2026-10-21 holding four, and every codex resume of those threads elsewhere
+    would have stopped at "already has an active writer". The lock stays with
+    the moved file; codex makes a new file in the old place. Done under codex's
+    own .coordination.lock, which it takes before creating or removing a thread
+    lock file, and only while another host still holds the lock. Files moved
+    earlier whose lock has gone since are deleted on the way.
+    """
+    locks = CODEX_DIR / "thread-writer-locks"
+    stale = locks.with_name(locks.name + ".stale")
+    path = locks / f"{session_id}.lock"
+    with open(locks / ".coordination.lock", "a") as coordination:
+        if not flock_wait(coordination, 30) or codex_lock_holder(path)[0] != "elsewhere":
+            return None
+        stale.mkdir(exist_ok=True)
+        for old in stale.iterdir():
+            if codex_lock_holder(old)[0] == "free":
+                old.unlink(missing_ok=True)
+        target = stale / f"{session_id}.lock.{host}.{time.strftime('%Y%m%d-%H%M%S')}"
+        os.rename(path, target)
+        return target
+
+
+def codex_native_binary():
+    """The native codex program and its npm package root, found the way ~/.bashrc's codex wrapper finds them.
+
+    The nvm copy first - l-fwdev-014 also has a root-installed 0.153.4 in
+    /usr/local/bin - and the program itself, not its node launcher, every start
+    of which asks autofs for /labhome/node_modules. (None, None) if there is none.
+    """
+    nvm_dir = Path(os.environ.get("NVM_DIR") or Path.home() / ".nvm")
+    found = shutil.which("codex")
+    if not found or not found.startswith(f"{nvm_dir}/"):
+        candidates = sorted(nvm_dir.glob("versions/node/v*/bin/codex"))
+        found = str(candidates[-1]) if candidates else found
+    if not found:
+        return None, None
+    root = Path(os.path.realpath(found)).parent.parent
+    for pattern in ("node_modules/@openai/codex-*/vendor/*/bin/codex", "vendor/*/bin/codex"):
+        for native in sorted(root.glob(pattern)):
+            if os.access(native, os.X_OK):
+                return native, root
+    return None, None
+
+
+def codex_warm_probe(native, root, timeout=60):
+    """Start the app-server a codex TUI runs in-process and have it answer the TUI's
+    first request, account/read; (seconds, error or None). No thread is started,
+    so no session is written to."""
+    env = dict(os.environ, CODEX_MANAGED_BY_NPM="1", CODEX_MANAGED_PACKAGE_ROOT=str(root))
+    start = time.monotonic()
+    try:
+        proc = subprocess.Popen([str(native), "--no-daemon", "app-server"], env=env, text=True, bufsize=1,
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        return 0.0, str(exc)
+
+    def send(message):
+        proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+
+    def answer(request_id):
+        while (left := start + timeout - time.monotonic()) > 0:
+            if not select.select([proc.stdout], [], [], left)[0]:
+                break
+            line = proc.stdout.readline()
+            if not line:
+                break
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            if message.get("id") == request_id:
+                return message
+        return None
+
+    error = None
+    try:
+        send({"id": 0, "method": "initialize",
+              "params": {"clientInfo": {"name": "jcl", "title": None, "version": "1"}}})
+        if answer(0) is None:
+            error = f"initialize got no answer within {timeout} s"
+        else:
+            send({"method": "initialized"})
+            send({"id": 1, "method": "account/read", "params": {"refreshToken": False}})
+            reply = answer(1)
+            if reply is None:
+                error = f"account/read got no answer within {timeout} s"
+            elif "error" in reply:
+                error = "account/read: " + str((reply["error"] or {}).get("message"))
+    except OSError as exc:
+        error = str(exc)
+    finally:
+        seconds = time.monotonic() - start
+        try:
+            proc.stdin.close()
+            proc.wait(timeout=20)
+        except (OSError, subprocess.TimeoutExpired):
+            proc.kill()
+            proc.wait()
+        proc.stdout.close()
+    return seconds, error
+
+
+def codex_warm_up():
+    """Have one codex start on this host take the cold start before restored TUIs do; a line to print, or None.
+
+    A codex TUI gives its first request, account/read, 15 seconds (codex 0.163.0,
+    workspace_routing.rs). The first codex start on a host that has not run one
+    for a while spends that long before it answers anything: 13.3 s just to
+    answer initialize on l-fwdev-014, against 0.3 s for the next start
+    (2026-10-23), and the TUI a restore started there cold on 2026-10-21 died
+    with "workspace routing discovery timed out". That first start also migrates
+    the host's state database, which two TUIs restored together raced over
+    ("index idx_threads_archive_created already exists", same restore). So the
+    panes of a restore queue on a lock in sqlite_home, which is per host: the
+    first starts the app-server once and has it answer account/read, and the
+    rest find its marker fresh and go straight on.
+    """
+    native, root = codex_native_binary()
+    if native is None:
+        return None
+    try:
+        version = json.loads((root / "package.json").read_text()).get("version", "")
+    except (OSError, ValueError):
+        version = ""
+    base = codex_sqlite_home(CODEX_DIR) or Path("/tmp") / f"jcl-codex-{os.getuid()}"
+    base.mkdir(parents=True, exist_ok=True)
+    marker = base / ".jcl-codex-warm"
+
+    def fresh():
+        try:
+            return (marker.read_text().strip() == version
+                    and time.time() - marker.stat().st_mtime < CODEX_WARM_FRESH_SECONDS)
+        except OSError:
+            return False
+
+    if fresh():
+        return None
+    with open(base / ".jcl-codex-warm.lock", "a") as lock:
+        if not flock_wait(lock, 150):
+            return "codex warm-up: another one has not finished in 150 s; starting codex anyway"
+        if fresh():
+            return None
+        seconds, error = codex_warm_probe(native, root)
+        # Written even after an error: the TUIs waiting here would each try again
+        # for up to a minute, while the first start has warmed the host anyway
+        marker.write_text(version + "\n")
+    if error:
+        return f"codex warm-up: {error}, after {seconds:.1f} s; starting codex anyway"
+    return f"codex warm-up on {os.uname().nodename}: {seconds:.1f} s"
+
+
+def cmd_codex_preflight(args):
+    """Clear the way for `codex resume ID` on this host; 0 when it may run.
+
+    restore and the tmux-resurrect layout put this ahead of every codex resume,
+    because both can bring a session back on a host other than the one it last
+    ran on.
+    """
+    c, e = palette(), palette(sys.stderr)
+    sid = args.session_id
+    lock = CODEX_DIR / "thread-writer-locks" / f"{sid}.lock"
+    state, pid = codex_lock_holder(lock)
+    if state == "here":
+        held = f" (pid {pid})" if pid else ""
+        print(f"{e['RED']}Codex session {sid} is already open on this host{held}{e['RESET']};"
+              " not resuming it a second time.", file=sys.stderr)
+        return 1
+    if state == "elsewhere":
+        host = snapshot_host(sid)
+        stale_dir = _home(lock.parent.with_name(lock.parent.name + ".stale"))
+        by_hand = f"mkdir -p {stale_dir} && mv {_home(lock)} {stale_dir}/"
+        if not host or host.split(".")[0] == os.uname().nodename.split(".")[0]:
+            print(f"{e['RED']}Another host holds the writer lock of codex session {sid}{e['RESET']},"
+                  " and the snapshot does not say which. Once that host is down, move the lock"
+                  f" aside and run this again:\n  {by_hand}", file=sys.stderr)
+            return 1
+        answers = host_answers(host)
+        if answers:
+            print(f"{e['RED']}Codex session {sid} is open on {host}{e['RESET']}: quit it there first"
+                  " (jcl exit-session there), then restore it here.", file=sys.stderr)
+            return 1
+        if answers is None:
+            print(f"{e['RED']}Another host holds the writer lock of codex session {sid}{e['RESET']},"
+                  f" and {host}, where the snapshot last saw it, does not resolve. Once that host"
+                  f" is down, move the lock aside and run this again:\n  {by_hand}", file=sys.stderr)
+            return 1
+        moved = move_stale_codex_lock(sid, host)
+        if moved:
+            print(f"{c['LIGHTYELLOW']}{host} does not answer; moved the writer lock it left on this"
+                  f" session to{c['RESET']} {_home(moved)}")
+        elif codex_lock_holder(lock)[0] != "free":
+            print(f"{e['RED']}Could not move the writer lock of codex session {sid}{e['RESET']}:\n"
+                  f"  {by_hand}", file=sys.stderr)
+            return 1
+    line = codex_warm_up()
+    if line:
+        print(f"{c['GREY']}{line}{c['RESET']}")
+    return 0
+
+
 def cmd_restore(args):
     """Resume the named snapshotted sessions that are not running, each in the pane it was saved from."""
     c, e = palette(), palette(sys.stderr)
@@ -1850,7 +2172,7 @@ def cmd_restore(args):
             # on "This conversation is open in another app". Leave the choice of
             # where to continue it to the user.
             print(f"{c['LIGHTYELLOW']}Skipped, app session{c['RESET']}: {label}")
-            print(f"  {c['GREY']}to take it over here: cd {shell_quote(cwd)} && {resume_record(rec)}{c['RESET']}")
+            print(f"  {c['GREY']}to take it over here: cd {shell_quote(cwd)} && {resume_record(rec, preflight=True)}{c['RESET']}")
             continue
         # Settled here, before resume_record reads it: a session saved empty
         # that has had a message since must resume, not start over
@@ -1862,7 +2184,9 @@ def cmd_restore(args):
             print(f"  {c['GREY']}to start a new one there: cd {shell_quote(cwd)} && {resume_record(rec)}{c['RESET']}")
             continue
 
-        command = f"cd {shell_quote(cwd)} && {resume_record(rec)}"
+        # A restore can be on another host than the session last ran on: a codex
+        # resume goes through codex-preflight, see there
+        command = f"cd {shell_quote(cwd)} && {resume_record(rec, preflight=True)}"
 
         # Back into the pane it came from, and nowhere else. A session whose
         # pane is gone or busy is listed with its command instead: a window
@@ -3039,13 +3363,17 @@ def cmd_resurrect(args):
 
     shown = saves if args.all else saves[:10]
     print(f"{c['GREY']}tmux-resurrect saves in {_home(directory)}, newest first{c['RESET']}")
-    print(f"{c['BOLD']}{'#':>3}  {'SAVED':<12} {'':<8}  {'PANES':>5}  {'AGENTS':>6}  SESSIONS{c['RESET']}")
+    # FILE is the save's name in that directory, to open it by hand: SAVED
+    # alone does not give it (10-21 10:54 is tmux_resurrect_20261021T105432.txt)
+    width = max(len(save["path"].name) for save in shown)
+    print(f"{c['BOLD']}{'#':>3}  {'SAVED':<12} {'':<8}  {'FILE':<{width}}  {'PANES':>5}  {'AGENTS':>6}"
+          f"  SESSIONS{c['RESET']}")
     for number, save in enumerate(shown, 1):
         when = time.strptime(save["stamp"], "%Y%m%dT%H%M%S")
         mark = f"  {c['GREEN']}<- last{c['RESET']}" if save["path"].name == current else ""
         print(f"{number:>3}  {time.strftime('%m-%d %H:%M', when):<12} "
-              f"{c['GREY']}{_ago(time.mktime(when)):<8}{c['RESET']}  {save['panes']:>5}  "
-              f"{save['agents']:>6}  {', '.join(save['sessions'])}{mark}")
+              f"{c['GREY']}{_ago(time.mktime(when)):<8}{c['RESET']}  {save['path'].name:<{width}}  "
+              f"{save['panes']:>5}  {save['agents']:>6}  {', '.join(save['sessions'])}{mark}")
     print()
     if len(saves) > len(shown):
         print(f"{c['GREY']}{len(saves) - len(shown)} older; jcl resurrect --all lists every save.{c['RESET']}")
@@ -3093,8 +3421,11 @@ def cmd_patch_resurrect(args):
                 if rec["cwd"]:
                     fields[7] = ":" + rec["cwd"].replace(" ", "\\ ")
                 # Preserve known model/effort settings, not arbitrary launch
-                # arguments (which may contain prompts or credentials).
-                fields[10] = ":" + resume_record(rec)
+                # arguments (which may contain prompts or credentials). A codex
+                # command starts with `jcl codex-preflight`, which resurrect
+                # restores only because @resurrect-processes in tmux.conf lists
+                # "~jcl codex-preflight" next to codex.
+                fields[10] = ":" + resume_record(rec, preflight=True)
                 patched.append(f"{rec['tmux_session']}:{rec['window_index']}.{rec['pane_index']}")
                 line = "\t".join(fields)
         out.append(line)
@@ -3847,6 +4178,24 @@ def main(argv=None):
         "-n", "--dry-run", action="store_true", help="Print the commands instead of running them"
     )
     p_restore.set_defaults(func=cmd_restore)
+
+    p_preflight = sub.add_parser(
+        "codex-preflight",
+        help="Clear the way for `codex resume ID` on this host; restore runs it ahead of every codex resume",
+        description=(
+            "Run by restore and by the tmux-resurrect layout ahead of `codex resume ID`;"
+            " exits 0 when the resume may go ahead. When another host holds the"
+            " session's writer lock, the host the snapshot last saw the session on"
+            " is tried: if it answers, the session is open there and nothing is"
+            " touched; if it is down, the lock it left is moved to"
+            " ~/.codex/thread-writer-locks.stale. Then, once per restore on this"
+            " host, one codex app-server is started and asked account/read, so"
+            " that the TUIs restored next start warm instead of all at once from"
+            " cold."
+        ),
+    )
+    p_preflight.add_argument("session_id", metavar="SESSION_ID", help="The codex thread about to be resumed")
+    p_preflight.set_defaults(func=cmd_codex_preflight)
 
     p_show = sub.add_parser(
         "show", help="Show what a snapshot holds and which of it runs on this host"

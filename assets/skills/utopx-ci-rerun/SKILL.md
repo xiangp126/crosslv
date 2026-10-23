@@ -103,9 +103,9 @@ That is a broken pipeline script in `fw_automations`; it hits every change in th
 
   ```bash
   source ~/.jenkins_env
-  curl -s -u "$JENKINS_USER:$JENKINS_API_TOKEN" \
-    "$JENKINS_URL/job/golan_fw_minireg/<N>/consoleText" -o logs/minireg_<N>.log
-  grep -oE 'LAST_STABLE_FW="[^"]*"' logs/minireg_<N>.log | head -1   # the DoA baseline FW
+  curl -s -u "$JENKINS_USER:$JENKINS_API_TOKEN" --create-dirs \
+    "$JENKINS_URL/job/golan_fw_minireg/<N>/consoleText" -o logs/ci/minireg_<N>.log
+  grep -oE 'LAST_STABLE_FW="[^"]*"' logs/ci/minireg_<N>.log | head -1   # the DoA baseline FW
   ```
 
 - The `nvidia-jenkins` MCP fails against blossom

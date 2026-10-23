@@ -1,8 +1,8 @@
 {
   "name": "md-preview-plus",
   "displayName": "Markdown Preview Plus",
-  "description": "Built-in Markdown preview: heading sidebar, text column and diff colours; Preview / Markdown buttons in the title bar; preview tabs kept open; Cmd + double click opens the source.",
-  "version": "0.2.1",
+  "description": "Built-in Markdown preview: heading sidebar, text column and diff colours; Preview / Markdown buttons in the title bar; preview tabs kept open; Cmd + double click opens the source; copy a link from its right-click menu.",
+  "version": "0.2.8",
   "publisher": "markdown-preview-plus",
   "engines": {
     "vscode": "^1.70.0"
@@ -30,6 +30,18 @@
         "command": "mdPreviewPlus.showSource",
         "title": "Markdown",
         "icon": "$(markdown)"
+      },
+      {
+        "command": "mdPreviewPlus.copySelection",
+        "title": "Copy"
+      },
+      {
+        "command": "mdPreviewPlus.copyLinkAddress",
+        "title": "Copy Link Address"
+      },
+      {
+        "command": "mdPreviewPlus.copyLinkText",
+        "title": "Copy Link Text"
       }
     ],
     "menus": {
@@ -53,6 +65,35 @@
         {
           "command": "mdPreviewPlus.showSource",
           "when": "activeCustomEditorId == 'vscode.markdown.preview.editor'"
+        },
+        {
+          "command": "mdPreviewPlus.copySelection",
+          "when": "false"
+        },
+        {
+          "command": "mdPreviewPlus.copyLinkAddress",
+          "when": "false"
+        },
+        {
+          "command": "mdPreviewPlus.copyLinkText",
+          "when": "false"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "mdPreviewPlus.copySelection",
+          "group": "9_cutcopypaste@1",
+          "when": "webviewSection == 'mppLink' && mppSelection"
+        },
+        {
+          "command": "mdPreviewPlus.copyLinkAddress",
+          "group": "9_cutcopypaste@2",
+          "when": "webviewSection == 'mppLink'"
+        },
+        {
+          "command": "mdPreviewPlus.copyLinkText",
+          "group": "9_cutcopypaste@3",
+          "when": "webviewSection == 'mppLink'"
         }
       ]
     },
@@ -69,6 +110,10 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:mdPreviewPlus.showPreview",
-    "onCommand:mdPreviewPlus.showSource"
+    "onCommand:mdPreviewPlus.showSource",
+    "onCommand:mdPreviewPlus.copySelection",
+    "onCommand:mdPreviewPlus.copyLinkAddress",
+    "onCommand:mdPreviewPlus.copyLinkText",
+    "onCommand:mdPreviewPlus.openLink"
   ]
 }

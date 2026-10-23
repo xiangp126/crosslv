@@ -44,22 +44,20 @@ Traps beyond the must-fire rules in `SKILL.md`. Phase and § numbers refer to `p
 
 ## Allocating the box; substitutes
 
-- **Box lifecycle:** reserve the `<machine>` from `setup_id` with `jmake --reg-malloc <machine>`
-  (never substitute another host or trim the command), keep it alive with `jmake --reg-extend`,
-  **release it only when Peter says so**, with `jmake --reg-free <machine>` (never
+- **Box lifecycle:** lock the `<machine>` from `setup_id` with NOGA
+  (`noga_watchdog.sh <machine> --until-locked`; never substitute another host), keep it with
+  `noga_watchdog.sh <machine>`, **release it only when Peter says so**, with
+  `jmake --reg-free <machine>` (never
   `jmake --reg-cancel`, which can release every box you hold). If it is busy, monitor its lock and grab it
   the instant it frees (§3b) — do not switch boxes. **Unknown reg/lab command → ask Glean
   (`glean_search` / `glean_chat`) before guessing.**
-- **Some reg boxes are outside the malloc pool.** `jmake --reg-malloc` / `--reg-mine` only see
-  boxes labelled `HCA_FW_ALLOCATION_POOL_HOST`; dedicated BRONCO/BF boxes may carry only
-  `PARTITION_NOGA_ALLOC_reg`, and some sit in a partition malloc refuses ("Server is in partition
-  virtio, allowed partitions are: e2e,mpi,automation,dev,perf,reg,userdev"). Lock those directly:
-  `noga_manage.py -l -t server -n <box> -L <hours> -N "…"` (the `-t server` is mandatory), and
-  confirm ownership via `noga_manage.py -q` — sqme won't show it.
-- **Noga REST can be down (504) for hours** — malloc / minfo / `noga_manage -q` all share that
-  backend. Probe `api_cmd=get_teams` with curl and wait it out in the background; never read a 504
-  traceback as "box locked". `lock_time_out` is UTC and auto-release lags — watch the
-  `Status.status` flip, not the clock. (STM-only fallback: Noga's direct Oracle DB API.)
+- **`jmake --reg-mine` lists only boxes labelled `HCA_FW_ALLOCATION_POOL_HOST`**; dedicated
+  BRONCO/BF boxes may carry only `PARTITION_NOGA_ALLOC_reg`. Confirm ownership of any box with
+  `noga_manage.py -q -t server -n <box>` (the `-t server` is mandatory).
+- **Noga REST can be down (504) for hours** — `noga_manage.py`, `jmake --reg-free`, minfo and sqme
+  all share that backend. Probe `api_cmd=get_teams` with curl and wait it out in the background;
+  never read a 504 traceback as "box locked". `lock_time_out` is UTC and auto-release lags — watch
+  the `Status.status` flip, not the clock. (STM-only fallback: Noga's direct Oracle DB API.)
 - **Same-PSID substitution** (approval rule: `SKILL.md`; procedure: §3b): match the PSID
   (board), not just the family; verify the substitute is idle + healthy (last session Burn RC=0)
   and, ideally, already shows the signature in its own latest regression.
@@ -420,7 +418,7 @@ What each field and attachment yields in Phase 1. Input: `https://redmine.nvidia
 | `journals` | auto-filed by the duty scrum, then reassigned to a developer; an Orion AI-overview link is in the description | when real triage started |
 
 Phases 2→8 for this ticket: pull `new_burn_fw` / `get_last_commit` from `11125573.tgz`;
-**`jmake --reg-malloc m-fwreg-029`** (the exact box from `setup_id` — wait for it if locked,
+**lock m-fwreg-029 with NOGA** (the exact box from `setup_id` — wait for it if locked,
 monitor + grab if busy); pin a per-ticket worktree off **`utopx2`** to its `get_last_commit` tag
 (FW burns from the official `.mlx`, no `golan_fw2` build needed); copy the regression INI and burn
 to `mt41695_pciconf0`; bring up **exactly** per the attached `fw_reset` / `modprobe_udriver` /

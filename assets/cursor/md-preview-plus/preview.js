@@ -1,24 +1,32 @@
-// Built-in Markdown preview: a heading sidebar on the left, rebuilt whenever the text changes, and a
-// find box, since Cursor's own find does not work in the preview. The preview keeps the rendered
-// text in .markdown-body; the sidebar and the find box live outside it, so the preview's updates
-// leave them in place.
+// Built-in Markdown preview: a heading sidebar on the left, rebuilt whenever the text changes, a
+// find box, since Cursor's own find does not work in the preview, a Back for jumps inside the
+// page and from other files' pages, and a Copy button on every code block. The preview keeps the
+// rendered text in .markdown-body; the sidebar, the find box and the Back button live outside it, so the
+// preview's updates leave them in place. The Copy buttons sit next to the code blocks, so each update
+// drops them: they are added again.
 (function () {
     'use strict';
     const HIDDEN_KEY = 'md-preview-plus-sidebar-hidden';
     const WIDTH_KEY = 'md-preview-plus-sidebar-width';
     const HISTORY_KEY = 'md-preview-plus-find-history';
     const OPTIONS_KEY = 'md-preview-plus-find-options';
+    const JUMPS_KEY = 'md-preview-plus-file-jumps';
+    // a jump from another file counts for an hour after the click
+    const JUMP_LIFETIME = 60 * 60 * 1000;
     const LEVELS = 'h1, h2, h3, h4';
     // our own nodes; changes inside them are not changes of the page
-    const OWN = '#mpp-sidebar, #mpp-toggle, #mpp-resize, #mpp-find';
+    const OWN = '#mpp-sidebar, #mpp-toggle, #mpp-resize, #mpp-find, #mpp-back, #mpp-back-link, mpp-copy, #mpp-copy-text';
     const IS_MAC = /Mac/.test(navigator.platform);
+    const IS_LINUX = /Linux/.test(navigator.platform);
     const FIND_MOD = IS_MAC ? 'metaKey' : 'ctrlKey';
+    const BACK_KEY_NAME = IS_MAC ? '⌃⌥← or ⌃-' : IS_LINUX ? 'Ctrl+Alt+← or Ctrl+Alt+-' : 'Alt+← or Ctrl+Alt+←';
     const CAN_HIGHLIGHT = Boolean(window.Highlight && window.CSS && CSS.highlights);
     // the editor's default word separators, for "match whole word"
     const SEPARATORS = '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?';
     let nav, list, headings = [], links = [], pending = false;
     let findBox, findInput, findCount, matches = [], matchIndex = 0, findHistory = [], rememberTimer;
     let findOptions = { matchCase: false, wholeWord: false }, optionButtons = {};
+    let backButton, backStack = [], backTimer;
 
     function storedHidden() {
         try { return localStorage.getItem(HIDDEN_KEY) === '1'; } catch (e) { return false; }
@@ -92,10 +100,218 @@
         setHidden(storedHidden());
     }
 
+    // Back: a click on a link to a place in this page, or on a sidebar entry, first remembers where the
+    // page was; the editor's Go Back key or the Back button at the bottom right returns there, one jump
+    // at a time. A click on a link to another .md file is remembered as well, in localStorage, which all the
+    // previews share: for an hour, the Back of that file's page returns to this file, when that jump is newer than
+    // the newest jump inside its own page.
+    function ensureBack() {
+        if (backButton && document.body.contains(backButton)) {
+            return;
+        }
+        backButton = document.createElement('button');
+        backButton.id = 'mpp-back';
+        backButton.type = 'button';
+        backButton.textContent = '↩ Back';
+        backButton.title = 'Back to where the link was clicked (' + BACK_KEY_NAME + ')';
+        backButton.addEventListener('click', goBack);
+        backButton.addEventListener('dblclick', e => e.stopPropagation());
+        document.body.appendChild(backButton);
+        updateBack();
+    }
+
+    function rememberPosition() {
+        backStack = backStack.concat({ y: window.scrollY, time: Date.now() }).slice(-50);
+        backButton.hidden = false;
+    }
+
+    function goBack() {
+        const jumps = fileJumps(), i = fileJumpBack(jumps);
+        if (i >= 0) {
+            const from = jumps[i].from;
+            jumps.splice(i, 1);
+            saveFileJumps(jumps);
+            openFile(from);
+        } else if (backStack.length > 0) {
+            window.scrollTo(0, backStack.pop().y);
+        }
+        updateBack();
+    }
+
+    function canGoBack() {
+        return backStack.length > 0 || fileJumpBack(fileJumps()) >= 0;
+    }
+
+    // The button shows while there is something to go back to; a jump from another file stops counting when it
+    // expires, so look again then.
+    function updateBack() {
+        const jumps = fileJumps(), i = fileJumpBack(jumps);
+        backButton.hidden = backStack.length === 0 && i < 0;
+        clearTimeout(backTimer);
+        if (i >= 0) {
+            backTimer = setTimeout(updateBack, jumps[i].time + JUMP_LIFETIME - Date.now());
+        }
+    }
+
+    // This page's file: the URL the preview renders it from (file:, vscode-remote: and the like)
+    function pageUrl() {
+        const settings = document.getElementById('vscode-markdown-preview-data').getAttribute('data-settings');
+        return new URL(JSON.parse(settings).source);
+    }
+
+    // The jumps from one file's page to another's in the last hour, { from, to, time } with the files' absolute paths,
+    // oldest first. Older ones are left out, so the next save drops them.
+    function fileJumps() {
+        try {
+            const now = Date.now();
+            return (JSON.parse(localStorage.getItem(JUMPS_KEY)) || []).filter(jump => now - jump.time < JUMP_LIFETIME);
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveFileJumps(jumps) {
+        try {
+            localStorage.setItem(JUMPS_KEY, JSON.stringify(jumps.slice(-50)));
+        } catch (e) { /* no storage: no Back to the other file */ }
+    }
+
+    // A click on a link to another .md file, which the preview opens in that file's own tab: remember the jump
+    function rememberFileJump(a) {
+        const raw = a.getAttribute('data-href') || a.getAttribute('href');
+        if (!raw || raw.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+            return;
+        }
+        try {
+            const here = pageUrl(), url = new URL(raw, here);
+            const from = decodeURIComponent(here.pathname), to = decodeURIComponent(url.pathname);
+            if (/\.md$/i.test(to) && to !== from) {
+                saveFileJumps(fileJumps().concat({ from, to, time: Date.now() }));
+            }
+        } catch (e) { /* a link it cannot read: no Back for it */ }
+    }
+
+    // The newest jump from another file to this page, when it is newer than this page's own newest jump: its index in
+    // <jumps>, else -1
+    function fileJumpBack(jumps) {
+        const here = decodeURIComponent(pageUrl().pathname), newest = backStack[backStack.length - 1];
+        for (let i = jumps.length - 1; i >= 0; i--) {
+            if (jumps[i].to === here) {
+                return !newest || jumps[i].time > newest.time ? i : -1;
+            }
+        }
+        return -1;
+    }
+
+    // Back to the file at <path> (absolute): a link to it, relative to this file, clicked by script. The preview's
+    // own click handler takes a link without a scheme whether or not the click is a real one, sends it to the
+    // extension and stops the browser from following it; the extension shows that file's preview tab, still where
+    // it was, or opens it.
+    function openFile(path) {
+        const dir = decodeURIComponent(pageUrl().pathname).split('/').slice(0, -1), parts = path.split('/');
+        let same = 0;
+        while (same < dir.length && same < parts.length - 1 && dir[same] === parts[same]) {
+            same++;
+        }
+        const href = dir.slice(same).map(() => '..').concat(parts.slice(same)).map(encodeURIComponent).join('/');
+        const a = document.createElement('a');
+        a.id = 'mpp-back-link';
+        a.href = href;
+        a.dataset.href = href;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    }
+
+    // The editor's Go Back key: ⌃- on the Mac, Ctrl+Alt+- on Linux, Alt+← on Windows; and Ctrl+Alt+← (⌃⌥← on the
+    // Mac) everywhere, because Peter's keybindings.json gives Go Back ctrl+alt+left and takes ⌃- away from it.
+    function isBackKey(e) {
+        if (e.shiftKey || e.metaKey) {
+            return false;
+        }
+        if (e.ctrlKey && e.altKey && e.key === 'ArrowLeft') {
+            return true;
+        }
+        if (IS_MAC) {
+            return e.ctrlKey && !e.altKey && e.code === 'Minus';
+        }
+        if (IS_LINUX) {
+            return e.ctrlKey && e.altKey && e.code === 'Minus';
+        }
+        return e.altKey && !e.ctrlKey && e.key === 'ArrowLeft';
+    }
+
+    // a link to a place in this page whose target exists
+    function isPageJump(a) {
+        const id = a.getAttribute('href').slice(1);
+        try {
+            return Boolean(id && (document.getElementById(id) || document.getElementById(decodeURIComponent(id))));
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // Copy: a button at the top right of every code block, shown while the pointer is over the block
+    // (preview.css). It sits in an <mpp-copy> of no height just before the block, not in it: the preview
+    // updates its text by comparing each block with the new text, and a block holding a button never
+    // matches, which leaves the code's line number (data-line, which scrolling along with the editor and
+    // Cmd+double-click go by) out of date. An update drops the <mpp-copy> elements; build() adds them
+    // again. The button holds no text: preview.css draws its label from data-state, so the find box, a
+    // selection and Cmd+C never pick it up.
+    function addCopyButtons(root) {
+        for (const code of root.querySelectorAll('pre > code')) {
+            const pre = code.parentElement;
+            if (pre.previousElementSibling?.localName === 'mpp-copy') {
+                continue;
+            }
+            const button = document.createElement('button');
+            button.type = 'button';
+            // the preview would act on the click, and open the source on a Cmd+double-click
+            button.addEventListener('click', e => {
+                e.stopPropagation();
+                copyCode(button, code);
+            });
+            button.addEventListener('dblclick', e => e.stopPropagation());
+            const holder = document.createElement('mpp-copy');
+            holder.appendChild(button);
+            pre.before(holder);
+        }
+    }
+
+    // The code as written in the file, without the line break that ends its last line, so a pasted
+    // command waits for Enter; the label says Copied or Copy failed for 1.5 s.
+    async function copyCode(button, code) {
+        const text = code.textContent.replace(/\n$/, '');
+        let copied;
+        try {
+            await navigator.clipboard.writeText(text);
+            copied = true;
+        } catch (e) {
+            copied = copyBySelection(text);
+        }
+        button.dataset.state = copied ? 'copied' : 'failed';
+        setTimeout(() => delete button.dataset.state, 1500);
+    }
+
+    // Where the webview refuses the clipboard API: the copy command on a selected textarea, which the
+    // click allows. preview.css fixes the textarea in the window, so selecting it does not scroll the page.
+    function copyBySelection(text) {
+        const area = document.createElement('textarea');
+        area.id = 'mpp-copy-text';
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        const copied = document.execCommand('copy');
+        area.remove();
+        return copied;
+    }
+
     function build() {
         ensureSidebar();
         ensureFind();
+        ensureBack();
         const root = document.querySelector('.markdown-body') || document.body;
+        addCopyButtons(root);
         headings = Array.from(root.querySelectorAll(LEVELS));
         links = [];
         list.textContent = '';
@@ -106,7 +322,7 @@
         const top = Math.min(...headings.map(h => Number(h.tagName[1])));
         for (const h of headings) {
             const a = document.createElement('a');
-            a.textContent = a.title = h.textContent.trim();
+            a.textContent = h.textContent.trim();
             a.href = '#' + h.id;
             a.className = 'mpp-l' + (Number(h.tagName[1]) - top);
             a.addEventListener('click', e => {
@@ -399,6 +615,22 @@
         }
     }
 
+    // Where a link points: a web link as written; a link to a file as the file's absolute path, with any
+    // ?v=<commit> and #fragment, resolved against this document the way the preview resolves it.
+    function linkAddress(a) {
+        const raw = a.getAttribute('data-href') || a.getAttribute('href');
+        if (/^[a-z][a-z0-9+.-]*:/i.test(raw) && !/^file:/i.test(raw)) {
+            return raw;
+        }
+        try {
+            const settings = document.getElementById('vscode-markdown-preview-data').getAttribute('data-settings');
+            const url = new URL(raw, JSON.parse(settings).source);
+            return decodeURIComponent(url.pathname + url.search + url.hash);
+        } catch (e) {
+            return raw;
+        }
+    }
+
     function init() {
         // A double click opens the source only with Cmd held; a plain double click stays in the preview.
         // The preview's own handler listens on document, so stop the event before it gets there.
@@ -408,7 +640,9 @@
             }
         }, true);
         // Find keys from anywhere in the page: Cmd+F opens the find box; while it is open, Esc closes it
-        // and ⌥⌘C / ⌥⌘W switch Aa / ab. Stop them here: the preview would otherwise pass them on to Cursor.
+        // and ⌥⌘C / ⌥⌘W switch Aa / ab. After a jump inside the page, or from another file's page, the Go
+        // Back key returns. Stop them here: the preview would otherwise pass them on to Cursor. With nothing
+        // to go back to, Go Back goes on to Cursor.
         window.addEventListener('keydown', e => {
             if (e.isComposing) {
                 return;
@@ -421,11 +655,54 @@
                 toggleFindOption('matchCase');
             } else if (isOptionKey(e, 'KeyW') && !findBox.hidden) {
                 toggleFindOption('wholeWord');
+            } else if (isBackKey(e) && canGoBack()) {
+                goBack();
             } else {
                 return;
             }
             e.preventDefault();
             e.stopPropagation();
+        }, true);
+        // A left click on a link to a place in this page, a sidebar entry included, with or without Cmd, Shift
+        // and the like held (the page jumps either way): remember where the page was before the webview (or
+        // the sidebar) scrolls to the target.
+        window.addEventListener('click', e => {
+            const a = e.target instanceof Element ? e.target.closest('a[href^="#"]') : null;
+            if (a && e.button === 0 && isPageJump(a)) {
+                rememberPosition();
+            }
+        }, true);
+        // A left click, with or without Cmd and the like, on a link to another .md file: remember the jump for the
+        // Back of that file's page. Only a real click: the one goBack makes to return to another file is not a jump.
+        window.addEventListener('click', e => {
+            const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
+            if (a && e.button === 0 && e.isTrusted) {
+                rememberFileJump(a);
+            }
+        }, true);
+        // another page's jump to this one, or back from it, changes whether there is something to go back to
+        window.addEventListener('storage', e => {
+            if (e.key === JUMPS_KEY) {
+                updateBack();
+            }
+        });
+        document.addEventListener('visibilitychange', updateBack);
+        // Right click on a link, in the text or in the sidebar: the webview's own Cut / Copy / Paste act on the
+        // selection only, so on a link they do nothing. Give the menu the link instead: Copy Link Address, Copy
+        // Link Text, and Copy when text is selected (package.json, extension.js); a sidebar entry's address is
+        // this file with the heading's #anchor. The menu elsewhere stays as it is.
+        window.addEventListener('contextmenu', e => {
+            const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
+            if (!a) {
+                return;
+            }
+            a.dataset.vscodeContext = JSON.stringify({
+                webviewSection: 'mppLink',
+                preventDefaultContextMenuItems: true,
+                mppHref: linkAddress(a),
+                mppText: a.textContent.trim(),
+                mppSelection: String(document.getSelection() || ''),
+            });
         }, true);
         build();
         new MutationObserver(onMutations).observe(document.body, { childList: true, subtree: true });

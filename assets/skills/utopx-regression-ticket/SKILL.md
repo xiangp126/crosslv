@@ -23,7 +23,7 @@ Within Redmine, pick the project by subject matter:
 | finding | project | tracker |
 |---|---|---|
 | **utopx defect** — wrong expected value, bad model, a UFATAL in a case that ran, or a draw/config that keeps a feature path from running (coverage gap) | **5581** `ConnectX FW Core - Verification` | **`Task`**, scrum type Story — the rest of this skill |
-| **firmware defect** — FW returns the wrong cap/syndrome, the test is right | **5580** `ConnectX FW Core - Design` | **`Bug SW`**, with `Reported by Department` / `Detected In Version` |
+| **firmware defect** — FW returns the wrong cap/syndrome, the test is right | **5580** `ConnectX FW Core - Design` | **`Bug SW`**, with `Reported by Department` / `Detected In Version`; fields in "Firmware defect tickets" below |
 
 - A utopx-side ticket is never `Bug SW`, although 5581 enables that tracker: utopx tickets are
   `Task`, like the ones the regression team opens.
@@ -40,7 +40,7 @@ first comment, attachments, analysis comment. A ticket is not opened until all o
 | 1 | subject | `[UTOPX]` + the quoted MAIN_FATAL message | Subject |
 | 2 | description | MAIN_FATAL line, MARS URL, Root cause paragraph, "See the first comment for …" — nothing else | Description |
 | 3 | first comment | the evidence in `== … ==` sections, **with every MARS per-case artifact attached in the same journal** (10 files) plus your own repro logs, probe scripts and candidate patch | What the first comment needs, Attachments |
-| 4 | analysis comment | one line pointing at the analysis, with `Rc_<ticket#>.md` attached under the name `ROOTCAUSE_analysis.md` | Attachments |
+| 4 | analysis comment | one line pointing at the analysis, with `ROOTCAUSE_analysis.md` attached: the English analysis written from the ticket's `Defects.md` | Attachments |
 
 Draft all four locally, show them to Peter, and post them together after he approves:
 
@@ -164,17 +164,20 @@ preceded by a large empty block. Write descriptions and comments in HTML.
 
 ### Posting
 
-1. Draft locally in `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/`: the description and each
-   comment as an `.html` file, the uploads of a comment as a manifest `.tsv`. Show them to Peter.
+1. Draft locally in the ticket's `redmine/`, `/auto/fwgwork1/$USER/bugZilla/<ticket#>_<core>/redmine/`,
+   in English, from the ticket's `Defects.md` and `Tracking.md` (skill `regression-repro`): the
+   description and each comment as an `.html` file, the uploads of a comment as a manifest `.tsv`
+   (the MARS artifacts' manifest stays in `attach/`). Show them to Peter. A posted file is not
+   edited afterwards; it records what Redmine holds.
 2. After he approves, post the approved files unchanged. Take any change back to him first.
 3. Post with `scripts/post_ticket.py` (REST, key from `~/.redmine_env`). Run every step with
    `--dry-run` first; every real write is read back and compared with the file:
 
    ```bash
    P=$(jskill path utopx-regression-ticket)/scripts/post_ticket.py
-   $P desc --ticket <id> --subject '<subject>' --description <dir>/TICKET_<id>_description.html
-   $P note --ticket <id> --note <dir>/NOTE_<id>_first_comment.html --manifest <dir>/attach/manifest.tsv
-   $P note --ticket <id> --note <dir>/NOTE_<id>_analysis.html --manifest <dir>/analysis.tsv   # new ticket
+   $P desc --ticket <id> --subject '<subject>' --description <dir>/redmine/TICKET_<id>_description.html
+   $P note --ticket <id> --note <dir>/redmine/NOTE_<id>_first_comment.html --manifest <dir>/attach/manifest.tsv
+   $P note --ticket <id> --note <dir>/redmine/NOTE_<id>_analysis.html --manifest <dir>/redmine/analysis.tsv   # new ticket
    $P note --ticket <id> --note <dir>/redmine/NOTE_<id>_rootcause.html     # root cause analysis: no uploads
    ```
 
@@ -182,7 +185,7 @@ preceded by a large empty block. Write descriptions and comments in HTML.
      the ticket, converted to its HTML form.
    - `note` uploads every manifest row and attaches them to the comment in **one journal**.
      Manifest rows: `<file><TAB><description>[<TAB><upload name>]`, paths relative to the
-     manifest. Upload `Rc_<ticket#>.md` as `ROOTCAUSE_analysis.md` with the third column.
+     manifest. `redmine/analysis.tsv` holds the one row of `ROOTCAUSE_analysis.md`.
    - Notes posted this way carry no MCP footer.
    - `verify --ticket <id> [--subject …] [--description <file>] [--journal <id> --note <file>]`
      re-checks a posted ticket read-only.
@@ -231,7 +234,7 @@ Template: `assets/root_cause_analysis.html`. Reference:
 
 - No attachments, and no second comment carrying files: the gerrit and MARS links are the trail.
   The attachment rules further down apply to opening a new ticket only.
-- Write it from the ticket's `Rc_<ticket#>.md` (skill `regression-repro`), not from memory.
+- Write it in English from the ticket's `Defects.md` (skill `regression-repro`), not from memory.
   Every number and timing comes from the logs and is checked on every run it is claimed for. Repro
   rates count only local runs from the case's starting state; a priming run is listed apart.
 - Mark anything inferred from source but not run as "(from code, not run)".
@@ -324,7 +327,7 @@ The full root cause goes into the first comment, not the description:
 - **Anything NOT verified, labelled as such**: write "Leading hypothesis, NOT yet verified:". A
   hypothesis presented as fact gets the ticket bounced.
 - **Whether reverting the suspect is an option**, if the suspect fixed something real.
-- A pointer to the full analysis, `Rc_<ticket#>.md`, which the analysis comment attaches.
+- A pointer to the full analysis, `ROOTCAUSE_analysis.md`, which the analysis comment attaches.
 
 ## Attachments
 
@@ -343,9 +346,12 @@ $S/mars_artifacts.sh <setup_id> <session_id> <key_id> <dir>/attach
   `dmesg`, `dump_file`, `fw_reset`, `mstdump_1..3`, `oplist`, `query_mlxconfig`, `run_case`), then
   your repro logs, probe scripts and candidate patch. [#5273909](https://redmine.nvidia.com/issues/5273909)
   carries twelve.
-- Then a separate comment, one line pointing at the analysis, with `Rc_<ticket#>.md` attached as
-  `ROOTCAUSE_analysis.md` (the upload name only; no local file has that name). A corrected version
-  goes up later as `ROOTCAUSE_analysis_v2.md`.
+- Then a separate comment, one line pointing at the analysis, with `redmine/ROOTCAUSE_analysis.md`
+  attached: the English analysis, written when the ticket is opened from the ticket's `Defects.md`
+  and `Tracking.md` §3, with this skill's `assets/ROOTCAUSE_analysis.md` as the template. Local
+  paths and lines of a local tree stay in backticks there; a source line the server has links
+  gerrit's file view or gitiles (skill `markdown-docs`, "Links"). A corrected version goes up later
+  as `ROOTCAUSE_analysis_v2.md`.
 - Every upload gets a `description`.
 - A ticket with zero attachments is not opened yet.
 
@@ -376,7 +382,7 @@ A `PUT` returns **204** but the value never lands for:
 
 `yai__update_ticket` cannot change the project; use REST once Peter has approved the move.
 
-1. Save the ticket as it is into the ticket directory:
+1. Save the ticket as it is into the ticket's `redmine/`:
    `GET {U}/issues/<id>.json?include=journals` — the record of what the move discards.
 2. Check that the target enables the tracker: `GET {U}/projects/<target>.json?include=trackers`.
 3. Move and set the fields in one `PUT {U}/issues/<id>.json`, e.g.
@@ -395,6 +401,9 @@ The move writes one journal of field changes and no note. Ids: `references/rest-
 ## Firmware defect tickets (project 5580)
 
 - Project **5580** `ConnectX FW Core - Design`, tracker **`Bug SW`** (id 28) — not 5581, not 5574.
+- `priority`: **`P1: Critical` (id 6)**, the default, as for a utopx ticket. Do not pick P2 or P3
+  from the definitions in the field table ("an impact outside regression" is not a reason to file
+  a FW defect as P2); changing the priority is Peter's call.
 - Required custom fields: `Reported by Department` = `R&D`; `Detected In Version` = the gerrit
   URL of the FW change that introduced the defect (or the FW version); `Chips` = the numeric chip
   id (`"84"`, not `"84=..."`).

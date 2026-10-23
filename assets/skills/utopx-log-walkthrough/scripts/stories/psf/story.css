@@ -1,0 +1,89 @@
+
+/* PSF story: the device side of the stage (global-mode lamp, pool, PF ICM, udriver and run overlays), the udriver
+   figure of step psf-udriver, the pool bar and the callout under the run map. */
+.glob .lamp { fill: var(--rule); stroke: var(--scene-dim); transition: fill 0.4s; }
+.glob.offered .lamp { fill: var(--warn); }
+.glob.on .lamp { fill: var(--ok); }
+.glob.cleared .lamp { fill: var(--surface); stroke-dasharray: 2 2; }
+.gl-k { font: 600 12px var(--font-display); letter-spacing: 0.04em; fill: var(--scene-ink); }
+.gl-v { font: 500 11px var(--font-mono); fill: var(--scene-dim); }
+.pool-k { font: 700 13px var(--font-display); fill: var(--scene-ink); }
+.pool-v { font: 500 11px var(--font-mono); fill: var(--scene-dim); }
+.pool-frame { fill: var(--surface); stroke: var(--rule); }
+.pseg { fill: var(--pool); stroke: var(--surface); stroke-width: 1.5; transform-box: fill-box; transform-origin: left center; }
+.pseg-l { font: 600 10px var(--font-mono); fill: var(--surface); pointer-events: none; }
+.pool-gone { fill: url(#hatch); opacity: 0; transition: opacity 0.6s; }
+.pool-gone.show { opacity: 0.9; }
+.pool-note { font: 500 10.5px var(--font-body); fill: var(--scene-dim); }
+.feed { opacity: 0; transition: opacity 0.5s; }
+.feed.show { opacity: 1; }
+.feedpath { fill: none; stroke: var(--pool); stroke-width: 2; stroke-dasharray: 5 6; animation: march 1.4s linear infinite; }
+.feed-t { font: 500 10.5px var(--font-body); fill: var(--pool); }
+.icmbox { fill: var(--surface); stroke-width: 1.5; } .icmbox.pf0 { stroke: var(--pf0); } .icmbox.pf1 { stroke: var(--pf1); }
+.icm-t { font: 600 10.5px var(--font-mono); fill: var(--scene-ink); }
+.pool-note.fn { font: 500 10px var(--font-mono); }
+.ud-sub { font: 500 10.5px var(--font-body); fill: var(--scene-dim); }
+.glob.confirmed .lamp { fill: var(--ok); }
+@keyframes march { to { stroke-dashoffset: -22; } }
+.udscene, .runscene { opacity: 0; pointer-events: none; transition: opacity 0.5s; }
+.udscene.show, .runscene.show { opacity: 1; }
+.ud-bg { fill: var(--surface); stroke: var(--rule); }
+.ud-k { font: 700 13px var(--font-display); fill: var(--scene-ink); }
+.ud-page { fill: var(--psf); opacity: 0.85; }
+.ud-lane { font: 600 11.5px var(--font-mono); }
+.ud-lane.v1 { fill: var(--bad); } .ud-lane.v2 { fill: var(--ok); }
+.ud-chunk { fill: color-mix(in srgb, var(--bad) 55%, var(--surface)); }
+.ud-axis { fill: var(--surface-2); stroke: var(--rule); }
+.ud-v2 { fill: var(--ok); transform-box: fill-box; transform-origin: left center; }
+.ud-addr { font: 500 10.5px var(--font-mono); fill: var(--scene-dim); }
+.rs-k { font: 600 12px var(--font-display); letter-spacing: 0.06em; fill: var(--scene-dim); text-transform: uppercase; }
+.rs-v { font: 700 40px var(--font-display); fill: var(--scene-ink); font-variant-numeric: tabular-nums; }
+.rs-v.zero { fill: var(--ok); }
+.rs-s { font: 500 11px var(--font-body); fill: var(--scene-dim); }
+.rs-tick { fill: var(--pf0); }
+.udcallout { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--psf) 8%, var(--surface)); border: 1px solid color-mix(in srgb, var(--psf) 35%, var(--rule)); display: grid; gap: 4px; }
+.udcallout p { margin: 0; max-width: 95ch; }
+.udcallout .jump { font-weight: 600; justify-self: start; }
+.udnote { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.poolbar { display: flex; height: 30px; border-radius: 6px; overflow: hidden; gap: 2px; margin-top: 6px; }
+.poolbar span { background: var(--pool); color: var(--surface); font: 600 11px/30px var(--font-mono); padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* udriver before/after figure in step 3 */
+.udfig-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 8px 6px; }
+.udfig { display: block; width: 100%; height: auto; min-width: 760px; }
+.udf-col { font: 600 10.5px var(--font-display); letter-spacing: 0.07em; fill: var(--muted); }
+.udf-row { font: 700 12.5px var(--font-mono); }
+.udf-row.bad { fill: var(--bad); } .udf-row.ok { fill: var(--ok); }
+.udf-lane.bad { fill: color-mix(in srgb, var(--bad) 5%, var(--surface)); stroke: color-mix(in srgb, var(--bad) 30%, var(--rule)); }
+.udf-lane.ok { fill: color-mix(in srgb, var(--ok) 5%, var(--surface)); stroke: color-mix(in srgb, var(--ok) 30%, var(--rule)); }
+.udf-box { fill: var(--surface); stroke: var(--rule); }
+.udf-t { font: 700 13px var(--font-display); fill: var(--ink); }
+.udf-s { font: 500 10.5px var(--font-mono); fill: var(--muted); }
+.udf-lab { font: 600 11px var(--font-body); }
+.udf-lab.bad { fill: var(--bad); } .udf-lab.ok { fill: var(--ok); }
+.udf-bad { font: 700 11.5px var(--font-body); fill: var(--bad); }
+.udf-good { font: 700 11.5px var(--font-body); fill: var(--ok); }
+.udf-x { font: 700 16px var(--font-body); fill: var(--bad); }
+.udf-foot { font: 500 11.5px var(--font-body); fill: var(--bad); }
+.udf-in { font: 600 11px var(--font-mono); fill: var(--surface); }
+.udf-chunk { fill: color-mix(in srgb, var(--bad) 55%, var(--surface)); }
+.udf-one { fill: var(--ok); }
+.udf-win.bad { fill: color-mix(in srgb, var(--bad) 55%, var(--surface)); }
+.udf-win.ok { fill: var(--ok); }
+.udf-axis { stroke: var(--muted); stroke-width: 1; }
+.udf-ar { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.udf-ar.bad { stroke: var(--bad); stroke-width: 1.2; }
+.udf-ar.ok { stroke: var(--ok); }
+.udf-ar.thick { stroke-width: 4; }
+.udf-ar.dash { stroke-dasharray: 4 3; }
+.udf-ah { fill: var(--muted); } .udf-ah.bad { fill: var(--bad); } .udf-ah.ok { fill: var(--ok); }
+.udf-one, .udf-win { transform-box: fill-box; transform-origin: left center; }
+.step.current .udfig .flow { stroke-dasharray: 6 5; animation: march 1.1s linear infinite; }
+.step.current .udfig .grow { animation: udgrow 1.2s cubic-bezier(.2, .8, .2, 1) 0.3s both; }
+.step.current .udfig .pop { animation: udpop 0.45s ease both; }
+@keyframes udgrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes udpop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .step.current .udfig .flow, .step.current .udfig .grow, .step.current .udfig .pop { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .feedpath { animation: none; }
+  .pool-gone, .feed, .udscene, .runscene { transition: none; }
+}

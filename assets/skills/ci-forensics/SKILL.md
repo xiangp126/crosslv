@@ -230,7 +230,7 @@ yours, before a rerun, and before a CI ticket.
   (`cmd_hca_cap: <field> ... expected= 0x1 Actual 0x0`) for every change on the branch.
 
   ```bash
-  grep -aoE 'LAST_STABLE_FW="[^"]*"' logs/minireg_<N>.log | head -1
+  grep -aoE 'LAST_STABLE_FW="[^"]*"' logs/ci/minireg_<N>.log | head -1
   grep -rhaE 'FW Version:' <unpacked session> | sort | uniq -c
   ```
 

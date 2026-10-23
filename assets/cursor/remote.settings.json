@@ -12,7 +12,6 @@
         "--enable-config",
         "--pretty",
         "--background-index",
-        "-j=40",
         "--all-scopes-completion",
         "--completion-style=detailed",
         "--header-insertion=never",

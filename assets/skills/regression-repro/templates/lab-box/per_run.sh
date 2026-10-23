@@ -280,7 +280,7 @@ verdict() {
     shift
     echo
     if [ "$rc" = 0 ]; then ok "$*"; else err "$*"; fi
-    note "record it in the task's log (the Repro Run log, or Ledger.md) with $BASE.*"
+    note "record it in the Run log of the task's Ledger.md with $BASE.*"
     exit "$rc"
 }
 [ "$INIT" = YES ] || verdict 3 "RUN VOID - the tool never initialised; this run says nothing either way"

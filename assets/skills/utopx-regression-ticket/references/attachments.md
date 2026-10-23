@@ -42,7 +42,7 @@ path as soon as you have it (skill `ci-forensics`).
 
 ### Also attach your own work
 
-- `Rc_<ticket#>.md`, as `ROOTCAUSE_analysis.md` in its own comment (above)
+- `redmine/ROOTCAUSE_analysis.md`, the English analysis, in its own comment (above)
 - every arm of an A/B experiment, named so the arm is obvious
   (`AB_arm_A_as_is.log` / `AB_arm_B_*.log` / `AB_arm_C_candidate_fix.log`)
 - the candidate patch **and** any patch used only to build an experiment arm — label the latter

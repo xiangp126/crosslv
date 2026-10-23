@@ -77,7 +77,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
 
 stage "$src/client" "$work/client" package.json extension.js webview_patch.js
 vsix "$work/client" "$work/client.vsix"
-stage "$src" "$work/plus" package.json extension.js preview_patch.js preview.js preview.css client/package.json
+stage "$src" "$work/plus" package.json extension.js preview_patch.js line_map.js preview.js preview.css client/package.json
 cp "$work/client.vsix" "$work/plus/extension/client.vsix"
 vsix "$work/plus" "$work/plus.vsix"
 if [ "${1:-}" = "--vsix" ]; then

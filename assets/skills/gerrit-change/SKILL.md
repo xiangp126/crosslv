@@ -92,7 +92,7 @@ What goes in it:
   syndrome, or the field mismatch, as in the fourth item above. No `FATAL :` prefix, no separate
   quote block.
 - **No verification narrative**: box, seeds, run counts and A/B results belong in the ticket and
-  its root-cause document (`Rc_<ticket#>.md`), not in the commit message.
+  its `Defects.md`, not in the commit message.
 - **Short**: a few sentences, or typically 2-5 items.
 
 ### Line length
@@ -415,8 +415,7 @@ nothing else. It is already in the `refs/for/<target>` you are about to type:
   ```
 
   Ambiguous month token → append the baseline (`June1642`). If one of the two is frozen, say so in
-  the work log — `Ledger.md`, or for a ticket the Investigation log of `Repro_<ticket#>.md` —
-  rather than silently ignoring it. "Which branches does this fix belong on" is a separate question
+  the work log, `Ledger.md`, rather than silently ignoring it. "Which branches does this fix belong on" is a separate question
   from naming; a frozen branch usually answers itself — check whether the recent fixes are on it (a
   branch missing the last two is not being maintained).
 - **Do not name a branch you push after the shape of the fix** (`5285522_macro_shape`,

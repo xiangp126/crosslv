@@ -237,7 +237,7 @@ _jcl_complete() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="list save restore show restart exit-session shell delete set patch-resurrect resurrect save-auth restore-auth fill-auth bridge"
+    local commands="list save restore codex-preflight show restart exit-session shell delete set patch-resurrect resurrect save-auth restore-auth fill-auth bridge"
     for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
         case "${COMP_WORDS[i]}" in
             --agent) agent="${COMP_WORDS[i+1]:-all}" ;;
@@ -248,7 +248,7 @@ _jcl_complete() {
     # Locate the subcommand if one has been typed already
     for ((i = 1; i < COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            list | save | restore | show | restart | exit-session | shell | delete | set | patch-resurrect | resurrect | save-auth | restore-auth | fill-auth | bridge)
+            list | save | restore | codex-preflight | show | restart | exit-session | shell | delete | set | patch-resurrect | resurrect | save-auth | restore-auth | fill-auth | bridge)
                 cmd="${COMP_WORDS[i]}"
                 break
                 ;;
@@ -319,6 +319,7 @@ _jcl_complete() {
         list) opts="-h --help -a --all --json --ids-only -v --verbose" ;;
         save) opts="-h --help -o --output" ;;
         restore) opts="-h --help -f --file -n --dry-run" ;;
+        codex-preflight) opts="-h --help" ;;
         show) opts="-h --help -f --file --json" ;;
         restart) opts="-h --help --timeout -n --dry-run" ;;
         exit-session) opts="-h --help --timeout -n --dry-run" ;;

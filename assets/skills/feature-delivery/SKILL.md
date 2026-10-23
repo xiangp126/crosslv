@@ -28,18 +28,18 @@ every time. Create it the day the feature starts or is taken over, before the fi
 ```bash
 S=~/myGit/crosslv/assets/skills
 D=/auto/fwgwork1/$USER/bugZilla/<feature>
-mkdir -p $D/tools $D/logs
+mkdir -p $D/{tools,ini,reports,drafts,patches,fw} $D/logs/{env_rebuild,ci,fwtrace,lock,build}
 cp $S/feature-delivery/templates/{Tracking.md,Ledger.md,Defects.md} $D/
 cp $S/regression-repro/templates/lab-box/* $D/tools/     # then fill tools/lab.conf, MODE=feature
 ```
 
-| File | What it is | Reader | Created |
-|---|---|---|---|
-| `Tracking.md` | the status page: verdict, status per part, commits per repository (owners only), what it waits for, next steps, decisions for Peter, requirements, test campaigns, defect status, timeline, how to run | Peter, owners, reviewers | day 0, `templates/Tracking.md` |
-| `Ledger.md` | the step-by-step record: dated entries, commands, SHAs, CI and MARS ids, Peter's instructions verbatim, corrections struck through | whoever continues | day 0, `templates/Ledger.md` |
-| `Defects.md` | one section per defect in reproduction order: how to hit it, verbatim evidence, root cause, fix diff, rejected alternatives | Peter, owners, reviewers | day 0, `templates/Defects.md` |
-| `report_<MMDD>_<box>_<sha>.md` | one test campaign, written once | Peter | end of each campaign, `templates/report.md` |
-| `tools/`, `logs/` | the lab-box scripts and `lab.conf`; logs the documents cite | — | day 0 |
+| File | What it is | Created |
+|---|---|---|
+| `Tracking.md` | the status page: verdict, status per part, commits per repository (owners only), what it waits for, next steps, decisions for Peter, Redmine tickets, requirements, test campaigns, defect status, timeline, how to run | day 0, `templates/Tracking.md` |
+| `Ledger.md` | the Run log, one row per device run, and the step-by-step record: dated entries, commands, SHAs, CI and MARS ids, Peter's instructions verbatim, corrections struck through | day 0, `templates/Ledger.md` |
+| `Defects.md` | one section per defect in reproduction order: how to hit it, verbatim evidence, root cause, fix diff, rejected alternatives | day 0, `templates/Defects.md` |
+| `reports/report_<MMDD>_<box>_<sha>.md` | one test campaign, written once | end of each campaign, `templates/report.md` |
+| `tools/`, `ini/`, `logs/`, `fw/`, `patches/`, `drafts/` | the lab-box scripts and `lab.conf`; the INI files a run burns; logs the documents cite; FW images a run burns; diffs of uncommitted trees a run used; outgoing text until it is sent (skill `markdown-docs`, "Task directory layout") | day 0 |
 
 **Every fact has one home**; other files link to it and never copy it. What changes the current
 state goes into `Tracking.md`, as its result; what was done, how, and where the evidence is goes
@@ -48,26 +48,31 @@ into `Ledger.md`. Most events touch both, at different depth — in the same ste
 | Event | `Tracking.md` (edit the section) | `Ledger.md` (append an entry) |
 |---|---|---|
 | Peter gives an instruction | — | his words, verbatim |
-| a build or long command ends | only when it changes the state (§1.2: "the new FW builds") | SUCCESS / FAILED, rc, `error:` count, elapsed, log path |
-| a push, or a new patchset from the owner | the §1.1 / §1.2 row (patchset); a §4 line | change URL, patchset, what the server echoed |
-| a CI verdict | the §1 status row; §1.3 when it blocks | build URL, failed stage, downstream jobs, MARS session id and archive path |
-| a merge | the row moves to "merged", dated by the gerrit `SUBM` approval; a §4 line | the date and the SHA on the branch after landing |
-| a review comment | §1.3 only when it blocks | who, file and line, how it was resolved |
-| device runs | when a campaign ends: a §2 row linking its report; new defects into §3 | per run: box, FW, tree SHA, seed, result, the control, log paths |
+| a build or long command ends | only when it changes the state (§1.1.1: "the new FW builds") | SUCCESS / FAILED, rc, `error:` count, elapsed, log path |
+| a push, or a new patchset from the owner | the change's §1.1 row (Now); a §4 line | change URL, patchset, what the server echoed |
+| a CI verdict | the change's §1.1 row (Status); §1.2 when it blocks | build URL, failed stage, downstream jobs, MARS session id and archive path |
+| a merge | the row moves to "Merged", its Now the merged patchset dated by the gerrit `SUBM` approval; a §4 line | the date and the SHA on the branch after landing |
+| a review comment | §1.2 only when it blocks | who, file and line, how it was resolved |
+| device runs | when a campaign ends: a §2 row linking its report; new defects into §3; the Version under test of each change that ran (§1.1) | a Run log row per run: box, FW, tree SHA and binary md5, seed and arguments, verdict, log; an entry for why they ran, what they showed, the control |
+| a run confirms or refutes a fix | its §3 status | the entry; the run's log copied to `logs/` in the same step and cited in the defect's evidence in `Defects.md` |
 | a defect found, fixed or no longer seen | its §3 status (the defect itself: `Defects.md`) | how it was found, the evidence |
-| a blocker appears or clears; an owner promises something | §1.3 / §1.4, and the verdict sentence when it changes | the source, in its own words |
-| a decision is needed / Peter decides | a §1.5 row / the row leaves §1.5 | the decision, verbatim |
+| a Redmine ticket opened, or its status changes | its §1.5 row | who opened it and why, the ticket as a link |
+| a blocker appears or clears; an owner promises something | §1.2 / §1.3, and the verdict sentence when it changes | the source, in its own words |
+| a decision is needed / Peter decides | a §1.4 row / the row leaves §1.4 | the decision, verbatim |
 | a gate opens | the "Gates" row of §1 | how it was opened |
+| the box, the image, a tree or a run command changes | the §5 row and the §6 steps that use it | what changed and why |
 | a judgement turns out wrong | simply corrected — the page shows the present | struck through in place, with the correction, its date and the criterion for next time |
 | the session is interrupted | — | what is in flight, and the next step |
-| a document, script or image is replaced; a campaign's report is written | the §6 row | delete the replaced file and the campaign's logs that neither the report, `Defects.md` nor `Tracking.md` cites — nothing is archived |
+| a document, script or image is replaced; a campaign's report is written | the §7 row | delete the replaced file and the campaign's logs that neither the report, `Defects.md` nor `Tracking.md` cites — nothing is archived |
 
 Two checks: `Tracking.md` alone answers "where is it, what blocks it, what comes next" — if not, a
-section was not updated; and it holds no commands, SHA lists or per-run results outside §5 — if
+section was not updated; and it holds no commands, SHA lists or per-run results outside §5 and §6 — if
 it does, that is ledger content in the wrong file.
 
-`Tracking.md` is a current-state page for people: edit it in place, keep it to one or two screens
-before §2, most important first, and never put rules for agents in it. Every section in detail and
+`Tracking.md` is a current-state page: edit it in place, most important first, the
+verdict and the status table of §1 on the first screen, and never put rules for agents in it. A
+status lives in one row — a change's in §1.1, a defect's in §3 — and §1.2 / §1.3 name what
+is to be done and point to that row. Every section in detail and
 how to move an old document set over: `references/documents.md`. How to write and keep any of
 these files — language, links, code blocks, log entries, corrections, what not to create, what to
 delete: skill `markdown-docs`. The bar a conclusion must clear: `references/evidence.md`.
@@ -109,11 +114,13 @@ the change under review) and `ABANDONED` ones (you will hit them in the review h
 # gerrit MCP: search_changes_by_criteria(owner=<user>, limit=40)
 ```
 
-Write the result into `Tracking.md` §1.1 / §1.2 as you go, under three rules: only the feature's
-owners' changes (current and former owners; other people's commits in the same area are not this
-feature's); "not merged" is the owner's current plan — ask them or read their own list — not every
-open change in gerrit; merged dates from the gerrit submit approval
-(`gerrit query --all-approvals`, type `SUBM`). Abandoned and stale changes stay out of the table.
+Write the result into `Tracking.md` §1.1 (§1.1.1 FW, §1.1.2 Utopx) as you go, under four rules:
+only the feature's owners' changes (current and former owners; other people's commits in the same
+area are not this feature's); "not merged" is the owner's current plan — ask them or read their own
+list — not every open change in gerrit; merged dates from the gerrit submit approval
+(`gerrit query --all-approvals`, type `SUBM`); the Content cell is the gerrit title verbatim, never
+a paraphrase. Both repositories' tables have the same five columns (`references/documents.md` §1).
+Abandoned and stale changes stay out of the table.
 
 ## Phase 1 — Design documents before code
 
@@ -260,7 +267,9 @@ git -C /auto/fwgwork1/$USER/golan_fw worktree add -b <task>-track /auto/fwgwork1
 Lab environment — `mars_reg` re-provisions the regression server **daily**, so the environment is
 rebuilt every session, not once. Copy skill `regression-repro`'s `templates/lab-box/` into
 `<task dir>/tools/` and fill in `lab.conf` (its Phase 9b explains every part); the scripts keep every
-guard. `MODE=feature` changes exactly the two repro rules that are backwards for a feature: no
+guard. Every session runs `Tracking.md` §6 from the top — lock, checks, rebuild, then the runs —
+and its last step is the same with the scripts; it is written as skill `markdown-docs`, "Run steps",
+says, so that copying the commands one by one does it. `MODE=feature` changes exactly the two repro rules that are backwards for a feature: no
 pre-fix-binary check (`FIX_COMMIT` stays empty — a feature run wants the new code), and the verdict
 asks whether the new code path ran instead of whether a defect signature appeared.
 
@@ -307,7 +316,7 @@ Known instances of both: `references/review-and-merge.md` §3.
 - Merge in the Phase 3 order (**interface → implementation → gate**), with an FW change landing
   before the test-tool change that consumes its capability; then propagate to ES / master / GA
   branches (skill `gerrit-change`; one column or table per target branch in `Tracking.md`
-  §1.1 / §1.2). Reasons and details: `references/review-and-merge.md` §2.
+  §1.1). Reasons and details: `references/review-and-merge.md` §2.
 - Then close the loop against the Feature Request from Phase 0. For **each numbered Req**, find the
   assertion in the test tool that would fail if it were violated — walk the FW↔utopx interface
   field by field — and record it in `Tracking.md` §1.6, whose "Verified?" column makes the holes

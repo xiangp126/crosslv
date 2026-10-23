@@ -111,18 +111,32 @@ outlives the worktree.
 ## Markdown documents
 
 Every `.md` written for Peter — in any folder, for any purpose: tracking pages, work logs, defect
-lists, reports, a ticket's Repro / Rc, code-flow write-ups, notes — follows skill `markdown-docs`:
-which document set the work gets, how each kind of document is kept, and the writing rules. The
-ones most often missed:
+lists, reports, code-flow write-ups, notes — follows skill `markdown-docs`: which document set the
+work gets (a feature, a long task and a bug ticket all get `Tracking.md`, `Ledger.md` and
+`Defects.md`), how each kind of document is kept, and the writing rules. The ones most often
+missed:
 
 - External items are short labels linked to the full URL, `[1459033](https://git-nbu…/+/1459033)`,
   `[FR #4838395](…)`; never a bare URL or a URL as its own label; every mention of a change or
   ticket number is linked, tables included.
 - Local files the reader opens (other documents, reports, run logs cited as evidence, `tools/`)
-  are relative links labelled with the file name — except in a ticket's `Rc`, which goes to
-  Redmine. Source lines are links too, `[VHCA.cpp:3264](../../utopx-psf/src/hca/VHCA.cpp#L3264)`;
-  a line of a gerrit patchset links gerrit's file view, `…/+/<change>/<ps>/<path>#<line>` (the
-  only form in `Rc`). Paths to type or copy stay in backticks.
+  are relative links labelled with the file name — except in the English copies under a ticket's
+  `redmine/`, which go to Redmine. Source lines are links too. Code links the local
+  worktree, never gerrit or gitiles, pinned to the commit its line number belongs to:
+  `[VHCA.cpp:5149](../../utopx-psf/src/hca/VHCA.cpp?v=6faa4de858#L5149)`; md-preview-plus opens
+  the line where that code is now, or the commit's read-only version if the line has changed. The
+  commit must be in the local repository and held by a ref (fetch a patchset first; one no
+  branch holds gets `refs/keep/<task>/<sha>`). The copies that go to Redmine
+  use gerrit's file view or gitiles instead. Paths to type or copy stay in backticks.
+- `Ledger.md` is only appended: the Run log table on top gets a row per run, its first cell
+  `<a id="run-N"></a>N`; entries `## <N>. <short title>`, first line date — conclusion, go at the
+  end. A handoff, a review thread or a draft is its own file, linked from the entry, not pasted
+  into it. A Run log row or a section of another file is cited as a link to it:
+  `[Run log #12](#run-12)`, `[Ledger.md §42](Ledger.md#42-fw-6025-builds)`.
+- Run steps — a ticket's `Tracking.md` §4, a feature's §6 — are copied one by one to rebuild the
+  box and run the test: every command complete as it stands (absolute paths, no variable carried
+  between steps, no "same as"), its expected output from a real run; then the same with
+  `env_rebuild.sh` and `per_run.sh`.
 - Headings are short titles that say what the section holds (they become the table of contents);
   owners, timestamps, conclusions and status marks go in the first line under the heading.
 - No code block inside a list item; patches go in `diff` fences.
@@ -183,10 +197,11 @@ it; run them after any change.
 | `ci-forensics` | red build → session_id → MARS archive → the raw failure log |
 | `ci-support-ticket` | a CI support request on the ServiceNow "Host Firmware Automation Support" form, only when Peter says "open a CI ticket"; its description reports the failure, never the root cause |
 | `fsearch-failures` | the regression failure DB: how often / since when / which commit — attribution. New path + Py3.8 since 2026-09, three silent traps |
-| `regression-repro` | a bug ticket end to end: reproduce locally ("regression repro template") → root-cause in FW/utopx source → **verify the fix on the box** → `Rc_<ticket>.md`. Also fires on "find the root cause", "investigate this ticket", "propose/verify a fix" |
+| `regression-repro` | a bug ticket end to end: reproduce locally ("regression repro template") → root-cause in FW/utopx source → **verify the fix on the box** → the ticket's `Tracking.md`, `Ledger.md` and `Defects.md`. Also fires on "find the root cause", "investigate this ticket", "propose/verify a fix" |
 | `utopx-regression-ticket` | a Redmine ticket for a UTOPX regression, CI or DoA failure (what "open a ticket" means): fields, subject, description, the evidence comment with every MARS artifact; the root cause analysis comment ("write a root cause analysis"); the HTML of any Redmine comment, and correcting one in place |
-| `feature-delivery` | a **feature** end to end (the mirror of `regression-repro`): survey both repos' change stacks, find the on/off gates that keep the path dark, per-task worktrees, the daily-wiped reg-box env, and the verdict "did the new code path execute" instead of `TEST PASSED`. Also the feature's documents, created from its templates on day 0: the `Tracking.md` status page (for people), the `Ledger.md` step-by-step record, `Defects.md`, test reports; any other multi-week task gets the same `Tracking.md` and `Ledger.md` (crosslv tool work gets one `plans/` document instead: skill `markdown-docs`). Fires on "take over this feature", "how far is X", "why is this change stuck", "update Tracking.md" |
+| `feature-delivery` | a **feature** end to end (the mirror of `regression-repro`): survey both repos' change stacks, find the on/off gates that keep the path dark, per-task worktrees, the daily-wiped reg-box env, and the verdict "did the new code path execute" instead of `TEST PASSED`. Also the feature's documents, created from its templates on day 0: the `Tracking.md` status page, the `Ledger.md` step-by-step record, `Defects.md`, test reports; any other multi-week task gets the same `Tracking.md` and `Ledger.md` (crosslv tool work gets one `plans/` document instead: skill `markdown-docs`). Fires on "take over this feature", "how far is X", "why is this change stuck", "update Tracking.md" |
 | `markdown-docs` | every `.md` written for Peter: which document set the work gets (feature or long task, bug ticket, crosslv `plans/`), how pages and logs are kept, what not to create or keep, the writing rules (language, links, headings, code blocks) |
+| `utopx-log-walkthrough` | an animated walkthrough page from one utopx debug log ("create a walkthrough demo for <log>"): build it, check it against the log, screenshot it, publish it as an Artifact, record it; the presenter talk track; the PSF ICM global-mode story and how to write a story for another feature |
 | `noga-lock` | querying, locking, renewing, waiting for and releasing lab servers |
 | `lab-box-login` | getting a shell on a lab box: ssh rules (BatchMode, DISPLAY, ControlMaster, waiting for a reboot), root login and where the lab passwords are, a box whose NFS home is not mounted (autofs, an empty `/etc/auto.master`) |
 | `nic-livefish-recovery` | un-bricking a NIC that vanished from PCI; the mlxconfig rule |

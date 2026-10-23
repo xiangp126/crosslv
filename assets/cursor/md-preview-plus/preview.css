@@ -89,9 +89,7 @@ body.mpp-on #mpp-sidebar.mpp-empty {
     padding: 2px 10px 2px 12px;
     color: inherit;
     text-decoration: none;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
     border-left: 2px solid transparent;
 }
 
@@ -129,6 +127,82 @@ body.mpp-on #mpp-sidebar.mpp-empty {
 
 #mpp-toggle:hover {
     opacity: 1;
+}
+
+/* Back button (preview.js): shown after a jump inside the page, returns to where the jump started. */
+#mpp-back {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 12;
+    height: 26px;
+    padding: 0 10px;
+    font-size: 13px;
+    line-height: 24px;
+    cursor: pointer;
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
+    border-radius: 4px;
+    opacity: 0.8;
+}
+
+#mpp-back:hover {
+    opacity: 1;
+}
+
+/* Copy button (preview.js) at the top right of each code block, looking like the Back button: shown while
+   the pointer is over the block or the button, while the button has the keyboard focus, and while it says
+   Copied or Copy failed. It sits in an <mpp-copy> of no height just before the block, whose top edge is
+   the block's; z-index keeps it above the code, which the preview positions. The label is drawn here, so
+   the page holds no text for it. */
+mpp-copy {
+    display: block;
+    position: relative;
+    height: 0;
+}
+mpp-copy > button {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    z-index: 1;
+    height: 22px;
+    padding: 0 8px;
+    font-size: 12px;
+    line-height: 20px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+mpp-copy:has(+ pre:hover) > button,
+mpp-copy > button:hover,
+mpp-copy > button:focus-visible,
+mpp-copy > button[data-state] {
+    opacity: 1;
+}
+mpp-copy > button:hover {
+    border-color: var(--vscode-focusBorder, rgba(0, 127, 212, 0.6));
+}
+mpp-copy > button::before {
+    content: 'Copy';
+}
+mpp-copy > button[data-state="copied"]::before {
+    content: 'Copied';
+}
+mpp-copy > button[data-state="failed"]::before {
+    content: 'Copy failed';
+}
+/* the textarea a copy goes through when the clipboard API is refused (preview.js) */
+#mpp-copy-text {
+    position: fixed;
+    top: 0;
+    left: 0;
+    opacity: 0;
 }
 
 /* Find box (preview.js) at the top right, coloured like the editor's find widget. */

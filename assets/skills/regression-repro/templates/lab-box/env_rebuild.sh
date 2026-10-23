@@ -15,7 +15,7 @@
 # Use the smallest mode that covers what changed; --burn only when the image or the NV must be redone.
 #
 # Exit: 0 every gate passed | 1 a guard, gate or step failed | 2 usage.
-# The last line is always ENV_REBUILD_RC=<rc>; the output is also kept in $TASK_DIR/logs/.
+# The last line is always ENV_REBUILD_RC=<rc>; the output is also kept in $TASK_DIR/logs/env_rebuild/.
 set -u
 # An ssh that falls back to password auth must fail, not open ssh-askpass on the user's desktop:
 # there is no TTY here and DISPLAY points at the user's X session. Every ssh below also carries
@@ -154,8 +154,8 @@ case "$HOST" in
 esac
 MUX=/tmp/ssh-mux-$USER@$HOST
 STAMP=$(date +%m%d_%H%M%S)
-mkdir -p "$TASK_DIR/logs" || exit 2
-LOG=$TASK_DIR/logs/env_rebuild_${HOST}_$STAMP.log
+mkdir -p "$TASK_DIR/logs/env_rebuild" || exit 2
+LOG=$TASK_DIR/logs/env_rebuild/env_rebuild_${HOST}_$STAMP.log
 exec > >(tee -a "$LOG") 2>&1
 
 hdr "env_rebuild $HOST  $(date '+%F %T %Z')"
@@ -201,7 +201,9 @@ if [ "$DO_BURN" = 1 ]; then
     fi
 
     step "offline image gate (mlxburn -wrimage + flint -i; does not touch the card)"
-    BIN=$TASK_DIR/logs/env_rebuild_image.bin
+    IMG_DIR=$(mktemp -d) || die "mktemp -d failed"
+    trap 'rm -rf "$IMG_DIR"' EXIT
+    BIN=$IMG_DIR/image.bin
     mlxburn -fw "$FW_MLX" -conf "$FW_INI" -wrimage "$BIN" >/dev/null 2>&1 || die "mlxburn -wrimage failed"
     IMG=$(flint -i "$BIN" q 2>/dev/null)
     IMG_VER=$(awk '/^FW Version:/{print $3}' <<<"$IMG")

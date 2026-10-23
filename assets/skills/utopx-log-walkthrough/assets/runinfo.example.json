@@ -1,0 +1,29 @@
+{
+  "box": "l-fwreg-NNN",
+  "fw": "40.51.NNNN + <a href=\"{g}1234567\">1234567</a> PS1 (local build 0123456789), feature on in the INI",
+  "utopx": "<branch> 0123456789, the content of <a href=\"{u}1234567\">1234567</a> PS1, no local change",
+  "udriver": {
+    "text": "3.09 (abc1234; the log prints 3.9)",
+    "version": "3.09",
+    "artifact": "abc1234"
+  },
+  "run": "YYYY-MM-DD HH:MM CST (box clock HH:MM IDT)",
+  "trees": {
+    "golan_fw": {
+      "path": "/auto/fwgwork1/USER/golan_fw-TASK",
+      "commit": "FULL_SHA_OF_THE_FW_BUILD",
+      "changes": [
+        {
+          "change": 1234567,
+          "ps": 1,
+          "commit": "FULL_SHA_OF_THE_PATCHSET"
+        }
+      ]
+    },
+    "utopx": {
+      "path": "/auto/fwgwork1/USER/utopx-TASK",
+      "commit": "FULL_SHA_OF_THE_UTOPX_TREE",
+      "patch": "/auto/fwgwork1/USER/bugZilla/TASK/patches/RUN_STAMP.diff"
+    }
+  }
+}

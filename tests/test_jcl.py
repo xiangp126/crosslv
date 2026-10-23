@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from types import SimpleNamespace
@@ -487,10 +488,160 @@ class SessionTests(unittest.TestCase):
             rc, _ = self.invoke(["patch-resurrect", str(layout)])
             self.assertEqual(rc, 0)
             first = layout.read_text()
-            self.assertIn(":codex resume " + SID, first)
+            # resurrect restores it through the "~jcl codex-preflight" entry of tmux.conf
+            self.assertIn(f":jcl codex-preflight {SID} && codex resume {SID}", first)
             self.assertIn(":claude --resume claude-id", first)
             self.invoke(["patch-resurrect", str(layout)])
             self.assertEqual(first, layout.read_text())
+
+    def test_restore_puts_the_preflight_ahead_of_a_codex_resume_only(self):
+        self.assertEqual(shlex.split(jcl.resume_record(record()))[:3], ["codex", "resume", SID])
+        words = shlex.split(jcl.resume_record(record(), preflight=True))
+        self.assertEqual(words[:7], ["jcl", "codex-preflight", SID, "&&", "codex", "resume", SID])
+        homed = jcl.resume_record(record(agent_home="/x/home"), preflight=True)
+        self.assertTrue(homed.startswith(f"env CODEX_HOME=/x/home jcl codex-preflight {SID}"
+                                         f" && env CODEX_HOME=/x/home codex resume {SID}"), homed)
+        self.assertEqual(jcl.resume_record(record(empty=True), preflight=True).split()[0], "codex")
+        self.assertNotIn("preflight", jcl.resume_record(record("claude"), preflight=True))
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(jcl, "collect", return_value=[]), patch.object(jcl, "tmux", return_value=""):
+            path = Path(tmp) / "sessions.json"
+            path.write_text(json.dumps({"sessions": [record()]}))
+            rc, out = self.invoke(["restore", "codex", "-f", str(path), "--dry-run"])
+        self.assertIn(f"jcl codex-preflight {SID} && codex resume {SID}", out)
+
+    @unittest.skipUnless(jcl.HAS_PROC, "Linux /proc/locks")
+    def test_codex_lock_holder_tells_this_host_from_another(self):
+        hold = ("import fcntl, sys; f = open(sys.argv[1], 'a');"
+                " (fcntl.flock if sys.argv[2] == 'flock' else fcntl.lockf)(f, fcntl.LOCK_EX);"
+                " print('ready', flush=True); sys.stdin.read()")
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / (SID + ".lock")
+            self.assertEqual(jcl.codex_lock_holder(lock), ("free", None))  # no file yet
+            lock.touch()
+            self.assertEqual(jcl.codex_lock_holder(lock), ("free", None))
+            for how in ("flock", "lockf"):  # codex's own kind, then the kind F_GETLK sees
+                child = subprocess.Popen([sys.executable, "-c", hold, str(lock), how],
+                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+                try:
+                    self.assertEqual(child.stdout.readline().strip(), "ready")
+                    self.assertEqual(jcl.codex_lock_holder(lock), ("here", child.pid), how)
+                    if how == "lockf":
+                        # Held, yet no process here holds it: how a lock another
+                        # host holds on an NFS file looks from this one
+                        with patch.object(jcl, "local_lock_holders", return_value={}):
+                            self.assertEqual(jcl.codex_lock_holder(lock), ("elsewhere", None))
+                finally:
+                    child.communicate("", timeout=5)
+            self.assertEqual(jcl.codex_lock_holder(lock), ("free", None))
+
+    def test_codex_preflight_moves_a_lock_only_when_its_host_is_down(self):
+        self.snapshot.write_text(json.dumps({"host": "m-old-1", "sessions": [record()]}))
+        cases = [  # holder, how the snapshot's host answers, rc, lock moved, warm-up run, said
+            (("free", None), None, 0, False, True, ""),
+            (("here", 4242), None, 1, False, False, "already open on this host (pid 4242)"),
+            (("elsewhere", None), True, 1, False, False, "is open on m-old-1: quit it there first"),
+            (("elsewhere", None), None, 1, False, False, "does not resolve"),
+            (("elsewhere", None), False, 0, True, True, "m-old-1 does not answer; moved"),
+        ]
+        for holder, answers, rc_want, moved, warmed, said in cases:
+            with self.subTest(holder=holder, answers=answers), \
+                 patch.object(jcl, "codex_lock_holder", return_value=holder), \
+                 patch.object(jcl, "host_answers", return_value=answers) as host_answers, \
+                 patch.object(jcl, "move_stale_codex_lock", return_value=Path("/x/" + SID)) as move, \
+                 patch.object(jcl, "codex_warm_up", return_value=None) as warm_up:
+                rc, out = self.invoke(["codex-preflight", SID])
+                self.assertEqual(rc, rc_want, out)
+                self.assertIn(said, out)
+                self.assertEqual(host_answers.called, holder[0] == "elsewhere")
+                self.assertEqual(move.call_args_list, [unittest.mock.call(SID, "m-old-1")] if moved else [])
+                self.assertEqual(warm_up.called, warmed)
+        # A session the snapshot does not hold: no host to ask, so nothing is moved
+        self.snapshot.write_text(json.dumps({"host": "m-old-1", "sessions": []}))
+        with patch.object(jcl, "codex_lock_holder", return_value=("elsewhere", None)), \
+             patch.object(jcl, "host_answers") as host_answers, \
+             patch.object(jcl, "move_stale_codex_lock") as move:
+            rc, out = self.invoke(["codex-preflight", SID])
+        self.assertEqual(rc, 1)
+        self.assertIn("the snapshot does not say which", out)
+        self.assertIn("thread-writer-locks.stale", out)  # the command to run by hand
+        host_answers.assert_not_called()
+        move.assert_not_called()
+
+    def test_move_stale_codex_lock_moves_the_lock_and_clears_released_ones(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(jcl, "CODEX_DIR", Path(tmp)):
+            locks = Path(tmp) / "thread-writer-locks"
+            locks.mkdir()
+            lock = locks / (SID + ".lock")
+            lock.touch()
+            stale = Path(tmp) / "thread-writer-locks.stale"
+            stale.mkdir()
+            released = stale / "01a0c7de-92f9-7713-b3d5-eb2edde59f27.lock.m-old-1.20261023-220350"
+            released.touch()
+            held = {lock: "elsewhere"}
+            with patch.object(jcl, "codex_lock_holder", side_effect=lambda p: (held.get(Path(p), "free"), None)):
+                moved = jcl.move_stale_codex_lock(SID, "m-old-1")
+                self.assertFalse(lock.exists())
+                self.assertEqual(moved.parent, stale)
+                self.assertRegex(moved.name, rf"^{SID}\.lock\.m-old-1\.\d{{8}}-\d{{6}}$")
+                self.assertFalse(released.exists())  # its host came back since: nothing holds it
+                lock.touch()
+                held.clear()  # a lock nobody holds is codex's own business
+                self.assertIsNone(jcl.move_stale_codex_lock(SID, "m-old-1"))
+                self.assertTrue(lock.exists())
+
+    def test_codex_warm_up_runs_once_for_the_panes_of_one_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "package"
+            root.mkdir()
+            (root / "package.json").write_text('{"version": "9.9.9"}')
+            home = Path(tmp) / "sqlite"
+            probes = []
+
+            def probe(native, package_root):
+                probes.append(native)
+                time.sleep(0.3)
+                return 0.3, None
+            with patch.object(jcl, "codex_native_binary", return_value=(Path("/fake/codex"), root)), \
+                 patch.object(jcl, "codex_sqlite_home", return_value=home), \
+                 patch.object(jcl, "codex_warm_probe", side_effect=probe):
+                said = []
+                threads = [threading.Thread(target=lambda: said.append(jcl.codex_warm_up())) for _ in range(3)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                self.assertEqual(len(probes), 1)
+                self.assertEqual(len([line for line in said if line]), 1)  # only the one that warmed says so
+                marker = home / ".jcl-codex-warm"
+                self.assertEqual(marker.read_text().strip(), "9.9.9")
+                self.assertIsNone(jcl.codex_warm_up())  # still fresh
+                old = time.time() - jcl.CODEX_WARM_FRESH_SECONDS - 5
+                os.utime(marker, (old, old))
+                self.assertIn("codex warm-up on", jcl.codex_warm_up())
+                self.assertEqual(len(probes), 2)
+
+    def test_codex_warm_probe_reads_the_answer_to_account_read(self):
+        server = ("import json, sys\n"
+                  "for line in sys.stdin:\n"
+                  "    msg = json.loads(line)\n"
+                  "    if msg.get('id') == 0:\n"
+                  "        print(json.dumps({'id': 0, 'result': {}}), flush=True)\n"
+                  "    elif msg.get('id') == 1 and MODE == 'ok':\n"
+                  "        print(json.dumps({'id': 1, 'result': {'account': None}}), flush=True)\n"
+                  "    elif msg.get('id') == 1 and MODE == 'error':\n"
+                  "        print(json.dumps({'id': 1, 'error': {'message': 'workspace routing discovery timed out'}}),"
+                  " flush=True)\n")
+        for mode, want in (("ok", None),
+                           ("error", "account/read: workspace routing discovery timed out"),
+                           ("silent", "account/read got no answer within 2 s")):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                fake = Path(tmp) / "codex"
+                fake.write_text(f"#!{sys.executable}\nMODE = {mode!r}\n{server}")
+                fake.chmod(0o755)
+                seconds, error = jcl.codex_warm_probe(fake, Path(tmp), timeout=2)
+                self.assertEqual(error, want)
+                self.assertLess(seconds, 10)
 
     @unittest.skipUnless(jcl.HAS_PROC, "Linux descriptor integration")
     def test_real_process_lock_discovery_and_exit(self):
@@ -650,6 +801,7 @@ class SessionTests(unittest.TestCase):
         rows = [line.split() for line in out.splitlines() if line.strip()[:1].isdigit()]
         self.assertEqual([row[0] for row in rows], ["1", "2"])
         self.assertEqual(rows[0][1:3], ["10-16", "13:52"])
+        self.assertIn("tmux_resurrect_20261016T135200.txt", rows[0])  # to open it by hand
         self.assertEqual(rows[0][-2:], ["<-", "last"])
         self.assertEqual(rows[1][-4:], ["3", "2", "0,", "3"])  # panes, agents, sessions
 

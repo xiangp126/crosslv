@@ -20,10 +20,13 @@ until it frees up, take it, then set it up.
   `Release` there does not mean idle. The listings also carry other non-`fwreg` hosts
   (`l-fwperf-*`, `l-fwvrt-*`, `icpe-*`); skip them too. A busy box is waited for; a substitute,
   when one is allowed at all, is another `*-fwreg-*` box.
-- **Respect existing locks.** A Noga lock is advisory — SSH still works — so never SSH into or run
-  anything (flint, mlxconfig, utopx, burn, reset) on a box whose `lock_owner` is another user; work
-  only on a box you hold or one that is free, and to get a held box, wait for it to free up and take
-  it first. Do not fight a live holder.
+- **Respect existing locks.** A Noga lock is advisory — SSH still works. On a box whose
+  `lock_owner` is another user, read-only inspection is fine: log in and look (`who`, `last`, `ps`,
+  `lspci`, `flint q`, logs), which is how you tell whether the holder is using it. Never change
+  its state there (burn, `mlxconfig set`, reset, reboot, utopx, driver binding): work only on a box
+  you hold or one that is free, and to get a held box, wait for it to free up and take it first.
+  Do not fight a live holder: take over another user's live lock only on Peter's explicit order,
+  and tell him whose lock it was.
 - **Never release a box you hold without Peter's explicit permission** — not when the experiment
   is done, not when the box looks idle, not to be polite to other teams. When the work on it is
   finished, report that and ask; release only after he says so, and only the box(es) he named:
@@ -53,9 +56,9 @@ python3 $CLI -u -t server -n $HOST                   # release (prefer jmake --r
   type, not an alias: Noga resolves `-n` by name alone, so a lock or a `Status.*` read still hits the
   right box, but a `-t host` query renders the Host attribute set and drops `Common.labels`.
 - `-l` on a box you already hold renews instead of failing. Never `-l` a box another user holds
-  with a live lease: `noga_manage.py` does no owner check of its own, and Noga treats the call as a
-  lock break, which takes the box from its holder wherever permissions allow. A refused grab is
-  harmless — keep polling.
+  with a live lease unless Peter ordered the takeover: `noga_manage.py` does no owner check of its
+  own, and Noga treats the call as a lock break, which takes the box from its holder wherever
+  permissions allow. A refused grab is harmless — keep polling.
 - Only `Status.status = Lock` with your user in `Status.lock_owner` proves you hold a box. A box
   without the `HCA_FW_ALLOCATION_POOL_HOST` label (some dedicated BRONCO/BF reg boxes carry only
   `PARTITION_NOGA_ALLOC_reg`) is missing from `jmake --reg-mine` even while you hold it; read its

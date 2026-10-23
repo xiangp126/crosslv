@@ -41,7 +41,7 @@ in the ledger; it decides what can be tested when.
 
 Cherry-picking to ES / master / GA branches: skill `gerrit-change` — the footer and Change-Id
 rules, and pushing a dependent series atomically. Which change reached which branch is kept in
-`Tracking.md` §1.1 / §1.2, one table per target branch; the SHA each one landed as (looked up by
+`Tracking.md` §1.1 (§1.1.1 FW, §1.1.2 Utopx), one table per target branch; the SHA each one landed as (looked up by
 Change-Id, SKILL.md Phase 4) goes into `Ledger.md` when it lands. A zero-conflict cherry-pick does
 **not** mean it compiles there.
 
